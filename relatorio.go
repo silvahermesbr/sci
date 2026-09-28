@@ -14,15 +14,15 @@ import (
 )
 
 type ConferenciaPDF struct {
-	ID        int64           `json:"id"`
-	Data      string          `json:"data"`
-	Status    string          `json:"status"`
-	Hora      *string         `json:"hora"`
-	CriadaEm  string          `json:"criada_em"`
-	FechadaEm *string         `json:"fechada_em"`
-	CriadoPor string          `json:"criado_por"`
-	GeradoPor string          `json:"gerado_por"`
-	Resumo    map[string]int  `json:"resumo"`
+	ID          int64            `json:"id"`
+	Data        string           `json:"data"`
+	Status      string           `json:"status"`
+	Hora        *string          `json:"hora"`
+	CriadaEm    string           `json:"criada_em"`
+	FechadaEm   *string          `json:"fechada_em"`
+	CriadoPor   string           `json:"criado_por"`
+	GeradoPor   string           `json:"gerado_por"`
+	Resumo      map[string]int   `json:"resumo"`
 	Lancamentos []map[string]any `json:"lancamentos"`
 }
 
@@ -75,23 +75,23 @@ type FormaturaStat struct {
 }
 
 type Bundle struct {
-	De, Ate      string `json:"-"`
-	Convocacoes  int    `json:"convocacoes"`
-	EfetivoAtivo int    `json:"efetivo_ativo"`
-	TotalLanc    int    `json:"total_lancamentos"`
-	Presentes    int    `json:"presentes"`
-	PresentesPuros int  `json:"presentes_puros"` // presentes SEM ressalva (ordem Tenente 28/09)
-	Atrasos      int    `json:"atrasos"`
-	Faltas       int    `json:"falta"`
-	Justificadas int    `json:"justificadas"`
-	PctGeral     float64 `json:"pct_geral"`
-	PctPronto    float64 `json:"pct_pronto"`           // % do efetivo pronto = presentes puros / convocações
-	PctPresencaEstrita float64 `json:"pct_presenca_estrita"` // decisão 28/09: justificada = falta
-	TotalFaltas  int     `json:"total_faltas"`         // falta + justificada (decisão 28/09)
-	PorSetor     []SetorStat     `json:"por_setor"`
-	PorDestino   []DestinoStat   `json:"por_destino"`
-	Pessoas      []PessoaStat    `json:"pessoas"`
-	Formaturas   []FormaturaStat `json:"formaturas"`
+	De, Ate            string          `json:"-"`
+	Convocacoes        int             `json:"convocacoes"`
+	EfetivoAtivo       int             `json:"efetivo_ativo"`
+	TotalLanc          int             `json:"total_lancamentos"`
+	Presentes          int             `json:"presentes"`
+	PresentesPuros     int             `json:"presentes_puros"` // presentes SEM ressalva (ordem Tenente 28/09)
+	Atrasos            int             `json:"atrasos"`
+	Faltas             int             `json:"falta"`
+	Justificadas       int             `json:"justificadas"`
+	PctGeral           float64         `json:"pct_geral"`
+	PctPronto          float64         `json:"pct_pronto"`           // % do efetivo pronto = presentes puros / convocações
+	PctPresencaEstrita float64         `json:"pct_presenca_estrita"` // decisão 28/09: justificada = falta
+	TotalFaltas        int             `json:"total_faltas"`         // falta + justificada (decisão 28/09)
+	PorSetor           []SetorStat     `json:"por_setor"`
+	PorDestino         []DestinoStat   `json:"por_destino"`
+	Pessoas            []PessoaStat    `json:"pessoas"`
+	Formaturas         []FormaturaStat `json:"formaturas"`
 }
 
 var (

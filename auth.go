@@ -24,11 +24,15 @@ const (
 )
 
 type Usuario struct {
-	ID       int64  `json:"id"`
-	Login    string `json:"login"`
-	Papel    string `json:"papel"` // admin | gerente | usuario
-	PessoaID *int64 `json:"pessoa_id"`
-	GrupoID  *int64 `json:"grupo_id"`
+	ID           int64  `json:"id"`
+	Login        string `json:"login"`
+	Papel        string `json:"papel"` // admin | gerente | usuario
+	PessoaID     *int64 `json:"pessoa_id"`
+	GrupoID      *int64 `json:"grupo_id"`
+	NomeGuerra   string `json:"nome_guerra"`
+	NomeCompleto string `json:"nome_completo"`
+	SetorID      *int64 `json:"setor_id"`
+	FuncaoID     *int64 `json:"funcao_id"`
 }
 
 type ctxKeyChave int
@@ -82,8 +86,8 @@ func NovoLimiter() *Limiter {
 }
 
 const (
-	limiteFalhasLogin = 5                 // por login+IP, janela de 15 min (revisão TAKEDA)
-	limiteFalhasIP    = 20                // por IP (varredura de logins)
+	limiteFalhasLogin = 5  // por login+IP, janela de 15 min (revisão TAKEDA)
+	limiteFalhasIP    = 20 // por IP (varredura de logins)
 	janelaFalhas      = 15 * time.Minute
 	penalidade        = 750 * time.Millisecond
 )
@@ -198,10 +202,15 @@ func (a *App) validarCredenciais(login, senha, ip string) (*Usuario, error) {
 		return nil, fmt.Errorf("credenciais inválidas")
 	}
 	a.st.Auditoria(&id, "login_ok", "usuarios", &id, "", ip)
-	// grupo vem na mesma linha (papel/grupo sempre juntos)
+	// perfil completo do usuário (aba Meu usuário — ordem Tenente 28/09 noite)
 	var grupoID *int64
-	if err := a.st.db.QueryRow(`SELECT grupo_id FROM usuarios WHERE id = ?`, id).Scan(&grupoID); err != nil {
+	var ng, nc string
+	var setorID, funcaoID *int64
+	if err := a.st.db.QueryRow(`SELECT grupo_id, COALESCE(nome_guerra,''), COALESCE(nome_completo,''),
+		setor_id, funcao_id FROM usuarios WHERE id = ?`, id).
+		Scan(&grupoID, &ng, &nc, &setorID, &funcaoID); err != nil {
 		return nil, err
 	}
-	return &Usuario{ID: id, Login: login, Papel: papel, PessoaID: pessoaID, GrupoID: grupoID}, nil
+	return &Usuario{ID: id, Login: login, Papel: papel, PessoaID: pessoaID, GrupoID: grupoID,
+		NomeGuerra: ng, NomeCompleto: nc, SetorID: setorID, FuncaoID: funcaoID}, nil
 }

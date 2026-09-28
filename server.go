@@ -185,8 +185,8 @@ func (a *App) rotas() {
 	m.Handle("GET /api/conferencias", a.auth(false, a.hConferenciaList))
 
 	m.Handle("GET /api/catalogo/{t}", a.auth(false, a.hCatalogoList))
-	m.Handle("POST /api/catalogo/{t}", a.auth(true, a.hCatalogoAdd))
-	m.Handle("DELETE /api/catalogo/{t}/{id}", a.auth(true, a.hCatalogoDel))
+	m.Handle("POST /api/catalogo/{t}", a.auth(false, a.hCatalogoAdd))
+	m.Handle("DELETE /api/catalogo/{t}/{id}", a.auth(false, a.hCatalogoDel))
 
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
 	m.Handle("POST /api/pessoas", a.auth(false, a.hPessoasAdd))
@@ -198,6 +198,11 @@ func (a *App) rotas() {
 	m.Handle("POST /api/usuarios/{id}/senha", a.auth(true, a.hUsuarioSenha))
 	m.Handle("GET /api/grupos", a.auth(false, a.hGruposList))
 	m.Handle("POST /api/grupos", a.auth(true, a.hGruposAdd))
+	m.Handle("GET /api/vinculos", a.auth(false, a.hVinculoList))
+	m.Handle("POST /api/vinculos", a.auth(false, a.hVinculoAdd))
+	m.Handle("GET /api/perfil", a.auth(false, a.hPerfilGet))
+	m.Handle("PATCH /api/perfil", a.auth(false, a.hPerfilSet))
+	m.Handle("PATCH /api/usuarios/{id}/mover", a.auth(true, a.hMoverConta))
 	m.Handle("POST /api/comentarios", a.auth(false, a.hComentariosAdd))
 	m.Handle("GET /api/comentarios/{id}", a.auth(false, a.hComentariosList))
 
@@ -416,11 +421,11 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 }
 
 type lancamentoReq struct {
-	PessoaID   int64   `json:"pessoa_id"`
-	Situacao   string  `json:"situacao"`
-	DestinoID  *int64  `json:"destino_id"`
-	TagID      *int64  `json:"tag_id"`
-	Observacao string  `json:"observacao"`
+	PessoaID   int64  `json:"pessoa_id"`
+	Situacao   string `json:"situacao"`
+	DestinoID  *int64 `json:"destino_id"`
+	TagID      *int64 `json:"tag_id"`
+	Observacao string `json:"observacao"`
 }
 
 // pessoasAtivas(escopo): escopo 0 = todas (admin); N = só do grupo N.
@@ -603,7 +608,8 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	q := `
 		SELECT c.id, c.data, COALESCE(c.hora,''), COALESCE(c.local,''), c.status,
 		       COALESCE(u.login,''), c.criado_em, c.fechada_em,
-		       (SELECT COUNT(*) FROM presencas p WHERE p.conferencia_id = c.id) AS lanc
+		       (SELECT COUNT(*) FROM presencas p WHERE p.conferencia_id = c.id) AS lanc,
+		       COALESCE(c.grupo_id,0), COALESCE((SELECT g.nome FROM grupos g WHERE g.id = c.grupo_id),'—')
 		FROM conferencias c
 		LEFT JOIN usuarios u ON u.id = c.criado_por`
 	var rows *sql.Rows
@@ -622,14 +628,16 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id int64
+		var id, grupoID int64
 		var data, hora, local, status, criado, criadaEm string
 		var fechada *string
 		var lanc int
-		if rows.Scan(&id, &data, &hora, &local, &status, &criado, &criadaEm, &fechada, &lanc) == nil {
+		var grupoNome string
+		if rows.Scan(&id, &data, &hora, &local, &status, &criado, &criadaEm, &fechada, &lanc, &grupoID, &grupoNome) == nil {
 			out = append(out, map[string]any{
 				"id": id, "data": data, "hora": hora, "local": local, "status": status,
 				"criado_por": criado, "criada_em": criadaEm, "fechada_em": fechada, "lancamentos": lanc,
+				"grupo_id": grupoID, "grupo": grupoNome,
 			})
 		}
 	}
@@ -661,6 +669,17 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// IDOR + HERANÇA (ordem Tenente 28/09 noite): grupo acessa a PRÓPRIA conferência;
+	// superior acessa TAMBÉM as de subordinados com vínculo ativo (relatório fechado).
+	uCtx := usuarioDoCtx(r)
+	if esc := escopoDoUsuario(uCtx); esc > 0 {
+		var gid int64
+		qerr := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM conferencias WHERE id = ?`, id).Scan(&gid)
+		if qerr != nil || (gid != esc && !int64Contem(a.gruposSubordinadosAtivos(esc), gid)) {
+			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
+			return
+		}
 	}
 	rows, e := a.st.db.Query(`
 		SELECT p.nome_guerra, COALESCE(s.nome,'Sem setor'), pr.situacao,
@@ -729,6 +748,16 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusConflict, "só é possível gerar relatório de conferência FECHADA")
 		return
 	}
+	// IDOR + HERANÇA (28/09 noite): superior gera o relatório FECHADO do subordinado.
+	uCtx := usuarioDoCtx(r)
+	if esc := escopoDoUsuario(uCtx); esc > 0 {
+		var gid int64
+		qerr := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM conferencias WHERE id = ?`, id).Scan(&gid)
+		if qerr != nil || (gid != esc && !int64Contem(a.gruposSubordinadosAtivos(esc), gid)) {
+			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
+			return
+		}
+	}
 	rows, e := a.st.db.Query(`
 		SELECT p.nome_guerra, COALESCE(s.nome,'Sem setor'), pr.situacao,
 		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), u.login
@@ -775,32 +804,52 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, "falha ao gerar PDF: "+err.Error())
 		return
 	}
-	a.st.Auditoria(&u.ID, "relatorio_conferencia", "conferencias", &id, data, ipDe(r))
+	a.st.Auditoria(&u.ID, "exportar", "conferencia", &id, "pdf", ipDe(r))
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf("attachment; filename=SCI_conferencia_%s_%d.pdf", data, id))
+		fmt.Sprintf("inline; filename=SCI_conferencia_%s_%d.pdf", data, id))
 	_, _ = w.Write(pdf)
 }
 
 // ---------- relatórios ----------
 
-func (a *App) montarBundle(de, ate string) Bundle {
+func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	b := Bundle{De: de, Ate: ate}
+	// filtro de escopo (revisão TAKEDA/SHORYU): grupo só agrega o próprio grupo
+	// + hierarquia (ordem 28/09 noite): superior agrega subordinados ativos
+	filtro := ` WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`
+	args := []any{de, ate}
+	if escopo > 0 {
+		cl, a2 := a.filtroArvore(escopo, "f")
+		filtro += cl
+		args = append(args, a2...)
+	}
 	_ = a.st.db.QueryRow(`
 		SELECT COUNT(*),
-		       COALESCE(SUM(situacao='presente'),0), COALESCE(SUM(situacao='atraso'),0),
-		       COALESCE(SUM(situacao='falta'),0), COALESCE(SUM(situacao='justificada'),0)
-		FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id
-		WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`,
-		de, ate).Scan(&b.TotalLanc, &b.Presentes, &b.Atrasos, &b.Faltas, &b.Justificadas)
+		       COALESCE(SUM(p.situacao='presente'),0), COALESCE(SUM(p.situacao='atraso'),0),
+		       COALESCE(SUM(p.situacao='falta'),0), COALESCE(SUM(p.situacao='justificada'),0)
+		FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro,
+		args...).Scan(&b.TotalLanc, &b.Presentes, &b.Atrasos, &b.Faltas, &b.Justificadas)
 	// "efetivo pronto" = presentes SEM ressalva (ordem do Tenente, 28/09)
 	_ = a.st.db.QueryRow(`
 		SELECT COALESCE(SUM(p.situacao='presente'),0)
-		FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id
-		WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`, de, ate).Scan(&b.PresentesPuros)
-	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM conferencias WHERE status='fechada' AND data BETWEEN ? AND ?`, de, ate).
+		FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro,
+		args...).Scan(&b.PresentesPuros)
+	qConv := `SELECT COUNT(*) FROM conferencias WHERE status='fechada' AND data BETWEEN ? AND ?`
+	qcArgs := append([]any{de, ate}, a.argsArvore(escopo)...)
+	if escopo > 0 {
+		qConv += a.clSetor(escopo)
+	}
+	_ = a.st.db.QueryRow(qConv, qcArgs...).
 		Scan(&b.Convocacoes)
-	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM pessoas WHERE status='ativo'`).Scan(&b.EfetivoAtivo)
+	// efetivo no escopo (grupo conta o SEU efetivo; admin o global)
+	qEfetivo := `SELECT COUNT(*) FROM pessoas WHERE status='ativo'`
+	var efetArgs []any
+	if escopo > 0 {
+		qEfetivo += ` AND grupo_id = ?`
+		efetArgs = append(efetArgs, escopo)
+	}
+	_ = a.st.db.QueryRow(qEfetivo, efetArgs...).Scan(&b.EfetivoAtivo)
 	// decisão Tenente 28/09: JUSTIFICADA = FALTA justificada → tudo que não é presente
 	// pune o % de presença (exibição separa faltas justificadas x não justificadas)
 	validas := b.Presentes + b.Atrasos
@@ -822,8 +871,9 @@ func (a *App) montarBundle(de, ate string) Bundle {
 		JOIN pessoas p ON p.id = pr.pessoa_id
 		LEFT JOIN setores s ON s.id = p.setor_id
 		JOIN conferencias f ON f.id = pr.conferencia_id
-		WHERE f.status='fechada' AND f.data BETWEEN ? AND ?
-		GROUP BY setor_nome ORDER BY pres DESC`, de, ate)
+		WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`+
+		a.clSetor(escopo)+`
+		GROUP BY setor_nome ORDER BY pres DESC`, append([]any{de, ate}, a.argsArvore(escopo)...)...)
 	if err == nil {
 		for rows.Next() {
 			var r SetorStat
@@ -843,8 +893,9 @@ func (a *App) montarBundle(de, ate string) Bundle {
 		JOIN conferencias f ON f.id = pr.conferencia_id
 		LEFT JOIN destinos d ON d.id = pr.destino_id
 		WHERE f.status='fechada' AND f.data BETWEEN ? AND ?
-		  AND pr.situacao IN ('falta','justificada')
-		GROUP BY d.id ORDER BY 2 DESC`, de, ate)
+		  AND pr.situacao IN ('falta','justificada')`+
+		a.clSetor(escopo)+`
+		GROUP BY d.id ORDER BY 2 DESC`, append([]any{de, ate}, a.argsArvore(escopo)...)...)
 	if err == nil {
 		for rows.Next() {
 			var r DestinoStat
@@ -866,8 +917,9 @@ func (a *App) montarBundle(de, ate string) Bundle {
 		LEFT JOIN setores s ON s.id = p.setor_id
 		LEFT JOIN presencas pr ON pr.pessoa_id = p.id
 		LEFT JOIN conferencias f ON f.id = pr.conferencia_id AND f.status='fechada' AND f.data BETWEEN ? AND ?
-		WHERE p.status='ativo'
-		GROUP BY p.id ORDER BY 7 DESC, 6 DESC, p.nome_guerra`, de, ate)
+		WHERE p.status='ativo'`+
+		a.clSetor(escopo)+`
+		GROUP BY p.id ORDER BY 7 DESC, 6 DESC, p.nome_guerra`, append([]any{de, ate}, a.argsArvore(escopo)...)...)
 	if err == nil {
 		for rows.Next() {
 			var r PessoaStat
@@ -889,8 +941,9 @@ func (a *App) montarBundle(de, ate string) Bundle {
 		FROM conferencias f
 		JOIN conferencia_tipos ft ON ft.id = f.tipo_id
 		LEFT JOIN presencas pr ON pr.conferencia_id = f.id
-		WHERE f.data BETWEEN ? AND ?
-		GROUP BY f.id ORDER BY f.data DESC`, de, ate)
+		WHERE f.data BETWEEN ? AND ?`+
+		a.clSetor(escopo)+`
+		GROUP BY f.id ORDER BY f.data DESC`, append([]any{de, ate}, a.argsArvore(escopo)...)...)
 	if err == nil {
 		for rows.Next() {
 			var r FormaturaStat
@@ -904,6 +957,116 @@ func (a *App) montarBundle(de, ate string) Bundle {
 }
 
 func round1(v float64) float64 { return float64(int(v*10+0.5)) / 10 }
+
+// filtroGrupoSQL/Args: cláusula de escopo por grupo para queries com alias "a"
+// (revisão TAKEDA/SHORYU — agregados não podem cruzar grupos).
+func filtroGrupoSQL(escopo int64, alias string) string {
+	if escopo <= 0 {
+		return ""
+	}
+	return ` AND ` + alias + `.grupo_id = ?`
+}
+func filtroGrupoArgs(escopo int64) []any {
+	if escopo <= 0 {
+		return nil
+	}
+	return []any{escopo}
+}
+
+// gruposSubordinadosAtivos: TODOS os descendentes (transitivo) com vínculo bilateral ativo.
+func (a *App) gruposSubordinadosAtivos(gid int64) []int64 {
+	visitado := map[int64]bool{gid: true}
+	fila := []int64{gid}
+	out := []int64{}
+	for len(fila) > 0 {
+		g := fila[0]
+		fila = fila[1:]
+		rows, err := a.st.db.Query(`SELECT subordinado_id FROM grupo_vinculos
+			WHERE superior_id = ? AND criado_por_superior = 1 AND criado_por_subordinado = 1`, g)
+		if err != nil {
+			break
+		}
+		for rows.Next() {
+			var s int64
+			if rows.Scan(&s) == nil && !visitado[s] {
+				visitado[s] = true
+				out = append(out, s)
+				fila = append(fila, s)
+			}
+		}
+		rows.Close()
+	}
+	return out
+}
+
+// filtroArvore: escopo do grupo + descendentes (relatórios sobem pela hierarquia).
+func (a *App) filtroArvore(escopo int64, alias string) (string, []any) {
+	ids := append([]int64{escopo}, a.gruposSubordinadosAtivos(escopo)...)
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	return ` AND ` + alias + `.grupo_id IN (` + ph + `)`, args
+}
+
+// clSetor/argsArvore: cláusula+args da ÁRVORE do escopo (grupo + subordinados ativos).
+// No escopo do bundle, "f" cobre conferências; para pessoas (alias p) a regra é a mesma
+// coluna grupo_id, então a cláusula gerada é idêntica em forma.
+func (a *App) clSetor(escopo int64) string {
+	if escopo <= 0 {
+		return ""
+	}
+	cl, _ := a.filtroArvore(escopo, "f")
+	return cl
+}
+func (a *App) argsArvore(escopo int64) []any {
+	if escopo <= 0 {
+		return nil
+	}
+	_, aa := a.filtroArvore(escopo, "f")
+	return aa
+}
+
+// escopoRelatorio: respeita ?grupo= — admin recorta qualquer grupo; gerente,
+// só o próprio ou descendentes.
+func (a *App) escopoRelatorio(r *http.Request, u *Usuario) int64 {
+	esc := escopoDoUsuario(u)
+	q := r.URL.Query().Get("grupo")
+	if esc <= 0 {
+		if q == "" {
+			return esc
+		}
+		gid, err := strconv.ParseInt(q, 10, 64)
+		if err != nil {
+			return esc
+		}
+		if esc == 0 { // admin: recorte livre
+			return gid
+		}
+		return esc
+	}
+	if q == "" {
+		return esc
+	}
+	gid, err := strconv.ParseInt(q, 10, 64)
+	if err != nil {
+		return esc
+	}
+	if gid == esc || int64Contem(a.gruposSubordinadosAtivos(esc), gid) {
+		return gid
+	}
+	return esc
+}
+
+func int64Contem(lista []int64, v int64) bool {
+	for _, x := range lista {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
 
 func (a *App) periodoPadrao(r *http.Request) (string, string) {
 	hoje := time.Now().In(a.horaLocal)
@@ -920,26 +1083,28 @@ func (a *App) periodoPadrao(r *http.Request) (string, string) {
 
 func (a *App) hPresencaPeriodo(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
-	jsonOK(w, a.montarBundle(de, ate))
+	u := usuarioDoCtx(r)
+	jsonOK(w, a.montarBundle(de, ate, a.escopoRelatorio(r, u)))
 }
 
 func (a *App) hRelatorioJSON(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
-	jsonOK(w, a.montarBundle(de, ate))
+	u := usuarioDoCtx(r)
+	jsonOK(w, a.montarBundle(de, ate, a.escopoRelatorio(r, u)))
 }
 
 func (a *App) hRelatorioPDF(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
-	pdf, err := a.gerarRelatorioPDF(a.montarBundle(de, ate))
+	u := usuarioDoCtx(r)
+	pdf, err := a.gerarRelatorioPDF(a.montarBundle(de, ate, a.escopoRelatorio(r, u)))
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao gerar PDF: "+err.Error())
 		return
 	}
-	u := usuarioDoCtx(r)
 	a.st.Auditoria(&u.ID, "exportar", "relatorio", nil, de+" a "+ate, ipDe(r))
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf("attachment; filename=SCI_relatorio_%s_%s.pdf", de, ate))
+		fmt.Sprintf("inline; filename=SCI_relatorio_%s_%s.pdf", de, ate))
 	_, _ = w.Write(pdf)
 }
 
@@ -947,6 +1112,7 @@ func (a *App) hRelatorioPDF(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hExportCSV(w http.ResponseWriter, r *http.Request) {
 	t := r.PathValue("t")
+	escopo := escopoDoUsuario(usuarioDoCtx(r))
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=sci_"+t+".csv")
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // BOM p/ Excel
@@ -957,7 +1123,9 @@ func (a *App) hExportCSV(w http.ResponseWriter, r *http.Request) {
 		rows, err := a.st.db.Query(`SELECT p.id, p.nome_guerra, p.nome_completo,
 			COALESCE(s.nome,''), COALESCE(fu.nome,''), p.status, p.criado_em
 			FROM pessoas p LEFT JOIN setores s ON s.id=p.setor_id
-			LEFT JOIN funcoes fu ON fu.id=p.funcao_id ORDER BY p.id`)
+			LEFT JOIN funcoes fu ON fu.id=p.funcao_id
+			WHERE 1=1`+filtroGrupoSQL(escopo, "p")+` ORDER BY p.id`,
+			filtroGrupoArgs(escopo)...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -975,7 +1143,8 @@ func (a *App) hExportCSV(w http.ResponseWriter, r *http.Request) {
 			FROM presencas pr JOIN conferencias f ON f.id=pr.conferencia_id
 			JOIN conferencia_tipos ft ON ft.id=f.tipo_id
 			JOIN pessoas p ON p.id=pr.pessoa_id LEFT JOIN destinos d ON d.id=pr.destino_id
-			ORDER BY f.data, p.nome_guerra`)
+			WHERE 1=1`+filtroGrupoSQL(escopo, "f")+` ORDER BY f.data, p.nome_guerra`,
+			filtroGrupoArgs(escopo)...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -989,7 +1158,9 @@ func (a *App) hExportCSV(w http.ResponseWriter, r *http.Request) {
 		_ = cw.Write([]string{"data", "hora", "tipo", "local", "status"})
 		rows, err := a.st.db.Query(`SELECT f.data, COALESCE(f.hora,''), ft.nome,
 			COALESCE(f.local,''), f.status FROM conferencias f
-			JOIN conferencia_tipos ft ON ft.id=f.tipo_id ORDER BY f.data`)
+			JOIN conferencia_tipos ft ON ft.id=f.tipo_id
+			WHERE 1=1`+filtroGrupoSQL(escopo, "f")+` ORDER BY f.data`,
+			filtroGrupoArgs(escopo)...)
 		if err == nil {
 			defer rows.Close()
 			for rows.Next() {
@@ -1007,6 +1178,24 @@ func (a *App) hExportCSV(w http.ResponseWriter, r *http.Request) {
 
 // ---------- catálogos ----------
 
+// gruposSuperioresAtivos: ids dos grupos superiores com vínculo BILATERAL ativo.
+func (a *App) gruposSuperioresAtivos(gid int64) []int64 {
+	rows, err := a.st.db.Query(`SELECT superior_id FROM grupo_vinculos
+		WHERE subordinado_id = ? AND criado_por_superior = 1 AND criado_por_subordinado = 1`, gid)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	t, err := tabelaDeCatalogo(r.PathValue("t"))
 	if err != nil {
@@ -1020,7 +1209,21 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	case "tags":
 		extra = ", cor"
 	}
-	rows, err := a.st.db.Query(`SELECT id, nome` + extra + `, ativo FROM ` + t + ` ORDER BY ativo DESC, nome`)
+	q := `SELECT id, nome` + extra + `, ativo FROM ` + t
+	var args []any
+	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
+		// escopo + HERANÇA (ordem Tenente 28/09 noite): grupo vê os globais (NULL),
+		// os do PRÓPRIO grupo e os dos grupos SUPERIORES com vínculo ativo
+		ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		args = make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+		q += ` WHERE grupo_id IS NULL OR grupo_id IN (` + ph + `)`
+	}
+	q += ` ORDER BY ativo DESC, nome`
+	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1065,22 +1268,32 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nome := strings.TrimSpace(req.Nome)
+	// porteira (28/09 noite): SOMENTE admin e gerente gerenciam catálogos
+	if u := usuarioDoCtx(r); u == nil || u.Papel == "usuario" {
+		jsonErro(w, http.StatusForbidden, "operador não gerencia catálogos")
+		return
+	}
+	// catálogo dono: gerente cria PARA O SEU grupo; admin cria global (NULL)
+	var grupoID any
+	if u := usuarioDoCtx(r); u != nil && u.Papel == "gerente" && u.GrupoID != nil {
+		grupoID = *u.GrupoID
+	}
 	var q string
 	switch t {
 	case "setores":
-		q = `INSERT INTO setores (nome, sigla) VALUES (?, NULLIF(?,''))`
+		q = `INSERT INTO setores (nome, sigla, grupo_id) VALUES (?, NULLIF(?,''), ?)`
 	case "tags":
-		q = `INSERT INTO tags (nome, cor) VALUES (?, NULLIF(?,''))`
+		q = `INSERT INTO tags (nome, cor, grupo_id) VALUES (?, NULLIF(?,''), ?)`
 	default:
-		q = `INSERT INTO ` + t + ` (nome) VALUES (?)`
+		q = `INSERT INTO ` + t + ` (nome, grupo_id) VALUES (?,?)`
 	}
 	var res interface {
 		LastInsertId() (int64, error)
 	}
 	if t == "setores" || t == "tags" {
-		res, err = a.st.db.Exec(q, nome, map[bool]string{true: req.Sigla, false: req.Cor}[t == "setores"])
+		res, err = a.st.db.Exec(q, nome, map[bool]string{true: req.Sigla, false: req.Cor}[t == "setores"], grupoID)
 	} else {
-		res, err = a.st.db.Exec(q, nome)
+		res, err = a.st.db.Exec(q, nome, grupoID)
 	}
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "não inserido (duplicado?): "+err.Error())
@@ -1104,6 +1317,19 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
+	// porteira (28/09 noite): operador comum não mexe em catálogo;
+	// gerente só em item DO SEU grupo (globais e de outros grupos: só o admin)
+	if u.Papel == "usuario" {
+		jsonErro(w, http.StatusForbidden, "operador não gerencia catálogos")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 {
+		var donoGrupo int64
+		if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); err != nil || donoGrupo != esc {
+			jsonErro(w, http.StatusForbidden, "catálogo de outro grupo ou global (só o admin)")
+			return
+		}
+	}
 	// padrão: EXCLUSÃO real (ordem do Tenente 28/09). Em uso → 409 (FK).
 	if r.URL.Query().Get("modo") != "desativar" {
 		if _, err = a.st.db.Exec(`DELETE FROM `+t+` WHERE id = ?`, id); err != nil {
@@ -1133,10 +1359,11 @@ func (a *App) hPessoasList(w http.ResponseWriter, r *http.Request) {
 func (a *App) pessoasTodas(escopo int64) []map[string]any {
 	q := `
 		SELECT p.id, p.nome_guerra, p.nome_completo, p.setor_id, p.funcao_id, p.status,
-		       COALESCE(s.nome,''), COALESCE(fu.nome,'')
+		       COALESCE(s.nome,''), COALESCE(fu.nome,''), COALESCE(g.nome,'')
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
-		LEFT JOIN funcoes fu ON fu.id = p.funcao_id`
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN grupos g ON g.id = p.grupo_id`
 	var rows *sql.Rows
 	var err error
 	if escopo > 0 {
@@ -1154,12 +1381,12 @@ func (a *App) pessoasTodas(escopo int64) []map[string]any {
 	for rows.Next() {
 		var id int64
 		var setorID, funcaoID *int64 // NULL = sem setor/função (não descartar a linha!)
-		var ng, nc, status, setor, funcao string
-		if rows.Scan(&id, &ng, &nc, &setorID, &funcaoID, &status, &setor, &funcao) == nil {
+		var ng, nc, status, setor, funcao, grupo string
+		if rows.Scan(&id, &ng, &nc, &setorID, &funcaoID, &status, &setor, &funcao, &grupo) == nil {
 			out = append(out, map[string]any{
 				"id": id, "nome_guerra": ng, "nome_completo": nc,
 				"setor_id": setorID, "funcao_id": funcaoID,
-				"setor": setor, "funcao": funcao, "status": status,
+				"setor": setor, "funcao": funcao, "status": status, "grupo": grupo,
 			})
 		}
 	}
@@ -1221,6 +1448,7 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 		Status       string `json:"status"`
 		SetorID      *int64 `json:"setor_id"`
 		FuncaoID     *int64 `json:"funcao_id"`
+		GrupoID      *int64 `json:"grupo_id"` // admin pode mover pessoa de grupo
 	}
 	if err = decodificar(r, &req); err != nil {
 		jsonErro(w, http.StatusBadRequest, "JSON inválido")
@@ -1242,13 +1470,22 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_, err = a.st.db.Exec(
-		`UPDATE pessoas SET nome_guerra=?, nome_completo=?, setor_id=?, funcao_id=?, status=?,
+	// admin pode mover a pessoa de grupo na edição; gerente nunca altera grupo
+	if u.Papel == "admin" {
+		if _, err = a.st.db.Exec(`UPDATE pessoas SET nome_guerra=?, nome_completo=?, setor_id=?, funcao_id=?, status=?, grupo_id=?,
 		 atualizado_em=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
-		req.NomeGuerra, req.NomeCompleto, req.SetorID, req.FuncaoID, req.Status, id)
-	if err != nil {
-		jsonErro(w, http.StatusBadRequest, err.Error())
-		return
+			req.NomeGuerra, req.NomeCompleto, req.SetorID, req.FuncaoID, req.Status, req.GrupoID, id); err != nil {
+			jsonErro(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else {
+		if _, err = a.st.db.Exec(
+			`UPDATE pessoas SET nome_guerra=?, nome_completo=?, setor_id=?, funcao_id=?, status=?,
+		 atualizado_em=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`,
+			req.NomeGuerra, req.NomeCompleto, req.SetorID, req.FuncaoID, req.Status, id); err != nil {
+			jsonErro(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	a.st.Auditoria(&u.ID, "alterar", "pessoas", &id, req.NomeGuerra, ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})
@@ -1256,9 +1493,12 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 
 // ---------- usuários ----------
 
-func (a *App) hUsuariosList(w http.ResponseWriter, _ *http.Request) {
+func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
 	rows, err := a.st.db.Query(
-		`SELECT id, login, papel, pessoa_id, ativo, criado_em, senhas FROM usuarios ORDER BY id`)
+		`SELECT id, login, papel, pessoa_id, COALESCE(grupo_id,0), ativo, criado_em, senhas
+		 FROM usuarios ORDER BY id`)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1266,14 +1506,18 @@ func (a *App) hUsuariosList(w http.ResponseWriter, _ *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id int64
+		var id, grupoID int64
 		var login, papel, criado, senhas string
 		var pessoaID *int64
 		var ativo int
-		if rows.Scan(&id, &login, &papel, &pessoaID, &ativo, &criado, &senhas) == nil {
+		if rows.Scan(&id, &login, &papel, &pessoaID, &grupoID, &ativo, &criado, &senhas) == nil {
+			// operador só vê contas do PRÓPRIO grupo (admin/gerente gerenciam os seus)
+			if escopo > 0 && int64(escopo) != grupoID {
+				continue
+			}
 			out = append(out, map[string]any{
 				"id": id, "login": login, "papel": papel, "pessoa_id": pessoaID,
-				"ativo": ativo == 1, "criado_em": criado,
+				"grupo_id": grupoID, "ativo": ativo == 1, "criado_em": criado,
 				"senhas": json.RawMessage(senhas),
 			})
 		}
@@ -1283,13 +1527,17 @@ func (a *App) hUsuariosList(w http.ResponseWriter, _ *http.Request) {
 
 // ---------- grupos e escopo (fase GRUPOS — ordem Tenente 28/09) ----------
 
-// escopoDoUsuario: 0 = vê tudo (admin); N = só o grupo N (gerente/operador).
+// escopoDoUsuario: 0 = vê tudo (APENAS admin); -1 = conta SEM grupo (sem acesso a dados
+// de grupo — revisão TAKEDA: devolver 0 aqui era escala de privilégio silenciosa).
 func escopoDoUsuario(u *Usuario) int64 {
 	if u == nil {
+		return -1
+	}
+	if u.Papel == "admin" {
 		return 0
 	}
-	if u.Papel == "admin" || u.GrupoID == nil {
-		return 0
+	if u.GrupoID == nil {
+		return -1 // gerente/operador sem grupo = sem acesso a dados de grupo
 	}
 	return *u.GrupoID
 }
@@ -1300,29 +1548,206 @@ func podeAdministrar(u *Usuario) bool {
 }
 
 // hGruposList / hGruposAdd / hGruposDel: gestão de grupos (só admin cria).
-func (a *App) hGruposList(w http.ResponseWriter, _ *http.Request) {
+func (a *App) hGruposList(w http.ResponseWriter, r *http.Request) {
+	escopo := escopoDoUsuario(usuarioDoCtx(r))
+	jsonOK(w, a.gruposComCodigo(escopo))
+}
+
+// ---------- hierarquia de grupos (ordem Tenente, 28/09 noite) ----------
+
+// hVinculoAdd: vínculo BILATERAL — superior informa código do subordinado e vice-versa.
+// O vínculo só existe quando AMBOS registraram o par (consentimento mútuo).
+func (a *App) hVinculoAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	var req struct {
+		Codigo string `json:"codigo"`
+		Lado   string `json:"lado"`  // "superior" = declaro MEU código a um inferior; "subordinado" = o contrário
+		Outro  string `json:"outro"` // admin: vincula DOIS códigos de uma vez (fecha o bilateral)
+	}
+	if err := decodificar(r, &req); err != nil || req.Codigo == "" || (req.Lado != "superior" && req.Lado != "subordinado") {
+		jsonErro(w, http.StatusBadRequest, "codigo e lado (superior|subordinado) obrigatórios")
+		return
+	}
+	// ADMIN vincula diretamente dois grupos pelos códigos (ordem Tenente 28/09 noite)
+	if u.Papel == "admin" && strings.TrimSpace(req.Outro) != "" {
+		var idA, idB int64
+		if a.st.db.QueryRow(`SELECT id FROM grupos WHERE codigo = ?`, strings.ToUpper(strings.TrimSpace(req.Codigo))).Scan(&idA) != nil ||
+			a.st.db.QueryRow(`SELECT id FROM grupos WHERE codigo = ?`, strings.ToUpper(strings.TrimSpace(req.Outro))).Scan(&idB) != nil {
+			jsonErro(w, http.StatusNotFound, "código de grupo inexistente")
+			return
+		}
+		if idA == idB {
+			jsonErro(w, http.StatusBadRequest, "um grupo não se vincula a si mesmo")
+			return
+		}
+		if _, err := a.st.db.Exec(`INSERT INTO grupo_vinculos (superior_id, subordinado_id, criado_por_superior, criado_por_subordinado)
+			VALUES (?, ?, 1, 1) ON CONFLICT(superior_id, subordinado_id)
+			DO UPDATE SET criado_por_superior = 1, criado_por_subordinado = 1`, idA, idB); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		a.st.Auditoria(&u.ID, "vincular", "grupo_vinculos", nil,
+			fmt.Sprintf("admin: sup=%d sub=%d", idA, idB), ipDe(r))
+		jsonOK(w, map[string]any{"vinculado": true})
+		return
+	}
+	if u.GrupoID == nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo não registra vínculos")
+		return
+	}
+	var outroID int64
+	err := a.st.db.QueryRow(`SELECT id FROM grupos WHERE codigo = ?`, strings.ToUpper(strings.TrimSpace(req.Codigo))).Scan(&outroID)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "código de grupo inexistente")
+		return
+	}
+	if outroID == *u.GrupoID {
+		jsonErro(w, http.StatusBadRequest, "um grupo não se vincula a si mesmo")
+		return
+	}
+	var supID, subID int64
+	if req.Lado == "superior" {
+		supID, subID = *u.GrupoID, outroID
+	} else {
+		supID, subID = outroID, *u.GrupoID
+	}
+	// proteção contra ciclo imediato A->B->A (v1): se o "subordinado" já é superior do solicitante
+	var ciclo int
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM grupo_vinculos WHERE superior_id = ? AND subordinado_id = ?`,
+		subID, supID).Scan(&ciclo)
+	if ciclo > 0 {
+		jsonErro(w, http.StatusConflict, "vínculo reverso já existe — não é possível inverter")
+		return
+	}
+	_, err = a.st.db.Exec(`INSERT INTO grupo_vinculos
+		(superior_id, subordinado_id, criado_por_superior, criado_por_subordinado)
+		VALUES (?,?,?,?)
+		ON CONFLICT(superior_id, subordinado_id) DO UPDATE SET
+		  criado_por_superior = criado_por_superior | ?,
+		  criado_por_subordinado = criado_por_subordinado | ?`,
+		supID, subID,
+		map[bool]int{true: 1, false: 0}[req.Lado == "superior"],
+		map[bool]int{true: 1, false: 0}[req.Lado == "subordinado"],
+		map[bool]int{true: 1, false: 0}[req.Lado == "superior"],
+		map[bool]int{true: 1, false: 0}[req.Lado == "subordinado"])
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var pS, pSb int
+	_ = a.st.db.QueryRow(`SELECT criado_por_superior, criado_por_subordinado FROM grupo_vinculos
+		WHERE superior_id = ? AND subordinado_id = ?`, supID, subID).Scan(&pS, &pSb)
+	a.st.Auditoria(&u.ID, "vincular", "grupo_vinculos", nil,
+		fmt.Sprintf("sup=%d sub=%d completo=%v", supID, subID, pS == 1 && pSb == 1), ipDe(r))
+	if pS == 1 && pSb == 1 {
+		jsonOK(w, map[string]any{"vinculado": true})
+	} else {
+		jsonOK(w, map[string]any{"vinculado": false,
+			"aguardando": "aguardando a confirmação do outro grupo"})
+	}
+}
+
+// hVinculoList: pendentes e ativos do MEU grupo.
+func (a *App) hVinculoList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.GrupoID == nil {
+		jsonOK(w, map[string]any{"pendentes": []map[string]any{}, "ativos": []map[string]any{}})
+		return
+	}
+	gid := *u.GrupoID
 	rows, err := a.st.db.Query(`
-		SELECT g.id, g.nome, g.criado_em,
-		       (SELECT COUNT(*) FROM usuarios u WHERE u.grupo_id = g.id) AS contas,
-		       (SELECT COUNT(*) FROM pessoas p WHERE p.grupo_id = g.id) AS efetivo
-		FROM grupos g ORDER BY g.nome`)
+		SELECT gv.superior_id, gs.nome, gv.subordinado_id, gsub.nome,
+		       gv.criado_por_superior, gv.criado_por_subordinado
+		FROM grupo_vinculos gv
+		JOIN grupos gs ON gs.id = gv.superior_id
+		JOIN grupos gsub ON gsub.id = gv.subordinado_id
+		WHERE gv.superior_id = ? OR gv.subordinado_id = ?`, gid, gid)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer rows.Close()
-	out := []map[string]any{}
+	pend, ativos := []map[string]any{}, []map[string]any{}
 	for rows.Next() {
-		var id int64
-		var nome, criado string
-		var contas, efetivo int
-		if rows.Scan(&id, &nome, &criado, &contas, &efetivo) == nil {
-			out = append(out, map[string]any{
-				"id": id, "nome": nome, "criado_em": criado, "contas": contas, "efetivo": efetivo,
-			})
+		var supID, subID, pS, pSb int64
+		var supNome, subNome string
+		if rows.Scan(&supID, &supNome, &subID, &subNome, &pS, &pSb) == nil {
+			role := "subordinado"
+			if supID == gid {
+				role = "superior"
+			}
+			item := map[string]any{"superior": supNome, "subordinado": subNome, "meu_papel": role}
+			if pS == 1 && pSb == 1 {
+				ativos = append(ativos, item)
+			} else {
+				pend = append(pend, item)
+			}
 		}
 	}
-	jsonOK(w, out)
+	jsonOK(w, map[string]any{"pendentes": pend, "ativos": ativos})
+}
+
+// hPerfilGet: dados da própria conta (aba Meu usuário).
+func (a *App) hPerfilGet(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	var grupo string
+	if u.GrupoID != nil {
+		_ = a.st.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, *u.GrupoID).Scan(&grupo)
+	}
+	var setor, funcao string
+	if u.SetorID != nil {
+		_ = a.st.db.QueryRow(`SELECT nome FROM setores WHERE id = ?`, *u.SetorID).Scan(&setor)
+	}
+	if u.FuncaoID != nil {
+		_ = a.st.db.QueryRow(`SELECT nome FROM funcoes WHERE id = ?`, *u.FuncaoID).Scan(&funcao)
+	}
+	jsonOK(w, map[string]any{"usuario": u, "grupo": grupo, "setor": setor, "funcao": funcao})
+}
+
+// hPerfilSet: o próprio usuário atualiza seu perfil (função/setor herdam do grupo;
+// aqui o usuário apenas mantém nome_guerra e nome_completo).
+func (a *App) hPerfilSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NomeGuerra   string `json:"nome_guerra"`
+		NomeCompleto string `json:"nome_completo"`
+	}
+	if err := decodificar(r, &req); err != nil || req.NomeGuerra == "" || req.NomeCompleto == "" {
+		jsonErro(w, http.StatusBadRequest, "nome de guerra e nome completo obrigatórios")
+		return
+	}
+	u := usuarioDoCtx(r)
+	if _, err := a.st.db.Exec(`UPDATE usuarios SET nome_guerra = ?, nome_completo = ? WHERE id = ?`,
+		req.NomeGuerra, req.NomeCompleto, u.ID); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "editar", "usuarios", &u.ID, "perfil próprio", ipDe(r))
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// hMoverConta: admin MOVE gerente/operador entre grupos (conta = credencial; função vem do grupo).
+func (a *App) hMoverConta(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var req struct {
+		GrupoID *int64 `json:"grupo_id"`
+	}
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "corpo inválido")
+		return
+	}
+	_, err = a.st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, req.GrupoID, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	u := usuarioDoCtx(r)
+	a.st.Auditoria(&u.ID, "mover", "usuarios", &id,
+		fmt.Sprintf("novo grupo: %v", req.GrupoID), ipDe(r))
+	jsonOK(w, map[string]bool{"ok": true})
 }
 
 func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
@@ -1333,15 +1758,88 @@ func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "nome do grupo obrigatório")
 		return
 	}
-	res, err := a.st.db.Exec(`INSERT INTO grupos (nome) VALUES (?)`, strings.TrimSpace(req.Nome))
+	cod := gerarCodigoGrupo()
+	var tenta int
+	for tenta = 0; tenta < 8; tenta++ {
+		var existe int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE codigo = ?`, cod).Scan(&existe)
+		if existe == 0 {
+			break
+		}
+		cod = gerarCodigoGrupo()
+	}
+	res, err := a.st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES (?,?)`,
+		strings.TrimSpace(req.Nome), cod)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "não criado (duplicado?): "+err.Error())
 		return
 	}
 	id, _ := res.LastInsertId()
 	u := usuarioDoCtx(r)
-	a.st.Auditoria(&u.ID, "criar", "grupos", &id, req.Nome, ipDe(r))
-	jsonOK(w, map[string]any{"id": id})
+	a.st.Auditoria(&u.ID, "criar", "grupos", &id, req.Nome+" ["+cod+"]", ipDe(r))
+	jsonOK(w, map[string]any{"id": id, "codigo": cod})
+}
+
+// gruposComCodigo: lista com código + vínculos de hierarquia (nomes resolvidos).
+func (a *App) gruposComCodigo(escopo int64) []map[string]any {
+	rows, err := a.st.db.Query(`
+		SELECT g.id, g.nome, COALESCE(g.codigo,''), g.criado_em,
+		       (SELECT COUNT(*) FROM usuarios u WHERE u.grupo_id = g.id) AS contas,
+		       (SELECT COUNT(*) FROM pessoas p WHERE p.grupo_id = g.id) AS efetivo,
+		       (SELECT GROUP_CONCAT(g2.nome) FROM grupo_vinculos gv
+		          JOIN grupos g2 ON g2.id = gv.subordinado_id
+		          WHERE gv.superior_id = g.id AND gv.criado_por_superior = 1 AND gv.criado_por_subordinado = 1),
+		       (SELECT GROUP_CONCAT(g3.nome) FROM grupo_vinculos gv2
+		          JOIN grupos g3 ON g3.id = gv2.superior_id
+		          WHERE gv2.subordinado_id = g.id AND gv2.criado_por_superior = 1 AND gv2.criado_por_subordinado = 1),
+		       (SELECT GROUP_CONCAT(g2.id) FROM grupo_vinculos gv
+		          JOIN grupos g2 ON g2.id = gv.subordinado_id
+		          WHERE gv.superior_id = g.id AND gv.criado_por_superior = 1 AND gv.criado_por_subordinado = 1),
+		       (SELECT GROUP_CONCAT(g3.id) FROM grupo_vinculos gv2
+		          JOIN grupos g3 ON g3.id = gv2.superior_id
+		          WHERE gv2.subordinado_id = g.id AND gv2.criado_por_superior = 1 AND gv2.criado_por_subordinado = 1)
+		FROM grupos g ORDER BY g.nome`)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var nome, cod, criado string
+		var contas, efetivo int
+		var sub, sup, subIDs, supIDs sql.NullString
+		if rows.Scan(&id, &nome, &cod, &criado, &contas, &efetivo, &sub, &sup, &subIDs, &supIDs) == nil {
+			if escopo > 0 && id != escopo {
+				// gerente/operador só enxerga o próprio grupo (sub/superiores chegam pelas colunas)
+				continue
+			}
+			out = append(out, map[string]any{
+				"id": id, "nome": nome, "codigo": cod, "criado_em": criado,
+				"contas": contas, "efetivo": efetivo,
+				"subordinados": nilToSlice(sub), "superiores": nilToSlice(sup),
+				"subordinados_ids": nilToInts(subIDs), "superiores_ids": nilToInts(supIDs),
+			})
+		}
+	}
+	return out
+}
+
+func nilToSlice(ns sql.NullString) []string {
+	if !ns.Valid || ns.String == "" {
+		return []string{}
+	}
+	return strings.Split(ns.String, ",")
+}
+
+func nilToInts(ns sql.NullString) []int64 {
+	out := []int64{}
+	for _, p := range nilToSlice(ns) {
+		if v, err := strconv.ParseInt(strings.TrimSpace(p), 10, 64); err == nil {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // hComentariosAdd: comentário append-only sobre pessoa em conferência (ordem Tenente).
@@ -1357,6 +1855,14 @@ func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
+	// IDOR (revisão TAKEDA/SHORYU): comentário só na conferência DO PRÓPRIO grupo
+	if esc := escopoDoUsuario(u); esc > 0 {
+		var gid *int64
+		if err := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, req.ConferenciaID).Scan(&gid); err != nil || gid == nil || *gid != esc {
+			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
+			return
+		}
+	}
 	// ordem incremental por conferência
 	var ord int64
 	_ = a.st.db.QueryRow(`SELECT COALESCE(MAX(ordem),0)+1 FROM comentarios WHERE conferencia_id = ?`,
@@ -1379,6 +1885,15 @@ func (a *App) hComentariosList(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
 		return
+	}
+	// IDOR: grupo só lista comentários da própria conferência
+	u := usuarioDoCtx(r)
+	if esc := escopoDoUsuario(u); esc > 0 {
+		var gid *int64
+		if qerr := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, id).Scan(&gid); qerr != nil || gid == nil || *gid != esc {
+			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
+			return
+		}
 	}
 	rows, err := a.st.db.Query(`
 		SELECT c.ordem, c.criado_em, p.nome_guerra, u.login, c.comentario
@@ -1428,6 +1943,11 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	// hierarquia de criação (ordem Tenente 28/09):
 	// - ADMIN é o ÚNICO que cria GERENTE (e admin)
 	// - GERENTE cria OPERADOR, sempre no PRÓPRIO grupo
+	// - OPERADOR COMUM não cria conta nenhuma (revisão TAKEDA)
+	if u.Papel == "usuario" {
+		jsonErro(w, http.StatusForbidden, "operador não cria contas")
+		return
+	}
 	if u.Papel != "admin" {
 		if papel != "usuario" {
 			jsonErro(w, http.StatusForbidden, "somente o admin cria gerentes")

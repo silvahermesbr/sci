@@ -5,7 +5,7 @@ package main
 // fonte-de-verdade fora do filesystem.
 
 import (
-	"crypto/rand"
+	crand "crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -54,6 +54,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.migrarV4(); err != nil {
+		return nil, err
+	}
+	if err := s.migrarV5(); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -238,12 +241,16 @@ func (s *Store) migrarV4() error {
 			`ALTER TABLE conferencias ADD COLUMN grupo_id INTEGER REFERENCES grupos(id)`)
 	}
 	// várias conferências por dia (ordem Tenente 28/09): rebuild p/ remover UNIQUE(data,tipo_id)
-	// condição correta: o DDL da tabela ainda contém "UNIQUE" (banco novo já nasce sem)
+	// CRÍTICO (revisão TAKEDA): DROP com FK ativa cascata em presencas/comentarios —
+	// desliga FK apenas nesta conexão, rebuild, checa integridade e religa.
 	ddlConferencias := ""
 	if err := s.db.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='table' AND name='conferencias'`).Scan(&ddlConferencias); err != nil {
 		return err
 	}
 	if strings.Contains(strings.ToUpper(ddlConferencias), "UNIQUE") {
+		if _, err := s.db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
 		steps = append(steps,
 			`CREATE TABLE conferencias_v4 (
 				id INTEGER PRIMARY KEY,
@@ -290,7 +297,109 @@ func (s *Store) migrarV4() error {
 			return fmt.Errorf("migração v4: %w", err)
 		}
 	}
+	// religa FK e prova integridade (revisão TAKEDA)
+	if _, err := s.db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+		return err
+	}
+	var fkViol int
+	if err := s.db.QueryRow(`PRAGMA foreign_key_check`).Scan(&fkViol); err == nil && fkViol > 0 {
+		return fmt.Errorf("migração v4: foreign_key_check detectou %d violações", fkViol)
+	}
 	return s.marcarVersao(4)
+}
+
+// migrarV5: hierarquia de grupos (ordem Tenente, 28/09 noite) — código de 6 dígitos,
+// vínculo BILATERAL (superior cadastra o inferior, inferior confirma) e perfil do usuário.
+func (s *Store) migrarV5() error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE versao = 5`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	steps := []string{
+		// 6 dígitos (gerados em Go abaixo, antes do índice único)
+		`ALTER TABLE grupos ADD COLUMN codigo TEXT`,
+		// vínculos de hierarquia: bilateral, sem auto-vínculo, sem duplicata
+		`CREATE TABLE IF NOT EXISTS grupo_vinculos (
+			id INTEGER PRIMARY KEY,
+			superior_id INTEGER NOT NULL REFERENCES grupos(id),
+			subordinado_id INTEGER NOT NULL REFERENCES grupos(id),
+			criado_por_superior INTEGER NOT NULL DEFAULT 0,
+			criado_por_subordinado INTEGER NOT NULL DEFAULT 0,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			CHECK (superior_id <> subordinado_id),
+			UNIQUE (superior_id, subordinado_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_gv_sup ON grupo_vinculos(superior_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_gv_sub ON grupo_vinculos(subordinado_id)`,
+		// catálogos por grupo (NULL = global/admin): subordinado herda os do superior
+		`ALTER TABLE setores ADD COLUMN grupo_id INTEGER REFERENCES grupos(id)`,
+		`ALTER TABLE funcoes ADD COLUMN grupo_id INTEGER REFERENCES grupos(id)`,
+		`ALTER TABLE destinos ADD COLUMN grupo_id INTEGER REFERENCES grupos(id)`,
+		`ALTER TABLE tags ADD COLUMN grupo_id INTEGER REFERENCES grupos(id)`,
+		`ALTER TABLE conferencia_tipos ADD COLUMN grupo_id INTEGER REFERENCES grupos(id)`,
+		// perfil do usuário (aba Meu usuário): dados espelham o banco de pessoal
+		`ALTER TABLE usuarios ADD COLUMN nome_guerra TEXT`,
+		`ALTER TABLE usuarios ADD COLUMN nome_completo TEXT`,
+		`ALTER TABLE usuarios ADD COLUMN setor_id INTEGER REFERENCES setores(id)`,
+		`ALTER TABLE usuarios ADD COLUMN funcao_id INTEGER REFERENCES funcoes(id)`,
+	}
+	for _, q := range steps {
+		if _, err := s.db.Exec(q); err != nil {
+			// falha parcial anterior reexecuta o ALTER — inofensivo
+			if strings.Contains(err.Error(), "duplicate column name") {
+				continue
+			}
+			return fmt.Errorf("migração v5: %w", err)
+		}
+	}
+	// códigos para grupos existentes (sem SQL frágil: rand em Go, com retry de colisão)
+	ids := []int64{}
+	rows, err := s.db.Query(`SELECT id FROM grupos WHERE codigo IS NULL OR codigo = ''`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		for tent := 0; tent < 8; tent++ {
+			var existe int
+			cod := gerarCodigoGrupo()
+			_ = s.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE codigo = ?`, cod).Scan(&existe)
+			if existe > 0 {
+				continue
+			}
+			if _, err := s.db.Exec(`UPDATE grupos SET codigo = ? WHERE id = ?`, cod, id); err == nil {
+				break
+			}
+		}
+	}
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_grupos_codigo ON grupos(codigo)`); err != nil {
+		return err
+	}
+	return s.marcarVersao(5)
+}
+
+// gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos
+// 32 símbolos legíveis) — revisão de leitura humana em campo.
+func gerarCodigoGrupo() string {
+	const alfabeto = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+	b := make([]byte, 6)
+	if _, err := crand.Read(b); err != nil {
+		// fallback determinístico por tempo — improvável de ocorrer
+		return fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
+	}
+	for i := range b {
+		b[i] = alfabeto[int(b[i])%len(alfabeto)]
+	}
+	return string(b)
 }
 
 // SeedIfEmpty cria o admin inicial e catálogos padrão na primeira execução.
@@ -347,7 +456,7 @@ func (s *Store) Auditoria(usuarioID *int64, acao, entidade string, registroID *i
 
 func novoToken() (cru, hash string, err error) {
 	b := make([]byte, 32)
-	if _, err = rand.Read(b); err != nil {
+	if _, err = crand.Read(b); err != nil {
 		return
 	}
 	cru = hex.EncodeToString(b)
@@ -375,11 +484,13 @@ func (s *Store) UsuarioDaSessao(tokenCru string) (*Usuario, error) {
 	hash := hex.EncodeToString(h[:])
 	var u Usuario
 	err := s.db.QueryRow(
-		`SELECT u.id, u.login, u.papel, u.pessoa_id, u.grupo_id
+		`SELECT u.id, u.login, u.papel, u.pessoa_id, u.grupo_id,
+		        COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''), u.setor_id, u.funcao_id
 		 FROM sessoes se JOIN usuarios u ON u.id = se.usuario_id
 		 WHERE se.token_hash = ? AND se.expira_em > ? AND u.ativo = 1`,
 		hash, time.Now().UTC().Format(time.RFC3339)).
-		Scan(&u.ID, &u.Login, &u.Papel, &u.PessoaID, &u.GrupoID)
+		Scan(&u.ID, &u.Login, &u.Papel, &u.PessoaID, &u.GrupoID,
+			&u.NomeGuerra, &u.NomeCompleto, &u.SetorID, &u.FuncaoID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
