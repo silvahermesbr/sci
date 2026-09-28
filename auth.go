@@ -26,8 +26,9 @@ const (
 type Usuario struct {
 	ID       int64  `json:"id"`
 	Login    string `json:"login"`
-	Papel    string `json:"papel"`
+	Papel    string `json:"papel"` // admin | gerente | usuario
 	PessoaID *int64 `json:"pessoa_id"`
+	GrupoID  *int64 `json:"grupo_id"`
 }
 
 type ctxKeyChave int
@@ -197,5 +198,10 @@ func (a *App) validarCredenciais(login, senha, ip string) (*Usuario, error) {
 		return nil, fmt.Errorf("credenciais inválidas")
 	}
 	a.st.Auditoria(&id, "login_ok", "usuarios", &id, "", ip)
-	return &Usuario{ID: id, Login: login, Papel: papel, PessoaID: pessoaID}, nil
+	// grupo vem na mesma linha (papel/grupo sempre juntos)
+	var grupoID *int64
+	if err := a.st.db.QueryRow(`SELECT grupo_id FROM usuarios WHERE id = ?`, id).Scan(&grupoID); err != nil {
+		return nil, err
+	}
+	return &Usuario{ID: id, Login: login, Papel: papel, PessoaID: pessoaID, GrupoID: grupoID}, nil
 }

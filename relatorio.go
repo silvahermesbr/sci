@@ -85,7 +85,9 @@ type Bundle struct {
 	Faltas       int    `json:"falta"`
 	Justificadas int    `json:"justificadas"`
 	PctGeral     float64 `json:"pct_geral"`
-	PctPronto    float64 `json:"pct_pronto"` // % do efetivo pronto = presentes puros / convocações
+	PctPronto    float64 `json:"pct_pronto"`           // % do efetivo pronto = presentes puros / convocações
+	PctPresencaEstrita float64 `json:"pct_presenca_estrita"` // decisão 28/09: justificada = falta
+	TotalFaltas  int     `json:"total_faltas"`         // falta + justificada (decisão 28/09)
 	PorSetor     []SetorStat     `json:"por_setor"`
 	PorDestino   []DestinoStat   `json:"por_destino"`
 	Pessoas      []PessoaStat    `json:"pessoas"`

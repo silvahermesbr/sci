@@ -193,8 +193,13 @@ func (a *App) rotas() {
 	m.Handle("PATCH /api/pessoas/{id}", a.auth(true, a.hPessoasEdit))
 
 	m.Handle("GET /api/usuarios", a.auth(true, a.hUsuariosList))
-	m.Handle("POST /api/usuarios", a.auth(true, a.hUsuariosAdd))
+	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
+	m.Handle("POST /api/usuarios", a.auth(false, a.hUsuariosAdd))
 	m.Handle("POST /api/usuarios/{id}/senha", a.auth(true, a.hUsuarioSenha))
+	m.Handle("GET /api/grupos", a.auth(false, a.hGruposList))
+	m.Handle("POST /api/grupos", a.auth(true, a.hGruposAdd))
+	m.Handle("POST /api/comentarios", a.auth(false, a.hComentariosAdd))
+	m.Handle("GET /api/comentarios/{id}", a.auth(false, a.hComentariosList))
 
 	m.Handle("GET /api/relatorio", a.auth(false, a.hRelatorioJSON))
 	m.Handle("GET /api/relatorio.pdf", a.auth(false, a.hRelatorioPDF))
@@ -368,15 +373,26 @@ func (a *App) tipoPadraoID() (int64, string, error) {
 // hConferenciaHoje: contexto para a área de conferência — a conferência ABERTA (se houver)
 // + o efetivo ativo + os lançamentos dela.
 func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
 	var f struct {
-		ID     int64
-		Status string
-		Data   string
+		ID       int64
+		Status   string
+		Data     string
 		CriadaEm string
 	}
-	err := a.st.db.QueryRow(
-		`SELECT id, status, data, criado_em FROM conferencias WHERE status = 'aberta' ORDER BY id DESC LIMIT 1`).
-		Scan(&f.ID, &f.Status, &f.Data, &f.CriadaEm)
+	var err error
+	if escopo > 0 {
+		err = a.st.db.QueryRow(
+			`SELECT id, status, data, criado_em FROM conferencias
+			 WHERE status = 'aberta' AND grupo_id = ? ORDER BY id DESC LIMIT 1`, escopo).
+			Scan(&f.ID, &f.Status, &f.Data, &f.CriadaEm)
+	} else {
+		err = a.st.db.QueryRow(
+			`SELECT id, status, data, criado_em FROM conferencias
+			 WHERE status = 'aberta' ORDER BY id DESC LIMIT 1`).
+			Scan(&f.ID, &f.Status, &f.Data, &f.CriadaEm)
+	}
 	var form *map[string]any
 	if err == nil {
 		estados := map[int64]map[string]any{}
@@ -456,26 +472,37 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	// já existe conferência aberta? uma por vez (regra de operação)
+	escopo := escopoDoUsuario(u)
+	// já existe conferência aberta NO ESCOPO? (admin: global; grupo: do grupo)
 	var abertaID int64
-	if e := a.st.db.QueryRow(`SELECT id FROM conferencias WHERE status = 'aberta' LIMIT 1`).Scan(&abertaID); e == nil {
+	qAberta := `SELECT id FROM conferencias WHERE status = 'aberta'`
+	if escopo > 0 {
+		qAberta += ` AND grupo_id = ?`
+	}
+	qAberta += ` LIMIT 1`
+	if escopo > 0 {
+		if e := a.st.db.QueryRow(qAberta, escopo).Scan(&abertaID); e == nil {
+			jsonErro(w, http.StatusConflict, "já existe uma conferência aberta do seu grupo (feche-a antes de iniciar outra)")
+			return
+		}
+	} else if e := a.st.db.QueryRow(qAberta).Scan(&abertaID); e == nil {
 		jsonErro(w, http.StatusConflict, "já existe uma conferência aberta (feche-a antes de iniciar outra)")
 		return
 	}
-	// já existe conferência do dia (fechada)? não duplica o mesmo dia
+	// várias por dia: permitido (ordem Tenente); UNIQUE(data,tipo) foi removida na v4
 	var id int64
-	err = a.st.db.QueryRow(`SELECT id FROM conferencias WHERE data = ? AND tipo_id = ?`, data, tipoID).Scan(&id)
-	if err == nil {
-		jsonErro(w, http.StatusConflict, "já existe conferência de pessoal nessa data (fechada); o relatório dela está na lista")
-		return
+	grupoID := escopo // operador/gerente → próprio grupo; admin → NULL (global)
+	var res sql.Result
+	var e error
+	if escopo > 0 {
+		res, e = a.st.db.Exec(
+			`INSERT INTO conferencias (data, tipo_id, local, grupo_id, criado_por) VALUES (?,?,?,?,?)`,
+			data, tipoID, req.Local, grupoID, u.ID)
+	} else {
+		res, e = a.st.db.Exec(
+			`INSERT INTO conferencias (data, tipo_id, local, criado_por) VALUES (?,?,?,?)`,
+			data, tipoID, req.Local, u.ID)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		jsonErro(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	res, e := a.st.db.Exec(
-		`INSERT INTO conferencias (data, tipo_id, local, criado_por) VALUES (?,?,?,?)`,
-		data, tipoID, req.Local, u.ID)
 	if e != nil {
 		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
@@ -760,11 +787,15 @@ func (a *App) montarBundle(de, ate string) Bundle {
 	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM conferencias WHERE status='fechada' AND data BETWEEN ? AND ?`, de, ate).
 		Scan(&b.Convocacoes)
 	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM pessoas WHERE status='ativo'`).Scan(&b.EfetivoAtivo)
+	// decisão Tenente 28/09: JUSTIFICADA = FALTA justificada → tudo que não é presente
+	// pune o % de presença (exibição separa faltas justificadas x não justificadas)
 	validas := b.Presentes + b.Atrasos
 	denom := b.Convocacoes * b.EfetivoAtivo
 	if denom > 0 {
 		b.PctGeral = round1(100 * float64(validas) / float64(denom))
 		b.PctPronto = round1(100 * float64(b.PresentesPuros) / float64(denom))
+		b.PctPresencaEstrita = round1(100 * float64(b.PresentesPuros) / float64(denom))
+		b.TotalFaltas = b.Faltas + b.Justificadas
 	}
 
 	rows, err := a.st.db.Query(`
@@ -1199,19 +1230,166 @@ func (a *App) hUsuariosList(w http.ResponseWriter, _ *http.Request) {
 	jsonOK(w, out)
 }
 
+// ---------- grupos e escopo (fase GRUPOS — ordem Tenente 28/09) ----------
+
+// escopoDoUsuario: 0 = vê tudo (admin); N = só o grupo N (gerente/operador).
+func escopoDoUsuario(u *Usuario) int64 {
+	if u == nil {
+		return 0
+	}
+	if u.Papel == "admin" || u.GrupoID == nil {
+		return 0
+	}
+	return *u.GrupoID
+}
+
+// podeAdministrar: admin sempre; gerente dentro do próprio grupo.
+func podeAdministrar(u *Usuario) bool {
+	return u != nil && (u.Papel == "admin" || u.Papel == "gerente")
+}
+
+// hGruposList / hGruposAdd / hGruposDel: gestão de grupos (só admin cria).
+func (a *App) hGruposList(w http.ResponseWriter, _ *http.Request) {
+	rows, err := a.st.db.Query(`
+		SELECT g.id, g.nome, g.criado_em,
+		       (SELECT COUNT(*) FROM usuarios u WHERE u.grupo_id = g.id) AS contas,
+		       (SELECT COUNT(*) FROM pessoas p WHERE p.grupo_id = g.id) AS efetivo
+		FROM grupos g ORDER BY g.nome`)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var nome, criado string
+		var contas, efetivo int
+		if rows.Scan(&id, &nome, &criado, &contas, &efetivo) == nil {
+			out = append(out, map[string]any{
+				"id": id, "nome": nome, "criado_em": criado, "contas": contas, "efetivo": efetivo,
+			})
+		}
+	}
+	jsonOK(w, out)
+}
+
+func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Nome string `json:"nome"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
+		jsonErro(w, http.StatusBadRequest, "nome do grupo obrigatório")
+		return
+	}
+	res, err := a.st.db.Exec(`INSERT INTO grupos (nome) VALUES (?)`, strings.TrimSpace(req.Nome))
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "não criado (duplicado?): "+err.Error())
+		return
+	}
+	id, _ := res.LastInsertId()
+	u := usuarioDoCtx(r)
+	a.st.Auditoria(&u.ID, "criar", "grupos", &id, req.Nome, ipDe(r))
+	jsonOK(w, map[string]any{"id": id})
+}
+
+// hComentariosAdd: comentário append-only sobre pessoa em conferência (ordem Tenente).
+func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ConferenciaID int64  `json:"conferencia_id"`
+		PessoaID      int64  `json:"pessoa_id"`
+		Comentario    string `json:"comentario"`
+	}
+	if err := decodificar(r, &req); err != nil || req.ConferenciaID == 0 || req.PessoaID == 0 ||
+		strings.TrimSpace(req.Comentario) == "" {
+		jsonErro(w, http.StatusBadRequest, "conferencia_id, pessoa_id e comentario obrigatórios")
+		return
+	}
+	u := usuarioDoCtx(r)
+	// ordem incremental por conferência
+	var ord int64
+	_ = a.st.db.QueryRow(`SELECT COALESCE(MAX(ordem),0)+1 FROM comentarios WHERE conferencia_id = ?`,
+		req.ConferenciaID).Scan(&ord)
+	res, err := a.st.db.Exec(
+		`INSERT INTO comentarios (ordem, conferencia_id, pessoa_id, operador_id, comentario) VALUES (?,?,?,?,?)`,
+		ord, req.ConferenciaID, req.PessoaID, u.ID, strings.TrimSpace(req.Comentario))
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	id, _ := res.LastInsertId()
+	a.st.Auditoria(&u.ID, "comentar", "comentarios", &id,
+		fmt.Sprintf("conf=%d pessoa=%d", req.ConferenciaID, req.PessoaID), ipDe(r))
+	jsonOK(w, map[string]any{"id": id, "ordem": ord})
+}
+
+func (a *App) hComentariosList(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	rows, err := a.st.db.Query(`
+		SELECT c.ordem, c.criado_em, p.nome_guerra, u.login, c.comentario
+		FROM comentarios c
+		JOIN pessoas p ON p.id = c.pessoa_id
+		JOIN usuarios u ON u.id = c.operador_id
+		WHERE c.conferencia_id = ? ORDER BY c.ordem`, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var ord int64
+		var em, nome, por, comentario string
+		if rows.Scan(&ord, &em, &nome, &por, &comentario) == nil {
+			out = append(out, map[string]any{
+				"ordem": ord, "datahora": em, "pessoa": nome,
+				"operador": por, "comentario": comentario,
+			})
+		}
+	}
+	jsonOK(w, out)
+}
+
 func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Login    string `json:"login"`
 		Senha    string `json:"senha"`
 		Papel    string `json:"papel"`
 		PessoaID *int64 `json:"pessoa_id"`
+		GrupoID  *int64 `json:"grupo_id"`
 	}
 	if err := decodificar(r, &req); err != nil || req.Login == "" || req.Senha == "" {
 		jsonErro(w, http.StatusBadRequest, "login e senha obrigatórios")
 		return
 	}
-	if req.Papel != "admin" {
-		req.Papel = "usuario"
+	u := usuarioDoCtx(r)
+	papel := strings.ToLower(strings.TrimSpace(req.Papel))
+	switch papel {
+	case "admin", "gerente", "usuario":
+	default:
+		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | usuario)")
+		return
+	}
+	// hierarquia de criação (ordem Tenente 28/09):
+	// - ADMIN é o ÚNICO que cria GERENTE (e admin)
+	// - GERENTE cria OPERADOR, sempre no PRÓPRIO grupo
+	if u.Papel != "admin" {
+		if papel != "usuario" {
+			jsonErro(w, http.StatusForbidden, "somente o admin cria gerentes")
+			return
+		}
+		if u.GrupoID == nil {
+			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
+			return
+		}
+		req.GrupoID = u.GrupoID // força o próprio grupo, ignore o que vier no corpo
+	}
+	if papel == "admin" {
+		req.GrupoID = nil // admin é global
 	}
 	hash, err := hashSenha(req.Senha)
 	if err != nil {
@@ -1219,15 +1397,14 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := a.st.db.Exec(
-		`INSERT INTO usuarios (login, senha_hash, papel, pessoa_id) VALUES (?,?,?,?)`,
-		strings.ToLower(strings.TrimSpace(req.Login)), hash, req.Papel, req.PessoaID)
+		`INSERT INTO usuarios (login, senha_hash, papel, pessoa_id, grupo_id) VALUES (?,?,?,?,?)`,
+		strings.ToLower(strings.TrimSpace(req.Login)), hash, papel, req.PessoaID, req.GrupoID)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "não criado (duplicado?): "+err.Error())
 		return
 	}
 	id, _ := res.LastInsertId()
-	u := usuarioDoCtx(r)
-	a.st.Auditoria(&u.ID, "criar", "usuarios", &id, req.Login, ipDe(r))
+	a.st.Auditoria(&u.ID, "criar", "usuarios", &id, req.Login+" ("+papel+")", ipDe(r))
 	jsonOK(w, map[string]any{"id": id})
 }
 
