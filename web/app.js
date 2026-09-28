@@ -89,14 +89,13 @@ function renderHoje(filtro = '') {
       }).join('') + '</div></div>';
   }
   const banner = semC
-    ? `<div class="cartao"><p style="color:var(--tx2)">Nenhuma conferência aberta. Inicie a conferência de pessoal — ela fica aberta até você fechá-la.</p>
+    ? `<div class="cartao"><p style="color:var(--tx2)">Nenhuma conferência aberta. Ao iniciar, a data e o horário de Brasília são registrados automaticamente.</p>
        <div style="display:flex;gap:8px;align-items:end;margin-top:10px;flex-wrap:wrap">
-         <div class="campo" style="margin:0"><label>Data de início</label><input type="date" id="cData" value="${dataLocal(new Date())}"></div>
          <div class="campo" style="margin:0"><label>Local (opcional)</label><input id="cLocal" placeholder="ex.: Praça" style="max-width:160px"></div>
          <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div>
        <p style="margin-top:10px"><a href="#/conferencias" style="color:var(--verde)">Ver lista de conferências →</a></p></div>`
     : `<div class="cartao" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-       <span>${pill('aberta')} <b>Conferência de pessoal</b> · aberta em ${e.c.data} às ${(e.c.criada_em || '').slice(11, 16)} · toque no militar p/ ciclar, ✅ para verificar</span>
+       <span>${pill('aberta')} <b>Conferência de pessoal</b> · aberta em ${e.c.data} às ${fmtHora(e.c.criada_em)} · toque no militar p/ ciclar, ✅ para verificar</span>
        <button class="perigo" id="btFechar">✕ Fechar conferência</button></div>
        <p style="color:var(--tx2);font-size:12px;margin:0 0 10px"><a href="#/conferencias" style="color:var(--verde)">Lista de conferências →</a></p>`;
   $('#app').innerHTML = `<h2>Conferência de pessoal</h2>${banner}
@@ -108,8 +107,8 @@ function renderHoje(filtro = '') {
   if (semC) {
     $('#btIniciar').onclick = async () => {
       try {
-        await api('/api/conferencia/iniciar', { method: 'POST', body: JSON.stringify({ data: $('#cData').value, local: $('#cLocal').value }) });
-        toast('Conferência iniciada');
+        await api('/api/conferencia/iniciar', { method: 'POST', body: JSON.stringify({ local: $('#cLocal').value }) });
+        toast('Conferência iniciada — data e hora de Brasília registradas');
         viewHoje();
       } catch (err) {}
     };
@@ -302,6 +301,16 @@ async function viewGrupos() {
 }
 
 /* ---------- LISTA DE CONFERÊNCIAS + RELATÓRIO PRÓPRIO ---------- */
+function fmtHora(iso) { // ISO UTC -> HH:MM no fuso do cliente (Brasília na OM)
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d) ? '—' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+function fmtDataHora(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return isNaN(d) ? '—' : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 async function viewConferencias() {
   navAtiva('#/conferencias');
   $('#app').innerHTML = '<div class="carregando">Carregando…</div>';
@@ -309,7 +318,7 @@ async function viewConferencias() {
   const linhas = lista.map(c => `
     <tr><td><b>${c.data}</b>${c.local ? ` <small style="color:var(--tx2)">${esc(c.local)}</small>` : ''}</td>
     <td>${pill(c.status === 'fechada' ? 'presente' : 'atraso')} ${c.status}</td>
-    <td>${c.status === 'aberta' ? (c.criada_em || '').slice(11, 16) : ((c.fechada_em || '').slice(11, 16) || '—')}</td>
+    <td>${c.status === 'aberta' ? fmtHora(c.criada_em) : fmtHora(c.fechada_em)}</td>
     <td>${esc(c.criado_por || '—')}</td>
     <td class="num">${c.lancamentos}</td>
     <td>${c.status === 'fechada'

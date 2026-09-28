@@ -450,22 +450,14 @@ func (a *App) pessoasAtivas() []map[string]any {
 	return out
 }
 
-// hConferenciaIniciar: cria a conferência (data = hoje ou a informada) e a deixa ABERTA.
+// hConferenciaIniciar: cria a conferência com data/hora de AGORA (Brasília) e a deixa ABERTA.
 func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Local string `json:"local"`
-		Data  string `json:"data"` // data de início (opcional; default hoje)
 	}
 	_ = decodificar(r, &req)
-	hoje := time.Now().In(a.horaLocal).Format("2006-01-02")
-	data := req.Data
-	if data == "" {
-		data = hoje
-	}
-	if len(data) != 10 || data[4] != '-' || data[7] != '-' {
-		jsonErro(w, http.StatusBadRequest, "data inválida (AAAA-MM-DD)")
-		return
-	}
+	// ordem Tenente (28/09): data/hora são coletadas do relógio — horário de Brasília
+	data := time.Now().In(a.horaLocal).Format("2006-01-02")
 	tipoID, _, err := a.tipoPadraoID()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "tipo '"+tipoConferenciaPadrao+"' inexistente")
