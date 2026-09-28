@@ -1,64 +1,56 @@
 # SCI — Sistema de Controle Interno (3º B Com GE)
 
-Controle digital de presença em formaturas. **1 binário Go + SQLite em arquivo + front embutido** — sem Docker, sem serviços externos, sem build-step no front.
+Controle digital de presença por **conferências de pessoal**. 1 binário Go + SQLite em
+arquivo + frontend embutido — sem Docker, sem npm, sem serviços externos.
 
 ## Rodar
 
 ```bash
-SCI_PORT=10003 SCI_DATA_DIR=./dados SCI_ADMIN_SENHA=<senha> ./sci
+SCI_PORT=10003 SCI_DATA_DIR=./dados ./sci
 ```
 
-- `SCI_PORT` (padrão 10003) · `SCI_DATA_DIR` (padrão `./dados`) · `SCI_ADMIN_SENHA` (padrão `sci12345` — TROCAR no 1º boot; seed só roda com banco vazio) · `SCI_OM_TITULO` (cabeçalho do PDF).
-- Login: `admin` + a senha do seed. Novas contas em **Admin → usuários** (admin ou usuário).
-- Front: qualquer navegador na rede local (tablet na formatura, desktop do admin).
+- Primeiro boot cria `admin/admin` (senha padrão — troque no botão "Senha"; mín. 8).
+- `SCI_PORT` (padrão 10003) · `SCI_DATA_DIR` (padrão `./dados`) · `SCI_OM_TITULO`
+  (padrão "SCI - Sistema de Controle Interno").
 
-## Build (host de dev = host de deploy)
+## Fluxo de conferência
 
-```bash
-CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o sci ./...
-```
+1. **Conferência** → iniciar (data + local opcional). A conferência fica **ABERTA**.
+2. Lista do efetivo ativo por setor: todo mundo **presente por padrão**; toque no nome
+   cicla `presente → falta → atraso → justificada`; falta pede **motivo**, justificada
+   pede **destino + motivo**; ✅ marca "verifiquei" (contador n/N na barra).
+3. **✕ Fechar conferência** grava tudo em 1 transação e arquiva.
+4. **Conferências** (lista agrupada por dia): status Aberta/Fechada, horário de criação
+   ou fechamento, operador, **Relatório PDF** (só para fechadas — com horário de
+   fechamento, horário de geração e nome do operador).
+5. **Relatórios** por dia/semana/mês/período, com **% EFETIVO PRONTO** (só presentes sem
+   ressalva) — impressão em preto e branco.
 
-Toolchain no home do host (sem sudo): Go 1.27 em `/opt/data/.local/go/bin`.
+## Zero perda de dados
 
-## Zero perda de dados — doutrina
+- Banco 100% em arquivo (WAL + synchronous FULL + FK); sessões e auditoria em tabelas.
+- Backup automático: a cada conferência fechada, no boot, via botão (com download no
+  navegador), via `sci backup` (cron) — `VACUUM INTO` + sha256 + MANIFEST; falha acende
+  FLAG.
+- Migrações de schema versionadas no binário (schema_migrations v1..v3).
+- Nada é apagado: fechado não se edita; comentários são append-only.
 
-1. **Tudo em arquivo**: banco `dados/sci.db` (WAL + `synchronous=FULL` + FK ON), sessões em tabela (sobrevivem a restart), auditoria em tabela.
-2. **Backup automático**: a cada formatura confirmada, no boot, via `POST /api/backup` (admin) e via CLI — `VACUUM INTO` (cópia consistente com o servidor no ar) → `backups/sci_YYYYMMDD_HHMMSS.db` + `.sha256` + linha no `MANIFEST.txt`. Falha vira `dados/FLAG_BACKUP.txt` (visível).
-3. **Backup diário (cron)**: `ops/backup_diario.sh` (retém 15 dias). Entrada sugerida:
-   `30 3 * * * /opt/data/workspace/projetos/sci/app/ops/backup_diario.sh >> ~/projetos/sci/backup.log 2>&1`
-4. **Teste de restore (mensal)**: `bash ops/restore_test.sh dados/backups/sci_<ts>.db` — valida sha256 + integrity + contagens.
-5. **Portabilidade**: export CSV em `Pessoas/Relatórios` (`/api/export/{pessoas|presencas|formaturas}`) + o próprio `.db` é SQLite padrão.
+## Admin
 
-## Operação no host (10.10.0.5)
+- CRUD de efetivo, catálogos (setores, funções, destinos, tags, tipos de conferência),
+  contas (usuário/admin) com redefinição de senha, backup.
+
+## Operação no host
 
 ```bash
 # subir (sobrevive à sessão):
-setsid nohup env SCI_PORT=10003 SCI_DATA_DIR=$HOME/projetos/sci/dados SCI_ADMIN_SENHA=... \
-  $HOME/projetos/sci/sci >> $HOME/projetos/sci/server.log 2>&1 < /dev/null &
-# watchdog (3 falhas -> mata por PID exato e re-levanta):
-setsid nohup bash /opt/data/workspace/projetos/sci/app/ops/watchdog_sci.sh \
-  >> $HOME/projetos/sci/watchdog.log 2>&1 < /dev/null &
-# parar: SEMPRE por PID exato (nunca pkill -f):
-PID=$(ss -tlnp | grep :10003 | grep -oP 'pid=\K\d+' | head -1); kill "$PID"
+cd ~/projetos/sci && setsid nohup env SCI_PORT=10003 SCI_DATA_DIR=$HOME/projetos/sci/dados \
+  ./sci >> server.log 2>&1 < /dev/null &
+# watchdog (re-levanta em 3 falhas; cron */5 de reforço):
+setsid nohup bash ops/watchdog_sci.sh >> watchdog.log 2>&1 < /dev/null &
 ```
 
-## Regras de negócio cravadas no MVP
+## Decisões registradas
 
-- Lançamento **exceção-first**: todos presentes por padrão; toque cicla `presente → atraso → falta → justificada`; falta/justificada **exige destino** (catálogo do admin).
-- `CONFIRMAR` grava N tickets em **1 transação** e fecha a formatura; re-confirmar no mesmo dia faz **upsert** (correção), nunca duplica (`UNIQUE formatura+pessoa`).
-- % de presença = (presentes + atrasos) ÷ convocações; **justificada fora da razão**; tabela ordenada **piores primeiro**.
-- Nada é apagado: correção é UPDATE com `alterado_por/em`; exclusão de catálogo = desativação.
-- 1 formatura do mesmo tipo por dia (`UNIQUE data+tipo`).
-
-## Decisões pendentes do Tenente
-
-Ver `../SCI_brainstorm_consolidado.pdf` seção 5 (13 itens — status da pessoa, prazo de correção, horário de corte, LGPD etc.). O MVP foi construído com os defaults prudentes documentados lá.
-
-## Estrutura
-
-```
-app/  main.go (boot, CLI backup) · server.go (rotas, backup, export)
-      store.go (schema, pragmas, sessões) · auth.go (argon2id, rate-limit)
-      relatorio.go (A4 fpdf) · web/ (index.html, app.js, style.css — embed)
-ops/  backup_diario.sh · watchdog_sci.sh · restore_test.sh
-```
+`../PLANO_DECISOES_2026-09-28.md` (status, comentários pós-fechamento, justificada =
+falta justificada, várias conferências/dia, grupos admin→gerente→operador etc.).
