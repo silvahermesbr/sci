@@ -57,6 +57,7 @@ async function viewHoje() {
   if (!DESTINOS.length) { try { DESTINOS = await api('/api/catalogo/destinos'); } catch (e) { DESTINOS = []; } }
   DESTINOS = DESTINOS.filter(x => x.ativo === 1 || x.ativo === true);
   const est = {}, dest = {}, obs = {}, verif = new Set();
+  ESTADO = { c: d.conferencia, pessoas: d.pessoas, est, dest, obs, verif, temComentario: {} };
   if (d.conferencia) for (const [pid, v] of Object.entries(d.conferencia.estados)) {
     est[pid] = v.situacao;
     dest[pid] = v.destino_id;
@@ -83,8 +84,8 @@ function renderHoje(filtro = '') {
           : '';
         return `<div class="pessoa ${e.verif.has(p.id) ? 'verificado' : ''}" data-id="${p.id}">
           <input type="checkbox" class="chk" data-id="${p.id}" ${e.verif.has(p.id) ? 'checked' : ''} title="verifiquei esta pessoa">
-          <span class="nome clicavel"><b>${esc(p.nome_guerra)}</b><small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${e.obs[p.id] ? ' · 📝' : ''}</small></span>
-          ${sel}${pill(sit)}</div>`;
+          <span class="nome clicavel"><b>${esc(p.nome_guerra)}</b><small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${e.obs[p.id] ? ' · 📝' : ''}${e.temComentario[p.id] ? ' · 💬' : ''}</small></span>
+          ${sel}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button>${pill(sit)}</div>`;
       }).join('') + '</div></div>';
   }
   const banner = semC
@@ -147,7 +148,55 @@ function renderHoje(filtro = '') {
     atualizar();
   });
   document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => { ESTADO.dest[+s.dataset.id] = +s.value || null; });
+  document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    modalComentarios(+b.dataset.id);
+  });
   $('#btFechar').onclick = fecharConferencia;
+}
+/* comentários: lista + novo (append-only, ordem/datahora/operador) */
+async function modalComentarios(pessoaId) {
+  const p = ESTADO.pessoas.find(x => x.id === pessoaId);
+  const cid = ESTADO.c.id;
+  const div = document.createElement('div');
+  div.className = 'modal-mask';
+  div.innerHTML = `<div class="modal" style="max-width:460px">
+    <h3>💬 Comentários — ${esc(p.nome_guerra)}</h3>
+    <div id="cmLista" style="max-height:220px;overflow:auto;margin-bottom:10px">
+      <span class="vazio">carregando…</span></div>
+    <div class="campo"><label>Novo comentário</label>
+      <textarea id="cmNovo" rows="2" placeholder="registre aqui…"></textarea></div>
+    <div class="modal-acoes">
+      <button class="fantasma" id="cmX">Fechar</button>
+      <button class="primario" id="cmGo">Adicionar</button></div></div>`;
+  document.body.appendChild(div);
+  const fechar = () => div.remove();
+  div.onclick = ev => { if (ev.target === div) fechar(); };
+  div.querySelector('#cmX').onclick = fechar;
+  div.addEventListener('keydown', ev => { if (ev.key === 'Escape') fechar(); });
+  const carregar = async () => {
+    try {
+      const lista = await api(`/api/comentarios/${cid}`);
+      const meus = lista.filter(c => c.pessoa === p.nome_guerra);
+      ESTADO.temComentario[pessoaId] = meus.length > 0;
+      $('#cmLista').innerHTML = meus.length ? meus.map(c =>
+        `<div class="cartao" style="padding:8px;margin-bottom:6px">
+         <small style="color:var(--tx2)">#${c.ordem} · ${esc(c.operador)} · ${(c.datahora || '').slice(0, 16).replace('T', ' ')}</small>
+         <div>${esc(c.comentario)}</div></div>`).join('') : '<span class="vazio">sem comentários</span>';
+      renderHoje($('#busca') ? $('#busca').value : '');
+    } catch (e) { $('#cmLista').innerHTML = '<span class="vazio">falha ao carregar</span>'; }
+  };
+  await carregar();
+  div.querySelector('#cmGo').onclick = async () => {
+    const txt = div.querySelector('#cmNovo').value.trim();
+    if (!txt) { toast('Escreva o comentário', 'erro'); return; }
+    try {
+      await api('/api/comentarios', { method: 'POST', body: JSON.stringify({ conferencia_id: cid, pessoa_id: pessoaId, comentario: txt }) });
+      div.querySelector('#cmNovo').value = '';
+      toast('Comentário adicionado');
+      await carregar();
+    } catch (e) {}
+  };
 }
 /* modal de lançamento: falta → motivo/obs; justificada → destino + obs */
 function modalLancamento(id, sit, aoSalvar) {
@@ -198,6 +247,60 @@ async function fecharConferencia() {
   } catch (err) {}
 }
 
+/* ---------- GRUPOS (admin cria grupo+gerente; gerente cria operador) ---------- */
+async function viewGrupos() {
+  navAtiva('#/grupos');
+  $('#app').innerHTML = '<div class="carregando">…</div>';
+  const souAdmin = ME.papel === 'admin';
+  const grupos = await api('/api/grupos');
+  let html = '<h2>Grupos</h2>';
+  if (souAdmin) {
+    html += `<div class="cartao"><h3 style="margin-top:0">Criar grupo</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><input id="gNome" placeholder="nome do grupo (ex.: 1ª Cia)" style="max-width:260px">
+      <button class="primario" id="gGo" style="min-height:40px">Criar grupo</button></div></div>`;
+  }
+  const meus = souAdmin ? grupos : grupos.filter(g => g.id === ME.grupo_id);
+  html += `<div class="cartao"><h3 style="margin-top:0">${souAdmin ? 'Grupos' : 'Meu grupo'}</h3>` +
+    (meus.map(g => `<div style="margin-bottom:6px">• <b>${esc(g.nome)}</b> — ${g.efetivo} no efetivo · ${g.contas} conta(s)</div>`).join('') || '<span class="vazio">nenhum grupo</span>') + '</div>';
+  if (souAdmin) {
+    html += `<div class="cartao"><h3 style="margin-top:0">Criar GERENTE — só o admin pode</h3>
+      <div class="form-linha"><div class="campo"><label>Login</label><input id="grLogin"></div>
+      <div class="campo"><label>Senha (mín. 8)</label><input id="grSenha" type="password"></div>
+      <div class="campo"><label>Grupo</label><select id="grGrupo">${grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('')}</select></div></div>
+      <button class="primario" id="grGo">Criar gerente</button>
+      <p style="color:var(--tx2);font-size:12px;margin-top:8px">Entregue login e senha ao responsável pelo grupo — ele criará os operadores.</p></div>`;
+  } else {
+    html += `<div class="cartao"><h3 style="margin-top:0">Criar OPERADOR do meu grupo</h3>
+      <div class="form-linha"><div class="campo"><label>Login</label><input id="opLogin"></div>
+      <div class="campo"><label>Senha (mín. 8)</label><input id="opSenha" type="password"></div></div>
+      <button class="primario" id="opGo">Criar operador</button></div>`;
+  }
+  $('#app').innerHTML = html;
+  if (souAdmin) {
+    $('#gGo').onclick = async () => {
+      const n = $('#gNome').value.trim();
+      if (!n) { toast('Nome do grupo obrigatório', 'erro'); return; }
+      await api('/api/grupos', { method: 'POST', body: JSON.stringify({ nome: n }) });
+      toast('Grupo criado'); viewGrupos();
+    };
+    $('#grGo').onclick = async () => {
+      const login = $('#grLogin').value.trim(), senha = $('#grSenha').value, gid = +$('#grGrupo').value;
+      if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
+      await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'gerente', grupo_id: gid }) });
+      toast('Gerente criado — entregue as credenciais ao responsável');
+      viewGrupos();
+    };
+  } else {
+    $('#opGo').onclick = async () => {
+      const login = $('#opLogin').value.trim(), senha = $('#opSenha').value;
+      if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
+      await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'usuario' }) });
+      toast('Operador criado');
+      viewGrupos();
+    };
+  }
+}
+
 /* ---------- LISTA DE CONFERÊNCIAS + RELATÓRIO PRÓPRIO ---------- */
 async function viewConferencias() {
   navAtiva('#/conferencias');
@@ -240,6 +343,7 @@ function renderRelatorio(b, titulo) {
     <div class="caixa"><b>${b.atrasos}</b><span>atrasos</span></div>
     <div class="caixa"><b>${b.falta}</b><span>faltas</span></div>
     <div class="caixa"><b>${b.justificadas}</b><span>justificadas</span></div>
+    <div class="caixa"><b>${b.total_faltas ?? ((b.falta || 0) + (b.justificadas || 0))}</b><span>faltas tot. (J+NJ)</span></div>
     <div class="caixa"><b>${b.pct_geral}%</b><span>presença</span></div>
     <div class="caixa" style="border-color:var(--verde)"><b>${b.pct_pronto}%</b><span>ef. pronto</span></div></div>`;
   const linhas = (b.pessoas || []).map(p =>
@@ -460,6 +564,7 @@ function montarNav() {
   $('#topbar').classList.remove('oculto');
   $('#quem').textContent = ME ? ME.login + (ME.papel === 'admin' ? ' · admin' : '') : '';
   const itens = [['#/hoje', 'Conferência'], ['#/conferencias', 'Conferências'], ['#/relatorios', 'Relatórios']];
+  if (ME && (ME.papel === 'admin' || ME.papel === 'gerente')) itens.push(['#/grupos', 'Grupos']);
   if (ME && ME.papel === 'admin') itens.push(['#/admin', 'Admin']);
   $('#nav').innerHTML = itens.map(([h, t]) => `<a href="${h}">${t}</a>`).join('');
   $('#btSenha').onclick = modalSenha; // botão estático no HTML — nunca duplica
@@ -502,6 +607,7 @@ async function rotear() {
   montarNav();
   if (h === '#/hoje') viewHoje();
   else if (h === '#/conferencias') viewConferencias();
+  else if (h === '#/grupos' && (ME.papel === 'admin' || ME.papel === 'gerente')) viewGrupos();
   else if (h === '#/relatorios' || h === '#/semana') viewRelatorios();
   else if (h === '#/admin' && ME.papel === 'admin') viewAdmin();
   else { location.hash = '#/hoje'; }

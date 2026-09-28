@@ -168,6 +168,11 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 		pdf.SetFont("Helvetica", "", 7)
 	}
 	pdf.SetY(y0 + 13)
+	// decisão Tenente 28/09: justificada = falta — nota com o total
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(60, 60, 60)
+	pdf.Cell(0, 4.5, T(fmt.Sprintf("Justificada conta como falta — total de faltas (justificadas + não justificadas): %d", b.TotalFaltas)))
+	pdf.Ln(7)
 
 	// ---- proporção de situações (barra segmentada) ----
 	pdf.SetFont("Helvetica", "B", 9.5)
