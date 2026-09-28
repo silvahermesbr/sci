@@ -189,8 +189,8 @@ func (a *App) rotas() {
 	m.Handle("DELETE /api/catalogo/{t}/{id}", a.auth(true, a.hCatalogoDel))
 
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
-	m.Handle("POST /api/pessoas", a.auth(true, a.hPessoasAdd))
-	m.Handle("PATCH /api/pessoas/{id}", a.auth(true, a.hPessoasEdit))
+	m.Handle("POST /api/pessoas", a.auth(false, a.hPessoasAdd))
+	m.Handle("PATCH /api/pessoas/{id}", a.auth(false, a.hPessoasEdit))
 
 	m.Handle("GET /api/usuarios", a.auth(true, a.hUsuariosList))
 	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
@@ -381,18 +381,16 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		Data     string
 		CriadaEm string
 	}
-	var err error
-	if escopo > 0 {
-		err = a.st.db.QueryRow(
-			`SELECT id, status, data, criado_em FROM conferencias
-			 WHERE status = 'aberta' AND grupo_id = ? ORDER BY id DESC LIMIT 1`, escopo).
-			Scan(&f.ID, &f.Status, &f.Data, &f.CriadaEm)
-	} else {
-		err = a.st.db.QueryRow(
-			`SELECT id, status, data, criado_em FROM conferencias
-			 WHERE status = 'aberta' ORDER BY id DESC LIMIT 1`).
-			Scan(&f.ID, &f.Status, &f.Data, &f.CriadaEm)
+	// admin não tem grupo: nunca há "conferência do admin" — a área fica em modo leitura
+	if escopo == 0 && u.Papel == "admin" {
+		jsonOK(w, map[string]any{"conferencia": nil, "pessoas": a.pessoasAtivas(0)})
+		return
 	}
+	var err error
+	err = a.st.db.QueryRow(
+		`SELECT id, status, data, criado_em FROM conferencias
+		 WHERE status = 'aberta' AND grupo_id = ? ORDER BY id DESC LIMIT 1`, escopo).
+		Scan(&f.ID, &f.Status, &f.Data, &f.CriadaEm)
 	var form *map[string]any
 	if err == nil {
 		estados := map[int64]map[string]any{}
@@ -414,7 +412,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		form = &map[string]any{"id": f.ID, "status": f.Status, "data": f.Data,
 			"criada_em": f.CriadaEm, "estados": estados}
 	}
-	jsonOK(w, map[string]any{"conferencia": form, "pessoas": a.pessoasAtivas()})
+	jsonOK(w, map[string]any{"conferencia": form, "pessoas": a.pessoasAtivas(escopo)})
 }
 
 type lancamentoReq struct {
@@ -425,14 +423,23 @@ type lancamentoReq struct {
 	Observacao string  `json:"observacao"`
 }
 
-func (a *App) pessoasAtivas() []map[string]any {
-	rows, err := a.st.db.Query(`
+// pessoasAtivas(escopo): escopo 0 = todas (admin); N = só do grupo N.
+func (a *App) pessoasAtivas(escopo int64) []map[string]any {
+	q := `
 		SELECT p.id, p.nome_guerra, p.nome_completo, COALESCE(s.nome,''), COALESCE(fu.nome,'')
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
-		WHERE p.status = 'ativo'
-		ORDER BY COALESCE(s.nome,''), p.nome_guerra`)
+		WHERE p.status = 'ativo'`
+	var rows *sql.Rows
+	var err error
+	if escopo > 0 {
+		rows, err = a.st.db.Query(q+` AND p.grupo_id = ?
+			ORDER BY COALESCE(s.nome,''), p.nome_guerra`, escopo)
+	} else {
+		rows, err = a.st.db.Query(q + `
+			ORDER BY COALESCE(s.nome,''), p.nome_guerra`)
+	}
 	if err != nil {
 		return []map[string]any{}
 	}
@@ -457,44 +464,36 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = decodificar(r, &req)
 	// ordem Tenente (28/09): data/hora são coletadas do relógio — horário de Brasília
+	// REGRA (28/09): ADMIN NÃO inicia conferência — só gerente/operador de grupo.
+	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "o admin não inicia conferências — quem inicia é o gerente/operador de um grupo")
+		return
+	}
+	if u.GrupoID == nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	grupoID := *u.GrupoID
 	data := time.Now().In(a.horaLocal).Format("2006-01-02")
 	tipoID, _, err := a.tipoPadraoID()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "tipo '"+tipoConferenciaPadrao+"' inexistente")
 		return
 	}
-	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
-	// já existe conferência aberta NO ESCOPO? (admin: global; grupo: do grupo)
+	// já existe conferência aberta DO GRUPO?
 	var abertaID int64
-	qAberta := `SELECT id FROM conferencias WHERE status = 'aberta'`
-	if escopo > 0 {
-		qAberta += ` AND grupo_id = ?`
-	}
-	qAberta += ` LIMIT 1`
-	if escopo > 0 {
-		if e := a.st.db.QueryRow(qAberta, escopo).Scan(&abertaID); e == nil {
-			jsonErro(w, http.StatusConflict, "já existe uma conferência aberta do seu grupo (feche-a antes de iniciar outra)")
-			return
-		}
-	} else if e := a.st.db.QueryRow(qAberta).Scan(&abertaID); e == nil {
-		jsonErro(w, http.StatusConflict, "já existe uma conferência aberta (feche-a antes de iniciar outra)")
+	if e := a.st.db.QueryRow(
+		`SELECT id FROM conferencias WHERE status = 'aberta' AND grupo_id = ? LIMIT 1`, grupoID).
+		Scan(&abertaID); e == nil {
+		jsonErro(w, http.StatusConflict, "já existe uma conferência aberta do seu grupo (feche-a antes de iniciar outra)")
 		return
 	}
-	// várias por dia: permitido (ordem Tenente); UNIQUE(data,tipo) foi removida na v4
+	// várias por dia: permitido (ordem Tenente); UNIQUE(data,tipo) removida na v4
 	var id int64
-	grupoID := escopo // operador/gerente → próprio grupo; admin → NULL (global)
-	var res sql.Result
-	var e error
-	if escopo > 0 {
-		res, e = a.st.db.Exec(
-			`INSERT INTO conferencias (data, tipo_id, local, grupo_id, criado_por) VALUES (?,?,?,?,?)`,
-			data, tipoID, req.Local, grupoID, u.ID)
-	} else {
-		res, e = a.st.db.Exec(
-			`INSERT INTO conferencias (data, tipo_id, local, criado_por) VALUES (?,?,?,?)`,
-			data, tipoID, req.Local, u.ID)
-	}
+	res, e := a.st.db.Exec(
+		`INSERT INTO conferencias (data, tipo_id, local, grupo_id, criado_por) VALUES (?,?,?,?,?)`,
+		data, tipoID, req.Local, grupoID, u.ID)
 	if e != nil {
 		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
@@ -531,6 +530,19 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	u := usuarioDoCtx(r)
+	// REGRA (28/09): só quem pertence ao grupo da conferência a fecha
+	if esc := escopoDoUsuario(u); esc > 0 {
+		var gid *int64
+		qerr := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, req.ID).Scan(&gid)
+		if qerr != nil {
+			jsonErro(w, http.StatusNotFound, "conferência inexistente")
+			return
+		}
+		if gid == nil || *gid != esc {
+			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
+			return
+		}
+	}
 
 	tx, err := a.st.db.Begin()
 	if err != nil {
@@ -584,15 +596,25 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"conferencia_id": req.ID, "gravados": gravados})
 }
 
-// hConferenciaList: todas as conferências, mais recentes primeiro, com status e horários.
-func (a *App) hConferenciaList(w http.ResponseWriter, _ *http.Request) {
-	rows, err := a.st.db.Query(`
+// hConferenciaList: conferências DO ESCOPO (grupo não vê grupo; admin vê todas).
+func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	q := `
 		SELECT c.id, c.data, COALESCE(c.hora,''), COALESCE(c.local,''), c.status,
 		       COALESCE(u.login,''), c.criado_em, c.fechada_em,
 		       (SELECT COUNT(*) FROM presencas p WHERE p.conferencia_id = c.id) AS lanc
 		FROM conferencias c
-		LEFT JOIN usuarios u ON u.id = c.criado_por
-		ORDER BY c.data DESC, c.id DESC`)
+		LEFT JOIN usuarios u ON u.id = c.criado_por`
+	var rows *sql.Rows
+	var err error
+	if escopo > 0 {
+		rows, err = a.st.db.Query(q+` WHERE c.grupo_id = ?
+			ORDER BY c.data DESC, c.id DESC`, escopo)
+	} else {
+		rows, err = a.st.db.Query(q + `
+			ORDER BY c.data DESC, c.id DESC`)
+	}
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1103,25 +1125,35 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 
 // ---------- pessoas ----------
 
-func (a *App) hPessoasList(w http.ResponseWriter, _ *http.Request) {
-	jsonOK(w, map[string]any{"pessoas": a.pessoasTodas()})
+func (a *App) hPessoasList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	jsonOK(w, map[string]any{"pessoas": a.pessoasTodas(escopoDoUsuario(u))})
 }
 
-func (a *App) pessoasTodas() []map[string]any {
-	rows, err := a.st.db.Query(`
+func (a *App) pessoasTodas(escopo int64) []map[string]any {
+	q := `
 		SELECT p.id, p.nome_guerra, p.nome_completo, p.setor_id, p.funcao_id, p.status,
 		       COALESCE(s.nome,''), COALESCE(fu.nome,'')
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
-		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
-		ORDER BY p.status, COALESCE(s.nome,''), p.nome_guerra`)
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id`
+	var rows *sql.Rows
+	var err error
+	if escopo > 0 {
+		rows, err = a.st.db.Query(q+` WHERE p.grupo_id = ?
+			ORDER BY p.status, COALESCE(s.nome,''), p.nome_guerra`, escopo)
+	} else {
+		rows, err = a.st.db.Query(q + `
+			ORDER BY p.status, COALESCE(s.nome,''), p.nome_guerra`)
+	}
 	if err != nil {
 		return []map[string]any{}
 	}
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, setorID, funcaoID int64
+		var id int64
+		var setorID, funcaoID *int64 // NULL = sem setor/função (não descartar a linha!)
 		var ng, nc, status, setor, funcao string
 		if rows.Scan(&id, &ng, &nc, &setorID, &funcaoID, &status, &setor, &funcao) == nil {
 			out = append(out, map[string]any{
@@ -1136,11 +1168,12 @@ func (a *App) pessoasTodas() []map[string]any {
 
 func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		NomeGuerra    string `json:"nome_guerra"`
-		NomeCompleto  string `json:"nome_completo"`
-		SetorID       *int64 `json:"setor_id"`
-		FuncaoID      *int64 `json:"funcao_id"`
-		Status        string `json:"status"`
+		NomeGuerra   string `json:"nome_guerra"`
+		NomeCompleto string `json:"nome_completo"`
+		SetorID      *int64 `json:"setor_id"`
+		FuncaoID     *int64 `json:"funcao_id"`
+		Status       string `json:"status"`
+		GrupoID      *int64 `json:"grupo_id"`
 	}
 	if err := decodificar(r, &req); err != nil || req.NomeGuerra == "" || req.NomeCompleto == "" {
 		jsonErro(w, http.StatusBadRequest, "nome de guerra e nome completo obrigatórios")
@@ -1149,15 +1182,29 @@ func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
 	if req.Status == "" {
 		req.Status = "ativo"
 	}
+	u := usuarioDoCtx(r)
+	// REGRA (28/09): admin e gerente cadastram; gerente SEMPRE no próprio grupo
+	var grupoID *int64
+	if u.Papel == "admin" {
+		grupoID = req.GrupoID // admin escolhe o grupo (ou NULL = sem grupo)
+	} else if u.Papel == "gerente" {
+		if u.GrupoID == nil {
+			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
+			return
+		}
+		grupoID = u.GrupoID
+	} else {
+		jsonErro(w, http.StatusForbidden, "somente admin e gerente cadastram pessoal")
+		return
+	}
 	res, err := a.st.db.Exec(
-		`INSERT INTO pessoas (nome_guerra, nome_completo, setor_id, funcao_id, status) VALUES (?,?,?,?,?)`,
-		req.NomeGuerra, req.NomeCompleto, req.SetorID, req.FuncaoID, req.Status)
+		`INSERT INTO pessoas (nome_guerra, nome_completo, setor_id, funcao_id, grupo_id, status) VALUES (?,?,?,?,?,?)`,
+		req.NomeGuerra, req.NomeCompleto, req.SetorID, req.FuncaoID, grupoID, req.Status)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	id, _ := res.LastInsertId()
-	u := usuarioDoCtx(r)
 	a.st.Auditoria(&u.ID, "criar", "pessoas", &id, req.NomeGuerra, ipDe(r))
 	jsonOK(w, map[string]any{"id": id})
 }
@@ -1169,11 +1216,11 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		NomeGuerra    string `json:"nome_guerra"`
-		NomeCompleto  string `json:"nome_completo"`
-		Status        string `json:"status"`
-		SetorID       *int64 `json:"setor_id"`
-		FuncaoID      *int64 `json:"funcao_id"`
+		NomeGuerra   string `json:"nome_guerra"`
+		NomeCompleto string `json:"nome_completo"`
+		Status       string `json:"status"`
+		SetorID      *int64 `json:"setor_id"`
+		FuncaoID     *int64 `json:"funcao_id"`
 	}
 	if err = decodificar(r, &req); err != nil {
 		jsonErro(w, http.StatusBadRequest, "JSON inválido")
@@ -1181,6 +1228,19 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Status == "" {
 		req.Status = "ativo"
+	}
+	u := usuarioDoCtx(r)
+	// REGRA (28/09): gerente só edita pessoal DO PRÓPRIO grupo (admin edita tudo)
+	if esc := escopoDoUsuario(u); esc > 0 {
+		var gid *int64
+		if err = a.st.db.QueryRow(`SELECT grupo_id FROM pessoas WHERE id = ?`, id).Scan(&gid); err != nil {
+			jsonErro(w, http.StatusNotFound, "pessoa inexistente")
+			return
+		}
+		if gid == nil || *gid != esc {
+			jsonErro(w, http.StatusForbidden, "pessoa de outro grupo")
+			return
+		}
 	}
 	_, err = a.st.db.Exec(
 		`UPDATE pessoas SET nome_guerra=?, nome_completo=?, setor_id=?, funcao_id=?, status=?,
@@ -1190,7 +1250,6 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	u := usuarioDoCtx(r)
 	a.st.Auditoria(&u.ID, "alterar", "pessoas", &id, req.NomeGuerra, ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})
 }
