@@ -1,0 +1,79 @@
+package main
+
+// SCI — Sistema de Controle Interno (3º B Com GE)
+// Binário único: Go + SQLite (arquivo) + frontend embutido.
+
+import (
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime/debug"
+	"time"
+)
+
+func main() {
+	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio
+	debug.SetMemoryLimit(96 << 20)
+	debug.SetGCPercent(40)
+
+	// CLI: `sci backup` faz cópia consistente e sai (p/ cron), sem servidor
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		dataDir := env("SCI_DATA_DIR", "./dados")
+		st, err := AbrirStore(dataDir)
+		if err != nil {
+			log.Fatalf("banco: %v", err)
+		}
+		defer st.Close()
+		a := NovaApp(st)
+		nome, sha, err := a.backupAgora()
+		if err != nil {
+			a.backupFlag("cron", err)
+			log.Fatalf("backup: %v", err)
+		}
+		_ = os.Remove(filepath.Join(dataDir, "FLAG_BACKUP.txt"))
+		log.Printf("backup OK: %s (sha256 %s)", nome, sha)
+		return
+	}
+
+	dataDir := env("SCI_DATA_DIR", "./dados")
+	porta := env("SCI_PORT", "10003")
+	senhaAdmin := env("SCI_ADMIN_SENHA", "admin") // ordem Tenente 28/09: senha padrão = admin
+
+	st, err := AbrirStore(dataDir)
+	if err != nil {
+		log.Fatalf("banco: %v", err)
+	}
+	defer st.Close()
+
+	if err := st.migrarV2(); err != nil {
+		log.Fatalf("migração v2: %v", err)
+	}
+	if err := st.SeedIfEmpty(senhaAdmin); err != nil {
+		log.Fatalf("seed: %v", err)
+	}
+
+	app := NovaApp(st)
+
+	// zero-perda: primeiro backup da sessão já no boot; falha vira FLAG visível
+	if _, _, err := app.backupAgora(); err != nil {
+		app.backupFlag("boot", err)
+	} else {
+		_ = os.Remove(filepath.Join(dataDir, "FLAG_BACKUP.txt"))
+	}
+
+	// limpeza de sessões expiradas a cada hora
+	go func() {
+		for range time.Tick(time.Hour) {
+			st.LimparSessoesExpiradas()
+		}
+	}()
+
+	srv := &http.Server{
+		Addr:              ":" + porta,
+		Handler:           app.mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	log.Printf("SCI no ar — porta %s — dados em %s", porta, dataDir)
+	log.Fatal(srv.ListenAndServe())
+}

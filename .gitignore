@@ -1,0 +1,22 @@
+# binários
+sci
+sci.new
+sci_test
+*.exe
+
+# dados e backups (nunca versionar dados de pessoal)
+dados/
+backups/
+*.db
+*.db-shm
+*.db-wal
+
+# logs
+*.log
+server.log
+watchdog.log
+backup.log
+FLAG_BACKUP.txt
+
+# artefatos locais
+/tmp/
