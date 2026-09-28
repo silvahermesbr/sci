@@ -431,7 +431,7 @@ function renderRelatorio(b, titulo) {
     <div class="caixa"><b>${b.falta}</b><span>faltas</span></div>
     <div class="caixa"><b>${b.justificadas}</b><span>justificadas</span></div>
     <div class="caixa"><b>${b.total_faltas ?? ((b.falta || 0) + (b.justificadas || 0))}</b><span>faltas tot. (J+NJ)</span></div>
-    <div class="caixa"><b>${b.pct_geral}%</b><span>presença</span></div>
+    <div class="caixa"><b>${b.pct_geral}%</b><span>% válidas (P+A)</span></div>
     <div class="caixa" style="border-color:var(--verde)"><b>${b.pct_pronto}%</b><span>ef. pronto</span></div></div>`;
   const linhas = (b.pessoas || []).map(p =>
     `<tr><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.setor)}</td><td class="num">${p.presencas}</td>

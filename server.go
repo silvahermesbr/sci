@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -820,9 +821,9 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	filtro := ` WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`
 	args := []any{de, ate}
 	if escopo > 0 {
-		cl, a2 := a.filtroArvore(escopo, "f")
-		filtro += cl
-		args = append(args, a2...)
+		ft := a.filtroArvore(escopo, "f")
+		filtro += ft.clause
+		args = append(args, ft.args...)
 	}
 	_ = a.st.db.QueryRow(`
 		SELECT COUNT(*),
@@ -835,30 +836,41 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		SELECT COALESCE(SUM(p.situacao='presente'),0)
 		FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro,
 		args...).Scan(&b.PresentesPuros)
-	qConv := `SELECT COUNT(*) FROM conferencias WHERE status='fechada' AND data BETWEEN ? AND ?`
+	// FIX S4-P0 (verif5): conferencias precisa do MESMO alias "f" da cláusula de
+	// árvore — sem alias, "no such column: f.grupo_id" era engolido pelo `_ =`
+	// e convocacoes ficava 0 (zerando todos os % do relatório).
+	qConv := `SELECT COUNT(*) FROM conferencias f WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`
 	qcArgs := append([]any{de, ate}, a.argsArvore(escopo)...)
 	if escopo > 0 {
 		qConv += a.clSetor(escopo)
 	}
-	_ = a.st.db.QueryRow(qConv, qcArgs...).
-		Scan(&b.Convocacoes)
-	// efetivo no escopo (grupo conta o SEU efetivo; admin o global)
-	qEfetivo := `SELECT COUNT(*) FROM pessoas WHERE status='ativo'`
+	// erros de contagem-base NUNCA silenciosos (lição v9): logar.
+	if err := a.st.db.QueryRow(qConv, qcArgs...).Scan(&b.Convocacoes); err != nil {
+		log.Printf("sci relatorio: convocacoes escopo=%d: %v", escopo, err)
+	}
+	// FIX S4-P1: efetivo ativo conta a ÁRVORE do escopo (mesma base dos lançamentos);
+	// antes era só o grupo próprio → denominador misturava escopos.
+	qEfetivo := `SELECT COUNT(*) FROM pessoas p WHERE p.status='ativo'`
 	var efetArgs []any
 	if escopo > 0 {
-		qEfetivo += ` AND grupo_id = ?`
-		efetArgs = append(efetArgs, escopo)
+		ftP := a.filtroArvore(escopo, "p")
+		qEfetivo += ftP.clause
+		efetArgs = ftP.args
 	}
-	_ = a.st.db.QueryRow(qEfetivo, efetArgs...).Scan(&b.EfetivoAtivo)
+	if err := a.st.db.QueryRow(qEfetivo, efetArgs...).Scan(&b.EfetivoAtivo); err != nil {
+		log.Printf("sci relatorio: efetivo escopo=%d: %v", escopo, err)
+	}
 	// decisão Tenente 28/09: JUSTIFICADA = FALTA justificada → tudo que não é presente
 	// pune o % de presença (exibição separa faltas justificadas x não justificadas)
 	validas := b.Presentes + b.Atrasos
 	denom := b.Convocacoes * b.EfetivoAtivo
+	// FIX S4-P1: total_faltas é contagem de lançamentos — independe do denominador;
+	// antes ficava 0 junto com os % quando denom=0 (falta real escondida).
+	b.TotalFaltas = b.Faltas + b.Justificadas
 	if denom > 0 {
 		b.PctGeral = round1(100 * float64(validas) / float64(denom))
 		b.PctPronto = round1(100 * float64(b.PresentesPuros) / float64(denom))
 		b.PctPresencaEstrita = round1(100 * float64(b.PresentesPuros) / float64(denom))
-		b.TotalFaltas = b.Faltas + b.Justificadas
 	}
 
 	rows, err := a.st.db.Query(`
@@ -906,8 +918,9 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		rows.Close()
 	}
 
+	ftP2 := a.filtroArvore(escopo, "f2")
 	rows, err = a.st.db.Query(`
-		SELECT p.id, p.nome_guerra, COALESCE(s.nome,''),
+		SELECT p.id, p.nome_guerra, COALESCE(s.nome,'Sem setor'),
 		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0),
 		       COALESCE(SUM(pr.situacao='atraso'),0),
 		       COALESCE(SUM(pr.situacao='falta'),0),
@@ -915,11 +928,19 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		       COUNT(pr.id)
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
+		/* FIX S4-P1 (verif5): escopo filtrado DENTRO do join de presencas —
+		   pessoa ativa sem lançamento no período permanece na lista (zeros),
+		   e lançamentos fora da árvore não contam (COUNT(pr.id) só vê pr
+		   já filtrado; o LEFT JOIN f direto contava linha com f NULL). */
 		LEFT JOIN presencas pr ON pr.pessoa_id = p.id
-		LEFT JOIN conferencias f ON f.id = pr.conferencia_id AND f.status='fechada' AND f.data BETWEEN ? AND ?
-		WHERE p.status='ativo'`+
-		a.clSetor(escopo)+`
-		GROUP BY p.id ORDER BY 7 DESC, 6 DESC, p.nome_guerra`, append([]any{de, ate}, a.argsArvore(escopo)...)...)
+		       AND pr.conferencia_id IN (
+		           SELECT f2.id FROM conferencias f2
+		           WHERE f2.status='fechada' AND f2.data BETWEEN ? AND ?`+
+		ftP2.clause+`
+		       )
+		WHERE p.status='ativo'`+a.filtroArvore(escopo, "p").clause+`
+		GROUP BY p.id ORDER BY 7 DESC, 6 DESC, p.nome_guerra`,
+		append(append([]any{de, ate}, ftP2.args...), a.filtroArvore(escopo, "p").args...)...)
 	if err == nil {
 		for rows.Next() {
 			var r PessoaStat
@@ -1000,14 +1021,26 @@ func (a *App) gruposSubordinadosAtivos(gid int64) []int64 {
 }
 
 // filtroArvore: escopo do grupo + descendentes (relatórios sobem pela hierarquia).
-func (a *App) filtroArvore(escopo int64, alias string) (string, []any) {
+// FIX S4: retorna struct nomeada (cláusula + args) — evita erro de compilação
+// "multiple-value in single-value context" em uso inline dentro de concatenação.
+type treeFilter struct {
+	clause string
+	args   []any
+}
+
+func (a *App) filtroArvore(escopo int64, alias string) treeFilter {
+	// FIX S4 (verif5): guarda AQUI — chamadores diretos (query de pessoas do
+	// bundle) não podem gerar "grupo_id IN (0)" no escopo global (esvaziava a lista).
+	if escopo <= 0 {
+		return treeFilter{}
+	}
 	ids := append([]int64{escopo}, a.gruposSubordinadosAtivos(escopo)...)
 	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
 	}
-	return ` AND ` + alias + `.grupo_id IN (` + ph + `)`, args
+	return treeFilter{clause: ` AND ` + alias + `.grupo_id IN (` + ph + `)`, args: args}
 }
 
 // clSetor/argsArvore: cláusula+args da ÁRVORE do escopo (grupo + subordinados ativos).
@@ -1017,46 +1050,46 @@ func (a *App) clSetor(escopo int64) string {
 	if escopo <= 0 {
 		return ""
 	}
-	cl, _ := a.filtroArvore(escopo, "f")
-	return cl
+	return a.filtroArvore(escopo, "f").clause
 }
 func (a *App) argsArvore(escopo int64) []any {
 	if escopo <= 0 {
 		return nil
 	}
-	_, aa := a.filtroArvore(escopo, "f")
-	return aa
+	return a.filtroArvore(escopo, "f").args
 }
 
 // escopoRelatorio: respeita ?grupo= — admin recorta qualquer grupo; gerente,
 // só o próprio ou descendentes.
-func (a *App) escopoRelatorio(r *http.Request, u *Usuario) int64 {
+// FIX S4-P1 (verif5): pedido de grupo FORA da árvore agora responde 403 com
+// escopo_aplicado — antes caía em fallback silencioso 200 e mascarava erro.
+func (a *App) escopoRelatorio(r *http.Request, u *Usuario) (int64, bool) {
 	esc := escopoDoUsuario(u)
 	q := r.URL.Query().Get("grupo")
 	if esc <= 0 {
 		if q == "" {
-			return esc
+			return esc, true
 		}
 		gid, err := strconv.ParseInt(q, 10, 64)
 		if err != nil {
-			return esc
+			return esc, true
 		}
 		if esc == 0 { // admin: recorte livre
-			return gid
+			return gid, true
 		}
-		return esc
+		return esc, true
 	}
 	if q == "" {
-		return esc
+		return esc, true
 	}
 	gid, err := strconv.ParseInt(q, 10, 64)
 	if err != nil {
-		return esc
+		return esc, true
 	}
 	if gid == esc || int64Contem(a.gruposSubordinadosAtivos(esc), gid) {
-		return gid
+		return gid, true
 	}
-	return esc
+	return esc, false
 }
 
 func int64Contem(lista []int64, v int64) bool {
@@ -1084,19 +1117,34 @@ func (a *App) periodoPadrao(r *http.Request) (string, string) {
 func (a *App) hPresencaPeriodo(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
-	jsonOK(w, a.montarBundle(de, ate, a.escopoRelatorio(r, u)))
+	esc, ok := a.escopoRelatorio(r, u)
+	if !ok {
+		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
+		return
+	}
+	jsonOK(w, a.montarBundle(de, ate, esc))
 }
 
 func (a *App) hRelatorioJSON(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
-	jsonOK(w, a.montarBundle(de, ate, a.escopoRelatorio(r, u)))
+	esc, ok := a.escopoRelatorio(r, u)
+	if !ok {
+		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
+		return
+	}
+	jsonOK(w, a.montarBundle(de, ate, esc))
 }
 
 func (a *App) hRelatorioPDF(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
-	pdf, err := a.gerarRelatorioPDF(a.montarBundle(de, ate, a.escopoRelatorio(r, u)))
+	esc, ok := a.escopoRelatorio(r, u)
+	if !ok {
+		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
+		return
+	}
+	pdf, err := a.gerarRelatorioPDF(a.montarBundle(de, ate, esc))
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao gerar PDF: "+err.Error())
 		return

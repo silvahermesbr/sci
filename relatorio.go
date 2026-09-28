@@ -149,7 +149,7 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 		{"ATRASO", strconv.Itoa(b.Atrasos)},
 		{"FALTA", strconv.Itoa(b.Faltas)},
 		{"JUSTIFICADA", strconv.Itoa(b.Justificadas)},
-		{"% PRESENCA", pctStr},
+		{"% VÁLIDAS", pctStr},
 		{"% EF.PRONTO", pctProntoStr},
 	}
 	pdf.SetFont("Helvetica", "", 7)
@@ -217,7 +217,7 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 	if len(b.PorSetor) > 0 {
 		pdf.SetFont("Helvetica", "B", 9.5)
 		pdf.SetTextColor(verdeR, verdeG, verdeB)
-		pdf.Cell(0, 6, T("PRESENÇA POR SETOR"))
+		pdf.Cell(0, 6, T("VALIDEZ POR SETOR (P+A)"))
 		pdf.Ln(7)
 		pdf.SetFont("Helvetica", "", 8)
 		for _, s := range b.PorSetor {
@@ -402,9 +402,11 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 		{"JUSTIFICADAS", strconv.Itoa(just)},
 	}
 	if total > 0 {
-		caixas = append(caixas, [2]string{"% PRESENCA", fmt.Sprintf("%.1f%%", 100*float64(presentes+atrasos)/float64(total))})
+		// FIX S4-P2 (verif5): uniformiza métrica — "presença" em TODO o documento
+		// conta presentes puros; presente+atraso vira "% VÁLIDAS (presente+atraso)".
+		caixas = append(caixas, [2]string{"% VÁLIDAS (P+A)", fmt.Sprintf("%.1f%%", 100*float64(presentes+atrasos)/float64(total))})
 	} else {
-		caixas = append(caixas, [2]string{"% PRESENCA", "—"})
+		caixas = append(caixas, [2]string{"% VÁLIDAS (P+A)", "—"})
 	}
 	pdf.SetFont("Helvetica", "", 7)
 	y0 := pdf.GetY()
