@@ -293,7 +293,7 @@ async function viewGrupos() {
   const meus = souAdmin ? grupos : grupos.filter(g => g.id === ME.grupo_id);
   html += `<div class="cartao"><h3 style="margin-top:0">${souAdmin ? 'Grupos' : 'Meu grupo'}</h3>` +
     (meus.map(g => `<div style="margin-bottom:10px">
-      • <b>${esc(g.nome)}</b> <code style="background:var(--fundo2,#f2f2f2);padding:1px 6px;border-radius:4px">${esc(g.codigo)}</code>
+      • <b>${esc(g.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700">${esc(g.codigo)}</code>
       — ${g.efetivo} no efetivo · ${g.contas} conta(s)
       ${g.subordinados && g.subordinados.length ? `<br><small style="color:var(--tx2);margin-left:14px">subordinados: ${g.subordinados.map(esc).join(', ')}</small>` : ''}
       ${g.superiores && g.superiores.length ? `<br><small style="color:var(--tx2);margin-left:14px">superior: ${g.superiores.map(esc).join(', ')}</small>` : ''}
