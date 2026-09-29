@@ -549,7 +549,6 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true, "gravado": true, "conferencia_id": confID})
 }
 
-
 // hEfetivoAtual (v9.15, ordem Tenente 29/09): estado ATUAL de cada militar = estado na ÚLTIMA
 // conferência em que foi lançado (não agregação de período). Usado no dashboard de relatórios
 // com alertas de frescor: >1 dia = amarelo; >1 semana = vermelho (calculado no cliente pela data).
@@ -1028,6 +1027,8 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.st.Auditoria(&u.ID, "exportar", "conferencia", &id, "pdf", ipDe(r))
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("inline; filename=SCI_conferencia_%s_%d.pdf", data, id))
@@ -1355,6 +1356,9 @@ func (a *App) hPresencaPeriodo(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
 		return
 	}
+	// v9.15.2: relatório sempre fresco — sem cache HTTP
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	jsonOK(w, a.montarBundle(de, ate, esc))
 }
 

@@ -55,7 +55,7 @@
       <td>${esc(c.criado_por || '—')}</td>
       <td class="num">${c.lancamentos}</td>
       <td>${c.status === 'fechada'
-        ? `<a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>`
+        ? `<a href="/api/conferencia/${c.id}/relatorio.pdf?t=${Date.now()}" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>`
         : `<button class="primario" data-abrir="${c.id}" style="min-height:36px;padding:8px 12px">Abrir</button>`}</td></tr>`;
     const porData = (a, b) => String(b.data || '').localeCompare(String(a.data || '')) || b.id - a.id;
     const abertas = lista.filter(c => c.status === 'aberta').sort(porData);
@@ -170,15 +170,23 @@
       </div>`;
     const contSpan = () => `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
     const atualizar = () => {
-      const barra = document.querySelector('.barra-fixa');
-      if (!barra) return;
-      barra.innerHTML = `<input id="busca" placeholder="buscar nome…" value="${esc(f)}">` +
-        `<span class="cont">${contSpan()}</span>` +
-        `<button class="perigo" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>`;
-      ligarBarra();
+      // v9.15.1: NÃO recriar a barra (perdia foco a cada dígito) — só o contador muda
+      const cont = document.querySelector('.barra-fixa .cont');
+      if (cont) cont.innerHTML = contSpan();
     };
+    let buscaTimer = null;
     const ligarBarra = () => {
-      $('#busca').oninput = ev => confRender(ev.target.value);
+      const inp = $('#busca');
+      if (inp) inp.oninput = ev => {
+        const v = ev.target.value;
+        clearTimeout(buscaTimer);
+        buscaTimer = setTimeout(() => {
+          const pos = inp.selectionStart; // preserva cursor
+          confRender(v);
+          const inp2 = $('#busca');
+          if (inp2) { inp2.focus(); inp2.setSelectionRange(pos, pos); }
+        }, 250);
+      };
       $('#btFecharBarra').onclick = confFechar;
     };
     atualizar();
@@ -342,7 +350,7 @@
        <td class="num">${f.presentes}</td><td class="num">${f.faltas}</td></tr>`).join('');
     return `${res}<div class="cartao"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
       <h3 style="margin:0">${titulo} — ${b.convocacoes} conferências no período</h3>
-      <a href="/api/relatorio.pdf?de=${encodeURIComponent(b.De)}&ate=${encodeURIComponent(b.Ate)}${grupoQ}" target="_blank"><button class="primario">ABRIR PDF</button></a></div>
+      <a href="/api/relatorio.pdf?de=${encodeURIComponent(b.De)}&ate=${encodeURIComponent(b.Ate)}${grupoQ}&t=${Date.now()}" target="_blank"><button class="primario">ABRIR PDF</button></a></div>
       ${forms ? `<div class="rolagem" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Tipo</th><th>Hora</th><th>Status</th><th class="num">Presentes</th><th class="num">Faltas</th></tr></thead><tbody>${forms}</tbody></table></div>` : ''}
       <div class="rolagem"><table><thead><tr><th class="num">Antig.</th><th>Nome</th><th>Função</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
       <th class="num">Falta</th><th class="num">Just.</th></tr></thead><tbody>${linhas || '<tr><td colspan="9"><span class="vazio">sem efetivo ativo no escopo</span></td></tr>'}</tbody></table></div></div>`;

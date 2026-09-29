@@ -371,7 +371,7 @@
        <td class="num">#${p.id}</td><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
        <td>${esc(p.setor)}${p.setor_id ? ` <small style="color:var(--tx2)">#${p.setor_id}</small>` : ''}</td>
        <td>${esc(p.funcao)}${p.funcao_id ? ` <small style="color:var(--tx2)">#${p.funcao_id}</small>` : ''}</td>
-       <td>${pill(p.status === 'ativo' ? 'presente' : 'justificada')} ${p.status}</td>
+       <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
        <td><button class="acao-linha" data-edit="${p.id}">editar</button>
        <button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button></td></tr>`).join('');
 
@@ -392,7 +392,7 @@
             <button class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
             <button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>
             <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span></div>
-          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Status</th><th></th></tr></thead>
+          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Ativo</th><th></th></tr></thead>
           <tbody id="tabP">${linhasP || '<tr><td colspan="8"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
       </div>
       <div id="gerTags" class="${abaGer === 'tags' ? '' : 'oculto'}">
