@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.2 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.3 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -84,10 +84,12 @@ function renderHoje(filtro = '') {
           ? `<select class="sel-destino" data-id="${p.id}"><option value="">destino…</option>` +
             DESTINOS.map(dx => `<option value="${dx.id}" ${e.dest[p.id] == dx.id ? 'selected' : ''}>${esc(dx.nome)}</option>`).join('') + '</select>'
           : '';
+        const optSit = s => `<option value="${s}" ${sit === s ? 'selected' : ''}>${{presente:'Presente', atraso:'Atraso', falta:'Falta', justificada:'Justificada'}[s]}</option>`;
         return `<div class="pessoa ${e.verif.has(p.id) ? 'verificado' : ''}" data-id="${p.id}">
           <input type="checkbox" class="chk" data-id="${p.id}" ${e.verif.has(p.id) ? 'checked' : ''} title="verifiquei esta pessoa">
-          <span class="nome clicavel"><b>${esc(p.nome_guerra)}</b><small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${e.obs[p.id] ? ' · 📝' : ''}${e.temComentario[p.id] ? ' · 💬' : ''}</small></span>
-          ${sel}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button>${pill(sit)}</div>`;
+          <span class="nome"><b>${esc(p.nome_guerra)}</b><small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${e.obs[p.id] ? ' · 📝' : ''}${e.temComentario[p.id] ? ' · 💬' : ''}</small></span>
+          <select class="sel-situacao" data-id="${p.id}" title="situação">${optSit('presente')}${optSit('atraso')}${optSit('falta')}${optSit('justificada')}</select>
+          ${sel}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
       }).join('') + '</div></div>';
   }
   const banner = semC
@@ -96,7 +98,7 @@ function renderHoje(filtro = '') {
          <div class="campo" style="margin:0"><label>Local (opcional)</label><input id="cLocal" placeholder="ex.: Praça" style="max-width:160px"></div>
          <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div></div>`
     : `<div class="cartao" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-       <span>${pill('aberta')} <b>Conferência de pessoal</b> · aberta em ${e.c.data} às ${fmtHora(e.c.criada_em)} · toque no militar p/ ciclar, ✅ para verificar</span>
+       <span>${pill('aberta')} <b>Conferência de pessoal</b> · aberta em ${e.c.data} às ${fmtHora(e.c.criada_em)} · situação pelo menu de cada militar, ✅ para verificar</span>
        <button class="perigo" id="btFechar">✕ Fechar conferência</button></div>`;
   $('#app').innerHTML = `<h2>Conferência de pessoal</h2>${banner}
     <div class="barra-fixa">
@@ -132,11 +134,12 @@ function renderHoje(filtro = '') {
     $('#btFecharBarra').onclick = fecharConferencia;
   };
   atualizar();
-  document.querySelectorAll('.pessoa .clicavel, .pessoa .pill').forEach(el => el.onclick = ev => {
-    const card = ev.target.closest('.pessoa');
-    const id = +card.dataset.id;
+  // v9.10.3: situação por DROP-DOWN (não cíclico) — mudar para falta/justificada abre modal
+  document.querySelectorAll('.sel-situacao').forEach(s => s.onchange = () => {
+    const id = +s.dataset.id;
+    const novo = s.value;
     const atual = ESTADO.est[id] || 'presente';
-    const novo = CICLO[(CICLO.indexOf(atual) + 1) % CICLO.length];
+    if (novo === atual) return;
     ESTADO.est[id] = novo;
     ESTADO.verif.delete(id);
     if (novo === 'falta' || novo === 'justificada') modalLancamento(id, novo, () => renderHoje($('#busca').value));
