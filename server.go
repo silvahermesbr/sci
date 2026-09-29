@@ -445,7 +445,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		estados := map[int64]map[string]any{}
 		rows, e := a.st.db.Query(
-			`SELECT pessoa_id, situacao, destino_id, COALESCE(observacao,'')
+			`SELECT pessoa_id, situacao, destino_id, COALESCE(observacao,''), verificado
 			 FROM presencas WHERE conferencia_id = ?`, f.ID)
 		if e == nil {
 			for rows.Next() {
@@ -453,8 +453,10 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 				var sit string
 				var did *int64
 				var obs string
-				if rows.Scan(&pid, &sit, &did, &obs) == nil {
-					estados[pid] = map[string]any{"situacao": sit, "destino_id": did, "observacao": obs}
+				var verificado int
+				if rows.Scan(&pid, &sit, &did, &obs, &verificado) == nil {
+					estados[pid] = map[string]any{"situacao": sit, "destino_id": did, "observacao": obs,
+						"verificado": verificado == 1}
 				}
 			}
 			rows.Close()
@@ -484,6 +486,7 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		Situacao   string  `json:"situacao"`
 		DestinoID  *int64  `json:"destino_id"`
 		Observacao *string `json:"observacao"`
+		Verificado *bool   `json:"verificado"`
 	}
 	if err := decodificar(r, &req); err != nil || req.PessoaID == 0 {
 		jsonErro(w, http.StatusBadRequest, "pessoa_id obrigatório")
@@ -532,17 +535,23 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "justificada exige destino")
 		return
 	}
+	// v9.16.4: ✅ de verificação persiste separado (carry over inicia zerado)
+	verificadoFlag := 0
+	if req.Verificado != nil && *req.Verificado {
+		verificadoFlag = 1
+	}
 	// v9.15.3: marcado_em em UTC REAL (exibição converte p/ Brasília)
 	marcadoEm := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	_, err = a.st.db.Exec(`INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+	_, err = a.st.db.Exec(`INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em, verificado)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(conferencia_id, pessoa_id) DO UPDATE SET
 		  situacao = excluded.situacao,
 		  destino_id = excluded.destino_id,
 		  observacao = excluded.observacao,
 		  marcado_por = excluded.marcado_por,
-		  marcado_em = excluded.marcado_em`,
-		confID, req.PessoaID, req.Situacao, req.DestinoID, req.Observacao, u.ID, marcadoEm)
+		  marcado_em = excluded.marcado_em,
+		  verificado = excluded.verificado`,
+		confID, req.PessoaID, req.Situacao, req.DestinoID, req.Observacao, u.ID, marcadoEm, verificadoFlag)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -686,8 +695,8 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	//   nunca conferido            → nada a herdar (default 'presente')
 	// Herda APENAS pessoas ativas do grupo.
 	_, _ = a.st.db.Exec(`INSERT INTO presencas
-		(conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em)
-		SELECT ?, pr.pessoa_id, pr.situacao, pr.destino_id, pr.observacao, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		(conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em, verificado)
+		SELECT ?, pr.pessoa_id, pr.situacao, pr.destino_id, pr.observacao, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 0
 		FROM presencas pr
 		JOIN conferencias c ON c.id = pr.conferencia_id AND c.status = 'fechada'
 		JOIN (SELECT pessoa_id, conferencia_id FROM (

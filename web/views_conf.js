@@ -26,9 +26,9 @@
   /* --- salvamento parcial (v9.13): grava o estado de 1 militar na conferência aberta --- */
   let CONF_ID = null; // conferência aberta sendo editada (várias simultâneas v9.14.2)
   let marcaTimer = {}, marcaPend = {};
-  const marcarParcial = (pid, situacao, destinoId, observacao) => {
+  const marcarParcial = (pid, situacao, destinoId, observacao, verificado) => {
     if (!C.c) return;
-    marcaPend[pid] = { situacao: situacao || null, destino_id: destinoId ?? null, observacao: observacao ?? null };
+    marcaPend[pid] = { situacao: situacao || null, destino_id: destinoId ?? null, observacao: observacao ?? null, verificado: !!verificado };
     clearTimeout(marcaTimer[pid]);
     marcaTimer[pid] = setTimeout(async () => {
       const corpo = marcaPend[pid];
@@ -107,7 +107,9 @@
         est[pid] = v.situacao;
         dest[pid] = v.destino_id;
         if (v.observacao) obs[pid] = v.observacao;
-        verif.add(+pid);
+        // v9.16.4: checkbox só vem marcado se o operador JÁ verificou NESTA conferência
+        // (carry over grava verificado=0 → checkbox começa zerado)
+        if (v.verificado) verif.add(+pid);
       }
     }
     C = { c: d.conferencia, pessoas: d.pessoas || [], destinos, est, dest, obs, verif, temComentario };
@@ -199,15 +201,15 @@
       C.est[id] = novo;
       C.verif.add(id);
       if (novo === 'falta' || novo === 'justificada') confModalLancamento(id, novo, () => confRender($('#busca') ? $('#busca').value : ''));
-      else { marcarParcial(id, novo, C.dest[id] ?? null, C.obs[id] ?? null); confRender($('#busca').value); }
+      else { marcarParcial(id, novo, C.dest[id] ?? null, C.obs[id] ?? null, true); confRender($('#busca').value); }
     });
     document.querySelectorAll('.pessoa .chk').forEach(ch => ch.onchange = () => {
       const id = +ch.dataset.id;
       if (ch.checked) C.verif.add(id); else C.verif.delete(id);
       ch.closest('.pessoa').classList.toggle('verificado', ch.checked);
       atualizar();
-      // salvamento parcial: check grava o estado atual (ou presente) daquele nome
-      if (ch.checked) marcarParcial(id, C.est[id] || 'presente', C.dest[id] ?? null, C.obs[id] ?? null);
+      // salvamento parcial: check grava o estado atual (ou presente) daquele nome + verificado
+      if (ch.checked) marcarParcial(id, C.est[id] || 'presente', C.dest[id] ?? null, C.obs[id] ?? null, true);
     });
     document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => { C.dest[+s.dataset.id] = +s.value || null; });
     document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => { ev.stopPropagation(); confModalComentarios(+b.dataset.id); });
@@ -280,7 +282,7 @@
       if (sit === 'justificada' && !destino) { toast('Justificada exige destino', 'erro'); return; }
       C.dest[id] = destino; C.obs[id] = obs;
       C.verif.add(id);
-      marcarParcial(id, sit, destino, obs); // salvamento parcial imediato
+      marcarParcial(id, sit, destino, obs, true); // salvamento parcial imediato (já verificado)
       fechar();
       if (aoSalvar) aoSalvar();
     };

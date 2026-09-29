@@ -74,6 +74,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV10(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV11(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -544,6 +547,25 @@ func (s *Store) migrarV10() error {
 	return s.marcarVersao(10)
 }
 
+// migrarV11 (v9.16.4, ordem Tenente 29/09): checkbox de VERIFICAÇÃO passa a persistir
+// separado da situação. Carry over insere verificado=0 (checkbox começa zerado); o ✅ do
+// operador grava verificado=1 via /marcar.
+func (s *Store) migrarV11() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 11`).Scan(&v)
+	if v == 11 {
+		return nil
+	}
+	var col int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('presencas') WHERE name='verificado'`).Scan(&col)
+	if col == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE presencas ADD COLUMN verificado INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return err
+		}
+	}
+	return s.marcarVersao(11)
+}
+
 // gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos
 // 32 símbolos legíveis) — revisão de leitura humana em campo.
 func gerarCodigoGrupo() string {
@@ -720,7 +742,10 @@ func (s *Store) ReabrirComArquivo(novoArquivo string) error {
 	if err := s.migrarV9(); err != nil {
 		return err
 	}
-	return s.migrarV10()
+	if err := s.migrarV10(); err != nil {
+		return err
+	}
+	return s.migrarV11()
 }
 
 // migrarV6: papéis limpos — 'usuario' passa a se chamar 'operador' (v9.3).
