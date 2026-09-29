@@ -690,10 +690,11 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		SELECT ?, pr.pessoa_id, pr.situacao, pr.destino_id, pr.observacao, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		FROM presencas pr
 		JOIN conferencias c ON c.id = pr.conferencia_id AND c.status = 'fechada'
-		JOIN (SELECT pessoa_id, MAX(data || '#' || conferencia_id) AS ultima
+		JOIN (SELECT pessoa_id, conferencia_id FROM (
+		      SELECT p2.pessoa_id, p2.conferencia_id,
+		             ROW_NUMBER() OVER (PARTITION BY p2.pessoa_id ORDER BY c2.data DESC, c2.id DESC) rn
 		      FROM presencas p2 JOIN conferencias c2 ON c2.id = p2.conferencia_id AND c2.status='fechada'
-		      GROUP BY pessoa_id) u2 ON u2.pessoa_id = pr.pessoa_id
-		     AND u2.ultima = c.data || '#' || c.id
+		      ) WHERE rn = 1) u2 ON u2.pessoa_id = pr.pessoa_id AND u2.conferencia_id = c.id
 		WHERE julianday(?) - julianday(c.data) <= 1
 		  AND pr.pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ? AND status = 'ativo')`,
 		id, u.ID, data, grupoID) // herança best-effort: falha não impede a conferência
