@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.4 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.5 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -165,9 +165,10 @@ async function carregarListaConf() {
   try {
     const lista = await api('/api/conferencia/lista');
     const linha = c => `
-      <tr data-cid="${c.id}"><td class="num"><b>#${c.id}</b></td><td><b>${c.data}</b>${c.local ? ` <small style="color:var(--tx2)">${esc(c.local)}</small>` : ''}</td>
-      <td>${pill(c.status === 'fechada' ? 'presente' : 'atraso')} ${c.status}</td>
+      <tr data-cid="${c.id}"><td class="num"><b>#${c.id}</b></td>
       <td>${c.status === 'aberta' ? fmtHora(c.criada_em) : fmtHora(c.fechada_em)}</td>
+      <td><b>${c.data}</b></td>
+      <td>${esc(c.grupo || '—')}</td>
       <td>${esc(c.criado_por || '—')}</td>
       <td class="num">${c.lancamentos}</td>
       <td>${c.status === 'fechada'
@@ -179,7 +180,7 @@ async function carregarListaConf() {
     const tabela = (titulo, itens) => `
       <h3 style="margin:14px 0 8px">${titulo} (${itens.length})</h3>
       <div class="cartao"><div class="rolagem"><table>
-      <thead><tr><th class="num">ID</th><th>Data</th><th>Status</th><th>Criada às / Fechada às</th><th>Operador</th><th class="num">Lanç.</th><th>Relatório</th></tr></thead>
+      <thead><tr><th class="num">ID</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th class="num">Lanç.</th><th>Relatório</th></tr></thead>
       <tbody>${itens.map(linha).join('') || '<tr><td colspan="7"><span class="vazio">nenhuma</span></td></tr>'}</tbody></table></div></div>`;
     alvo.innerHTML = `<h2 style="margin-top:22px">Histórico de conferências</h2>
       <div class="cartao" style="margin-bottom:10px"><div class="campo" style="margin:0"><label>Pesquisar por ID da conferência</label><input id="fConfID" placeholder="ex.: 3"></div></div>` +
