@@ -1,6 +1,10 @@
 # HANDOFF — SCI Frontend Redesign (para a Seção de Frontend)
 
-> **Missão:** redesenhar o frontend do SCI (protótipo funcional → produto profissional).
+> **STATUS: CONCLUÍDO (29/09/2026, commit d70452a).** O redesign foi implementado e está em
+> produção (v200: core.js + views_conf.js + views_gestao.js + style.css novo). Este documento
+> permanece como referência de contratos/telas/doutrina para manutenção futura.
+
+> **Missão (original):** redesenhar o frontend do SCI (protótipo funcional → produto profissional).
 > **Regra de OURO:** o backend (Go) e a API **NÃO mudam**. Todo o trabalho é em `web/`.
 > **Estado do código no momento deste handoff:** commit `a413857`, tag `v9.11.2`, produção
 > em `10.10.0.5:10003` (v9.11.2, `app.js?v=109`). Banco RESETADO e zerado (fresh start).
