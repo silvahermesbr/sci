@@ -166,6 +166,7 @@ async function carregarListaConf() {
     const lista = await api('/api/conferencia/lista');
     const linha = c => `
       <tr data-cid="${c.id}"><td class="num"><b>#${c.id}</b></td>
+      <td>${c.status === 'aberta' ? 'Aberta' : 'Fechada'}</td>
       <td>${c.status === 'aberta' ? fmtHora(c.criada_em) : fmtHora(c.fechada_em)}</td>
       <td><b>${c.data}</b></td>
       <td>${esc(c.grupo || '—')}</td>
@@ -180,8 +181,8 @@ async function carregarListaConf() {
     const tabela = (titulo, itens) => `
       <h3 style="margin:14px 0 8px">${titulo} (${itens.length})</h3>
       <div class="cartao"><div class="rolagem"><table>
-      <thead><tr><th class="num">ID</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th class="num">Lanç.</th><th>Relatório</th></tr></thead>
-      <tbody>${itens.map(linha).join('') || '<tr><td colspan="7"><span class="vazio">nenhuma</span></td></tr>'}</tbody></table></div></div>`;
+      <thead><tr><th class="num">ID</th><th>Status</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th class="num">Lanç.</th><th>Relatório</th></tr></thead>
+      <tbody>${itens.map(linha).join('') || '<tr><td colspan="8"><span class="vazio">nenhuma</span></td></tr>'}</tbody></table></div></div>`;
     alvo.innerHTML = `<h2 style="margin-top:22px">Histórico de conferências</h2>
       <div class="cartao" style="margin-bottom:10px"><div class="campo" style="margin:0"><label>Pesquisar por ID da conferência</label><input id="fConfID" placeholder="ex.: 3"></div></div>` +
       tabela('Abertas', abertas) + tabela('Fechadas', fechadas) +
@@ -642,9 +643,8 @@ function renderRelatorio(b, titulo) {
   const linhas = (b.pessoas || []).map(p =>
     `<tr><td class="num">#${p.antiguidade ?? ''}</td><td><b>${esc(p.nome_guerra)}</b></td>
      <td>${esc(p.funcao || '—')}${p.funcao_id ? ` <small style="color:#000">#${p.funcao_id}</small>` : ''}</td>
-     <td>${esc(p.setor)}</td><td class="num">${p.presencas}</td>
-     <td class="num">${p.atrasos}</td><td class="num">${p.faltas}</td><td class="num">${p.justificadas}</td>
-     <td class="num">${pill(p.pct >= 90 ? 'presente' : p.pct >= 70 ? 'atraso' : 'falta')} ${p.pct}%</td></tr>`).join('');
+     <td>${esc(p.setor)}</td><td>${esc(p.grupo || '—')}</td><td class="num">${p.presencas}</td>
+     <td class="num">${p.atrasos}</td><td class="num">${p.faltas}</td><td class="num">${p.justificadas}</td></tr>`).join('');
   const forms = (b.formaturas || []).map(f =>
     `<tr><td>${f.data}</td><td>${esc(f.tipo)}</td><td>${esc(f.hora || '—')}</td><td>${pill(f.status === 'fechada' ? 'presente' : 'atraso')} ${f.status}</td>
      <td class="num">${f.presentes}</td><td class="num">${f.faltas}</td></tr>`).join('');
@@ -652,8 +652,8 @@ function renderRelatorio(b, titulo) {
     <h3 style="margin:0">${titulo} — ${b.convocacoes} conferências no período</h3>
     <a href="/api/relatorio.pdf?de=${b.De}&ate=${b.Ate}${$('#fGrupo') && $('#fGrupo').value ? `&grupo=${$('#fGrupo').value}` : ''}" target="_blank"><button class="primario">ABRIR PDF</button></a></div>
     ${forms ? `<div class="rolagem" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Tipo</th><th>Hora</th><th>Status</th><th class="num">Presentes</th><th class="num">Faltas</th></tr></thead><tbody>${forms}</tbody></table></div>` : ''}
-    <div class="rolagem"><table><thead><tr><th class="num">Antig.</th><th>Nome</th><th>Função</th><th>Setor</th><th class="num">Pres.</th><th class="num">Atraso</th>
-    <th class="num">Falta</th><th class="num">Just.</th><th class="num">%</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
+    <div class="rolagem"><table><thead><tr><th class="num">Antig.</th><th>Nome</th><th>Função</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
+    <th class="num">Falta</th><th class="num">Just.</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
 }
 async function viewRelatorios() {
   navAtiva('#/relatorios');

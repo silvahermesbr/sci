@@ -951,6 +951,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	ftP2 := a.filtroArvore(escopo, "f2")
 	// v9.7 (ordem Tenente): relatórios organizados por ANTIGUIDADE DE FUNÇÃO
 	// (funcao_id menor = mais antigo), depois alfabetica. ID da função visível no relatório.
+	// v9.11.1 (ordem Tenente 29/09): efetivo do relatório em ORDEM ALFABÉTICA (por hora).
 	rows, err = a.st.db.Query(`
 		SELECT p.id, p.nome_guerra, COALESCE(s.nome,'Sem setor'),
 		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0),
@@ -958,10 +959,12 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		       COALESCE(SUM(pr.situacao='falta'),0),
 		       COALESCE(SUM(pr.situacao='justificada'),0),
 		       COUNT(pr.id), p.funcao_id, COALESCE(fu.nome,''),
-		       ROW_NUMBER() OVER (ORDER BY p.funcao_id IS NULL, p.funcao_id, p.nome_guerra) AS antig
+		       ROW_NUMBER() OVER (ORDER BY p.nome_guerra COLLATE NOCASE) AS antig,
+		       COALESCE(g2.nome,'—')
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN grupos g2 ON g2.id = p.grupo_id
 		/* FIX S4-P1 (verif5): escopo filtrado DENTRO do join de presencas —
 		   pessoa ativa sem lançamento no período permanece na lista (zeros),
 		   e lançamentos fora da árvore não contam (COUNT(pr.id) só vê pr
@@ -981,7 +984,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 			var funcaoID *int64
 			var antig int
 			if rows.Scan(&r.ID, &r.NomeGuerra, &r.Setor, &r.Presencas, &r.Atrasos,
-				&r.Faltas, &r.Justificadas, &r.Lancados, &funcaoID, &r.Funcao, &antig) == nil {
+				&r.Faltas, &r.Justificadas, &r.Lancados, &funcaoID, &r.Funcao, &antig, &r.Grupo) == nil {
 				r.FuncaoID = funcaoID
 				r.Antiguidade = antig
 				if b.Convocacoes > 0 {
@@ -1295,7 +1298,9 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	case "tags":
 		extra = ", cor"
 	}
-	q := `SELECT id, nome` + extra + `, ativo FROM ` + t
+	// v9.11: pai_id em TODOS os catálogos de organização + ordenação hierárquica
+	// (raízes primeiro, cada pai seguido de seus filhos; dentro do nível, alfabético)
+	q := `SELECT id, nome` + extra + `, pai_id, ativo FROM ` + t
 	var args []any
 	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
 		// escopo + HERANÇA (ordem Tenente 28/09 noite): grupo vê os globais (NULL),
@@ -1308,7 +1313,7 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 		}
 		q += ` WHERE grupo_id IS NULL OR grupo_id IN (` + ph + `)`
 	}
-	q += ` ORDER BY ativo DESC, nome`
+	q += ` ORDER BY COALESCE(pai_id, id), pai_id IS NOT NULL, nome`
 	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -1320,7 +1325,7 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	if extra != "" {
 		cols = append(cols, strings.TrimPrefix(extra, ", "))
 	}
-	cols = append(cols, "ativo")
+	cols = append(cols, "pai_id", "ativo")
 	vals := make([]any, len(cols))
 	ptrs := make([]any, len(cols))
 	for i := range vals {

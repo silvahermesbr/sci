@@ -46,6 +46,7 @@ type PessoaStat struct {
 	Funcao       string  `json:"funcao"`
 	FuncaoID     *int64  `json:"funcao_id"`
 	Antiguidade  int     `json:"antiguidade"`
+	Grupo        string  `json:"grupo"`
 	Presencas    int     `json:"presencas"`
 	Atrasos      int     `json:"atrasos"`
 	Faltas       int     `json:"faltas"`
@@ -98,13 +99,17 @@ type Bundle struct {
 }
 
 var (
-	// Preto e branco no A4 (ordem Tenente 28/09) — paleta em tons de cinza
+	// Preto e branco no A4 (ordem Tenente 28/09) — v9.11: tabelas e textos P&B;
+	// gráficos/proporções COLORIDOS (ordem Tenente 29/09).
 	verdeR, verdeG, verdeB = 15, 15, 15
 	verdeClaro             = [3]int{235, 235, 235}
-	corPresente            = [3]int{60, 60, 60}
-	corAtraso              = [3]int{130, 130, 130}
-	corFalta               = [3]int{10, 10, 10}
-	corJust                = [3]int{175, 175, 175}
+	// v9.11 (ordem Tenente 29/09): GRÁFICOS E PROPORÇÕES COLORIDOS; tabelas e textos P&B.
+	corPresente = [3]int{67, 160, 71}  // verde
+	corAtraso   = [3]int{251, 176, 52} // âmbar
+	corFalta    = [3]int{198, 40, 40}  // vermelho
+	corJust     = [3]int{69, 90, 100}  // azul-acinzentado
+	corBarra    = [3]int{27, 94, 32}   // barras de setor/destino (verde-militar)
+	corDestino  = [3]int{21, 101, 192} // barras de destino (azul)
 )
 
 func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
@@ -288,8 +293,8 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 	pdf.SetTextColor(verdeR, verdeG, verdeB)
 	pdf.Cell(0, 6, T("EFETIVO — POR ANTIGUIDADE DE FUNÇÃO (ID menor = mais antigo)"))
 	pdf.Ln(7)
-	cab := []string{"Nome de guerra", "Função (ID)", "Setor", "Pres.", "Atraso", "Falta", "Just.", "%"}
-	larg := []float64{38, 40, 26, 15, 15, 15, 15, 12}
+	cab := []string{"Nome de guerra", "Função (ID)", "Setor", "Grupo", "Pres.", "Atraso", "Falta", "Just."}
+	larg := []float64{36, 38, 26, 28, 15, 15, 15, 15}
 	pdf.SetFont("Helvetica", "B", 8)
 	pdf.SetFillColor(verdeR, verdeG, verdeB)
 	pdf.SetTextColor(255, 255, 255)
@@ -334,10 +339,9 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 			fnCell = "(#" + strconv.FormatInt(*p.FuncaoID, 10) + ")"
 		}
 		vals := []string{
-			T(p.NomeGuerra), fnCell, T(p.Setor),
+			T(p.NomeGuerra), fnCell, T(p.Setor), T(p.Grupo),
 			strconv.Itoa(p.Presencas), strconv.Itoa(p.Atrasos),
 			strconv.Itoa(p.Faltas), strconv.Itoa(p.Justificadas),
-			fmt.Sprintf("%.0f%%", p.Pct),
 		}
 		for i, v := range vals {
 			align := "L"

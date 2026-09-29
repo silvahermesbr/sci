@@ -68,6 +68,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV8(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV9(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -500,6 +503,30 @@ func (s *Store) migrarV8() error {
 	return s.marcarVersao(8)
 }
 
+// migrarV9 (v9.11, ordem Tenente 29/09): HIERARQUIA nos catálogos — pai_id (self-FK)
+// em setores/funcoes/tags/destinos. NULL = raiz. Facilita filtragem/ordenação em
+// queries (herança visual pai→filho dentro do próprio grupo). Idempotente.
+func (s *Store) migrarV9() error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE versao = 9`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	for _, tab := range []string{"setores", "funcoes", "tags", "destinos"} {
+		if _, err := s.db.Exec(`ALTER TABLE ` + tab + ` ADD COLUMN pai_id INTEGER REFERENCES ` + tab + `(id)`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("migração v9 (%s): %w", tab, err)
+			}
+		}
+		if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_` + tab + `_pai ON ` + tab + `(pai_id)`); err != nil {
+			return fmt.Errorf("migração v9 idx (%s): %w", tab, err)
+		}
+	}
+	return s.marcarVersao(9)
+}
+
 // gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos
 // 32 símbolos legíveis) — revisão de leitura humana em campo.
 func gerarCodigoGrupo() string {
@@ -670,7 +697,10 @@ func (s *Store) ReabrirComArquivo(novoArquivo string) error {
 	if err := s.migrarV7(); err != nil {
 		return err
 	}
-	return s.migrarV8()
+	if err := s.migrarV8(); err != nil {
+		return err
+	}
+	return s.migrarV9()
 }
 
 // migrarV6: papéis limpos — 'usuario' passa a se chamar 'operador' (v9.3).
