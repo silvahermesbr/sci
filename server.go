@@ -1387,6 +1387,9 @@ func (a *App) hRelatorioPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.st.Auditoria(&u.ID, "exportar", "relatorio", nil, de+" a "+ate, ipDe(r))
+	// v9.15.2 (ordem Tenente): relatório SEMPRE on demand — proibir cache do navegador
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("inline; filename=SCI_relatorio_%s_%s.pdf", de, ate))
