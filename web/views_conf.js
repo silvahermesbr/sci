@@ -211,6 +211,7 @@
     });
     document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => { C.dest[+s.dataset.id] = +s.value || null; });
     document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => { ev.stopPropagation(); confModalComentarios(+b.dataset.id); });
+    atualizar(); // contador de verificados acompanha o re-render (v9.15.2)
   }
 
 
