@@ -434,21 +434,25 @@ input[type="checkbox"]{width:auto;cursor:pointer;accent-color:var(--verde)}
   /* dropdown de login à direita (já existe; garante ordem) */
   .sessao{order:3}
 
-  /* nav vira DRAWER lateral esquerdo off-canvas */
+  /* nav vira DRAWER lateral esquerdo off-canvas — LISTA vertical com scroll */
   #nav{
     position:fixed;top:0;left:0;bottom:0;z-index:60;
-    display:flex;flex-direction:column;gap:4px;
-    width:min(76vw,300px);padding:70px 14px 20px;
-    background:var(--fundo2,#0e1310);border-right:1px solid var(--borda);
+    display:flex;flex-direction:column;flex-wrap:nowrap;gap:6px;
+    align-items:stretch;justify-content:flex-start;
+    width:min(76vw,300px);padding:74px 12px 20px;
+    background:var(--painel);border-right:1px solid var(--borda);
     transform:translateX(-102%);transition:transform .24s ease;
     box-shadow:0 0 40px rgba(0,0,0,.5);
+    overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
   }
   #nav.aberta{transform:translateX(0)}
   #nav a{
-    padding:13px 14px;border-radius:9px;font-size:13.5px;letter-spacing:.1em;
-    border:1px solid transparent;
+    display:block;width:100%;box-sizing:border-box;
+    padding:14px 16px;margin:0;border-radius:9px;font-size:13.5px;letter-spacing:.1em;
+    border:1px solid transparent;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
   #nav a.ativo{background:rgba(87,161,115,.12);border-color:rgba(87,161,115,.35)}
+  #nav a.ativo::after{display:none}
 
   /* máscara do drawer */
   #burgMask{
