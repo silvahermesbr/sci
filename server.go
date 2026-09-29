@@ -175,15 +175,17 @@ func (a *App) rotas() {
 	m.Handle("POST /api/logout", a.auth(false, a.hLogout))
 	m.Handle("POST /api/senha", a.auth(false, a.hTrocarSenha))
 
-	m.Handle("GET /api/conferencia/hoje", a.auth(false, a.hConferenciaHoje))
-	m.Handle("POST /api/conferencia/iniciar", a.auth(false, a.hConferenciaIniciar))
-	m.Handle("POST /api/conferencia/fechar", a.auth(false, a.hConferenciaFechar))
-	m.Handle("GET /api/conferencia/lista", a.auth(false, a.hConferenciaList))
-	m.Handle("GET /api/conferencia/{id}", a.auth(false, a.hConferenciaGet))
-	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.auth(false, a.hConferenciaPDF))
+	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria)
+	confAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
+	m.Handle("GET /api/conferencia/hoje", confAuth(a.hConferenciaHoje))
+	m.Handle("POST /api/conferencia/iniciar", confAuth(a.hConferenciaIniciar))
+	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
+	m.Handle("GET /api/conferencia/lista", confAuth(a.hConferenciaList))
+	m.Handle("GET /api/conferencia/{id}", confAuth(a.hConferenciaGet))
+	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", confAuth(a.hConferenciaPDF))
 
-	m.Handle("GET /api/presenca/periodo", a.auth(false, a.hPresencaPeriodo))
-	m.Handle("GET /api/conferencias", a.auth(false, a.hConferenciaList))
+	m.Handle("GET /api/presenca/periodo", confAuth(a.hPresencaPeriodo))
+	m.Handle("GET /api/conferencias", confAuth(a.hConferenciaList))
 
 	m.Handle("GET /api/catalogo/{t}", a.auth(false, a.hCatalogoList))
 	m.Handle("POST /api/catalogo/{t}", a.auth(false, a.hCatalogoAdd))
@@ -196,22 +198,28 @@ func (a *App) rotas() {
 	m.Handle("GET /api/usuarios", a.auth(true, a.hUsuariosList))
 	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
 	m.Handle("POST /api/usuarios", a.auth(false, a.hUsuariosAdd))
+	m.Handle("DELETE /api/usuarios/{id}", a.auth(true, a.hUsuarioExcluir)) // R6
 	m.Handle("POST /api/usuarios/{id}/senha", a.auth(true, a.hUsuarioSenha))
 	m.Handle("GET /api/grupos", a.auth(false, a.hGruposList))
-	m.Handle("POST /api/grupos", a.auth(true, a.hGruposAdd))
+	m.Handle("POST /api/grupos", a.auth(true, a.hGruposAdd)) // R7: exige gerente no ato
+	m.Handle("GET /api/grupos/{id}/gerente", a.auth(true, a.hGrupoGerenteGet))
+	m.Handle("POST /api/grupos/{id}/trocar-gerente", a.auth(true, a.hGrupoTrocarGerente))
+	m.Handle("POST /api/admin/grupos/vinculo", a.auth(true, a.hAdminVinculoSet))   // R8
+	m.Handle("DELETE /api/admin/grupos/vinculo", a.auth(true, a.hAdminVinculoRem)) // R8
 	m.Handle("GET /api/vinculos", a.auth(false, a.hVinculoList))
-	m.Handle("POST /api/vinculos", a.auth(false, a.hVinculoAdd))
+	m.Handle("POST /api/vinculos", a.auth(false, a.hVinculoAdd)) // legado: fora da UI (R12)
 	m.Handle("GET /api/perfil", a.auth(false, a.hPerfilGet))
 	m.Handle("PATCH /api/perfil", a.auth(false, a.hPerfilSet))
 	m.Handle("PATCH /api/usuarios/{id}/mover", a.auth(true, a.hMoverConta))
-	m.Handle("POST /api/comentarios", a.auth(false, a.hComentariosAdd))
-	m.Handle("GET /api/comentarios/{id}", a.auth(false, a.hComentariosList))
+	m.Handle("POST /api/comentarios", confAuth(a.hComentariosAdd))
+	m.Handle("GET /api/comentarios/{id}", confAuth(a.hComentariosList))
 
 	m.Handle("GET /api/relatorio", a.auth(false, a.hRelatorioJSON))
 	m.Handle("GET /api/relatorio.pdf", a.auth(false, a.hRelatorioPDF))
 	m.Handle("GET /api/export/{t}", a.auth(false, a.hExportCSV))
 
 	m.Handle("POST /api/backup", a.auth(true, a.hBackup))
+	m.Handle("POST /api/backup/importar", a.auth(true, a.hBackupImportar)) // R9
 	m.Handle("GET /api/backup/download", a.auth(true, a.hBackupDownload))
 
 	m.Handle("GET /", http.HandlerFunc(a.hSPA))
@@ -1316,14 +1324,15 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nome := strings.TrimSpace(req.Nome)
-	// porteira (28/09 noite): SOMENTE admin e gerente gerenciam catálogos
-	if u := usuarioDoCtx(r); u == nil || u.Papel == "usuario" {
-		jsonErro(w, http.StatusForbidden, "operador não gerencia catálogos")
+	// R4 (v9.3): gestão de catálogos é EXCLUSIVA do GERENTE (operador usa, não gerencia)
+	u := usuarioDoCtx(r)
+	if u == nil || u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
 		return
 	}
-	// catálogo dono: gerente cria PARA O SEU grupo; admin cria global (NULL)
+	// catálogo dono: sempre o grupo do gerente (v9.3 — admin não gerencia catálogo)
 	var grupoID any
-	if u := usuarioDoCtx(r); u != nil && u.Papel == "gerente" && u.GrupoID != nil {
+	if u.GrupoID != nil {
 		grupoID = *u.GrupoID
 	}
 	var q string
@@ -1348,7 +1357,6 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
-	u := usuarioDoCtx(r)
 	a.st.Auditoria(&u.ID, "criar", t, &id, nome, ipDe(r))
 	jsonOK(w, map[string]any{"id": id, "nome": nome})
 }
@@ -1365,10 +1373,9 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	// porteira (28/09 noite): operador comum não mexe em catálogo;
-	// gerente só em item DO SEU grupo (globais e de outros grupos: só o admin)
-	if u.Papel == "usuario" {
-		jsonErro(w, http.StatusForbidden, "operador não gerencia catálogos")
+	// R4 (v9.3): gestão de catálogos é EXCLUSIVA do GERENTE
+	if u == nil || u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
 		return
 	}
 	if esc := escopoDoUsuario(u); esc > 0 {
@@ -1798,35 +1805,7 @@ func (a *App) hMoverConta(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
-func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Nome string `json:"nome"`
-	}
-	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
-		jsonErro(w, http.StatusBadRequest, "nome do grupo obrigatório")
-		return
-	}
-	cod := gerarCodigoGrupo()
-	var tenta int
-	for tenta = 0; tenta < 8; tenta++ {
-		var existe int
-		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE codigo = ?`, cod).Scan(&existe)
-		if existe == 0 {
-			break
-		}
-		cod = gerarCodigoGrupo()
-	}
-	res, err := a.st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES (?,?)`,
-		strings.TrimSpace(req.Nome), cod)
-	if err != nil {
-		jsonErro(w, http.StatusBadRequest, "não criado (duplicado?): "+err.Error())
-		return
-	}
-	id, _ := res.LastInsertId()
-	u := usuarioDoCtx(r)
-	a.st.Auditoria(&u.ID, "criar", "grupos", &id, req.Nome+" ["+cod+"]", ipDe(r))
-	jsonOK(w, map[string]any{"id": id, "codigo": cod})
-}
+// hGruposAdd movido para a seção v9.3 (R7: exige gerente no ato).
 
 // gruposComCodigo: lista com código + vínculos de hierarquia (nomes resolvidos).
 func (a *App) gruposComCodigo(escopo int64) []map[string]any {
@@ -1983,21 +1962,21 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	papel := strings.ToLower(strings.TrimSpace(req.Papel))
 	switch papel {
-	case "admin", "gerente", "usuario":
+	case "admin", "gerente", "operador":
 	default:
-		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | usuario)")
+		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador)")
 		return
 	}
-	// hierarquia de criação (ordem Tenente 28/09):
+	// hierarquia de criação (v9.3):
 	// - ADMIN é o ÚNICO que cria GERENTE (e admin)
 	// - GERENTE cria OPERADOR, sempre no PRÓPRIO grupo
-	// - OPERADOR COMUM não cria conta nenhuma (revisão TAKEDA)
-	if u.Papel == "usuario" {
+	// - OPERADOR COMUM não cria conta nenhuma
+	if u.Papel == "operador" {
 		jsonErro(w, http.StatusForbidden, "operador não cria contas")
 		return
 	}
 	if u.Papel != "admin" {
-		if papel != "usuario" {
+		if papel != "operador" {
 			jsonErro(w, http.StatusForbidden, "somente o admin cria gerentes")
 			return
 		}
@@ -2061,4 +2040,381 @@ func (a *App) hSPA(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/svg+xml")
 	}
 	_, _ = w.Write(b)
+}
+
+// ---------- v9.3 ----------
+
+// hUsuarioExcluir (R6): admin exclui conta. Regras: nunca a si nem outro admin;
+// gerente só se o grupo não ficar sem gerente; com FK (presencas.marcado_por,
+// conferencias.criado_por, comentarios.operador_id) -> desativa (ativo=0) e responde
+// {desativado:true}; sem FK -> DELETE físico.
+func (a *App) hUsuarioExcluir(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	eu := usuarioDoCtx(r)
+	if id == eu.ID {
+		jsonErro(w, http.StatusBadRequest, "não é possível excluir a própria conta")
+		return
+	}
+	var papel string
+	if err := a.st.db.QueryRow(`SELECT papel FROM usuarios WHERE id = ?`, id).Scan(&papel); err != nil {
+		jsonErro(w, http.StatusNotFound, "usuário inexistente")
+		return
+	}
+	if papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "conta admin não é excluída")
+		return
+	}
+	if papel == "gerente" {
+		var gid int64
+		var temOutro int
+		if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM usuarios WHERE id = ?`, id).Scan(&gid); err != nil {
+			jsonErro(w, http.StatusNotFound, "usuário inexistente")
+			return
+		}
+		if gid == 0 {
+			jsonErro(w, http.StatusConflict, "gerente sem grupo — mova a conta antes de excluir")
+			return
+		}
+		if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE grupo_id = ? AND papel = 'gerente' AND id <> ? AND ativo = 1`,
+			gid, id).Scan(&temOutro); err == nil && temOutro == 0 {
+			jsonErro(w, http.StatusConflict, "excluiria o único gerente do grupo — troque o gerente antes")
+			return
+		}
+	}
+	var marcou, criou, comentou int
+	_ = a.st.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM presencas WHERE marcado_por = ?),
+		(SELECT COUNT(*) FROM conferencias WHERE criado_por = ?),
+		(SELECT COUNT(*) FROM comentarios WHERE operador_id = ?)`, id, id, id).Scan(&marcou, &criou, &comentou)
+	if marcou+criou+comentou > 0 {
+		if _, err := a.st.db.Exec(`UPDATE usuarios SET ativo = 0 WHERE id = ?`, id); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		a.st.Auditoria(&eu.ID, "desativar", "usuarios", &id, "histórico preservado (FK)", ipDe(r))
+		jsonOK(w, map[string]bool{"desativado": true})
+		return
+	}
+	if _, err := a.st.db.Exec(`DELETE FROM usuarios WHERE id = ?`, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&eu.ID, "excluir", "usuarios", &id, "", ipDe(r))
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// hGruposAdd (R7): criar grupo EXIGE gerente no ato (login+senha+nome de guerra).
+// Transacional: grupo + conta gerente nascem juntos — nunca grupo vago.
+func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Nome       string `json:"nome"`
+		Login      string `json:"login"`
+		Senha      string `json:"senha"`
+		NomeGuerra string `json:"nome_guerra"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
+		jsonErro(w, http.StatusBadRequest, "nome do grupo obrigatório")
+		return
+	}
+	if strings.TrimSpace(req.Login) == "" || len(req.Senha) < 8 || strings.TrimSpace(req.NomeGuerra) == "" {
+		jsonErro(w, http.StatusBadRequest, "grupo nasce com gerente: login, senha (mín. 8) e nome de guerra obrigatórios")
+		return
+	}
+	req.Login = strings.ToLower(strings.TrimSpace(req.Login))
+	var existeLogin int
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE login = ?`, req.Login).Scan(&existeLogin)
+	if existeLogin > 0 {
+		jsonErro(w, http.StatusBadRequest, "login já existe")
+		return
+	}
+	hash, err := hashSenha(req.Senha)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cod := gerarCodigoGrupo()
+	for tenta := 0; tenta < 8; tenta++ {
+		var existe int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE codigo = ?`, cod).Scan(&existe)
+		if existe == 0 {
+			break
+		}
+		cod = gerarCodigoGrupo()
+	}
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`INSERT INTO grupos (nome, codigo) VALUES (?,?)`, strings.TrimSpace(req.Nome), cod)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "grupo não criado (duplicado?): "+err.Error())
+		return
+	}
+	gid, _ := res.LastInsertId()
+	res2, err := tx.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, nome_guerra, nome_completo)
+		VALUES (?,?,?,?,?,?)`,
+		req.Login, hash, "gerente", gid, strings.TrimSpace(req.NomeGuerra), strings.TrimSpace(req.NomeGuerra))
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "gerente não criado (login duplicado?): "+err.Error())
+		return
+	}
+	uid, _ := res2.LastInsertId()
+	if err = tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	u := usuarioDoCtx(r)
+	a.st.Auditoria(&u.ID, "criar", "grupos", &gid, req.Nome+" ["+cod+"] gerente="+req.Login, ipDe(r))
+	jsonOK(w, map[string]any{"id": gid, "codigo": cod, "gerente_id": uid})
+}
+
+// hGrupoGerenteGet: nome do gerente do grupo (painel admin).
+func (a *App) hGrupoGerenteGet(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var login string
+	var tem int
+	err = a.st.db.QueryRow(`SELECT login, 1 FROM usuarios WHERE grupo_id = ? AND papel = 'gerente' AND ativo = 1 LIMIT 1`, id).Scan(&login, &tem)
+	if err != nil {
+		jsonOK(w, map[string]any{"gerente": ""})
+		return
+	}
+	jsonOK(w, map[string]any{"gerente": login})
+}
+
+// hGrupoTrocarGerente (R7): promove uma conta do grupo a gerente; o gerente
+// anterior vira operador. Garante exatamente 1 gerente ativo por grupo.
+func (a *App) hGrupoTrocarGerente(w http.ResponseWriter, r *http.Request) {
+	gid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var req struct {
+		Login string `json:"login"`
+	}
+	if err = decodificar(r, &req); err != nil || strings.TrimSpace(req.Login) == "" {
+		jsonErro(w, http.StatusBadRequest, "login do novo gerente obrigatório")
+		return
+	}
+	req.Login = strings.ToLower(strings.TrimSpace(req.Login))
+	var uid int64
+	var papel string
+	if err := a.st.db.QueryRow(`SELECT id, papel FROM usuarios WHERE login = ? AND grupo_id = ? AND ativo = 1`,
+		req.Login, gid).Scan(&uid, &papel); err != nil {
+		jsonErro(w, http.StatusNotFound, "conta não encontrada neste grupo")
+		return
+	}
+	if papel == "gerente" {
+		jsonErro(w, http.StatusBadRequest, "esta conta já é o gerente")
+		return
+	}
+	var existeGer int
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE grupo_id = ? AND papel = 'gerente' AND ativo = 1`, gid).Scan(&existeGer)
+	if existeGer > 1 {
+		jsonErro(w, http.StatusConflict, "grupo com mais de um gerente — corrija antes de trocar")
+		return
+	}
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+	if existeGer == 1 {
+		if _, err = tx.Exec(`UPDATE usuarios SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND ativo = 1`, gid); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if _, err = tx.Exec(`UPDATE usuarios SET papel = 'gerente' WHERE id = ?`, uid); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	u := usuarioDoCtx(r)
+	a.st.Auditoria(&u.ID, "trocar_gerente", "grupos", &gid, "novo="+req.Login, ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "gerente": req.Login})
+}
+
+// hAdminVinculoSet (R8): subordinação direto do painel admin — grava o vínculo
+// completo (criado_por_superior=1 e criado_por_subordinado=1), mesma semântica
+// de gruposSubordinadosAtivos.
+func (a *App) hAdminVinculoSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SuperiorID    int64 `json:"superior_id"`
+		SubordinadoID int64 `json:"subordinado_id"`
+	}
+	if err := decodificar(r, &req); err != nil || req.SuperiorID == 0 || req.SubordinadoID == 0 {
+		jsonErro(w, http.StatusBadRequest, "superior_id e subordinado_id obrigatórios")
+		return
+	}
+	if req.SuperiorID == req.SubordinadoID {
+		jsonErro(w, http.StatusBadRequest, "um grupo não se subordina a si mesmo")
+		return
+	}
+	var sup, sub, reverso int
+	if a.st.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE id = ?`, req.SuperiorID).Scan(&sup) != nil || sup == 0 ||
+		a.st.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE id = ?`, req.SubordinadoID).Scan(&sub) != nil || sub == 0 {
+		jsonErro(w, http.StatusNotFound, "grupo inexistente")
+		return
+	}
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM grupo_vinculos WHERE superior_id = ? AND subordinado_id = ?`,
+		req.SubordinadoID, req.SuperiorID).Scan(&reverso)
+	if reverso > 0 {
+		jsonErro(w, http.StatusConflict, "vínculo reverso já existe — não é possível inverter")
+		return
+	}
+	if _, err := a.st.db.Exec(`INSERT INTO grupo_vinculos (superior_id, subordinado_id, criado_por_superior, criado_por_subordinado)
+		VALUES (?, ?, 1, 1) ON CONFLICT(superior_id, subordinado_id)
+		DO UPDATE SET criado_por_superior = 1, criado_por_subordinado = 1`,
+		req.SuperiorID, req.SubordinadoID); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	u := usuarioDoCtx(r)
+	a.st.Auditoria(&u.ID, "vincular", "grupo_vinculos", nil,
+		fmt.Sprintf("admin: sup=%d sub=%d", req.SuperiorID, req.SubordinadoID), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+// hAdminVinculoRem (R8): remove a subordinação (painel admin).
+func (a *App) hAdminVinculoRem(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SuperiorID    int64 `json:"superior_id"`
+		SubordinadoID int64 `json:"subordinado_id"`
+	}
+	_ = decodificar(r, &req)
+	// aceita também query string (DELETE da UI)
+	if req.SuperiorID == 0 {
+		req.SuperiorID, _ = strconv.ParseInt(r.URL.Query().Get("superior_id"), 10, 64)
+	}
+	if req.SubordinadoID == 0 {
+		req.SubordinadoID, _ = strconv.ParseInt(r.URL.Query().Get("subordinado_id"), 10, 64)
+	}
+	if req.SuperiorID == 0 || req.SubordinadoID == 0 {
+		jsonErro(w, http.StatusBadRequest, "superior_id e subordinado_id obrigatórios")
+		return
+	}
+	res, err := a.st.db.Exec(`DELETE FROM grupo_vinculos WHERE superior_id = ? AND subordinado_id = ?`,
+		req.SuperiorID, req.SubordinadoID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		jsonErro(w, http.StatusNotFound, "vínculo inexistente")
+		return
+	}
+	u := usuarioDoCtx(r)
+	a.st.Auditoria(&u.ID, "desvincular", "grupo_vinculos", nil,
+		fmt.Sprintf("admin: sup=%d sub=%d", req.SuperiorID, req.SubordinadoID), ipDe(r))
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// hBackupImportar (R9): recebe um .db, valida (magic SQLite + integrity_check +
+// schema_migrations do arquivo <= schema_migrations do binário), grava backup de
+// segurança (VACUUM INTO timestamp), faz o swap atômico (fechar pool → rename →
+// reabrir → migrar). Falha em qualquer passo = rejeição SEM tocar o banco.
+func (a *App) hBackupImportar(w http.ResponseWriter, r *http.Request) {
+	// mapear usuário → sessão depois do swap morre? Não: sessões vivem NO banco,
+	// restauradas junto com o arquivo importado.
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		jsonErro(w, http.StatusBadRequest, "upload inválido (multipart/form-data, campo 'arquivo')")
+		return
+	}
+	f, _, err := r.FormFile("arquivo")
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "campo 'arquivo' ausente")
+		return
+	}
+	defer f.Close()
+	tmp, err := os.CreateTemp(a.st.dataDir, "import_*.db")
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tmpNome := tmp.Name()
+	defer os.Remove(tmpNome)
+	if _, err = io.Copy(tmp, f); err != nil {
+		tmp.Close()
+		jsonErro(w, http.StatusInternalServerError, "falha ao gravar upload: "+err.Error())
+		return
+	}
+	tmp.Close()
+	// 1) magic SQLite: "SQLite format 3\x00"
+	cab := make([]byte, 16)
+	fh, err := os.Open(tmpNome)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_, err = io.ReadFull(fh, cab)
+	fh.Close()
+	if err != nil || string(cab) != "SQLite format 3\x00" {
+		jsonErro(w, http.StatusBadRequest, "arquivo não é um banco SQLite — importação rejeitada")
+		return
+	}
+	// 2) abre o upload em cópia privativa e roda integrity_check + checagem de versão
+	checagem, err := sql.Open("sqlite", "file:"+tmpNome+"?_pragma=foreign_keys(0)&_txlock=immediate")
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "banco ilegível: "+err.Error())
+		return
+	}
+	defer checagem.Close()
+	var integridade string
+	if err = checagem.QueryRow(`PRAGMA integrity_check`).Scan(&integridade); err != nil || integridade != "ok" {
+		jsonErro(w, http.StatusBadRequest, "integrity_check falhou ("+integridade+") — importação rejeitada")
+		return
+	}
+	var versaoArq int
+	if err = checagem.QueryRow(`SELECT COALESCE(MAX(versao),0) FROM schema_migrations`).Scan(&versaoArq); err != nil {
+		jsonErro(w, http.StatusBadRequest, "arquivo sem schema_migrations — não é um banco do SCI")
+		return
+	}
+	versaoBin := versaoSchemaBinario
+	if versaoArq > versaoBin {
+		jsonErro(w, http.StatusBadRequest,
+			fmt.Sprintf("backup mais novo que o sistema (schema %d > %d) — importação rejeitada", versaoArq, versaoBin))
+		return
+	}
+	checagem.Close()
+	// 3) backup de segurança do estado ATUAL
+	nomeSeg, _, err := a.backupAgora()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "backup de segurança falhou — nada alterado: "+err.Error())
+		return
+	}
+	// 4) swap atômico: fecha pool → remove alvo+wal/shm → rename → reabre+migra
+	novo := a.st.arquivo + ".novo"
+	_ = os.Remove(novo)
+	if err = os.Rename(tmpNome, novo); err != nil {
+		jsonErro(w, http.StatusInternalServerError, "preparar swap falhou — nada alterado: "+err.Error())
+		return
+	}
+	// o defer os.Remove(tmpNome) vira no-op (arquivo renomeado)
+	if err = a.st.ReabrirComArquivo(novo); err != nil {
+		// rollback: volta o arquivo de segurança para o lugar
+		_ = a.st.ReabrirComArquivo(a.st.arquivo)
+		jsonErro(w, http.StatusInternalServerError, "swap falhou — banco reaberto no estado anterior: "+err.Error())
+		return
+	}
+	_ = os.Remove(a.st.arquivo + "-wal")
+	_ = os.Remove(a.st.arquivo + "-shm")
+	u := usuarioDoCtx(r)
+	a.st.Auditoria(&u.ID, "importar_backup", "banco", nil,
+		fmt.Sprintf("schema=%d seguranca=%s", versaoArq, nomeSeg), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "schema": versaoArq, "seguranca": "backups/" + nomeSeg})
 }

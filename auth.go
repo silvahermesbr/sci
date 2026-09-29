@@ -26,7 +26,7 @@ const (
 type Usuario struct {
 	ID           int64  `json:"id"`
 	Login        string `json:"login"`
-	Papel        string `json:"papel"` // admin | gerente | usuario
+	Papel        string `json:"papel"` // admin | gerente | operador
 	PessoaID     *int64 `json:"pessoa_id"`
 	GrupoID      *int64 `json:"grupo_id"`
 	NomeGuerra   string `json:"nome_guerra"`
@@ -173,6 +173,20 @@ func (a *App) auth(admin bool, prox http.HandlerFunc) http.Handler {
 			return
 		}
 		prox(w, r.WithContext(context.WithValue(r.Context(), ctxUsuario, u)))
+	})
+}
+
+// authPapeis: exige sessão e papel na lista (p.ex. conferência: gerente|operador).
+func (a *App) authPapeis(papeis []string, prox http.HandlerFunc) http.Handler {
+	return a.auth(false, func(w http.ResponseWriter, r *http.Request) {
+		p := usuarioDoCtx(r).Papel
+		for _, want := range papeis {
+			if p == want {
+				prox(w, r)
+				return
+			}
+		}
+		http.Error(w, `{"erro":"papel sem acesso a esta área"}`, http.StatusForbidden)
 	})
 }
 

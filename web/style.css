@@ -113,3 +113,12 @@ button.perigo{background:#3a2323;color:#e8a5a3;padding:11px 16px;min-height:var(
   .lista-pessoa{display:grid;grid-template-columns:1fr 1fr;gap:6px}
   .form-linha{grid-template-columns:1fr 1fr 1fr}
 }
+
+/* v9.3 — menu do usuário no topo direito (R13): só o nome destacado + dropdown */
+#menuUsuario{position:relative}
+#quem{background:transparent;color:var(--tx);font-weight:700;padding:6px 10px;border-radius:8px;border:1px solid transparent}
+#quem:hover{border-color:var(--borda);background:var(--painel2)}
+#quem::after{content:" ▾";color:var(--tx2);font-weight:400}
+#menuUsuarioItens{position:absolute;right:0;top:calc(100% + 6px);background:var(--painel);border:1px solid var(--borda);border-radius:10px;min-width:170px;box-shadow:0 8px 24px rgba(0,0,0,.45);z-index:60;overflow:hidden}
+#menuUsuarioItens button{display:block;width:100%;text-align:left;background:transparent;color:var(--tx);padding:11px 14px;min-height:40px;border-radius:0}
+#menuUsuarioItens button:hover{background:var(--painel2);color:var(--verde)}

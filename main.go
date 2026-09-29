@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
+// (v9.3 = 6). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
+const versaoSchemaBinario = 6
+
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio
 	debug.SetMemoryLimit(96 << 20)

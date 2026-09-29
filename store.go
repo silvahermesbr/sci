@@ -22,6 +22,8 @@ import (
 type Store struct {
 	db      *sql.DB
 	dataDir string
+	arquivo string // caminho absoluto do sci.db (swap do importar-backup)
+	dsn     string
 }
 
 func AbrirStore(dataDir string) (*Store, error) {
@@ -49,7 +51,7 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, dataDir: dataDir}
+	s := &Store{db: db, dataDir: dataDir, arquivo: filepath.Join(dataDir, "sci.db"), dsn: dsn}
 	if err := s.migrar(); err != nil {
 		return nil, err
 	}
@@ -112,7 +114,7 @@ func (s *Store) migrar() error {
 			id INTEGER PRIMARY KEY,
 			login TEXT NOT NULL UNIQUE COLLATE NOCASE,
 			senha_hash TEXT NOT NULL,
-			papel TEXT NOT NULL, -- admin | gerente | usuario (validação no app)
+			papel TEXT NOT NULL, -- admin | gerente | operador (validação no app)
 			pessoa_id INTEGER UNIQUE REFERENCES pessoas(id),
 			grupo_id INTEGER REFERENCES grupos(id), -- NULL = admin global
 			ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0,1)),
@@ -521,4 +523,52 @@ func tabelaDeCatalogo(tab string) (string, error) {
 		return tab, nil
 	}
 	return "", fmt.Errorf("catálogo inválido: %s", tab)
+}
+
+// ReabrirComArquivo: fecha o pool atual e reabre o banco sobre outro arquivo
+// (swap atômico do IMPORTAR backup). Migrações v2/v4/v5/v6 rodam na reabertura.
+func (s *Store) ReabrirComArquivo(novoArquivo string) error {
+	if err := s.db.Close(); err != nil {
+		return fmt.Errorf("fechar pool: %w", err)
+	}
+	s.arquivo = novoArquivo
+	dsn := "file:" + novoArquivo +
+		"?_pragma=busy_timeout(5000)" +
+		"&_pragma=foreign_keys(1)" +
+		"&_pragma=journal_mode(WAL)" +
+		"&_pragma=synchronous(FULL)" +
+		"&_txlock=immediate"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := db.Ping(); err != nil {
+		return err
+	}
+	s.db = db
+	s.dsn = dsn
+	if err := s.migrarV2(); err != nil {
+		return err
+	}
+	if err := s.migrar(); err != nil {
+		return err
+	}
+	if err := s.migrarV4(); err != nil {
+		return err
+	}
+	if err := s.migrarV5(); err != nil {
+		return err
+	}
+	return s.migrarV6()
+}
+
+// migrarV6: papéis limpos — 'usuario' passa a se chamar 'operador' (v9.3).
+// Idempotente: UPDATE só bate com linhas antigas; versão marcada uma vez.
+func (s *Store) migrarV6() error {
+	if _, err := s.db.Exec(`UPDATE usuarios SET papel = 'operador' WHERE papel = 'usuario'`); err != nil {
+		return err
+	}
+	return s.marcarVersao(6)
 }

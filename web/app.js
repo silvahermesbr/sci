@@ -1,9 +1,10 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.3 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const CICLO = ['presente', 'atraso', 'falta', 'justificada'];
 let ME = null, DESTINOS = [];
+const rotuloPapel = p => p === 'admin' ? 'ADMIN' : p === 'gerente' ? 'GERENTE' : 'OPERADOR';
 
 async function api(path, opts = {}) {
   opts.headers = Object.assign({ 'Content-Type': 'application/json', 'X-SCI': '1' }, opts.headers || {});
@@ -41,7 +42,8 @@ function viewLogin() {
     try {
       const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ login: $('#lg').value.trim(), senha: $('#sn').value }) });
       ME = r.usuario; toast('Bem-vindo, ' + ME.login);
-      location.hash = '#/hoje';
+      location.hash = ME.papel === 'admin' ? '#/admin' : '#/hoje';
+      rotear(); // hash pode não mudar se já estava lá
     } catch (e) {}
   };
   $('#btEntrar').onclick = entrar;
@@ -49,7 +51,7 @@ function viewLogin() {
 }
 
 /* ---------- CONFERÊNCIA DE PESSOAL (iniciar → verificar → fechar) ---------- */
-let ESTADO = null; // {c:conferencia|null, pessoas:[], est:{}, dest:{}, obs:{}, verif:Set}
+let ESTADO = null;
 async function viewHoje() {
   navAtiva('#/hoje');
   $('#app').innerHTML = '<div class="carregando">Carregando efetivo…</div>';
@@ -62,7 +64,7 @@ async function viewHoje() {
     est[pid] = v.situacao;
     dest[pid] = v.destino_id;
     if (v.observacao) obs[pid] = v.observacao;
-    verif.add(+pid); // já registrado na conferência = verificado
+    verif.add(+pid);
   }
   ESTADO = { c: d.conferencia, pessoas: d.pessoas, est, dest, obs, verif };
   renderHoje();
@@ -136,7 +138,7 @@ function renderHoje(filtro = '') {
     const atual = ESTADO.est[id] || 'presente';
     const novo = CICLO[(CICLO.indexOf(atual) + 1) % CICLO.length];
     ESTADO.est[id] = novo;
-    ESTADO.verif.delete(id); // mudou situação → precisa reverificar
+    ESTADO.verif.delete(id);
     if (novo === 'falta' || novo === 'justificada') modalLancamento(id, novo, () => renderHoje($('#busca').value));
     else renderHoje($('#busca').value);
   });
@@ -153,7 +155,6 @@ function renderHoje(filtro = '') {
   });
   $('#btFechar').onclick = fecharConferencia;
 }
-/* comentários: lista + novo (append-only, ordem/datahora/operador) */
 async function modalComentarios(pessoaId) {
   const p = ESTADO.pessoas.find(x => x.id === pessoaId);
   const cid = ESTADO.c.id;
@@ -197,7 +198,6 @@ async function modalComentarios(pessoaId) {
     } catch (e) {}
   };
 }
-/* modal de lançamento: falta → motivo/obs; justificada → destino + obs */
 function modalLancamento(id, sit, aoSalvar) {
   const p = ESTADO.pessoas.find(x => x.id === id);
   const e = ESTADO;
@@ -246,8 +246,7 @@ async function fecharConferencia() {
   } catch (err) {}
 }
 
-/* ---------- GRUPOS (admin cria grupo+gerente; gerente cria operador) ---------- */
-/* ---------- MEU USUÁRIO (ordem Tenente 28/09 noite) ---------- */
+/* ---------- MEU USUÁRIO (gerente/operador — R3: admin não tem esta aba) ---------- */
 async function viewPerfil() {
   navAtiva('#/perfil');
   $('#app').innerHTML = '<div class="carregando">…</div>';
@@ -257,7 +256,7 @@ async function viewPerfil() {
     <div class="cartao" style="max-width:640px">
       <div class="form-linha">
         <div class="campo"><label>Login</label><input value="${esc(u.login)}" disabled></div>
-        <div class="campo"><label>Função na conta</label><input value="${esc(u.papel === 'gerente' ? 'gerente' : u.papel === 'admin' ? 'administrador' : 'operador')}" disabled></div></div>
+        <div class="campo"><label>Função na conta</label><input value="${esc(rotuloPapel(u.papel))}" disabled></div></div>
       <div class="form-linha">
         <div class="campo"><label>Grupo</label><input value="${esc(d.grupo || '— (sem grupo)')}" disabled></div>
         <div class="campo"><label>Setor (herdado)</label><input value="${esc(d.setor || '—')}" disabled></div>
@@ -266,128 +265,50 @@ async function viewPerfil() {
         <div class="campo"><label>Nome de guerra</label><input id="pfNg" value="${esc(u.nome_guerra || '')}"></div>
         <div class="campo"><label>Nome completo</label><input id="pfNc" value="${esc(u.nome_completo || '')}"></div></div>
       <button class="primario" id="pfGo">Salvar perfil</button>
-      <p style="color:var(--tx2);font-size:12px">Setor e função vêm do grupo — muda com você quando o admin mover sua conta. Senha: botão 🔑 no topo.</p></div>`;
+      <p style="color:var(--tx2);font-size:12px">Setor e função vêm do grupo. Senha: menu do seu nome no topo direito.</p></div>`;
   $('#pfGo').onclick = async () => {
     const ng = $('#pfNg').value.trim(), nc = $('#pfNc').value.trim();
     if (!ng || !nc) { toast('Preencha os dois nomes', 'erro'); return; }
     await api('/api/perfil', { method: 'PATCH', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc }) });
     ME.nome_guerra = ng; ME.nome_completo = nc;
+    montarNav();
     toast('Perfil salvo');
   };
 }
 
-/* ---------- GRUPOS + HIERARQUIA (ordem Tenente 28/09 noite) ---------- */
+/* ---------- GRUPOS (gerente/operador: visão do próprio grupo) ---------- */
 async function viewGrupos() {
   navAtiva('#/grupos');
   $('#app').innerHTML = '<div class="carregando">…</div>';
-  const souAdmin = ME.papel === 'admin';
   const grupos = await api('/api/grupos');
-  const vinc = await api('/api/vinculos');
-  let html = '<h2>Grupos</h2>';
-  if (souAdmin) {
-    html += `<div class="cartao"><h3 style="margin-top:0">Criar grupo</h3>
-      <div style="display:flex;gap:6px;flex-wrap:wrap"><input id="gNome" placeholder="nome do grupo (ex.: 1ª Cia)" style="max-width:260px">
-      <button class="primario" id="gGo" style="min-height:40px">Criar grupo</button></div>
-      <p style="color:var(--tx2);font-size:12px;margin-top:6px">Cada grupo nasce com um código de 6 dígitos — é ele que liga grupos na hierarquia.</p></div>`;
-  }
-  const meus = souAdmin ? grupos : grupos.filter(g => g.id === ME.grupo_id);
-  html += `<div class="cartao"><h3 style="margin-top:0">${souAdmin ? 'Grupos' : 'Meu grupo'}</h3>` +
+  let html = '<h2>Meu grupo</h2>';
+  const meus = grupos.filter(g => g.id === ME.grupo_id);
+  html += `<div class="cartao"><h3 style="margin-top:0">Dados do grupo</h3>` +
     (meus.map(g => `<div style="margin-bottom:10px">
       • <b>${esc(g.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700">${esc(g.codigo)}</code>
       — ${g.efetivo} no efetivo · ${g.contas} conta(s)
       ${g.subordinados && g.subordinados.length ? `<br><small style="color:var(--tx2);margin-left:14px">subordinados: ${g.subordinados.map(esc).join(', ')}</small>` : ''}
       ${g.superiores && g.superiores.length ? `<br><small style="color:var(--tx2);margin-left:14px">superior: ${g.superiores.map(esc).join(', ')}</small>` : ''}
     </div>`).join('') || '<span class="vazio">nenhum grupo</span>') + '</div>';
-  // hierarquia: vínculo BILATERAL por código (consentimento dos dois lados)
-  if (!souAdmin && ME.grupo_id) {
-    html += `<div class="cartao"><h3 style="margin-top:0">Hierarquia — vínculo por código</h3>
-      <div class="form-linha">
-        <div class="campo"><label>Código do OUTRO grupo</label><input id="vCod" maxlength="6" placeholder="ex.: QNHTE5" style="max-width:140px;text-transform:uppercase"></div>
-        <div class="campo"><label>Meu grupo é…</label><select id="vLado"><option value="superior">SUPERIOR a ele (passo a mandar relatórios)</option><option value="subordinado">SUBORDINADO a ele (herdo relatórios… ele herdará catálogos)</option></select></div>
-        <button class="primario" id="vGo" style="min-height:40px">Registrar</button></div>
-      <p style="color:var(--tx2);font-size:12px">O vínculo só vale quando OS DOIS lados registrarem o par — ninguém arrasta ninguém sem consentimento.</p>
-      ${vinc.pendentes.length ? `<p style="color:var(--ambar);font-size:13px">⏳ pendentes: ${vinc.pendentes.map(v => `${esc(v.superior)} → ${esc(v.subordinado)}`).join('; ')}</p>` : ''}
-      ${vinc.ativos.length ? `<p style="color:var(--verde);font-size:13px">🔗 ativos: ${vinc.ativos.map(v => v.meu_papel === 'superior' ? `${esc(v.subordinado)} (subordinado)` : `${esc(v.superior)} (superior)`).join('; ')}</p>` : ''}</div>`;
-  }
-  if (souAdmin) {
-    html += `<div class="cartao"><h3 style="margin-top:0">Vincular direto (admin fecha o bilateral)</h3>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:end">
-        <div class="campo" style="margin:0"><label>Código SUPERIOR</label><input id="vASup" maxlength="6" style="max-width:130px;text-transform:uppercase"></div>
-        <div class="campo" style="margin:0"><label>Código SUBORDINADO</label><input id="vASub" maxlength="6" style="max-width:130px;text-transform:uppercase"></div>
-        <button class="primario" id="vAGo" style="min-height:40px">Vincular</button></div></div>`;
-  }
-  if (souAdmin) {
-    html += `<div class="cartao"><h3 style="margin-top:0">Criar GERENTE — só o admin pode</h3>
-      <div class="form-linha"><div class="campo"><label>Login</label><input id="grLogin"></div>
-      <div class="campo"><label>Senha (mín. 8)</label><input id="grSenha" type="password"></div>
-      <div class="campo"><label>Grupo</label><select id="grGrupo">${grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('')}</select></div></div>
-      <button class="primario" id="grGo">Criar gerente</button>
-      <p style="color:var(--tx2);font-size:12px;margin-top:8px">Entregue login e senha ao responsável pelo grupo — ele criará os operadores.</p></div>`;
-    html += `<div class="cartao"><h3 style="margin-top:0">Mover conta entre grupos</h3>
-      <div class="form-linha">
-        <div class="campo"><label>Conta</label><select id="mvUser">${(await api('/api/usuarios')).filter(x => x.papel !== 'admin').map(x => `<option value="${x.id}">${esc(x.login)} (${x.papel})</option>`).join('')}</select></div>
-        <div class="campo"><label>Novo grupo</label><select id="mvGrupo">${grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('')}<option value="">— sem grupo —</option></select></div>
-        <button class="primario" id="mvGo" style="min-height:40px">Mover</button></div>
-      <p style="color:var(--tx2);font-size:12px">A conta é credencial: o efetivo, as conferências e os relatórios passam a ser os do novo grupo; setor/função passam a ser herdados dele.</p></div>`;
-  } else {
-    html += `<div class="cartao"><h3 style="margin-top:0">Criar OPERADOR do meu grupo</h3>
+  html += `<div class="cartao"><h3 style="margin-top:0">Criar operador do meu grupo</h3>
       <div class="form-linha"><div class="campo"><label>Login</label><input id="opLogin"></div>
       <div class="campo"><label>Senha (mín. 8)</label><input id="opSenha" type="password"></div></div>
       <button class="primario" id="opGo">Criar operador</button></div>`;
-  }
   $('#app').innerHTML = html;
-  if (souAdmin) {
-    $('#gGo').onclick = async () => {
-      const n = $('#gNome').value.trim();
-      if (!n) { toast('Nome do grupo obrigatório', 'erro'); return; }
-      const r = await api('/api/grupos', { method: 'POST', body: JSON.stringify({ nome: n }) });
-      toast(`Grupo criado — código ${r.codigo}`); viewGrupos();
-    };
-    $('#vAGo').onclick = async () => {
-      const a = $('#vASup').value.trim(), b = $('#vASub').value.trim();
-      if (!a || !b) { toast('Dois códigos obrigatórios', 'erro'); return; }
-      try { const r = await api('/api/vinculos', { method: 'POST', body: JSON.stringify({ codigo: a, lado: 'superior', outro: b }) });
-        toast(r.vinculado ? 'Vínculo criado' : 'Pendente de confirmação'); viewGrupos(); } catch (e) {}
-    };
-    $('#grGo').onclick = async () => {
-      const login = $('#grLogin').value.trim(), senha = $('#grSenha').value, gid = +$('#grGrupo').value;
-      if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
-      await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'gerente', grupo_id: gid }) });
-      toast('Gerente criado — entregue as credenciais ao responsável');
-      viewGrupos();
-    };
-    $('#mvGo').onclick = async () => {
-      const uid = +$('#mvUser').value, gid = $('#mvGrupo').value ? +$('#mvGrupo').value : null;
-      await api(`/api/usuarios/${uid}/mover`, { method: 'PATCH', body: JSON.stringify({ grupo_id: gid }) });
-      toast('Conta movida'); viewGrupos();
-    };
-  } else {
-    $('#vGo').onclick = async () => {
-      const codigo = $('#vCod').value.trim().toUpperCase(), lado = $('#vLado').value;
-      if (!codigo) { toast('Código obrigatório', 'erro'); return; }
-      try { const r = await api('/api/vinculos', { method: 'POST', body: JSON.stringify({ codigo, lado }) });
-        toast(r.vinculado ? 'Vínculo ATIVADO' : 'Registrado — aguardando o outro grupo'); viewGrupos(); } catch (e) {}
-    };
-    $('#opGo').onclick = async () => {
-      const login = $('#opLogin').value.trim(), senha = $('#opSenha').value;
-      if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
-      await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'usuario' }) });
-      toast('Operador criado');
-      viewGrupos();
-    };
-  }
+  $('#opGo').onclick = async () => {
+    const login = $('#opLogin').value.trim(), senha = $('#opSenha').value;
+    if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
+    await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'operador' }) });
+    toast('Operador criado');
+    viewGrupos();
+  };
 }
 
-/* ---------- LISTA DE CONFERÊNCIAS + RELATÓRIO PRÓPRIO ---------- */
-function fmtHora(iso) { // ISO UTC -> HH:MM no fuso do cliente (Brasília na OM)
+/* ---------- LISTA DE CONFERÊNCIAS ---------- */
+function fmtHora(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
   return isNaN(d) ? '—' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-}
-function fmtDataHora(iso) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  return isNaN(d) ? '—' : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 async function viewConferencias() {
   navAtiva('#/conferencias');
@@ -406,14 +327,14 @@ async function viewConferencias() {
     <div class="cartao"><div class="rolagem"><table>
     <thead><tr><th>Data</th><th>Status</th><th>Criada às / Fechada às</th><th>Operador</th><th class="num">Lanç.</th><th>Relatório</th></tr></thead>
     <tbody>${linhas}</tbody></table></div>
-    <p style="color:var(--tx2);font-size:12px;margin-top:8px">O relatório PDF só é gerado para conferências <b>fechadas</b> — contém horário de fechamento, horário de geração e o nome do operador.</p></div>`;
+    <p style="color:var(--tx2);font-size:12px;margin-top:8px">O relatório PDF só é gerado para conferências <b>fechadas</b>.</p></div>`;
 }
 
-/* ---------- SEMANA / RELATÓRIOS ---------- */
+/* ---------- RELATÓRIOS ---------- */
 function dataLocal(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 function semanaDe(isoDia) {
   const d = new Date(isoDia + 'T12:00:00');
-  const dow = (d.getDay() + 6) % 7; // seg=0
+  const dow = (d.getDay() + 6) % 7;
   const ini = new Date(d.getTime() - dow * 864e5);
   const fim = new Date(ini.getTime() + 6 * 864e5);
   return [dataLocal(ini), dataLocal(fim)];
@@ -451,7 +372,6 @@ async function viewRelatorios() {
   navAtiva('#/relatorios');
   const hoje = new Date();
   const [seg, dom] = semanaDe(dataLocal(hoje));
-  // escopo por grupo (hierarquia): superior recorta subordinado; admin recorta qualquer
   let gSel = '';
   try {
     const gs = await api('/api/grupos');
@@ -514,127 +434,47 @@ async function viewRelatorios() {
   $('#btGerar').onclick = gerar;
 }
 
-/* ---------- ADMIN ---------- */
-let abaAdmin = 'pessoas';
+/* ---------- DASHBOARD (leitura; admin não tem ferramentas de conferência — R11) ---------- */
+async function viewDashboard() {
+  navAtiva('#/hoje');
+  const hoje = new Date();
+  const [seg] = semanaDe(dataLocal(hoje));
+  const gq = ME.papel === 'admin' ? '' : '';
+  const b = await api(`/api/relatorio?de=${seg}&ate=${dataLocal(hoje)}${gq}`);
+  b.De = seg; b.Ate = dataLocal(hoje);
+  $('#app').innerHTML = `<h2>Dashboard</h2>
+    <p style="color:var(--tx2);font-size:13px">Panorama da semana — leitura. A conferência de pessoal fica com o gerente e o operador.</p>` +
+    renderRelatorio(b, 'Semana em curso');
+}
+
+/* ---------- ABA ADMIN (só admin — R7/R11): Usuários · Grupos · Backup ---------- */
+let abaAdmin = 'usuarios';
 async function viewAdmin() {
   navAtiva('#/admin');
-  const abas = ['pessoas', 'catálogos', 'usuários', 'backup'];
+  const abas = ['usuarios', 'grupos', 'backup'];
   $('#app').innerHTML = `<h2>Administração</h2>
     <div class="abas">${abas.map(a => `<button data-a="${a}" class="${abaAdmin === a ? 'ativo' : ''}">${a}</button>`).join('')}</div>
     <div id="adm"><div class="carregando">…</div></div>`;
   document.querySelectorAll('.abas button').forEach(b => b.onclick = () => { abaAdmin = b.dataset.a; viewAdmin(); });
-  if (abaAdmin === 'pessoas') await admPessoas();
-  else if (abaAdmin === 'catálogos') await admCatalogos();
-  else if (abaAdmin === 'usuários') await admUsuarios();
+  if (abaAdmin === 'usuarios') await admUsuarios();
+  else if (abaAdmin === 'grupos') await admGrupos();
   else admBackup();
 }
-async function admPessoas() {
-  const [pessoas, setores, funcoes, grupos] = await Promise.all([
-    api('/api/pessoas'), api('/api/catalogo/setores'), api('/api/catalogo/funcoes'),
-    ME.papel === 'admin' ? api('/api/grupos') : Promise.resolve([])]);
-  const souAdminP = ME.papel === 'admin';
-  const opts = (lista, sel) => `<option value="">—</option>` + lista.filter(x => x.ativo === 1 || x.ativo === true)
-    .map(x => `<option value="${x.id}" ${sel == x.id ? 'selected' : ''}>${esc(x.nome)}</option>`).join('');
-  const selGrupo = souAdminP
-    ? `<div class="campo"><label>Grupo</label><select id="pGrupo"><option value="">— (sem grupo)</option>` +
-      grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('') + `</select></div>` : '';
-  const colGrupo = souAdminP ? '<th>Grupo</th>' : '';
-  const linhas = pessoas.pessoas.map(p =>
-    `<tr data-p='${esc(JSON.stringify(p))}'><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
-     <td>${esc(p.setor)}</td><td>${esc(p.funcao)}</td><td>${pill(p.status === 'ativo' ? 'presente' : 'justificada')} ${p.status}</td>
-     ${souAdminP ? `<td>${esc(p.grupo || '—')}</td>` : ''}</tr>`).join('');
-  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Cadastrar / editar militar</h3>
-    <input type="hidden" id="pId">
-    <div class="form-linha"><div class="campo"><label>Nome de guerra</label><input id="pNg"></div>
-    <div class="campo"><label>Nome completo</label><input id="pNc"></div></div>
-    <div class="form-linha"><div class="campo"><label>Setor</label><select id="pSetor">${opts(setores)}</select></div>
-    <div class="campo"><label>Função</label><select id="pFuncao">${opts(funcoes)}</select></div>
-    <div class="campo"><label>Status</label><select id="pStatus"><option value="ativo">ativo</option><option value="inativo">inativo</option><option value="movido">movido</option></select></div>
-    ${selGrupo}</div>
-    <button class="primario" id="pSalvar">Salvar</button>
-    <h3>Importar em lote (1 por linha: nome de guerra ; nome completo ; setor ; função)</h3>
-    <textarea id="csv" rows="4" placeholder="SILVA;José da Silva;Comando;Motorista"></textarea>
-    <button class="acao-linha" id="csvGo" style="margin-top:8px">Importar linhas</button>
-    ${souAdminP ? '<p style="color:var(--tx2);font-size:12px">Defina o GRUPO antes de importar em lote — as linhas entram no grupo selecionado.</p>' : ''}</div>
-    <div class="cartao"><h3 style="margin-top:0">Efetivo cadastrado (${pessoas.pessoas.length})</h3>
-    <div class="rolagem"><table><thead><tr><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Status</th>${colGrupo}</tr></thead>
-    <tbody id="tabP">${linhas}</tbody></table></div></div>`;
-  $('#pSalvar').onclick = async () => {
-    const corpo = { nome_guerra: $('#pNg').value.trim(), nome_completo: $('#pNc').value.trim(),
-      setor_id: +$('#pSetor').value || null, funcao_id: +$('#pFuncao').value || null, status: $('#pStatus').value };
-    if ($('#pGrupo')) corpo.grupo_id = $('#pGrupo').value ? +$('#pGrupo').value : null;
-    if (!corpo.nome_guerra || !corpo.nome_completo) { toast('Nomes obrigatórios', 'erro'); return; }
-    const id = $('#pId').value;
-    if (id) await api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) });
-    else await api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) });
-    toast('Salvo'); viewAdmin();
-  };
-  $('#csvGo').onclick = async () => {
-    const gid = $('#pGrupo') && $('#pGrupo').value ? +$('#pGrupo').value : null;
-    const linhas = $('#csv').value.split('\n').map(l => l.trim()).filter(Boolean);
-    let ok = 0;
-    for (const l of linhas) {
-      const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
-      if (!ng || !nc) continue;
-      const sid = (setores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
-      const fid = (funcoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
-      try { await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo', grupo_id: gid }) }); ok++; } catch (e) {}
-    }
-    toast(`${ok} importados`); if (ok) viewAdmin();
-  };
-  document.querySelectorAll('#tabP tr').forEach(tr => tr.onclick = () => {
-    const p = JSON.parse(tr.dataset.p);
-    $('#pId').value = p.id; $('#pNg').value = p.nome_guerra; $('#pNc').value = p.nome_completo;
-    $('#pSetor').value = p.setor_id || ''; $('#pFuncao').value = p.funcao_id || ''; $('#pStatus').value = p.status;
-    if ($('#pGrupo')) $('#pGrupo').value = p.grupo_id || '';
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  });
-}
-async function admCatalogos() {
-  const tabs = ['setores', 'funcoes', 'destinos', 'tags', 'conferencia_tipos'];
-  const rot = { funcoes: 'funções', destinos: 'destinos', tags: 'tags', setores: 'setores', conferencia_tipos: 'tipos de conferência' };
-  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Catálogos do admin (alimentam os dropdowns)</h3>
-    ${tabs.map(t => `<div class="cat-bloco"><b>${rot[t]}</b><div id="cat-${t}" class="cat-itens">…</div>
-      <div style="display:flex;gap:6px"><input id="nov-${t}" placeholder="novo item" style="max-width:220px">
-      <button class="acao-linha" data-t="${t}">adicionar</button></div></div>`).join('')}
-    <p style="color:var(--tx2);font-size:12px;margin-top:8px">✕ exclui de verdade (itens em uso por lançamentos não podem ser excluídos) · ⏸ desativa preservando o histórico.</p></div>`;
-  const carregar = async () => {
-    for (const t of tabs) {
-      const lista = await api('/api/catalogo/' + t);
-      $('#cat-' + t).innerHTML = lista.map(x =>
-        `<span class="cat-item">${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
-         <button class="cat-x" data-t="${t}" data-id="${x.id}" title="excluir">✕</button>
-         ${x.ativo ? `<button class="cat-off" data-t="${t}" data-id="${x.id}" title="desativar">⏸</button>` : ''}</span>`).join(' ') || '<span class="vazio">— vazio —</span>';
-    }
-    document.querySelectorAll('.cat-x').forEach(b => b.onclick = () => excluirItem(b.dataset.t, b.dataset.id, b));
-    document.querySelectorAll('.cat-off').forEach(b => b.onclick = async () => {
-      await api(`/api/catalogo/${b.dataset.t}/${b.dataset.id}?modo=desativar`, { method: 'DELETE' });
-      toast('Desativado'); await carregar();
-    });
-  };
-  window.excluirItem = async (t, id, btn) => {
-    const nome = btn.parentNode.childNodes[0].textContent.trim();
-    if (!confirm(`Excluir "${nome}"? Itens em uso por lançamentos/cadastros não podem ser excluídos.`)) return;
-    try { await api(`/api/catalogo/${t}/${id}`, { method: 'DELETE' }); toast('Excluído'); await carregar(); } catch (e) {}
-  };
-  await carregar();
-  document.querySelectorAll('#adm button[data-t]').forEach(b => b.onclick = async () => {
-    const t = b.dataset.t, nome = $('#nov-' + t).value.trim();
-    if (!nome) return;
-    await api('/api/catalogo/' + t, { method: 'POST', body: JSON.stringify({ nome }) });
-    toast('Adicionado'); await carregar();
-  });
-}
+
+/* --- Usuários: criar, redefinir senha, EXCLUIR com confirmação (R6) --- */
 async function admUsuarios() {
   const lista = await api('/api/usuarios');
-  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Contas</h3>
+  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Criar conta</h3>
     <div class="form-linha"><div class="campo"><label>Login</label><input id="uLogin"></div>
-    <div class="campo"><label>Senha</label><input id="uSenha" type="password"></div>
-    <div class="campo"><label>Papel</label><select id="uPapel"><option value="usuario">usuário</option><option value="admin">admin</option></select></div></div>
-    <button class="primario" id="uCriar">Criar conta</button></div>
-    <div class="cartao"><table><thead><tr><th>Login</th><th>Papel</th><th>Criada</th><th></th></tr></thead>
-    <tbody>${lista.map(u => `<tr><td><b>${esc(u.login)}</b></td><td>${u.papel}</td><td>${(u.criado_em || '').slice(0, 10)}</td>
-      <td><button class="acao-linha" data-id="${u.id}" data-login="${esc(u.login)}">🔑 senha</button></td></tr>`).join('')}</tbody></table></div>`;
+    <div class="campo"><label>Senha (mín. 8)</label><input id="uSenha" type="password"></div>
+    <div class="campo"><label>Papel</label><select id="uPapel"><option value="gerente">gerente</option><option value="admin">admin</option></select></div></div>
+    <button class="primario" id="uCriar">Criar conta</button>
+    <p style="color:var(--tx2);font-size:12px">Operadores nascem dentro do grupo (o gerente cria os do seu). Excluir: contas com histórico são desativadas, o resto é removido.</p></div>
+    <div class="cartao"><table><thead><tr><th>Login</th><th>Papel</th><th>Grupo</th><th>Status</th><th>Criada</th><th></th></tr></thead>
+    <tbody>${lista.map(u => `<tr><td><b>${esc(u.login)}</b></td><td>${rotuloPapel(u.papel)}</td><td>${u.grupo_id || '—'}</td>
+      <td>${u.ativo ? 'ativa' : 'desativada'}</td><td>${(u.criado_em || '').slice(0, 10)}</td>
+      <td><button class="acao-linha" data-id="${u.id}" data-login="${esc(u.login)}">🔑 senha</button>
+      ${u.papel !== 'admin' ? `<button class="acao-linha" data-exc="${u.id}" data-login="${esc(u.login)}">excluir</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
   $('#uCriar').onclick = async () => {
     await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login: $('#uLogin').value.trim(), senha: $('#uSenha').value, papel: $('#uPapel').value }) });
     toast('Conta criada'); viewAdmin();
@@ -658,19 +498,118 @@ async function admUsuarios() {
       toast('Senha redefinida'); div.remove();
     };
   });
+  document.querySelectorAll('#adm button[data-exc]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Excluir a conta "${b.dataset.login}"?`)) return;
+    try {
+      const r = await api(`/api/usuarios/${b.dataset.exc}`, { method: 'DELETE' });
+      toast(r.desativado ? 'Conta desativada (histórico preservado)' : 'Conta excluída');
+      viewAdmin();
+    } catch (e) {}
+  });
 }
+
+/* --- Grupos: criar grupo+gerente, trocar gerente, subordinação (R7/R8) --- */
+async function admGrupos() {
+  const [grupos, contas] = await Promise.all([api('/api/grupos'), api('/api/usuarios')]);
+  const gerenteDe = {};
+  contas.filter(c => c.papel === 'gerente' && c.ativo && c.grupo_id).forEach(c => { gerenteDe[c.grupo_id] = c.login; });
+  const optsContas = gid => contas.filter(c => c.grupo_id === gid && c.papel !== 'admin' && c.ativo)
+    .map(c => `<option value="${esc(c.login)}">${esc(c.login)} (${rotuloPapel(c.papel)})</option>`).join('');
+  let linhas = grupos.map(g => {
+    const subs = g.subordinados_ids || [], sups = g.superiores_ids || [];
+    return `<div class="cartao" data-g="${g.id}" style="margin-bottom:10px">
+      <h3 style="margin:0 0 6px">${esc(g.nome)} <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700">${esc(g.codigo)}</code></h3>
+      <p style="margin:0 0 6px;color:var(--tx2);font-size:13px">gerente: <b id="ger-${g.id}">${esc(gerenteDe[g.id] || '— sem gerente —')}</b> · ${g.efetivo} no efetivo · ${g.contas} conta(s)</p>
+      <div class="form-linha">
+        <div class="campo"><label>Trocar gerente — promover conta</label><select id="tg-${g.id}">${optsContas(g.id)}</select></div>
+        <div class="campo"><label>Subordinado a</label><select id="sub-${g.id}">
+          <option value="">— sem superior —</option>
+          ${grupos.filter(x => x.id !== g.id).map(x => `<option value="${x.id}" ${sups.includes(x.id) ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}
+        </select></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="primario" data-trocar="${g.id}">Trocar gerente</button>
+        <button class="acao-linha" data-remover="${g.id}">Remover subordinação</button>
+      </div></div>`;
+  }).join('');
+  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Criar grupo — nasce com gerente</h3>
+    <div class="form-linha">
+      <div class="campo"><label>Nome do grupo</label><input id="gNome" placeholder="ex.: 1ª Cia"></div>
+      <div class="campo"><label>Login do gerente</label><input id="gLogin"></div>
+      <div class="campo"><label>Senha do gerente (mín. 8)</label><input id="gSenha" type="password"></div>
+      <div class="campo"><label>Nome de guerra do gerente</label><input id="gGuerra"></div></div>
+    <button class="primario" id="gGo">Criar grupo</button>
+    <p style="color:var(--tx2);font-size:12px">O grupo exige gerente no ato da criação — sem gerente, sem grupo.</p></div>
+    ${linhas || '<div class="cartao"><span class="vazio">nenhum grupo</span></div>'}`;
+  $('#gGo').onclick = async () => {
+    const nome = $('#gNome').value.trim(), login = $('#gLogin').value.trim(),
+          senha = $('#gSenha').value, guerra = $('#gGuerra').value.trim();
+    if (!nome || !login || senha.length < 8 || !guerra) { toast('Nome do grupo + login + senha (mín. 8) + nome de guerra do gerente', 'erro'); return; }
+    const r = await api('/api/grupos', { method: 'POST', body: JSON.stringify({ nome, login, senha, nome_guerra: guerra }) });
+    toast(`Grupo criado — código ${r.codigo}, gerente ${login}`); viewAdmin();
+  };
+  document.querySelectorAll('#adm button[data-trocar]').forEach(b => b.onclick = async () => {
+    const gid = b.dataset.trocar;
+    const login = $('#tg-' + gid) ? $('#tg-' + gid).value : '';
+    if (!login) { toast('Escolha a conta a promover', 'erro'); return; }
+    try {
+      await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login }) });
+      toast('Gerente trocado — o anterior virou operador'); viewAdmin();
+    } catch (e) {}
+  });
+  document.querySelectorAll('#adm button[data-remover]').forEach(b => b.onclick = async () => {
+    const gid = +b.dataset.remover;
+    const sel = $('#sub-' + gid);
+    if (!sel || !sel.value) { toast('Este grupo não tem superior', 'erro'); return; }
+    try {
+      await api('/api/admin/grupos/vinculo?superior_id=' + sel.value + '&subordinado_id=' + gid, { method: 'DELETE', body: '{}' });
+      toast('Subordinação removida'); viewAdmin();
+    } catch (e) {}
+  });
+  document.querySelectorAll('#adm select[id^="sub-"]').forEach(sel => sel.onchange = async () => {
+    const gid = sel.id.split('-')[1];
+    if (!sel.value) { return; } // remover é pelo botão
+    try {
+      await api('/api/admin/grupos/vinculo', { method: 'POST', body: JSON.stringify({ superior_id: +sel.value, subordinado_id: +gid }) });
+      toast('Subordinação gravada'); viewAdmin();
+    } catch (e) {}
+  });
+}
+
+/* --- Backup: gerar, baixar e IMPORTAR (R9) --- */
 function admBackup() {
-  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Backup definitivo</h3>
-    <p style="color:var(--tx2);font-size:13px">O SCI já faz backup automático a cada formatura confirmada e no boot
-    (<code>VACUUM INTO</code> + SHA-256 + MANIFEST). Aqui você força uma cópia agora.</p>
+  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Backup</h3>
+    <p style="color:var(--tx2);font-size:13px">O SCI faz backup automático a cada conferência fechada e no boot
+    (<code>VACUUM INTO</code> + SHA-256 + MANIFEST). Aqui você força uma cópia agora ou restaura um arquivo .db.</p>
     <button class="primario" id="bkGo">Fazer backup agora</button>
-    <pre id="bkOut" style="margin-top:10px;color:var(--tx2);font-size:12px"></pre></div>`;
+    <pre id="bkOut" style="margin-top:10px;color:var(--tx2);font-size:12px"></pre></div>
+    <div class="cartao"><h3 style="margin-top:0">Importar backup (.db)</h3>
+    <p style="color:var(--tx2);font-size:13px">Valida o arquivo (SQLite + integridade + versão de schema), grava um backup de segurança do estado atual e troca o banco. Arquivo inválido é rejeitado sem tocar em nada.</p>
+    <input type="file" id="bkArq" accept=".db">
+    <button class="primario" id="bkImp" style="margin-top:8px">Importar</button>
+    <pre id="bkImpOut" style="margin-top:10px;color:var(--tx2);font-size:12px"></pre></div>`;
   $('#bkGo').onclick = async () => {
     const r = await api('/api/backup', { method: 'POST', body: '{}' });
     $('#bkOut').textContent = `${r.arquivo}\nsha256: ${r.sha256}\n→ download iniciado no navegador`;
     toast('Backup gerado — download iniciado');
-    // ordem do Tenente: gerou → baixa o arquivo no navegador
     window.location.href = '/api/backup/download?nome=' + encodeURIComponent(r.arquivo.split('/').pop());
+  };
+  $('#bkImp').onclick = async () => {
+    const f = $('#bkArq').files[0];
+    if (!f) { toast('Escolha o arquivo .db', 'erro'); return; }
+    if (!confirm(`Importar "${f.name}"? O banco atual será substituído (antes, um backup de segurança é gravado).`)) return;
+    const fd = new FormData();
+    fd.append('arquivo', f);
+    try {
+      const r = await fetch('/api/backup/importar', { method: 'POST', headers: { 'X-SCI': '1' }, body: fd });
+      const j = await r.json();
+      if (!r.ok) { toast(j.erro || 'Falha na importação', 'erro'); $('#bkImpOut').textContent = 'REJEITADO: ' + (j.erro || r.status); return; }
+      $('#bkImpOut').textContent = `Importado (schema ${j.schema}). Backup de segurança: ${j.seguranca}`;
+      toast('Backup importado — entre novamente com as credenciais do arquivo importado');
+      ME = null;
+      location.hash = '#/login';
+      rotear();
+    } catch (e) { $('#bkImpOut').textContent = 'falha de rede'; }
   };
 }
 
@@ -678,14 +617,28 @@ function admBackup() {
 function navAtiva(h) { document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('ativo', a.hash === h)); }
 function montarNav() {
   $('#topbar').classList.remove('oculto');
-  $('#quem').textContent = ME ? ME.login + (ME.papel === 'admin' ? ' · admin' : '') : '';
-  const itens = [['#/hoje', 'Conferência'], ['#/conferencias', 'Conferências'], ['#/relatorios', 'Relatórios']];
-  if (ME && (ME.papel === 'admin' || ME.papel === 'gerente')) itens.push(['#/grupos', 'Grupos']);
-  itens.push(['#/perfil', 'Meu usuário']);
-  if (ME && ME.papel === 'admin') itens.push(['#/admin', 'Admin']);
+  $('#quem').textContent = ME ? ME.login + ' · ' + rotuloPapel(ME.papel) : '';
+  // R11: admin = DASHBOARD - ADMIN - RELATÓRIOS; R2: sem abas de conferência
+  let itens;
+  if (ME && ME.papel === 'admin') {
+    itens = [['#/hoje', 'Dashboard'], ['#/admin', 'Admin'], ['#/relatorios', 'Relatórios']];
+  } else {
+    itens = [['#/hoje', 'Conferência'], ['#/conferencias', 'Conferências'], ['#/relatorios', 'Relatórios']];
+    if (ME && ME.papel === 'gerente') itens.push(['#/grupos', 'Grupos']);
+    if (ME && ME.papel !== 'admin') itens.push(['#/perfil', 'Meu usuário']); // R3
+  }
   $('#nav').innerHTML = itens.map(([h, t]) => `<a href="${h}">${t}</a>`).join('');
-  $('#btSenha').onclick = modalSenha; // botão estático no HTML — nunca duplica
-  $('#btnSair').onclick = async () => { await api('/api/logout', { method: 'POST', body: '{}' }); ME = null; location.hash = '#/login'; };
+}
+function ligarMenuUsuario() { // R13
+  const menu = $('#menuUsuarioItens');
+  $('#quem').onclick = ev => { ev.stopPropagation(); menu.classList.toggle('oculto'); };
+  document.addEventListener('click', ev => { if (!menu.classList.contains('oculto') && !$('#menuUsuario').contains(ev.target)) menu.classList.add('oculto'); });
+  $('#btSenha').onclick = () => { menu.classList.add('oculto'); modalSenha(); };
+  $('#btnSair').onclick = async () => {
+    menu.classList.add('oculto');
+    try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (e) {}
+    ME = null; location.hash = '#/login'; rotear();
+  };
 }
 function modalSenha() {
   const div = document.createElement('div');
@@ -722,17 +675,24 @@ async function rotear() {
   const h = location.hash || '#/hoje';
   if (!ME) { viewLogin(); return; }
   montarNav();
+  if (ME.papel === 'admin') {
+    if (h === '#/hoje') viewDashboard();
+    else if (h === '#/admin') viewAdmin();
+    else if (h === '#/relatorios' || h === '#/semana') viewRelatorios();
+    else location.hash = '#/admin'; // homepage do admin = aba ADMIN
+    return;
+  }
   if (h === '#/hoje') viewHoje();
   else if (h === '#/conferencias') viewConferencias();
-  else if (h === '#/grupos' && (ME.papel === 'admin' || ME.papel === 'gerente')) viewGrupos();
+  else if (h === '#/grupos' && ME.papel === 'gerente') viewGrupos();
   else if (h === '#/perfil') viewPerfil();
   else if (h === '#/relatorios' || h === '#/semana') viewRelatorios();
-  else if (h === '#/admin' && ME.papel === 'admin') viewAdmin();
   else { location.hash = '#/hoje'; }
 }
 window.onhashchange = rotear;
 (async function init() {
+  ligarMenuUsuario();
   try { const r = await api('/api/me'); ME = r.usuario; } catch (e) {}
-  if (!location.hash) location.hash = '#/hoje';
+  if (!location.hash) location.hash = ME && ME.papel === 'admin' ? '#/admin' : '#/hoje';
   rotear();
 })();
