@@ -180,6 +180,7 @@ func (a *App) rotas() {
 	m.Handle("GET /api/conferencia/hoje", confAuth(a.hConferenciaHoje))
 	m.Handle("POST /api/conferencia/iniciar", confAuth(a.hConferenciaIniciar))
 	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
+	m.Handle("POST /api/conferencia/marcar", confAuth(a.hConferenciaMarcar))
 	m.Handle("GET /api/conferencia/lista", confAuth(a.hConferenciaList))
 	m.Handle("GET /api/conferencia/{id}", confAuth(a.hConferenciaGet))
 	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", confAuth(a.hConferenciaPDF))
@@ -457,6 +458,75 @@ type lancamentoReq struct {
 	DestinoID  *int64 `json:"destino_id"`
 	TagID      *int64 `json:"tag_id"`
 	Observacao string `json:"observacao"`
+}
+
+
+// hConferenciaMarcar (v9.13, ordem Tenente 29/09): salvamento PARCIAL — grava imediatamente
+// o estado de UM militar na conferência ABERTA do escopo. Reload volta ao ponto (o GET hoje
+// já devolve estados). Imutabilidade: conferência fechada rejeita.
+func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	var req struct {
+		PessoaID   int64  `json:"pessoa_id"`
+		Situacao   string `json:"situacao"`
+		DestinoID  *int64 `json:"destino_id"`
+		Observacao *string `json:"observacao"`
+	}
+	if err := decodificar(r, &req); err != nil || req.PessoaID == 0 {
+		jsonErro(w, http.StatusBadRequest, "pessoa_id obrigatório")
+		return
+	}
+	var confID int64
+	var status string
+	err := a.st.db.QueryRow(`SELECT id, status FROM conferencias
+		WHERE status = 'aberta' AND grupo_id = ? ORDER BY id DESC LIMIT 1`, escopo).Scan(&confID, &status)
+	if err != nil {
+		jsonErro(w, http.StatusConflict, "nenhuma conferência aberta")
+		return
+	}
+	// pessoa precisa pertencer ao escopo
+	var n int
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM pessoas WHERE id = ? AND grupo_id = ? AND status='ativo'`,
+		req.PessoaID, escopo).Scan(&n)
+	if n == 0 {
+		jsonErro(w, http.StatusForbidden, "pessoa fora do seu escopo")
+		return
+	}
+	if req.Situacao == "" {
+		// "desmarcar" o check: mantém lançamento existente; se não existe, nada a gravar
+		var jahExiste int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM presencas WHERE conferencia_id = ? AND pessoa_id = ?`,
+			confID, req.PessoaID).Scan(&jahExiste)
+		jsonOK(w, map[string]any{"ok": true, "gravado": jahExiste > 0})
+		return
+	}
+	switch req.Situacao {
+	case "presente", "atraso", "falta", "justificada":
+	default:
+		jsonErro(w, http.StatusBadRequest, "situação inválida")
+		return
+	}
+	if req.Situacao == "justificada" && req.DestinoID == nil {
+		jsonErro(w, http.StatusBadRequest, "justificada exige destino")
+		return
+	}
+	_, err = a.st.db.Exec(`INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em)
+		VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		ON CONFLICT(conferencia_id, pessoa_id) DO UPDATE SET
+		  situacao = excluded.situacao,
+		  destino_id = excluded.destino_id,
+		  observacao = excluded.observacao,
+		  marcado_por = excluded.marcado_por,
+		  marcado_em = excluded.marcado_em`,
+		confID, req.PessoaID, req.Situacao, req.DestinoID, req.Observacao, u.ID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "marcar_parcial", "presencas", &confID,
+		"pessoa "+fmt.Sprintf("%d", req.PessoaID)+" → "+req.Situacao, ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "gravado": true, "conferencia_id": confID})
 }
 
 // pessoasAtivas(escopo): escopo 0 = todas (admin); N = só do grupo N.

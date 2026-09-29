@@ -277,6 +277,10 @@ function montarShell(usuario) {
   burger.onclick = ev => {
     ev.stopPropagation();
     const abre = !navEl.classList.contains('aberta');
+    if (abre) { // fora do #topbar: stacking context do topbar não limita mais o drawer
+      document.body.appendChild(mask);
+      document.body.appendChild(navEl);
+    }
     navEl.classList.toggle('aberta', abre);
     burger.classList.toggle('x', abre);
     burger.setAttribute('aria-expanded', String(abre));

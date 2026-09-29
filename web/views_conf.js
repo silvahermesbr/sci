@@ -23,6 +23,19 @@
   /* ================================================================
      #/hoje — CONFERÊNCIA DE PESSOAL (gerente/operador)
      ================================================================ */
+  /* --- salvamento parcial (v9.13): grava o estado de 1 militar na conferência aberta --- */
+  let marcaTimer = {}, marcaPend = {};
+  const marcarParcial = (pid, situacao, destinoId, observacao) => {
+    if (!C.c) return;
+    marcaPend[pid] = { situacao: situacao || null, destino_id: destinoId ?? null, observacao: observacao ?? null };
+    clearTimeout(marcaTimer[pid]);
+    marcaTimer[pid] = setTimeout(async () => {
+      const corpo = marcaPend[pid];
+      delete marcaPend[pid];
+      try { await api('/api/conferencia/marcar', { method: 'POST', body: JSON.stringify({ pessoa_id: pid, ...corpo }) }); }
+      catch (e) { toast('Falha ao salvar estado parcial', 'erro'); }
+    }, 350);
+  };
   window.ViewHoje = async function () {
     navAtiva('#/hoje');
     $('#app').innerHTML = '<div class="carregando">Carregando efetivo…</div>';
@@ -113,15 +126,17 @@
       const atual = C.est[id] || 'presente';
       if (novo === atual) return;
       C.est[id] = novo;
-      C.verif.delete(id);
+      C.verif.add(id);
       if (novo === 'falta' || novo === 'justificada') confModalLancamento(id, novo, () => confRender($('#busca') ? $('#busca').value : ''));
-      else confRender($('#busca').value);
+      else { marcarParcial(id, novo, C.dest[id] ?? null, C.obs[id] ?? null); confRender($('#busca').value); }
     });
     document.querySelectorAll('.pessoa .chk').forEach(ch => ch.onchange = () => {
       const id = +ch.dataset.id;
       if (ch.checked) C.verif.add(id); else C.verif.delete(id);
       ch.closest('.pessoa').classList.toggle('verificado', ch.checked);
       atualizar();
+      // salvamento parcial: check grava o estado atual (ou presente) daquele nome
+      if (ch.checked) marcarParcial(id, C.est[id] || 'presente', C.dest[id] ?? null, C.obs[id] ?? null);
     });
     document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => { C.dest[+s.dataset.id] = +s.value || null; });
     document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => { ev.stopPropagation(); confModalComentarios(+b.dataset.id); });
@@ -231,6 +246,8 @@
       const obs = raiz.querySelector('#mObs').value.trim();
       if (sit === 'justificada' && !destino) { toast('Justificada exige destino', 'erro'); return; }
       C.dest[id] = destino; C.obs[id] = obs;
+      C.verif.add(id);
+      marcarParcial(id, sit, destino, obs); // salvamento parcial imediato
       fechar();
       if (aoSalvar) aoSalvar();
     };
