@@ -424,9 +424,19 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-	err = a.st.db.QueryRow(
-		`SELECT id, status, data, criado_em FROM conferencias
-		 WHERE status = 'aberta' AND grupo_id = ? ORDER BY id DESC LIMIT 1`, escopo).
+	// v9.14.2: ?id=N abre conferência específica (várias simultâneas); senão a mais recente
+	idQ := r.URL.Query().Get("id")
+	qHoje := `SELECT id, status, data, criado_em FROM conferencias
+		 WHERE status = 'aberta' AND grupo_id = ?`
+	argsHoje := []any{escopo}
+	if idQ != "" {
+		if cid, e := strconv.ParseInt(idQ, 10, 64); e == nil {
+			qHoje += ` AND id = ?`
+			argsHoje = append(argsHoje, cid)
+		}
+	}
+	qHoje += ` ORDER BY id DESC LIMIT 1`
+	err = a.st.db.QueryRow(qHoje, argsHoje...).
 		Scan(&f.ID, &f.Status, &f.Data, &f.CriadaEm)
 	var form *map[string]any
 	if err == nil {
@@ -478,8 +488,17 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 	}
 	var confID int64
 	var status string
-	err := a.st.db.QueryRow(`SELECT id, status FROM conferencias
-		WHERE status = 'aberta' AND grupo_id = ? ORDER BY id DESC LIMIT 1`, escopo).Scan(&confID, &status)
+	qMark := `SELECT id, status FROM conferencias
+		WHERE status = 'aberta' AND grupo_id = ?`
+	argsMark := []any{escopo}
+	if idQ := r.URL.Query().Get("id"); idQ != "" {
+		if cid, e := strconv.ParseInt(idQ, 10, 64); e == nil {
+			qMark += ` AND id = ?`
+			argsMark = append(argsMark, cid)
+		}
+	}
+	qMark += ` ORDER BY id DESC LIMIT 1`
+	err := a.st.db.QueryRow(qMark, argsMark...).Scan(&confID, &status)
 	if err != nil {
 		jsonErro(w, http.StatusConflict, "nenhuma conferência aberta")
 		return
@@ -586,15 +605,9 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, "tipo '"+tipoConferenciaPadrao+"' inexistente")
 		return
 	}
-	// já existe conferência aberta DO GRUPO?
-	var abertaID int64
-	if e := a.st.db.QueryRow(
-		`SELECT id FROM conferencias WHERE status = 'aberta' AND grupo_id = ? LIMIT 1`, grupoID).
-		Scan(&abertaID); e == nil {
-		jsonErro(w, http.StatusConflict, "já existe uma conferência aberta do seu grupo (feche-a antes de iniciar outra)")
-		return
-	}
-	// várias por dia: permitido (ordem Tenente); UNIQUE(data,tipo) removida na v4
+	// v9.14.2 (ordem Tenente 29/09): MÚLTIPLAS conferências abertas simultâneas por grupo
+	// (o bloqueio anterior de "1 aberta por grupo" foi removido). Cada conferência tem o
+	// próprio ID; o /hoje (edição) usa ?id= quando informado, senão a mais recente.
 	var id int64
 	res, e := a.st.db.Exec(
 		`INSERT INTO conferencias (data, tipo_id, local, grupo_id, criado_por) VALUES (?,?,?,?,?)`,

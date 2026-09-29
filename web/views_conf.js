@@ -24,6 +24,7 @@
      #/hoje — CONFERÊNCIA DE PESSOAL (gerente/operador)
      ================================================================ */
   /* --- salvamento parcial (v9.13): grava o estado de 1 militar na conferência aberta --- */
+  let CONF_ID = null; // conferência aberta sendo editada (várias simultâneas v9.14.2)
   let marcaTimer = {}, marcaPend = {};
   const marcarParcial = (pid, situacao, destinoId, observacao) => {
     if (!C.c) return;
@@ -32,7 +33,7 @@
     marcaTimer[pid] = setTimeout(async () => {
       const corpo = marcaPend[pid];
       delete marcaPend[pid];
-      try { await api('/api/conferencia/marcar', { method: 'POST', body: JSON.stringify({ pessoa_id: pid, ...corpo }) }); }
+      try { await api('/api/conferencia/marcar' + (CONF_ID ? '?id=' + CONF_ID : ''), { method: 'POST', body: JSON.stringify({ pessoa_id: pid, ...corpo }) }); }
       catch (e) { toast('Falha ao salvar estado parcial', 'erro'); }
     }, 350);
   };
@@ -66,23 +67,21 @@
       <tbody>${itens.map(linha).join('') || '<tr><td colspan="8"><span class="vazio">nenhuma</span></td></tr>'}</tbody></table></div></div>`;
     $('#app').innerHTML = `<h2>Conferências</h2>
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-        ${haAberta ? `<button class="primario" id="btAbrirAtiva" style="min-height:44px">▶ Abrir conferência #${haAberta.id} (em andamento)</button>`
-                   : `<button class="primario" id="btIniciarTopo" style="min-height:44px">▶ Iniciar conferência</button>`}
-        <span style="color:var(--tx2);font-size:12px">abertas podem ser editadas · fechadas viram relatório (PDF)</span></div>
+        <button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>
+        <span style="color:var(--tx2);font-size:12px">abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)</span></div>
       <div class="cartao" style="margin-bottom:10px"><div class="campo" style="margin:0"><label>Pesquisar por ID da conferência</label><input id="fConfID" placeholder="ex.: 3"></div></div>` +
       tabela('Abertas', abertas) + tabela('Fechadas', fechadas) +
       `<p style="color:var(--tx2);font-size:12px">O relatório PDF só é gerado para conferências fechadas.</p>`;
-    const iniciar = async () => {
+    const btNova = $('#btNovaConf');
+    if (btNova) btNova.onclick = async () => {
       try {
-        await api('/api/conferencia/iniciar', { method: 'POST', body: '{}' });
-        location.hash = '#/conferencia';
+        const r = await api('/api/conferencia/iniciar', { method: 'POST', body: '{}' });
+        location.hash = '#/conferencia?id=' + r.conferencia.id;
       } catch (e) {}
     };
-    const bt = $('#btIniciarTopo');
-    if (bt) bt.onclick = iniciar;
-    const ab = $('#btAbrirAtiva');
-    if (ab) ab.onclick = () => { location.hash = '#/conferencia'; };
-    document.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => { location.hash = '#/conferencia'; });
+    document.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
+      location.hash = '#/conferencia?id=' + b.dataset.abrir;
+    });
     $('#fConfID').oninput = () => {
       const q = $('#fConfID').value.trim().replace('#', '');
       document.querySelectorAll('#app tr[data-cid]').forEach(tr => {
@@ -95,7 +94,9 @@
   window.ViewConferencia = async function () {
     navAtiva('#/hoje');
     $('#app').innerHTML = '<div class="carregando">Carregando efetivo…</div>';
-    const d = await api('/api/conferencia/hoje');
+    CONF_ID = new URLSearchParams(location.hash.split('?')[1] || '').get('id') || null;
+    const qs = CONF_ID ? '?id=' + CONF_ID : '';
+    const d = await api('/api/conferencia/hoje' + qs);
     if (!d.conferencia) { location.hash = '#/hoje'; return; }
     let destinos = [];
     try { destinos = await api('/api/catalogo/destinos'); } catch (e) { destinos = []; }
