@@ -573,9 +573,11 @@
       const cont = $('#catGer');
       if (!cont) return;
       let html = '';
-      for (const t of ['setores', 'funcoes', 'tags', 'destinos']) {
-        let lista = [];
-        try { lista = await api('/api/catalogo/' + t); } catch (e) {}
+      // v9.16.7: os 4 catálogos em PARALELO (sequencial somava ~1.7s de rede)
+      const tipos = ['setores', 'funcoes', 'tags', 'destinos'];
+      const resultados = await Promise.all(tipos.map(t =>
+        api('/api/catalogo/' + t).then(l => [t, l]).catch(() => [t, []])));
+      for (const [t, lista] of resultados) {
         if (t === 'tags' && lista.length) {
           /* --- v9.16: TAGs em ÁRVORE com DRAG & DROP de hierarquia --- */
           const filhosDe = pai => lista.filter(x => (x.pai_id || null) === (pai || null) && x.pai_id !== null || (pai === null && x.pai_id === null));

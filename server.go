@@ -1269,18 +1269,35 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	// v9.7 (ordem Tenente): relatórios organizados por ANTIGUIDADE DE FUNÇÃO
 	// (funcao_id menor = mais antigo), depois alfabetica. ID da função visível no relatório.
 	// v9.11.1 (ordem Tenente 29/09): efetivo do relatório em ORDEM ALFABÉTICA (por hora).
+	// v9.17 (ordem Tenente 29/09): TODOS os relatórios ordenam por HIERARQUIA DE SETOR
+	// (árvore pai>filho, raiz antes, alfabético por nível), depois HIERARQUIA DE FUNÇÃO
+	// (mesma regra), depois nome de guerra. Caminho construído com CTE recursiva.
 	rows, err = a.st.db.Query(`
+		WITH RECURSIVE cam_setor(id, caminho) AS (
+		  SELECT id, nome FROM setores WHERE pai_id IS NULL
+		  UNION ALL
+		  SELECT f.id, cs.caminho || ' > ' || f.nome FROM setores f JOIN cam_setor cs ON f.pai_id = cs.id
+		),
+		cam_funcao(id, caminho) AS (
+		  SELECT id, nome FROM funcoes WHERE pai_id IS NULL
+		  UNION ALL
+		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
+		)
 		SELECT p.id, p.nome_guerra, COALESCE(s.nome,'Sem setor'),
 		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0),
 		       COALESCE(SUM(pr.situacao='atraso'),0),
 		       COALESCE(SUM(pr.situacao='falta'),0),
 		       COALESCE(SUM(pr.situacao='justificada'),0),
 		       COUNT(pr.id), p.funcao_id, COALESCE(fu.nome,''),
-		       ROW_NUMBER() OVER (ORDER BY p.nome_guerra COLLATE NOCASE) AS antig,
+		       ROW_NUMBER() OVER (ORDER BY COALESCE(cs2.caminho,'~sem setor'),
+		                                  COALESCE(cf2.caminho,'~sem função'),
+		                                  p.nome_guerra COLLATE NOCASE) AS antig,
 		       COALESCE(g2.nome,'—')
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN cam_setor cs2 ON cs2.id = s.id
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN cam_funcao cf2 ON cf2.id = fu.id
 		LEFT JOIN grupos g2 ON g2.id = p.grupo_id
 		/* FIX S4-P1 (verif5): escopo filtrado DENTRO do join de presencas —
 		   pessoa ativa sem lançamento no período permanece na lista (zeros),
@@ -1293,7 +1310,10 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		ftP2.clause+`
 		       )
 		WHERE p.status='ativo'`+a.filtroArvore(escopo, "p").clause+`
-		GROUP BY p.id ORDER BY p.funcao_id IS NULL, p.funcao_id, p.nome_guerra`,
+		GROUP BY p.id
+		ORDER BY COALESCE(cs2.caminho,'~sem setor'),
+		         COALESCE(cf2.caminho,'~sem função'),
+		         p.nome_guerra COLLATE NOCASE`,
 		append(append([]any{de, ate}, ftP2.args...), a.filtroArvore(escopo, "p").args...)...)
 	if err == nil {
 		for rows.Next() {
