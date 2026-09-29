@@ -41,7 +41,7 @@
       ? ` · efetivo total: <b style="color:#000">${n.efetivo_total}</b> <small style="color:#000">(próprio ${n.efetivo})</small>`
       : ` · <span style="color:#000">${n.efetivo} no efetivo</span>`;
     return `<div style="margin-left:${nivel * 22}px;padding:5px 8px;border-left:3px solid var(--verde);margin-bottom:4px;background:#f4f8f4;border-radius:0 6px 6px 0">` +
-      (nivel === 0 && temFilhos ? `<span data-tgl="${id}" style="cursor:pointer;font-weight:700;color:#000">▸ </span>` : '') +
+      (temFilhos ? `<span data-tgl="${id}" style="cursor:pointer;font-weight:700;color:#000">▸ </span>` : '') +
       `<b style="color:#000">${esc(n.nome)}</b> <small style="color:#000">#${n.id}</small> ` + codigoChip(n.codigo) +
       `<small style="color:#000">${comGerente ? ` · gerente: <b style="color:#000">${esc(n.gerente || '—')}</b>` : ''}${efetTxt} · ${n.contas} conta(s)</small>` +
       (temFilhos ? `<div id="${id}" class="oculto" style="margin-top:4px">${n.filhos.map(f => noHTML(f, nivel + 1, comGerente)).join('')}</div>` : '') +
