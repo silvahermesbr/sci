@@ -65,6 +65,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV7(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV8(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -466,6 +469,35 @@ func (s *Store) migrarV7() error {
 	return s.marcarVersao(7)
 }
 
+// migrarV8 (v9.9, ordem Tenente 29/09): catálogos de FUNÇÃO, SETOR e TAG nascem ZEROS —
+// todo grupo começa sem nenhum item; herança é só de LEITURA (o que o grupo de cima cria
+// desce para os de baixo; nunca o contrário). Remove os seeds globais de setores/funcoes/
+// tags. Mantidos: destinos, conferencia_tipos e status_pessoal (operacionais, não de
+// organização). Ordem: apagar seeds globais (só os SEM lançamento/setor referenciando;
+// os em uso viram órfãos ativos preservando histórico), marca versão 8.
+func (s *Store) migrarV8() error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE versao = 8`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	// seeds globais de organização (grupo_id IS NULL) saem — exceto os em uso por
+	// pessoas/lançamentos (imutabilidade histórica preservada: ficam mas invisíveis
+	// para novos grupos pois a herança só desce; mais limpo: desativa em vez de apagar)
+	for _, q := range []string{
+		`UPDATE setores SET ativo = 0 WHERE grupo_id IS NULL AND id NOT IN (SELECT DISTINCT setor_id FROM pessoas WHERE setor_id IS NOT NULL)`,
+		`UPDATE funcoes SET ativo = 0 WHERE grupo_id IS NULL AND id NOT IN (SELECT DISTINCT funcao_id FROM pessoas WHERE funcao_id IS NOT NULL)`,
+		`UPDATE tags SET ativo = 0 WHERE grupo_id IS NULL`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v8: %w", err)
+		}
+	}
+	return s.marcarVersao(8)
+}
+
 // gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos
 // 32 símbolos legíveis) — revisão de leitura humana em campo.
 func gerarCodigoGrupo() string {
@@ -500,18 +532,14 @@ func (s *Store) SeedIfEmpty(senhaAdmin string) error {
 		return err
 	}
 	for _, q := range []string{
-		`INSERT OR IGNORE INTO setores (nome, sigla) VALUES
-			('Comando','Cmdo'),('Escola','Esco'),('Serviços','Svc'),('Manutenção','Manut'),('Telemática','TLM')`,
-		`INSERT OR IGNORE INTO funcoes (nome) VALUES
-			('Operador'),('Motorista'),('Mecânico'),('Bombeiro'),('Auxiliar Adm')`,
+		// v9.9 (ordem Tenente 29/09): FUNÇÃO, SETOR e TAG nascem ZEROS — sem seeds.
+		// Herança só desce (o que o grupo de cima cria é herdado pelos de baixo;
+		// edição é exclusiva do grupo dono). Destinos/tipos/status: operacionais, ficam.
 		`INSERT OR IGNORE INTO destinos (nome) VALUES
 			('Serviço'),('SSV - saindo de serviço'),('Missão externa'),('Curso'),('Hospital'),
 			('Licença'),('Trânsito'),('CMA')`,
-		`INSERT OR IGNORE INTO tags (nome, cor) VALUES
-			('Sd','#8ea9c1'),('Cb','#7fb069'),('3º Sgt','#d4a24e'),('2º Sgt','#d4a24e'),
-			('1º Sgt','#d4a24e'),('Asp','#9b7fb0'),('Of','#c14e4e')`,
 		`INSERT OR IGNORE INTO conferencia_tipos (nome) VALUES
-			('Conferência de pessoal'),('Café Coletivo'),('Instrução'),('Inspeção')`,
+			('Conferência de pessoal')`,
 		`INSERT OR IGNORE INTO status_pessoal (nome) VALUES ('Ativo'),('Inativo')`,
 	} {
 		if _, err := s.db.Exec(q); err != nil {
@@ -641,7 +669,10 @@ func (s *Store) ReabrirComArquivo(novoArquivo string) error {
 	if err := s.migrarV6(); err != nil {
 		return err
 	}
-	return s.migrarV7()
+	if err := s.migrarV7(); err != nil {
+		return err
+	}
+	return s.migrarV8()
 }
 
 // migrarV6: papéis limpos — 'usuario' passa a se chamar 'operador' (v9.3).
