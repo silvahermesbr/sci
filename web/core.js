@@ -227,8 +227,13 @@ function montarShell(usuario) {
   }
   topbar.classList.remove('oculto');
   topbar.innerHTML =
+    '<button type="button" id="btBurger" aria-label="menu" aria-expanded="false">' +
+      '<span class="burg-x"></span><span class="burg-x"></span><span class="burg-x"></span>' +
+    '</button>' +
     '<div class="marca"><span class="logo">SCI</span><span class="sub">Controle Interno</span></div>' +
+    '<div id="tituloMob"></div>' +
     '<nav id="nav"></nav>' +
+    '<div id="burgMask" class="oculto"></div>' +
     '<div class="sessao"><div id="menuUsuario">' +
       '<button type="button" id="quem" title="conta"></button>' +
       '<div id="menuUsuarioItens" class="oculto">' +
@@ -261,6 +266,26 @@ function montarShell(usuario) {
     irPara('#/login');
   });
 
+  /* --- burger menu mobile (ordem Tenente 29/09): drawer lateral esquerdo --- */
+  const burger = $('#btBurger', topbar), mask = $('#burgMask', topbar), navEl = $('#nav', topbar);
+  const fecharDrawer = () => {
+    navEl.classList.remove('aberta');
+    burger.classList.remove('x');
+    burger.setAttribute('aria-expanded', 'false');
+    mask.classList.add('oculto');
+  };
+  burger.onclick = ev => {
+    ev.stopPropagation();
+    const abre = !navEl.classList.contains('aberta');
+    navEl.classList.toggle('aberta', abre);
+    burger.classList.toggle('x', abre);
+    burger.setAttribute('aria-expanded', String(abre));
+    mask.classList.toggle('oculto', !abre);
+  };
+  mask.onclick = fecharDrawer;
+  navEl.querySelectorAll('a').forEach(a => a.addEventListener('click', fecharDrawer));
+  montarShell.fecharDrawer = fecharDrawer;
+
   if (!montarShell._foraLigado) { // fecha o dropdown ao clicar fora (uma única vez)
     montarShell._foraLigado = true;
     document.addEventListener('click', ev => {
@@ -274,6 +299,9 @@ window.montarShell = montarShell;
 
 function navAtiva(hash) {
   $$('#nav a').forEach(a => a.classList.toggle('ativo', a.getAttribute('href') === hash));
+  const t = document.querySelector('#nav a.ativo');
+  const tm = document.querySelector('#tituloMob');
+  if (tm) tm.textContent = t ? t.textContent : '';
 }
 window.navAtiva = navAtiva;
 

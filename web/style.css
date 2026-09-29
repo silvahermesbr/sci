@@ -398,9 +398,65 @@ input[type="checkbox"]{width:auto;cursor:pointer;accent-color:var(--verde)}
 @media (min-width:769px){
   .lista-pessoa{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr))}
 }
+/* ---------- burger menu mobile (ordem Tenente 29/09) ---------- */
+/* desktop: burger, título central e máscara INEXISTEM */
+#btBurger{display:none}
+#tituloMob{display:none}
+#burgMask{display:none}
+
 @media (max-width:760px){
-  #topbar{padding:8px 12px;gap:4px 10px}
+  #topbar{padding:6px 10px;gap:0;flex-wrap:nowrap;justify-content:space-between;position:relative}
   .sub{display:none}
+  .marca{position:static}
+
+  /* botão burger: 3 barrinhas, esquerda superior */
+  #btBurger{
+    display:inline-flex;flex-direction:column;justify-content:center;gap:4px;
+    width:40px;height:40px;padding:9px 8px;flex:0 0 auto;
+    background:transparent;border:1px solid var(--borda);border-radius:8px;cursor:pointer;
+  }
+  #btBurger .burg-x{
+    display:block;height:2px;width:100%;border-radius:2px;
+    background:var(--tx);transition:transform .22s ease, opacity .18s ease;
+  }
+  #btBurger.x .burg-x:nth-child(1){transform:translateY(6px) rotate(45deg)}
+  #btBurger.x .burg-x:nth-child(2){opacity:0}
+  #btBurger.x .burg-x:nth-child(3){transform:translateY(-6px) rotate(-45deg)}
+
+  /* título central absoluto */
+  #tituloMob{
+    display:block;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw;
+    pointer-events:none;
+  }
+
+  /* dropdown de login à direita (já existe; garante ordem) */
+  .sessao{order:3}
+
+  /* nav vira DRAWER lateral esquerdo off-canvas */
+  #nav{
+    position:fixed;top:0;left:0;bottom:0;z-index:60;
+    display:flex;flex-direction:column;gap:4px;
+    width:min(76vw,300px);padding:70px 14px 20px;
+    background:var(--fundo2,#0e1310);border-right:1px solid var(--borda);
+    transform:translateX(-102%);transition:transform .24s ease;
+    box-shadow:0 0 40px rgba(0,0,0,.5);
+  }
+  #nav.aberta{transform:translateX(0)}
+  #nav a{
+    padding:13px 14px;border-radius:9px;font-size:13.5px;letter-spacing:.1em;
+    border:1px solid transparent;
+  }
+  #nav a.ativo{background:rgba(87,161,115,.12);border-color:rgba(87,161,115,.35)}
+
+  /* máscara do drawer */
+  #burgMask{
+    display:block;position:fixed;inset:0;z-index:55;
+    background:rgba(0,0,0,.55);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+  }
+  #burgMask.oculto{display:none}
+
   main{padding:16px 12px 130px}
   .cartao{padding:14px}
   .resumo{grid-template-columns:repeat(2,1fr)}
