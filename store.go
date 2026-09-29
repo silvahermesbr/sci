@@ -486,10 +486,12 @@ func (s *Store) migrarV8() error {
 	// seeds globais de organização (grupo_id IS NULL) saem — exceto os em uso por
 	// pessoas/lançamentos (imutabilidade histórica preservada: ficam mas invisíveis
 	// para novos grupos pois a herança só desce; mais limpo: desativa em vez de apagar)
+	// v9.11: DESTINOS também — tudo de organização nasce zerado.
 	for _, q := range []string{
 		`UPDATE setores SET ativo = 0 WHERE grupo_id IS NULL AND id NOT IN (SELECT DISTINCT setor_id FROM pessoas WHERE setor_id IS NOT NULL)`,
 		`UPDATE funcoes SET ativo = 0 WHERE grupo_id IS NULL AND id NOT IN (SELECT DISTINCT funcao_id FROM pessoas WHERE funcao_id IS NOT NULL)`,
 		`UPDATE tags SET ativo = 0 WHERE grupo_id IS NULL`,
+		`UPDATE destinos SET ativo = 0 WHERE grupo_id IS NULL`,
 	} {
 		if _, err := s.db.Exec(q); err != nil {
 			return fmt.Errorf("migração v8: %w", err)
@@ -532,14 +534,10 @@ func (s *Store) SeedIfEmpty(senhaAdmin string) error {
 		return err
 	}
 	for _, q := range []string{
-		// v9.9 (ordem Tenente 29/09): FUNÇÃO, SETOR e TAG nascem ZEROS — sem seeds.
-		// Herança só desce (o que o grupo de cima cria é herdado pelos de baixo;
-		// edição é exclusiva do grupo dono). Destinos/tipos/status: operacionais, ficam.
-		`INSERT OR IGNORE INTO destinos (nome) VALUES
-			('Serviço'),('SSV - saindo de serviço'),('Missão externa'),('Curso'),('Hospital'),
-			('Licença'),('Trânsito'),('CMA')`,
-		`INSERT OR IGNORE INTO conferencia_tipos (nome) VALUES
-			('Conferência de pessoal')`,
+		// v9.11 (ordem Tenente 29/09): TUDO de organização nasce ZERADO — setores,
+		// funções, tags E DESTINOS. Herança só desce (leitura); edição do dono.
+		// Destinos default migrados para desativados (preserva histórico de lançamentos).
+		`UPDATE destinos SET ativo = 0 WHERE grupo_id IS NULL`,
 		`INSERT OR IGNORE INTO status_pessoal (nome) VALUES ('Ativo'),('Inativo')`,
 	} {
 		if _, err := s.db.Exec(q); err != nil {
