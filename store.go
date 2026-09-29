@@ -71,6 +71,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV9(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV10(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -299,9 +302,6 @@ func (s *Store) migrarV4() error {
 		`CREATE INDEX IF NOT EXISTS idx_comentarios_conf ON comentarios(conferencia_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_conferencias_data ON conferencias(data)`,
 		`INSERT OR IGNORE INTO status_pessoal (nome) VALUES ('Ativo'),('Inativo')`,
-		`INSERT OR IGNORE INTO destinos (nome) VALUES
-			('Serviço'),('SSV - saindo de serviço'),('Missão externa'),('Curso'),('Hospital'),
-			('Licença'),('Trânsito'),('CMA')`,
 		`INSERT OR IGNORE INTO conferencia_tipos (nome) VALUES ('Conferência de pessoal')`,
 	)
 	for _, q := range steps {
@@ -527,6 +527,23 @@ func (s *Store) migrarV9() error {
 	return s.marcarVersao(9)
 }
 
+// migrarV10 (ordem Tenente 29/09: "destinos parecem hardcoded"): APAGA as seeds globais
+// de destinos (grupo_id IS NULL) que NÃO são referenciadas por lançamentos — bancos novos
+// já nascem sem o INSERT (removido do schema base). As referenciadas por histórico ficam
+// (imutabilidade), mas invisíveis para grupos que não as usam.
+func (s *Store) migrarV10() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 10`).Scan(&v)
+	if v == 10 {
+		return nil
+	}
+	if _, err := s.db.Exec(`DELETE FROM destinos WHERE grupo_id IS NULL AND id NOT IN
+		(SELECT DISTINCT destino_id FROM presencas WHERE destino_id IS NOT NULL)`); err != nil {
+		return err
+	}
+	return s.marcarVersao(10)
+}
+
 // gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos
 // 32 símbolos legíveis) — revisão de leitura humana em campo.
 func gerarCodigoGrupo() string {
@@ -700,7 +717,10 @@ func (s *Store) ReabrirComArquivo(novoArquivo string) error {
 	if err := s.migrarV8(); err != nil {
 		return err
 	}
-	return s.migrarV9()
+	if err := s.migrarV9(); err != nil {
+		return err
+	}
+	return s.migrarV10()
 }
 
 // migrarV6: papéis limpos — 'usuario' passa a se chamar 'operador' (v9.3).
