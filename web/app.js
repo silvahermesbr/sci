@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.2 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -272,6 +272,7 @@ async function fecharConferencia() {
     const r = await api('/api/conferencia/fechar', { method: 'POST', body: JSON.stringify({ id: e.c.id, lancamentos: lanc }) });
     toast(`Conferência fechada — ${r.gravados} lançamentos gravados`);
     location.hash = '#/hoje';
+    location.reload(); // v9.10.2 (ordem Tenente): fechar = recarga completa da página
   } catch (err) {}
 }
 
