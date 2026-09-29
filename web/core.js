@@ -371,14 +371,16 @@ function chamarView(nome) {
 /* ---------- router ---------- */
 function rotear() {
   garantirApp();
-  const h = location.hash || '';
+  // v9.14.2: hash pode carregar query (#/conferencia?id=7) — rotear pela BASE (antes de '?')
+  const hBruto = location.hash || '';
+  const h = hBruto.split('?')[0] || '';
   if (!ME) { viewLogin(); return; }
   montarShell(ME);
   const papel = ME.papel;
 
   if (h === '' || h === '#' || h === '#/' || h === '#/login') { irPara(rotaInicial()); return; }
-  if (h === '#/conferencias') { irPara('#/hoje'); return; }             // histórico mora na Conferência
-  if (papel === 'admin' && h === '#/hoje') { irPara('#/dashboard'); return; } // admin não vê conferência
+  if (h === '#/conferencias') { irPara('#/hoje'); return; }             // listas moram na Conferência
+  if (papel === 'admin' && (h === '#/hoje' || h === '#/conferencia')) { irPara('#/dashboard'); return; } // admin não vê conferência
   if (papel !== 'admin' && h === '#/dashboard') { irPara(rotaInicial()); return; }
 
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
