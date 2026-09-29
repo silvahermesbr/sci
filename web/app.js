@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.7 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.8 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -322,11 +322,15 @@ function arvoreHTML(nos, nivel) {
   return nos.map(n => {
     const temFilhos = n.filhos && n.filhos.length;
     const id = 'no' + n.id + '_' + nivel + Math.random().toString(36).slice(2, 6);
+    const rec = n.efetivo_total !== undefined && n.efetivo_total !== n.efetivo;
+    const efetTxt = rec
+      ? ` · efetivo total: <b style="color:#000">${n.efetivo_total}</b> <small>(próprio ${n.efetivo})</small>`
+      : ` · ${n.efetivo} no efetivo`;
     return `<div style="margin-left:${pad}px;padding:5px 8px;border-left:3px solid var(--verde);margin-bottom:4px;background:#f4f8f4;border-radius:0 6px 6px 0">
       ${nivel === 0 && temFilhos ? `<span data-tgl="${id}" style="cursor:pointer;font-weight:700;color:#000">▸ </span>` : ''}
       <b style="color:#000">${esc(n.nome)}</b> <small style="color:#000">#${n.id}</small>
       <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
-      <small style="color:#000"> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
+      <small style="color:#000">${efetTxt} · ${n.contas} conta(s)</small>
       ${temFilhos ? `<div id="${id}" class="oculto" style="margin-top:4px">${arvoreHTML(n.filhos, nivel + 1)}</div>` : ''}
     </div>`;
   }).join('');
