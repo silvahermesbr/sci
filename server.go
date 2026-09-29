@@ -460,7 +460,6 @@ type lancamentoReq struct {
 	Observacao string `json:"observacao"`
 }
 
-
 // hConferenciaMarcar (v9.13, ordem Tenente 29/09): salvamento PARCIAL — grava imediatamente
 // o estado de UM militar na conferência ABERTA do escopo. Reload volta ao ponto (o GET hoje
 // já devolve estados). Imutabilidade: conferência fechada rejeita.
@@ -468,9 +467,9 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
 	var req struct {
-		PessoaID   int64  `json:"pessoa_id"`
-		Situacao   string `json:"situacao"`
-		DestinoID  *int64 `json:"destino_id"`
+		PessoaID   int64   `json:"pessoa_id"`
+		Situacao   string  `json:"situacao"`
+		DestinoID  *int64  `json:"destino_id"`
 		Observacao *string `json:"observacao"`
 	}
 	if err := decodificar(r, &req); err != nil || req.PessoaID == 0 {
@@ -708,7 +707,7 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	escopo := escopoDoUsuario(u)
 	q := `
 		SELECT c.id, c.data, COALESCE(c.hora,''), COALESCE(c.local,''), c.status,
-		       COALESCE(u.login,''), c.criado_em, c.fechada_em,
+		       COALESCE(NULLIF(u.nome_guerra,''), u.login), c.criado_em, c.fechada_em,
 		       (SELECT COUNT(*) FROM presencas p WHERE p.conferencia_id = c.id) AS lanc,
 		       COALESCE(c.grupo_id,0), COALESCE((SELECT g.nome FROM grupos g WHERE g.id = c.grupo_id),'—')
 		FROM conferencias c

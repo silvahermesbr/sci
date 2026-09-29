@@ -120,6 +120,10 @@
     C.pessoas
       .filter(p => !f || (p.nome_guerra || '').toLowerCase().includes(f) || (p.nome_completo || '').toLowerCase().includes(f))
       .forEach(p => { (porSetor[p.setor || 'Sem setor'] = porSetor[p.setor || 'Sem setor'] || []).push(p); });
+    // ordem dentro do setor (v9.14.1): sem check primeiro, depois alfabética
+    const ordemCheck = (a, b) => (C.verif.has(a.id) - C.verif.has(b.id))
+      || (a.nome_guerra || '').localeCompare(b.nome_guerra || '', 'pt', { sensitivity: 'base' });
+    for (const s of Object.keys(porSetor)) porSetor[s].sort(ordemCheck);
     let listas = '';
     for (const setor of Object.keys(porSetor).sort()) {
       listas += `<div class="grupo-setor"><h4>${esc(setor)} · ${porSetor[setor].length}</h4><div class="lista-pessoa">` +
