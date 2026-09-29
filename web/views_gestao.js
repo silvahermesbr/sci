@@ -572,40 +572,58 @@
     const carregarCats = async () => {
       const cont = $('#catGer');
       if (!cont) return;
-      let html = '';
-      // v9.16.7: os 4 catálogos em PARALELO (sequencial somava ~1.7s de rede)
       const tipos = ['setores', 'funcoes', 'tags', 'destinos'];
+      const meusGrupos = new Set(((window.ME && window.ME.grupo_id) ? [window.ME.grupo_id] : []));
       const resultados = await Promise.all(tipos.map(t =>
         api('/api/catalogo/' + t).then(l => [t, l]).catch(() => [t, []])));
+      let html = '';
       for (const [t, lista] of resultados) {
-        if (t === 'tags' && lista.length) {
-          /* --- v9.16: TAGs em ÁRVORE com DRAG & DROP de hierarquia --- */
-          const filhosDe = pai => lista.filter(x => (x.pai_id || null) === (pai || null) && x.pai_id !== null || (pai === null && x.pai_id === null));
-          const arv = (pai, nivel) => lista
+        // v9.16.8: HERDADO (grupo superior) vem primeiro, READ ONLY; DO GRUPO vem depois, gerenciável
+        const herdadas = lista.filter(x => !meusGrupos.has(x.grupo_id));
+        const minhas = lista.filter(x => meusGrupos.has(x.grupo_id));
+        const chipHerd = x => `<span class="cat-item herdado" title="herdado de grupo superior — somente leitura">` +
+          `<small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}</span>`;
+        const chipMeu = x => `<span class="cat-item"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
+            <button class="cat-x" data-ct="${t}" data-cid="${x.id}" title="excluir">✕</button>
+            ${x.ativo ? `<button class="cat-off" data-ct="${t}" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span>`;
+        let corpo = '';
+        if (herdadas.length) corpo += `<div class="cat-secao">HERDADO <small>(de grupos superiores — somente leitura, sempre mais antigas)</small></div>` +
+          `<div class="cat-itens">${herdadas.map(chipHerd).join(' ')}</div>`;
+        corpo += `<div class="cat-secao">DO MEU GRUPO</div>`;
+        if (t === 'tags' && minhas.length) {
+          const arv = (pai, nivel) => minhas
             .filter(x => (x.pai_id ?? null) === (pai ?? null))
             .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt'))
             .map(x => {
-              const dentro = lista.some(y => y.pai_id === x.id);
-              return `<div class="cat-arv-item ${dentro ? 'tem-filhos' : ''}" draggable="true" data-tagid="${x.id}" style="margin-left:${nivel * 22}px">
-                <span class="cat-arv-dot"></span>
-                <span class="cat-item" draggable="false"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
+              const temFilhos = minhas.some(y => y.pai_id === x.id);
+              return `<div class="cat-arv-item" draggable="true" data-tagid="${x.id}" style="margin-left:${nivel * 22}px">` +
+                `<span class="cat-arv-dot"></span><span class="cat-item" draggable="false"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
                 <button class="cat-x" data-ct="tags" data-cid="${x.id}" title="excluir">✕</button>
                 ${x.ativo ? `<button class="cat-off" data-ct="tags" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span></div>` + arv(x.id, nivel + 1);
             }).join('');
-          html += `<div class="cat-bloco"><b>${rotCat[t]}</b>
-            <p style="color:var(--tx2);font-size:11.5px;margin:4px 0">Arraste uma tag sobre outra para torná-la subordinada; arraste até a área pontilhada para voltar à raiz.</p>
-            <div class="cat-arv" id="arvTags">${arv(null, 0)}</div>
-            <div class="cat-arv-raiz" id="arvRaiz">⟲ soltar aqui para voltar à raiz</div></div>`;
+          corpo += `<div class="cat-arv" id="arvTags">${arv(null, 0)}</div>
+            <div class="cat-arv-raiz" id="arvRaiz">⟲ soltar aqui para voltar à raiz</div>`;
         } else {
-          html += `<div class="cat-bloco"><b>${rotCat[t]}</b><div class="cat-itens">` +
-            (lista.length ? lista.map(x => `<span class="cat-item"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
-              <button class="cat-x" data-ct="${t}" data-cid="${x.id}" title="excluir">✕</button>
-              ${x.ativo ? `<button class="cat-off" data-ct="${t}" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span>`).join(' ')
-              : '<span class="vazio">— vazio —</span>') + '</div></div>';
+          corpo += `<div class="cat-itens">${minhas.length ? minhas.map(chipMeu).join(' ') : '<span class="vazio">— nenhuma —</span>'}</div>`;
         }
+        // botão de antiguidade (D&D) — só para catálogos com 2+ itens do grupo
+        const btAnt = minhas.length >= 2
+          ? `<button class="fantasma" data-ant="${t}" style="min-height:34px;padding:6px 12px">⚖ Definir antiguidade</button>` : '';
+        html += `<div class="cat-bloco"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <b>${rotCat[t]}</b>${btAnt}</div>${corpo}</div>`;
       }
       cont.innerHTML = html;
-      /* --- liga o DRAG & DROP da árvore de tags --- */
+      /* --- handlers: excluir / desativar --- */
+      cont.querySelectorAll('.cat-x').forEach(b => b.onclick = async () => {
+        if (!(await confirmar('Excluir este item?'))) return;
+        const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
+        if (r.ok) { toast('Excluído'); carregarCats(); }
+      });
+      cont.querySelectorAll('.cat-off').forEach(b => b.onclick = async () => {
+        const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}?modo=desativar`, { method: 'DELETE' }), 'Desativando item…');
+        if (r.ok) { toast('Desativado'); carregarCats(); }
+      });
+      /* --- drag & drop hierarquia de tags (só itens do meu grupo) --- */
       let dragId = null;
       cont.querySelectorAll('.cat-arv-item').forEach(item => {
         item.addEventListener('dragstart', ev => { dragId = +item.dataset.tagid; ev.dataTransfer.effectAllowed = 'move'; });
@@ -616,11 +634,8 @@
           item.classList.remove('drop-alvo');
           const pai = +item.dataset.tagid;
           if (!dragId || dragId === pai) return;
-          try {
-            await api(`/api/catalogo/tags/${dragId}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: pai }) });
-            toast('Tag subordinada');
-            carregarCats();
-          } catch (e) {}
+          const r = await processar(() => api(`/api/catalogo/tags/${dragId}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: pai }) }), 'Movendo tag…');
+          if (r.ok) { toast('Tag subordinada'); carregarCats(); }
           dragId = null;
         });
       });
@@ -632,22 +647,59 @@
           ev.preventDefault();
           raiz.classList.remove('drop-alvo');
           if (!dragId) return;
-          try {
-            await api(`/api/catalogo/tags/${dragId}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: null }) });
-            toast('Tag voltou à raiz');
-            carregarCats();
-          } catch (e) {}
+          const r = await processar(() => api(`/api/catalogo/tags/${dragId}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: null }) }), 'Movendo tag…');
+          if (r.ok) { toast('Tag voltou à raiz'); carregarCats(); }
           dragId = null;
         });
       }
-      cont.querySelectorAll('.cat-x').forEach(b => b.onclick = async () => {
-        if (!(await confirmar('Excluir este item?'))) return;
-        const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
-        if (r.ok) { toast('Excluído'); carregarCats(); }
-      });
-      cont.querySelectorAll('.cat-off').forEach(b => b.onclick = async () => {
-        const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}?modo=desativar`, { method: 'DELETE' }), 'Desativando item…');
-        if (r.ok) { toast('Desativado'); carregarCats(); }
+      /* --- v9.16.8: modal de ANTIGUIDADE por categoria (drag & drop ordenável) --- */
+      cont.querySelectorAll('[data-ant]').forEach(bt => bt.onclick = () => {
+        const t = bt.dataset.ant;
+        const lista = (resultados.find(r => r[0] === t) || [null, []])[1]
+          .filter(x => meusGrupos.has(x.grupo_id));
+        if (lista.length < 2) return;
+        let ordem = lista.slice().sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt'));
+        const div = modal(`<div class="modal-inner"><h3>Antiguidade — ${rotCat[t]}</h3>
+          <p style="color:var(--tx2);font-size:12px;margin:4px 0">Arraste para ordenar: o primeiro é o mais antigo.</p>
+          <div id="antLista" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto"></div>
+          <div class="modal-acoes"><button class="fantasma" id="antX">Cancelar</button>
+          <button class="primario" id="antGo">Salvar ordem</button></div></div>`);
+        const desenhar = () => {
+          div.querySelector('#antLista').innerHTML = ordem.map((x, i) =>
+            `<div class="ant-item" draggable="true" data-antid="${x.id}">
+               <span class="num" style="width:26px;text-align:center;font-weight:800">${i + 1}</span>
+               <span style="flex:1">${esc(x.nome)}</span>
+               <span style="color:var(--tx3);cursor:grab">⋮⋮</span></div>`).join('');
+          div.querySelectorAll('.ant-item').forEach(item => {
+            item.addEventListener('dragstart', ev => { ev.dataTransfer.setData('text/plain', item.dataset.antid); item.classList.add('drop-alvo'); });
+            item.addEventListener('dragend', () => item.classList.remove('drop-alvo'));
+            item.addEventListener('dragover', ev => { ev.preventDefault(); item.style.borderTop = '2px solid var(--verde)'; });
+            item.addEventListener('dragleave', () => { item.style.borderTop = ''; });
+            item.addEventListener('drop', ev => {
+              ev.preventDefault();
+              item.style.borderTop = '';
+              const movId = +ev.dataTransfer.getData('text/plain');
+              const alvoId = +item.dataset.antid;
+              if (movId === alvoId) return;
+              const de = ordem.findIndex(x => x.id === movId);
+              const para = ordem.findIndex(x => x.id === alvoId);
+              const [mov] = ordem.splice(de, 1);
+              ordem.splice(para, 0, mov);
+              desenhar();
+            });
+          });
+        };
+        desenhar();
+        div.querySelector('#antX').onclick = () => div.fechar();
+        div.querySelector('#antGo').onclick = async () => {
+          const ids = [...div.querySelectorAll('.ant-item')].map(e => +e.dataset.antid);
+          const r = await processar(async () => {
+            for (let i = 0; i < ids.length; i++) {
+              await api(`/api/catalogo/${t}/${ids[i]}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: null, antiguidade: i + 1 }) });
+            }
+          }, 'Salvando antiguidade…');
+          if (r.ok) { toast('Antiguidade salva'); carregarCats(); }
+        };
       });
     };
     $('#cgGo').onclick = async () => {

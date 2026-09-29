@@ -921,7 +921,8 @@ func (a *App) hCatalogoReparentar(w http.ResponseWriter, r *http.Request) {
 	}
 	esc := escopoDoUsuario(u)
 	var req struct {
-		PaiID *int64 `json:"pai_id"`
+		PaiID       *int64 `json:"pai_id"`
+		Antiguidade *int   `json:"antiguidade"`
 	}
 	if err = decodificar(r, &req); err != nil {
 		jsonErro(w, http.StatusBadRequest, "JSON inválido")
@@ -981,6 +982,15 @@ func (a *App) hCatalogoReparentar(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusBadRequest, "profundidade máxima da hierarquia é 8")
 			return
 		}
+	}
+	if req.Antiguidade != nil {
+		if _, err = a.st.db.Exec(`UPDATE `+t+` SET antiguidade = ? WHERE id = ?`, *req.Antiguidade, id); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		a.st.Auditoria(&u.ID, "antiguidade", t, &id, fmt.Sprintf("posição %d", *req.Antiguidade), ipDe(r))
+		jsonOK(w, map[string]any{"ok": true, "id": id, "antiguidade": *req.Antiguidade})
+		return
 	}
 	if _, err = a.st.db.Exec(`UPDATE `+t+` SET pai_id = ? WHERE id = ?`, req.PaiID, id); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -1628,18 +1638,27 @@ func (a *App) hExportCSV(w http.ResponseWriter, r *http.Request) {
 
 // gruposSuperioresAtivos: ids dos grupos superiores com vínculo BILATERAL ativo.
 func (a *App) gruposSuperioresAtivos(gid int64) []int64 {
-	rows, err := a.st.db.Query(`SELECT superior_id FROM grupo_vinculos
-		WHERE subordinado_id = ? AND criado_por_superior = 1 AND criado_por_subordinado = 1`, gid)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
+	// v9.16.8: TODA a cadeia de superiores (recursivo) — herança vale para qualquer vínculo
+	// ativo, em todos os níveis (ex.: 3º Pel → Cia → Bde).
+	visita := map[int64]bool{gid: true}
+	fila := []int64{gid}
 	var out []int64
-	for rows.Next() {
-		var id int64
-		if rows.Scan(&id) == nil {
-			out = append(out, id)
+	for len(fila) > 0 {
+		atual := fila[0]
+		fila = fila[1:]
+		rows, err := a.st.db.Query(`SELECT superior_id FROM grupo_vinculos WHERE subordinado_id = ?`, atual)
+		if err != nil {
+			continue
 		}
+		for rows.Next() {
+			var sup int64
+			if rows.Scan(&sup) == nil && !visita[sup] {
+				visita[sup] = true
+				out = append(out, sup)
+				fila = append(fila, sup)
+			}
+		}
+		rows.Close()
 	}
 	return out
 }
@@ -1659,7 +1678,8 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	}
 	// v9.11: pai_id em TODOS os catálogos de organização + ordenação hierárquica
 	// (raízes primeiro, cada pai seguido de seus filhos; dentro do nível, alfabético)
-	q := `SELECT id, nome` + extra + `, pai_id, ativo FROM ` + t
+	// v9.16.8: grupo_id no retorno — o front separa HERDADO (grupo superior) x DO GRUPO
+	q := `SELECT id, nome` + extra + `, pai_id, ativo, grupo_id FROM ` + t
 	var args []any
 	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
 		// escopo + HERANÇA (ordem Tenente 28/09 noite): grupo vê os globais (NULL),
@@ -1672,7 +1692,8 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 		}
 		q += ` WHERE grupo_id IS NULL OR grupo_id IN (` + ph + `)`
 	}
-	q += ` ORDER BY COALESCE(pai_id, id), pai_id IS NOT NULL, nome`
+	// v9.16.8: antiguidade primeiro, depois nome (front separa HERDADO x DO GRUPO)
+	q += ` ORDER BY antiguidade, nome`
 	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -1684,7 +1705,7 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	if extra != "" {
 		cols = append(cols, strings.TrimPrefix(extra, ", "))
 	}
-	cols = append(cols, "pai_id", "ativo")
+	cols = append(cols, "pai_id", "ativo", "grupo_id", "antiguidade")
 	vals := make([]any, len(cols))
 	ptrs := make([]any, len(cols))
 	for i := range vals {

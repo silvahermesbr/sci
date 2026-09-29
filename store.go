@@ -77,6 +77,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV11(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV12(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -566,6 +569,26 @@ func (s *Store) migrarV11() error {
 	return s.marcarVersao(11)
 }
 
+// migrarV12 (v9.16.8, ordem Tenente 29/09): ANTIGUIDADE nos catálogos de organização —
+// definida por drag & drop no painel do gerente; herdadas sempre anteriores às do grupo.
+func (s *Store) migrarV12() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 12`).Scan(&v)
+	if v == 12 {
+		return nil
+	}
+	for _, t := range []string{"setores", "funcoes", "tags", "destinos"} {
+		var col int
+		_ = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('` + t + `') WHERE name='antiguidade'`).Scan(&col)
+		if col == 0 {
+			if _, err := s.db.Exec(`ALTER TABLE ` + t + ` ADD COLUMN antiguidade INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return err
+			}
+		}
+	}
+	return s.marcarVersao(12)
+}
+
 // gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos
 // 32 símbolos legíveis) — revisão de leitura humana em campo.
 func gerarCodigoGrupo() string {
@@ -745,7 +768,10 @@ func (s *Store) ReabrirComArquivo(novoArquivo string) error {
 	if err := s.migrarV10(); err != nil {
 		return err
 	}
-	return s.migrarV11()
+	if err := s.migrarV11(); err != nil {
+		return err
+	}
+	return s.migrarV12()
 }
 
 // migrarV6: papéis limpos — 'usuario' passa a se chamar 'operador' (v9.3).
