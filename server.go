@@ -2708,13 +2708,13 @@ func (a *App) hSPA(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(caminho, ".html"):
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	case strings.HasSuffix(caminho, ".js"):
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	case strings.HasSuffix(caminho, ".css"):
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
 	case strings.HasSuffix(caminho, ".svg"):
 		w.Header().Set("Content-Type", "image/svg+xml")
 	}
