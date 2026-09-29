@@ -195,13 +195,14 @@ func (a *App) rotas() {
 	m.Handle("POST /api/pessoas", a.auth(false, a.hPessoasAdd))
 	m.Handle("PATCH /api/pessoas/{id}", a.auth(false, a.hPessoasEdit))
 
-	m.Handle("GET /api/usuarios", a.auth(true, a.hUsuariosList))
+	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4)
 	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
 	m.Handle("POST /api/usuarios", a.auth(false, a.hUsuariosAdd))
-	m.Handle("DELETE /api/usuarios/{id}", a.auth(true, a.hUsuarioExcluir)) // R6
-	m.Handle("POST /api/usuarios/{id}/senha", a.auth(true, a.hUsuarioSenha))
+	m.Handle("DELETE /api/usuarios/{id}", a.auth(false, a.hUsuarioExcluir))   // R6; gerente só operador do próprio grupo (v9.4)
+	m.Handle("POST /api/usuarios/{id}/senha", a.auth(false, a.hUsuarioSenha)) // admin: qualquer; gerente: operador do próprio grupo (v9.4)
 	m.Handle("GET /api/grupos", a.auth(false, a.hGruposList))
-	m.Handle("POST /api/grupos", a.auth(true, a.hGruposAdd)) // R7: exige gerente no ato
+	m.Handle("GET /api/grupos/arvore", a.auth(false, a.hArvoreGrupos)) // v9.4: árvore nested (admin: floresta; gerente: do próprio)
+	m.Handle("POST /api/grupos", a.auth(true, a.hGruposAdd))           // R7: exige gerente no ato
 	m.Handle("GET /api/grupos/{id}/gerente", a.auth(true, a.hGrupoGerenteGet))
 	m.Handle("POST /api/grupos/{id}/trocar-gerente", a.auth(true, a.hGrupoTrocarGerente))
 	m.Handle("POST /api/admin/grupos/vinculo", a.auth(true, a.hAdminVinculoSet))   // R8
@@ -338,7 +339,8 @@ func (a *App) hBackupDownload(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, caminho)
 }
 
-// hUsuarioSenha: admin redefine a senha de qualquer conta (ordem Tenente 28/09).
+// hUsuarioSenha: admin redefine a senha de qualquer conta; GERENTE redefine a de
+// OPERADOR do próprio grupo (v9.4 — aba Gerenciar). Senha de gerente só admin muda.
 func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -352,12 +354,31 @@ func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "senha: mínimo 8 caracteres")
 		return
 	}
-	hash, err := hashSenha(req.Senha)
+	solicitante := usuarioDoCtx(r)
+	if solicitante.Papel == "gerente" {
+		var alvoPapel string
+		var alvoGrupo int64
+		if err := a.st.db.QueryRow(`SELECT papel, COALESCE(grupo_id,0) FROM usuarios WHERE id = ?`, id).Scan(&alvoPapel, &alvoGrupo); err != nil {
+			jsonErro(w, http.StatusNotFound, "usuário inexistente")
+			return
+		}
+		if alvoPapel != "operador" || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
+			jsonErro(w, http.StatusForbidden, "gerente só redefine senha de operador do próprio grupo")
+			return
+		}
+	}
+	var hashAtual string
+	if err := a.st.db.QueryRow(`SELECT senha_hash FROM usuarios WHERE id = ?`, id).Scan(&hashAtual); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	_ = hashAtual // leitura apenas para validar existência da conta
+	novoHash, err := hashSenha(req.Senha)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	res, err := a.st.db.Exec(`UPDATE usuarios SET senha_hash = ? WHERE id = ?`, hash, id)
+	res, err := a.st.db.Exec(`UPDATE usuarios SET senha_hash = ? WHERE id = ?`, novoHash, id)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -366,8 +387,7 @@ func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "usuário inexistente")
 		return
 	}
-	u := usuarioDoCtx(r)
-	a.st.Auditoria(&u.ID, "redefinir_senha", "usuarios", &id, "", ipDe(r))
+	a.st.Auditoria(&solicitante.ID, "redefinir_senha", "usuarios", &id, "", ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
@@ -1566,15 +1586,20 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 		var pessoaID *int64
 		var ativo int
 		if rows.Scan(&id, &login, &papel, &pessoaID, &grupoID, &ativo, &criado, &senhas) == nil {
-			// operador só vê contas do PRÓPRIO grupo (admin/gerente gerenciam os seus)
-			if escopo > 0 && int64(escopo) != grupoID {
+			// escopo: admin vê tudo; gerente vê o PRÓPRIO grupo (gerencia os do seu);
+			// operador só vê contas do próprio grupo, SEM dados de sessão/senha (v9.4).
+			mostrar := escopo <= 0 || int64(escopo) == grupoID
+			if !mostrar {
 				continue
 			}
-			out = append(out, map[string]any{
+			item := map[string]any{
 				"id": id, "login": login, "papel": papel, "pessoa_id": pessoaID,
 				"grupo_id": grupoID, "ativo": ativo == 1, "criado_em": criado,
-				"senhas": json.RawMessage(senhas),
-			})
+			}
+			if u.Papel != "operador" {
+				item["senhas"] = json.RawMessage(senhas)
+			}
+			out = append(out, item)
 		}
 	}
 	jsonOK(w, out)
@@ -1869,6 +1894,92 @@ func nilToInts(ns sql.NullString) []int64 {
 	return out
 }
 
+// hArvoreGrupos (v9.4): árvore NESTED dos grupos. Admin: floresta completa a partir
+// das raízes. Gerente/operador: próprio grupo como raiz + subordinados (recursivo).
+// READ ONLY — subordinação só no painel admin.
+func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	rows, err := a.st.db.Query(`
+		SELECT g.id, g.nome, COALESCE(g.codigo,''),
+		       (SELECT COUNT(*) FROM pessoas p WHERE p.grupo_id = g.id),
+		       (SELECT COUNT(*) FROM usuarios us WHERE us.grupo_id = g.id AND us.ativo = 1)
+		FROM grupos g ORDER BY g.nome`)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	type GrupoN struct {
+		ID      int64     `json:"id"`
+		Nome    string    `json:"nome"`
+		Codigo  string    `json:"codigo"`
+		Efetivo int       `json:"efetivo"`
+		Contas  int       `json:"contas"`
+		Filhos  []*GrupoN `json:"filhos"`
+	}
+	nos := map[int64]*GrupoN{}
+	filhosDe := map[int64][]int64{}
+	paiDe := map[int64]int64{}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var nome, cod string
+		var efetivo, contas int
+		if err := rows.Scan(&id, &nome, &cod, &efetivo, &contas); err != nil {
+			continue
+		}
+		nos[id] = &GrupoN{ID: id, Nome: nome, Codigo: cod, Efetivo: efetivo, Contas: contas, Filhos: []*GrupoN{}}
+	}
+	linhas, err := a.st.db.Query(`SELECT superior_id, subordinado_id FROM grupo_vinculos
+		WHERE criado_por_superior = 1 AND criado_por_subordinado = 1`)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer linhas.Close()
+	for linhas.Next() {
+		var sup, sub int64
+		if linhas.Scan(&sup, &sub) == nil {
+			filhosDe[sup] = append(filhosDe[sup], sub)
+			paiDe[sub] = sup
+		}
+	}
+	var montar func(id int64, profundidade int) *GrupoN
+	montar = func(id int64, profundidade int) *GrupoN {
+		no := nos[id]
+		if no == nil || profundidade > 32 {
+			return nil
+		}
+		for _, filho := range filhosDe[id] {
+			if f := montar(filho, profundidade+1); f != nil {
+				no.Filhos = append(no.Filhos, f)
+			}
+		}
+		return no
+	}
+	raizes := []int64{}
+	for id := range nos {
+		if paiDe[id] == 0 {
+			raizes = append(raizes, id)
+		}
+	}
+	if u != nil && u.Papel != "admin" && u.GrupoID != nil {
+		// gerente/operador: árvore enraizada no PRÓPRIO grupo
+		if raiz := montar(*u.GrupoID, 0); raiz != nil {
+			jsonOK(w, []*GrupoN{raiz})
+			return
+		}
+		jsonOK(w, []*GrupoN{})
+		return
+	}
+	out := []*GrupoN{}
+	for _, id := range raizes {
+		if no := montar(id, 0); no != nil {
+			out = append(out, no)
+		}
+	}
+	jsonOK(w, out)
+}
+
 // hComentariosAdd: comentário append-only sobre pessoa em conferência (ordem Tenente).
 func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -2067,6 +2178,23 @@ func (a *App) hUsuarioExcluir(w http.ResponseWriter, r *http.Request) {
 	if papel == "admin" {
 		jsonErro(w, http.StatusForbidden, "conta admin não é excluída")
 		return
+	}
+	// v9.4: GERENTE exclui OPERADOR do próprio grupo; operador não exclui ninguém.
+	if eu.Papel == "operador" {
+		jsonErro(w, http.StatusForbidden, "somente admin e gerente excluem contas")
+		return
+	}
+	if eu.Papel == "gerente" {
+		var alvoPapel string
+		var alvoGrupo int64
+		if err := a.st.db.QueryRow(`SELECT papel, COALESCE(grupo_id,0) FROM usuarios WHERE id = ?`, id).Scan(&alvoPapel, &alvoGrupo); err != nil {
+			jsonErro(w, http.StatusNotFound, "usuário inexistente")
+			return
+		}
+		if alvoPapel != "operador" || eu.GrupoID == nil || alvoGrupo != *eu.GrupoID {
+			jsonErro(w, http.StatusForbidden, "gerente só exclui operador do próprio grupo")
+			return
+		}
 	}
 	if papel == "gerente" {
 		var gid int64

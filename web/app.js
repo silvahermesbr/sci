@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.3 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.4 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -94,18 +94,17 @@ function renderHoje(filtro = '') {
     ? `<div class="cartao"><p style="color:var(--tx2)">Nenhuma conferência aberta. Ao iniciar, a data e o horário de Brasília são registrados automaticamente.</p>
        <div style="display:flex;gap:8px;align-items:end;margin-top:10px;flex-wrap:wrap">
          <div class="campo" style="margin:0"><label>Local (opcional)</label><input id="cLocal" placeholder="ex.: Praça" style="max-width:160px"></div>
-         <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div>
-       <p style="margin-top:10px"><a href="#/conferencias" style="color:var(--verde)">Ver lista de conferências →</a></p></div>`
+         <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div></div>`
     : `<div class="cartao" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
        <span>${pill('aberta')} <b>Conferência de pessoal</b> · aberta em ${e.c.data} às ${fmtHora(e.c.criada_em)} · toque no militar p/ ciclar, ✅ para verificar</span>
-       <button class="perigo" id="btFechar">✕ Fechar conferência</button></div>
-       <p style="color:var(--tx2);font-size:12px;margin:0 0 10px"><a href="#/conferencias" style="color:var(--verde)">Lista de conferências →</a></p>`;
+       <button class="perigo" id="btFechar">✕ Fechar conferência</button></div>`;
   $('#app').innerHTML = `<h2>Conferência de pessoal</h2>${banner}
     <div class="barra-fixa">
       <input id="busca" placeholder="buscar nome…">
       <button class="primario" id="btFecharBarra" ${semC ? 'disabled' : ''}>✕ FECHAR CONFERÊNCIA</button>
     </div>
-    <div id="lista">${semC ? '' : listas}</div>`;
+    <div id="lista">${semC ? '' : listas}</div>
+    <div id="listaConf"><div class="carregando">…</div></div>`;
   if (semC) {
     $('#btIniciar').onclick = async () => {
       try {
@@ -114,6 +113,7 @@ function renderHoje(filtro = '') {
         viewHoje();
       } catch (err) {}
     };
+    carregarListaConf();
     return;
   }
   const contSpan = () => {
@@ -154,6 +154,35 @@ function renderHoje(filtro = '') {
     modalComentarios(+b.dataset.id);
   });
   $('#btFechar').onclick = fecharConferencia;
+  carregarListaConf();
+}
+/* --- lista cronológica embutida (v9.4): abertas primeiro (novas→antigas), depois fechadas --- */
+async function carregarListaConf() {
+  const alvo = $('#listaConf');
+  if (!alvo) return;
+  try {
+    const lista = await api('/api/conferencia/lista');
+    const linha = c => `
+      <tr><td><b>${c.data}</b>${c.local ? ` <small style="color:var(--tx2)">${esc(c.local)}</small>` : ''}</td>
+      <td>${pill(c.status === 'fechada' ? 'presente' : 'atraso')} ${c.status}</td>
+      <td>${c.status === 'aberta' ? fmtHora(c.criada_em) : fmtHora(c.fechada_em)}</td>
+      <td>${esc(c.criado_por || '—')}</td>
+      <td class="num">${c.lancamentos}</td>
+      <td>${c.status === 'fechada'
+        ? `<a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>`
+        : `<span style="color:var(--ambar);font-size:13px">em andamento</span>`}</td></tr>`;
+    const porData = (a, b) => b.data.localeCompare(a.data) || b.id - a.id;
+    const abertas = lista.filter(c => c.status === 'aberta').sort(porData);
+    const fechadas = lista.filter(c => c.status === 'fechada').sort(porData);
+    const tabela = (titulo, itens) => `
+      <h3 style="margin:14px 0 8px">${titulo} (${itens.length})</h3>
+      <div class="cartao"><div class="rolagem"><table>
+      <thead><tr><th>Data</th><th>Status</th><th>Criada às / Fechada às</th><th>Operador</th><th class="num">Lanç.</th><th>Relatório</th></tr></thead>
+      <tbody>${itens.map(linha).join('') || '<tr><td colspan="6"><span class="vazio">nenhuma</span></td></tr>'}</tbody></table></div></div>`;
+    alvo.innerHTML = `<h2 style="margin-top:22px">Histórico de conferências</h2>` +
+      tabela('Abertas', abertas) + tabela('Fechadas', fechadas) +
+      `<p style="color:var(--tx2);font-size:12px">O relatório PDF só é gerado para conferências fechadas.</p>`;
+  } catch (e) { alvo.innerHTML = ''; }
 }
 async function modalComentarios(pessoaId) {
   const p = ESTADO.pessoas.find(x => x.id === pessoaId);
@@ -242,7 +271,7 @@ async function fecharConferencia() {
   try {
     const r = await api('/api/conferencia/fechar', { method: 'POST', body: JSON.stringify({ id: e.c.id, lancamentos: lanc }) });
     toast(`Conferência fechada — ${r.gravados} lançamentos gravados`);
-    location.hash = '#/conferencias';
+    location.hash = '#/hoje';
   } catch (err) {}
 }
 
@@ -259,8 +288,8 @@ async function viewPerfil() {
         <div class="campo"><label>Função na conta</label><input value="${esc(rotuloPapel(u.papel))}" disabled></div></div>
       <div class="form-linha">
         <div class="campo"><label>Grupo</label><input value="${esc(d.grupo || '— (sem grupo)')}" disabled></div>
-        <div class="campo"><label>Setor (herdado)</label><input value="${esc(d.setor || '—')}" disabled></div>
-        <div class="campo"><label>Função (herdada)</label><input value="${esc(d.funcao || '—')}" disabled></div></div>
+        <div class="campo"><label>Setor</label><input value="${esc(d.setor || '—')}" disabled></div>
+        <div class="campo"><label>Função</label><input value="${esc(d.funcao || '—')}" disabled></div></div>
       <div class="form-linha">
         <div class="campo"><label>Nome de guerra</label><input id="pfNg" value="${esc(u.nome_guerra || '')}"></div>
         <div class="campo"><label>Nome completo</label><input id="pfNc" value="${esc(u.nome_completo || '')}"></div></div>
@@ -276,32 +305,139 @@ async function viewPerfil() {
   };
 }
 
-/* ---------- GRUPOS (gerente/operador: visão do próprio grupo) ---------- */
+/* ---------- GERENCIAR (gerente — v9.4: MEU GRUPO · BANCO DE PESSOAL · OPERADORES · árvore nested READ ONLY) ---------- */
+function arvoreHTML(nos, nivel) {
+  const pad = nivel * 22;
+  return nos.map(n => `
+    <div style="margin-left:${pad}px;padding:5px 8px;border-left:3px solid var(--verde);margin-bottom:4px;background:#f4f8f4;border-radius:0 6px 6px 0">
+      <b>${esc(n.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
+      <small style="color:var(--tx2)"> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
+    </div>` + (n.filhos && n.filhos.length ? arvoreHTML(n.filhos, nivel + 1) : '')).join('');
+}
 async function viewGrupos() {
   navAtiva('#/grupos');
   $('#app').innerHTML = '<div class="carregando">…</div>';
-  const grupos = await api('/api/grupos');
-  let html = '<h2>Meu grupo</h2>';
+  const [grupos, arvore, pessoas, setores, funcoes, contas] = await Promise.all([
+    api('/api/grupos'), api('/api/grupos/arvore'), api('/api/pessoas'),
+    api('/api/catalogo/setores'), api('/api/catalogo/funcoes'), api('/api/usuarios')]);
   const meus = grupos.filter(g => g.id === ME.grupo_id);
-  html += `<div class="cartao"><h3 style="margin-top:0">Dados do grupo</h3>` +
-    (meus.map(g => `<div style="margin-bottom:10px">
+  const ativos = l => (l || []).filter(x => x.ativo === 1 || x.ativo === true);
+  const optSetores = ativos(setores), optFuncoes = ativos(funcoes);
+  const operadores = contas.filter(c => c.grupo_id === ME.grupo_id && c.papel === 'operador');
+
+  /* --- formulário de militar (criar/editar) --- */
+  const formPessoa = `
+    <div class="cartao"><h3 style="margin-top:0">Cadastrar / editar militar</h3>
+      <input type="hidden" id="pId">
+      <div class="form-linha"><div class="campo"><label>Nome de guerra</label><input id="pNg"></div>
+      <div class="campo"><label>Nome completo</label><input id="pNc"></div></div>
+      <div class="form-linha"><div class="campo"><label>Setor</label><select id="pSetor"><option value="">—</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Função</label><select id="pFuncao"><option value="">—</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Status</label><select id="pStatus"><option value="ativo">ativo</option><option value="inativo">inativo</option><option value="movido">movido</option></select></div></div>
+      <button class="primario" id="pSalvar">Salvar</button>
+      <h3 style="margin-top:16px">Adição em lote — cole as linhas e importe</h3>
+      <p style="color:var(--tx2);font-size:12px;margin:4px 0">Formato (1 por linha, separado por ponto-e-vírgula): <code>nome de guerra ; nome completo ; setor ; função</code> — setor e função são opcionais e devem já existir no catálogo.</p>
+      <textarea id="csv" rows="5" placeholder="SILVA;José da Silva;Comando;Motorista&#10;SOUSA;Maria de Sousa;Serviços&#10;PERES;Bruno Peres"></textarea>
+      <button class="acao-linha" id="csvGo" style="margin-top:8px">Importar linhas</button></div>`;
+
+  /* --- tabela de pessoal --- */
+  const linhasP = (pessoas.pessoas || []).map(p =>
+    `<tr data-p='${esc(JSON.stringify(p))}'><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
+     <td>${esc(p.setor)}</td><td>${esc(p.funcao)}</td><td>${pill(p.status === 'ativo' ? 'presente' : 'justificada')} ${p.status}</td>
+     <td><button class="acao-linha" data-edit="${p.id}">editar</button></td></tr>`).join('');
+
+  /* --- operadores --- */
+  const linhasOp = operadores.map(o => `
+    <tr><td><b>${esc(o.login)}</b></td><td>${o.ativo ? 'ativa' : 'desativada'}</td><td>${(o.criado_em || '').slice(0, 10)}</td>
+    <td><button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
+    <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button></td></tr>`).join('');
+
+  $('#app').innerHTML = `<h2>Gerenciar</h2>
+    <div class="cartao"><h3 style="margin-top:0">MEU GRUPO</h3>` +
+    (meus.map(g => `<div style="margin-bottom:8px">
       • <b>${esc(g.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700">${esc(g.codigo)}</code>
-      — ${g.efetivo} no efetivo · ${g.contas} conta(s)
-      ${g.subordinados && g.subordinados.length ? `<br><small style="color:var(--tx2);margin-left:14px">subordinados: ${g.subordinados.map(esc).join(', ')}</small>` : ''}
-      ${g.superiores && g.superiores.length ? `<br><small style="color:var(--tx2);margin-left:14px">superior: ${g.superiores.map(esc).join(', ')}</small>` : ''}
-    </div>`).join('') || '<span class="vazio">nenhum grupo</span>') + '</div>';
-  html += `<div class="cartao"><h3 style="margin-top:0">Criar operador do meu grupo</h3>
-      <div class="form-linha"><div class="campo"><label>Login</label><input id="opLogin"></div>
-      <div class="campo"><label>Senha (mín. 8)</label><input id="opSenha" type="password"></div></div>
-      <button class="primario" id="opGo">Criar operador</button></div>`;
-  $('#app').innerHTML = html;
+      — ${g.efetivo} no efetivo · ${g.contas} conta(s)</div>`).join('') || '<span class="vazio">nenhum grupo</span>') + `</div>
+    <div class="cartao"><h3 style="margin-top:0">SUBORDINAÇÃO — árvore do meu grupo (leitura; organização definida pela Administração)</h3>
+      <div id="arvore">${(arvore && arvore.length) ? arvoreHTML(arvore, 0) : '<span class="vazio">sem grupos</span>'}</div></div>
+    ${formPessoa}
+    <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
+      <div class="form-linha"><div class="campo"><label>Login do operador</label><input id="opLogin"></div>
+      <div class="campo"><label>Senha (mín. 8)</label><input id="opSenha" type="password"></div>
+      <div class="campo" style="align-self:end"><button class="primario" id="opGo">Criar operador</button></div></div>
+      <div class="rolagem" style="margin-top:10px"><table><thead><tr><th>Login</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
+      <tbody>${linhasOp || '<tr><td colspan="4"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div></div>
+    <div class="cartao"><h3 style="margin-top:0">BANCO DE PESSOAL (${(pessoas.pessoas || []).length})</h3>
+      <div class="rolagem"><table><thead><tr><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Status</th><th></th></tr></thead>
+      <tbody id="tabP">${linhasP || '<tr><td colspan="6"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>`;
+
+  /* --- salvar militar (criar/editar) --- */
+  $('#pSalvar').onclick = async () => {
+    const corpo = { nome_guerra: $('#pNg').value.trim(), nome_completo: $('#pNc').value.trim(),
+      setor_id: +$('#pSetor').value || null, funcao_id: +$('#pFuncao').value || null, status: $('#pStatus').value };
+    if (!corpo.nome_guerra || !corpo.nome_completo) { toast('Nomes obrigatórios', 'erro'); return; }
+    const id = $('#pId').value;
+    if (id) await api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) });
+    else await api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) });
+    toast('Salvo'); viewGrupos();
+  };
+  /* --- adição em lote --- */
+  $('#csvGo').onclick = async () => {
+    const linhas = $('#csv').value.split('\n').map(l => l.trim()).filter(Boolean);
+    if (!linhas.length) { toast('Cole ao menos uma linha', 'erro'); return; }
+    let ok = 0, falha = 0;
+    for (const l of linhas) {
+      const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
+      if (!ng || !nc) { falha++; continue; }
+      const sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
+      const fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
+      try { await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo' }) }); ok++; }
+      catch (e) { falha++; }
+    }
+    toast(`${ok} importado(s)${falha ? ' · ' + falha + ' linha(s) com falha' : ''}`, falha && !ok ? 'erro' : 'ok');
+    if (ok) viewGrupos();
+  };
+  /* --- editar militar (clica na linha) --- */
+  document.querySelectorAll('#tabP tr[data-p]').forEach(tr => {
+    tr.querySelector('[data-edit]').onclick = ev => {
+      ev.stopPropagation();
+      const p = JSON.parse(tr.dataset.p);
+      $('#pId').value = p.id; $('#pNg').value = p.nome_guerra; $('#pNc').value = p.nome_completo;
+      $('#pSetor').value = p.setor_id || ''; $('#pFuncao').value = p.funcao_id || ''; $('#pStatus').value = p.status;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+  });
+  /* --- operadores: criar, senha, excluir --- */
   $('#opGo').onclick = async () => {
     const login = $('#opLogin').value.trim(), senha = $('#opSenha').value;
     if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
     await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'operador' }) });
-    toast('Operador criado');
-    viewGrupos();
+    toast('Operador criado'); viewGrupos();
   };
+  document.querySelectorAll('[data-senha]').forEach(b => b.onclick = () => {
+    const div = document.createElement('div');
+    div.className = 'modal-mask';
+    div.innerHTML = `<div class="modal"><h3>Redefinir senha — ${b.dataset.login}</h3>
+      <div class="campo"><label>Nova senha (mín. 8)</label><input type="password" id="rN"></div>
+      <div class="modal-acoes"><button class="fantasma" id="rX">Cancelar</button>
+      <button class="primario" id="rGo">Redefinir</button></div></div>`;
+    document.body.appendChild(div);
+    div.querySelector('#rX').onclick = () => div.remove();
+    div.onclick = ev => { if (ev.target === div) div.remove(); };
+    div.querySelector('#rGo').onclick = async () => {
+      const n = div.querySelector('#rN').value;
+      if (n.length < 8) { toast('Mínimo 8 caracteres', 'erro'); return; }
+      await api(`/api/usuarios/${b.dataset.senha}/senha`, { method: 'POST', body: JSON.stringify({ senha: n }) });
+      toast('Senha redefinida'); div.remove();
+    };
+  });
+  document.querySelectorAll('[data-exc]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Excluir a conta "${b.dataset.login}"?`)) return;
+    try {
+      const r = await api(`/api/usuarios/${b.dataset.exc}`, { method: 'DELETE' });
+      toast(r.desativado ? 'Conta desativada (histórico preservado)' : 'Conta excluída');
+      viewGrupos();
+    } catch (e) {}
+  });
 }
 
 /* ---------- LISTA DE CONFERÊNCIAS ---------- */
@@ -311,23 +447,8 @@ function fmtHora(iso) {
   return isNaN(d) ? '—' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 async function viewConferencias() {
-  navAtiva('#/conferencias');
-  $('#app').innerHTML = '<div class="carregando">Carregando…</div>';
-  const lista = await api('/api/conferencia/lista');
-  const linhas = lista.map(c => `
-    <tr><td><b>${c.data}</b>${c.local ? ` <small style="color:var(--tx2)">${esc(c.local)}</small>` : ''}</td>
-    <td>${pill(c.status === 'fechada' ? 'presente' : 'atraso')} ${c.status}</td>
-    <td>${c.status === 'aberta' ? fmtHora(c.criada_em) : fmtHora(c.fechada_em)}</td>
-    <td>${esc(c.criado_por || '—')}</td>
-    <td class="num">${c.lancamentos}</td>
-    <td>${c.status === 'fechada'
-      ? `<a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>`
-      : `<a href="#/hoje" style="color:var(--ambar);font-size:13px">em andamento →</a>`}</td></tr>`).join('');
-  $('#app').innerHTML = `<h2>Conferências</h2>
-    <div class="cartao"><div class="rolagem"><table>
-    <thead><tr><th>Data</th><th>Status</th><th>Criada às / Fechada às</th><th>Operador</th><th class="num">Lanç.</th><th>Relatório</th></tr></thead>
-    <tbody>${linhas}</tbody></table></div>
-    <p style="color:var(--tx2);font-size:12px;margin-top:8px">O relatório PDF só é gerado para conferências <b>fechadas</b>.</p></div>`;
+  // v9.4: aba consolidada — o histórico vive dentro da própria Conferência (#/hoje)
+  location.hash = '#/hoje';
 }
 
 /* ---------- RELATÓRIOS ---------- */
@@ -379,10 +500,15 @@ async function viewRelatorios() {
       gSel = `<div class="campo"><label>Grupo</label><select id="fGrupo"><option value="">Todos</option>` +
         gs.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('') + `</select></div>`;
     } else {
+      // v9.4 (ordem Tenente): escopos = Meu grupo + Subordinados / Meu Grupo / cada subordinado
       const meuG = gs.find(g => g.id === ME.grupo_id);
-      if (meuG && meuG.subordinados_ids && meuG.subordinados_ids.length) {
-        gSel = `<div class="campo"><label>Escopo</label><select id="fGrupo"><option value="">Meu grupo + subordinados</option>` +
-          meuG.subordinados_ids.map((id, i) => `<option value="${id}">Somente: ${esc(meuG.subordinados[i])}</option>`).join('') + `</select></div>`;
+      const subs = (meuG && meuG.subordinados_ids) || [];
+      if (subs.length) {
+        gSel = `<div class="campo"><label>Escopo</label><select id="fGrupo">
+          <option value="">Meu grupo + subordinados</option>
+          <option value="${ME.grupo_id}">Meu grupo (somente)</option>` +
+          subs.map((id, i) => `<option value="${id}">Somente: ${esc(meuG.subordinados[i])}</option>`).join('') +
+          `</select></div>`;
       }
     }
   } catch (e) {}
@@ -508,15 +634,15 @@ async function admUsuarios() {
   });
 }
 
-/* --- Grupos: criar grupo+gerente, trocar gerente, subordinação (R7/R8) --- */
+/* --- Grupos: criar grupo+gerente, trocar gerente, subordinação (R7/R8) + árvore NESTED (v9.4) --- */
 async function admGrupos() {
-  const [grupos, contas] = await Promise.all([api('/api/grupos'), api('/api/usuarios')]);
+  const [grupos, contas, arvore] = await Promise.all([api('/api/grupos'), api('/api/usuarios'), api('/api/grupos/arvore')]);
   const gerenteDe = {};
   contas.filter(c => c.papel === 'gerente' && c.ativo && c.grupo_id).forEach(c => { gerenteDe[c.grupo_id] = c.login; });
   const optsContas = gid => contas.filter(c => c.grupo_id === gid && c.papel !== 'admin' && c.ativo)
     .map(c => `<option value="${esc(c.login)}">${esc(c.login)} (${rotuloPapel(c.papel)})</option>`).join('');
   let linhas = grupos.map(g => {
-    const subs = g.subordinados_ids || [], sups = g.superiores_ids || [];
+    const sups = g.superiores_ids || [];
     return `<div class="cartao" data-g="${g.id}" style="margin-bottom:10px">
       <h3 style="margin:0 0 6px">${esc(g.nome)} <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700">${esc(g.codigo)}</code></h3>
       <p style="margin:0 0 6px;color:var(--tx2);font-size:13px">gerente: <b id="ger-${g.id}">${esc(gerenteDe[g.id] || '— sem gerente —')}</b> · ${g.efetivo} no efetivo · ${g.contas} conta(s)</p>
@@ -532,7 +658,14 @@ async function admGrupos() {
         <button class="acao-linha" data-remover="${g.id}">Remover subordinação</button>
       </div></div>`;
   }).join('');
-  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Criar grupo — nasce com gerente</h3>
+  const noHTML = (n, nivel) => `
+    <div style="margin-left:${nivel * 24}px;padding:6px 10px;border-left:3px solid var(--verde);margin-bottom:5px;background:#f4f8f4;border-radius:0 6px 6px 0">
+      <b>${esc(n.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
+      <small style="color:var(--tx2)"> · gerente: <b>${esc(gerenteDe[n.id] || '—')}</b> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
+    </div>` + (n.filhos && n.filhos.length ? n.filhos.map(f => noHTML(f, nivel + 1)).join('') : '');
+  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Hierarquia dos grupos (subordinados indentados)</h3>
+      <div id="arvoreAdm">${(arvore && arvore.length) ? arvore.map(n => noHTML(n, 0)).join('') : '<span class="vazio">nenhum grupo</span>'}</div></div>
+    <div class="cartao"><h3 style="margin-top:0">Criar grupo — nasce com gerente</h3>
     <div class="form-linha">
       <div class="campo"><label>Nome do grupo</label><input id="gNome" placeholder="ex.: 1ª Cia"></div>
       <div class="campo"><label>Login do gerente</label><input id="gLogin"></div>
@@ -618,21 +751,23 @@ function navAtiva(h) { document.querySelectorAll('#nav a').forEach(a => a.classL
 function montarNav() {
   $('#topbar').classList.remove('oculto');
   $('#quem').textContent = ME ? ME.login + ' · ' + rotuloPapel(ME.papel) : '';
-  // R11: admin = DASHBOARD - ADMIN - RELATÓRIOS; R2: sem abas de conferência
+  // R11: admin = DASHBOARD - ADMIN - RELATÓRIOS; sem abas de conferência
+  // v9.4: gerente/operador = Conferência (única, com histórico) + Gerenciar + Relatórios
   let itens;
   if (ME && ME.papel === 'admin') {
     itens = [['#/hoje', 'Dashboard'], ['#/admin', 'Admin'], ['#/relatorios', 'Relatórios']];
   } else {
-    itens = [['#/hoje', 'Conferência'], ['#/conferencias', 'Conferências'], ['#/relatorios', 'Relatórios']];
-    if (ME && ME.papel === 'gerente') itens.push(['#/grupos', 'Grupos']);
-    if (ME && ME.papel !== 'admin') itens.push(['#/perfil', 'Meu usuário']); // R3
+    itens = [['#/hoje', 'Conferência'], ['#/relatorios', 'Relatórios']];
+    if (ME && ME.papel === 'gerente') itens.push(['#/grupos', 'Gerenciar']);
   }
   $('#nav').innerHTML = itens.map(([h, t]) => `<a href="${h}">${t}</a>`).join('');
 }
-function ligarMenuUsuario() { // R13
+function ligarMenuUsuario() { // R13 + v9.4: Meu usuário dentro do dropdown, acima de Mudar senha (admin não tem perfil — R3)
   const menu = $('#menuUsuarioItens');
+  $('#btPerfil').classList.toggle('oculto', ME && ME.papel === 'admin');
   $('#quem').onclick = ev => { ev.stopPropagation(); menu.classList.toggle('oculto'); };
   document.addEventListener('click', ev => { if (!menu.classList.contains('oculto') && !$('#menuUsuario').contains(ev.target)) menu.classList.add('oculto'); });
+  $('#btPerfil').onclick = () => { menu.classList.add('oculto'); location.hash = '#/perfil'; rotear(); };
   $('#btSenha').onclick = () => { menu.classList.add('oculto'); modalSenha(); };
   $('#btnSair').onclick = async () => {
     menu.classList.add('oculto');
@@ -683,7 +818,7 @@ async function rotear() {
     return;
   }
   if (h === '#/hoje') viewHoje();
-  else if (h === '#/conferencias') viewConferencias();
+  else if (h === '#/conferencias') { location.hash = '#/hoje'; } // v9.4: histórico mora na própria Conferência
   else if (h === '#/grupos' && ME.papel === 'gerente') viewGrupos();
   else if (h === '#/perfil') viewPerfil();
   else if (h === '#/relatorios' || h === '#/semana') viewRelatorios();
