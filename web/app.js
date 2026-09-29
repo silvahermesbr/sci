@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.11 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.11.2 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -394,8 +394,9 @@ async function viewGrupos() {
       <div class="cartao"><h3 style="margin-top:0">BANCO DE PESSOAL (${(pessoas.pessoas || []).length})</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
           <label style="font-size:13px"><input type="checkbox" id="chkTodosP"> todos</label>
-          <button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel">0</span>)</button>
-          <span style="color:var(--tx2);font-size:12px">com histórico de conferência: vira inativo (histórico preservado)</span></div>
+          <button class="primario" id="btEditLote" disabled>✏️ Editar selecionados (<span id="nSel">0</span>)</button>
+          <button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>
+          <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span></div>
         <div class="rolagem"><table><thead><tr><th></th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Status</th><th></th></tr></thead>
         <tbody id="tabP">${linhasP || '<tr><td colspan="7"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
     </div>
@@ -496,7 +497,9 @@ async function viewGrupos() {
   const refreshSel = () => {
     const n = selCount();
     $('#nSel').textContent = n;
+    $('#nSel2').textContent = n;
     $('#btExcLote').disabled = n === 0;
+    $('#btEditLote').disabled = n === 0;
   };
   document.querySelectorAll('.chkP').forEach(ch => ch.onchange = refreshSel);
   $('#chkTodosP').onchange = () => {
@@ -516,6 +519,43 @@ async function viewGrupos() {
     }
     toast(`Excluídos: ${ok} · desativados: ${des}${falha ? ' · falhas: ' + falha : ''}`, falha && !ok ? 'erro' : 'ok');
     if (ok || des) viewGrupos();
+  };
+  /* --- edição em lote: modal único aplica setor/função/status aos selecionados (v9.11.2) --- */
+  $('#btEditLote').onclick = () => {
+    const sel = [...document.querySelectorAll('.chkP:checked')].map(c => +c.dataset.id);
+    if (!sel.length) { toast('Selecione ao menos um militar', 'erro'); return; }
+    const div = document.createElement('div');
+    div.className = 'modal-mask';
+    div.innerHTML = `<div class="modal"><h3>Editar em lote — ${sel.length} militar(es)</h3>
+      <p style="color:var(--tx2);font-size:12px;margin:4px 0">Campos em <b>manter</b> não são alterados. Aplica a todos os selecionados.</p>
+      <div class="form-linha">
+        <div class="campo"><label>Setor</label><select id="lSetor"><option value="">(manter)</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+        <div class="campo"><label>Função</label><select id="lFuncao"><option value="">(manter)</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+        <div class="campo"><label>Status</label><select id="lStatus"><option value="">(manter)</option><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
+      <div class="modal-acoes"><button class="fantasma" id="lX">Cancelar</button>
+      <button class="primario" id="lGo">Aplicar a ${sel.length}</button></div></div>`;
+    document.body.appendChild(div);
+    div.querySelector('#lX').onclick = () => div.remove();
+    div.onclick = ev => { if (ev.target === div) div.remove(); };
+    div.querySelector('#lGo').onclick = async () => {
+      const sid = div.querySelector('#lSetor').value;
+      const fid = div.querySelector('#lFuncao').value;
+      const st = div.querySelector('#lStatus').value;
+      if (!sid && !fid && !st) { toast('Nada para alterar — todos em manter', 'erro'); return; }
+      let ok = 0, falha = 0;
+      for (const id of sel) {
+        const p = (pessoas.pessoas || []).find(x => x.id === id);
+        if (!p) { falha++; continue; }
+        const corpo = { nome_guerra: p.nome_guerra, nome_completo: p.nome_completo,
+          setor_id: sid ? +sid : p.setor_id, funcao_id: fid ? +fid : p.funcao_id,
+          status: st || p.status };
+        try { await api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) }); ok++; }
+        catch (e) { falha++; }
+      }
+      toast(`Aplicado a ${ok} militar(es)${falha ? ' · falhas: ' + falha : ''}`, falha && !ok ? 'erro' : 'ok');
+      div.remove();
+      if (ok) viewGrupos();
+    };
   };
   /* --- adição em lote --- */
   $('#csvGo').onclick = async () => {
