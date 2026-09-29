@@ -194,6 +194,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/catalogo/{t}", a.auth(false, a.hCatalogoAdd))
 	m.Handle("DELETE /api/catalogo/{t}/{id}", a.auth(false, a.hCatalogoDel))
 	m.Handle("PATCH /api/catalogo/{t}/{id}/pai", a.auth(false, a.hCatalogoReparentar))
+	m.Handle("PATCH /api/catalogo/{t}/{id}", a.auth(false, a.hCatalogoEditar))
 
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
 	m.Handle("POST /api/pessoas", a.auth(false, a.hPessoasAdd))
@@ -1000,6 +1001,57 @@ func (a *App) hCatalogoReparentar(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true, "id": id, "pai_id": req.PaiID})
 }
 
+// hCatalogoEditar (v9.16.11, ordem Tenente 29/09): EDITAR item do catálogo (nome, sigla, cor).
+// Só gerente; item do próprio grupo (herdados são read only).
+func (a *App) hCatalogoEditar(w http.ResponseWriter, r *http.Request) {
+	t, err := tabelaDeCatalogo(r.PathValue("t"))
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	if u == nil || u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
+		return
+	}
+	var req struct {
+		Nome  string `json:"nome"`
+		Sigla string `json:"sigla"`
+		Cor   string `json:"cor"`
+	}
+	if err = decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
+		jsonErro(w, http.StatusBadRequest, "nome obrigatório")
+		return
+	}
+	nome := strings.TrimSpace(req.Nome)
+	if esc := escopoDoUsuario(u); esc > 0 {
+		var donoGrupo int64
+		if e := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); e != nil || donoGrupo != esc {
+			jsonErro(w, http.StatusForbidden, "item herdado de grupo superior — somente leitura")
+			return
+		}
+	}
+	switch t {
+	case "setores":
+		_, err = a.st.db.Exec(`UPDATE setores SET nome = ?, sigla = NULLIF(?,'') WHERE id = ?`, nome, req.Sigla, id)
+	case "tags":
+		_, err = a.st.db.Exec(`UPDATE tags SET nome = ?, cor = NULLIF(?,'') WHERE id = ?`, nome, req.Cor, id)
+	default:
+		_, err = a.st.db.Exec(`UPDATE `+t+` SET nome = ? WHERE id = ?`, nome, id)
+	}
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "não atualizado (duplicado?): "+err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "editar", t, &id, nome, ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": id, "nome": nome})
+}
+
 // hConferenciaGet: dados completos de UMA conferência (para o relatório na tela).
 func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -1038,7 +1090,7 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows, e := a.st.db.Query(`
-		SELECT p.nome_guerra, COALESCE(s.nome,'Sem setor'), pr.situacao,
+		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
 		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), u.login, pr.marcado_em
 		FROM presencas pr
 		JOIN pessoas p ON p.id = pr.pessoa_id
@@ -1125,7 +1177,7 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		  UNION ALL
 		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
 		)
-		SELECT p.nome_guerra, COALESCE(s.nome,'Sem setor'), pr.situacao,
+		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
 		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), u.login,
 		       COALESCE(fu.nome,''), COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor')
 		FROM presencas pr
@@ -1247,7 +1299,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	}
 
 	rows, err := a.st.db.Query(`
-		SELECT COALESCE(s.nome,'Sem setor') AS setor_nome,
+		SELECT COALESCE(s.nome,'INDEFINIDO') AS setor_nome,
 		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0) AS pres,
 		       COALESCE(SUM(pr.situacao='falta'),0) AS faltas,
 		       COALESCE(SUM(pr.situacao='justificada'),0) AS just,
@@ -1309,7 +1361,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		  UNION ALL
 		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
 		)
-		SELECT p.id, p.nome_guerra, COALESCE(s.nome,'Sem setor'),
+		SELECT p.id, p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'),
 		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0),
 		       COALESCE(SUM(pr.situacao='atraso'),0),
 		       COALESCE(SUM(pr.situacao='falta'),0),

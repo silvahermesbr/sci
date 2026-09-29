@@ -132,7 +132,7 @@
     const porSetor = {};
     C.pessoas
       .filter(p => !f || (p.nome_guerra || '').toLowerCase().includes(f) || (p.nome_completo || '').toLowerCase().includes(f))
-      .forEach(p => { (porSetor[p.setor || 'Sem setor'] = porSetor[p.setor || 'Sem setor'] || []).push(p); });
+      .forEach(p => { (porSetor[p.setor || 'INDEFINIDO'] = porSetor[p.setor || 'INDEFINIDO'] || []).push(p); });
     // ordem dentro do setor (v9.14.1): sem check primeiro, depois alfabética
     const ordemCheck = (a, b) => (C.verif.has(a.id) - C.verif.has(b.id))
       || (a.nome_guerra || '').localeCompare(b.nome_guerra || '', 'pt', { sensitivity: 'base' });

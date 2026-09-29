@@ -375,8 +375,8 @@
     const linhasP = (pessoas.pessoas || []).map(p =>
       `<tr data-p='${esc(JSON.stringify(p))}'><td><input type="checkbox" class="chkP" data-id="${p.id}"></td>
        <td class="num">#${p.id}</td><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
-       <td>${esc(p.setor)}${p.setor_id ? ` <small style="color:var(--tx2)">#${p.setor_id}</small>` : ''}</td>
-       <td>${esc(p.funcao)}${p.funcao_id ? ` <small style="color:var(--tx2)">#${p.funcao_id}</small>` : ''}</td>
+       <td>${esc(p.setor || 'INDEFINIDO')}</td>
+       <td>${esc(p.funcao || 'INDEFINIDO')}</td>
        <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
        <td><button class="acao-linha" data-edit="${p.id}">editar</button>
        <button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button></td></tr>`).join('');
@@ -585,88 +585,59 @@
           : api('/api/catalogo/' + t).then(l => [t, l]).catch(() => [t, []])));
       let html = '';
       for (const [t, lista] of resultados) {
-        // v9.16.8: HERDADO (grupo superior) vem primeiro, READ ONLY; DO GRUPO vem depois, gerenciável
+        // v9.16.11: LISTA com EDITAR/EXCLUIR; HERDADO read only primeiro
         const herdadas = lista.filter(x => !meusGrupos.has(x.grupo_id));
         const minhas = lista.filter(x => meusGrupos.has(x.grupo_id));
-        const chipHerd = x => `<span class="cat-item herdado" title="herdado de grupo superior — somente leitura">` +
-          `<small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}</span>`;
-        const chipMeu = x => `<span class="cat-item"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
-            <button class="cat-x" data-ct="${t}" data-cid="${x.id}" title="excluir">✕</button>
-            ${x.ativo ? `<button class="cat-off" data-ct="${t}" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span>`;
+        const nivelTag = x => {
+          let n = 0, pai = x.pai_id;
+          while (pai != null) { const p = lista.find(y => y.id === pai); if (!p) break; n++; pai = p.pai_id; }
+          return n;
+        };
+        const linhaLista = (x, herdado) => `<div class="cat-linha ${herdado ? 'herdado' : ''}" ${t === 'tags' && !herdado ? `style="margin-left:${nivelTag(x) * 20}px"` : ''}>
+            <small class="num" style="width:34px">#${x.id}</small>
+            <span style="flex:1">${esc(x.nome)}${x.ativo ? '' : ' <i style="color:var(--tx3)">(inativo)</i>'}</span>
+            ${herdado ? '<small style="color:var(--tx3)">herdado</small>' :
+              `<button class="acao-linha" data-editcat="${t}" data-cid="${x.id}" data-nome="${esc(x.nome)}">editar</button>
+               <button class="acao-linha" data-delcat="${t}" data-cid="${x.id}">excluir</button>`}</div>`;
         let corpo = '';
-        if (herdadas.length) corpo += `<div class="cat-secao">HERDADO <small>(de grupos superiores — somente leitura, sempre mais antigas)</small></div>` +
-          `<div class="cat-itens">${herdadas.map(chipHerd).join(' ')}</div>`;
-        corpo += `<div class="cat-secao">DO MEU GRUPO</div>`;
-        if (t === 'tags' && minhas.length) {
-          const arv = (pai, nivel) => minhas
-            .filter(x => (x.pai_id ?? null) === (pai ?? null))
-            .sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999)
-              || (a.id - b.id))
-            .map(x => {
-              const temFilhos = minhas.some(y => y.pai_id === x.id);
-              return `<div class="cat-arv-item" draggable="true" data-tagid="${x.id}" style="margin-left:${nivel * 22}px">` +
-                `<span class="cat-arv-dot"></span><span class="cat-item" draggable="false"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
-                <button class="cat-x" data-ct="tags" data-cid="${x.id}" title="excluir">✕</button>
-                ${x.ativo ? `<button class="cat-off" data-ct="tags" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span></div>` + arv(x.id, nivel + 1);
-            }).join('');
-          corpo += `<div class="cat-arv" id="arvTags">${arv(null, 0)}</div>
-            <div class="cat-arv-raiz" id="arvRaiz">⟲ soltar aqui para voltar à raiz</div>`;
-        } else {
-          corpo += `<div class="cat-itens">${minhas.length ? minhas.map(chipMeu).join(' ') : '<span class="vazio">— nenhuma —</span>'}</div>`;
-        }
-        // botão de antiguidade (D&D) — só para catálogos com 2+ itens do grupo
-        const btAnt = minhas.length >= 2
+        if (herdadas.length) corpo += `<div class="cat-secao">HERDADO <small>(de grupos superiores — somente leitura)</small></div>` +
+          herdadas.map(x => linhaLista(x, true)).join('');
+        corpo += `<div class="cat-secao">DO MEU GRUPO</div>` + (minhas.length
+          ? minhas.sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id))
+              .map(x => linhaLista(x, false)).join('')
+          : '<span class="vazio">— nenhuma —</span>');
+        const btAnt = (t === 'tags' || t === 'setores' || t === 'funcoes') && minhas.length >= 2
           ? `<button class="fantasma" data-ant="${t}" style="min-height:34px;padding:6px 12px">⚖ Definir antiguidade</button>` : '';
         html += `<div class="cat-bloco"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
           <b>${rotCat[t]}</b>${btAnt}</div>${corpo}</div>`;
       }
       cont.innerHTML = html;
-      /* --- handlers: excluir / desativar --- */
-      cont.querySelectorAll('.cat-x').forEach(b => b.onclick = async () => {
+      /* --- handlers: editar / excluir / desativar --- */
+      cont.querySelectorAll('[data-editcat]').forEach(b => b.onclick = () => {
+        const t = b.dataset.editcat, cid = b.dataset.cid, nome = b.dataset.nome;
+        const div = modal(`<div class="modal-inner"><h3>Editar ${rotCat[t]}</h3>
+          <div class="campo"><label>Nome</label><input id="edNome" value="${nome}"></div>
+          <div class="modal-acoes"><button class="fantasma" id="edX">Cancelar</button>
+          <button class="primario" id="edGo">Salvar</button></div></div>`);
+        div.querySelector('#edNome').focus();
+        div.querySelector('#edX').onclick = () => div.fechar();
+        div.querySelector('#edGo').onclick = async () => {
+          const novoNome = div.querySelector('#edNome').value.trim();
+          if (!novoNome) { toast('Informe o nome', 'erro'); return; }
+          const r = await processar(() => api(`/api/catalogo/${t}/${cid}`, { method: 'PATCH', body: JSON.stringify({ nome: novoNome }) }), 'Salvando…');
+          if (r.ok) { toast('Editado'); if (t === 'setores' || t === 'funcoes') setoresCat = funcoesCat = null; carregarCats(); }
+        };
+      });
+      cont.querySelectorAll('[data-delcat]').forEach(b => b.onclick = async () => {
         if (!(await confirmar('Excluir este item?'))) return;
-        const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
-        if (r.ok) { toast('Excluído'); if (b.dataset.ct === 'setores' || b.dataset.ct === 'funcoes') setoresCat = funcoesCat = null; carregarCats(); }
+        const r = await processar(() => api(`/api/catalogo/${b.dataset.delcat}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
+        if (r.ok) { toast('Excluído'); if (b.dataset.delcat === 'setores' || b.dataset.delcat === 'funcoes') setoresCat = funcoesCat = null; carregarCats(); }
       });
-      cont.querySelectorAll('.cat-off').forEach(b => b.onclick = async () => {
-        const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}?modo=desativar`, { method: 'DELETE' }), 'Desativando item…');
-        if (r.ok) { toast('Desativado'); carregarCats(); }
-      });
-      /* --- drag & drop hierarquia de tags (só itens do meu grupo) --- */
-      let dragId = null;
-      cont.querySelectorAll('.cat-arv-item').forEach(item => {
-        item.addEventListener('dragstart', ev => { dragId = +item.dataset.tagid; ev.dataTransfer.effectAllowed = 'move'; });
-        item.addEventListener('dragover', ev => { ev.preventDefault(); item.classList.add('drop-alvo'); });
-        item.addEventListener('dragleave', () => item.classList.remove('drop-alvo'));
-        item.addEventListener('drop', async ev => {
-          ev.preventDefault(); ev.stopPropagation();
-          item.classList.remove('drop-alvo');
-          const pai = +item.dataset.tagid;
-          if (!dragId || dragId === pai) return;
-          const r = await processar(() => api(`/api/catalogo/tags/${dragId}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: pai }) }), 'Movendo tag…');
-          if (r.ok) { toast('Tag subordinada'); carregarCats(); }
-          dragId = null;
-        });
-      });
-      const raiz = cont.querySelector('#arvRaiz');
-      if (raiz) {
-        raiz.addEventListener('dragover', ev => { ev.preventDefault(); raiz.classList.add('drop-alvo'); });
-        raiz.addEventListener('dragleave', () => raiz.classList.remove('drop-alvo'));
-        raiz.addEventListener('drop', async ev => {
-          ev.preventDefault();
-          raiz.classList.remove('drop-alvo');
-          if (!dragId) return;
-          const r = await processar(() => api(`/api/catalogo/tags/${dragId}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: null }) }), 'Movendo tag…');
-          if (r.ok) { toast('Tag voltou à raiz'); carregarCats(); }
-          dragId = null;
-        });
-      }
-      /* --- v9.16.8: modal de ANTIGUIDADE por categoria (drag & drop ordenável) --- */
       cont.querySelectorAll('[data-ant]').forEach(bt => bt.onclick = () => {
         const t = bt.dataset.ant;
         const lista = (resultados.find(r => r[0] === t) || [null, []])[1]
           .filter(x => meusGrupos.has(x.grupo_id));
         if (lista.length < 2) return;
-        // v9.16.10: ordem inicial segue a HIERARQUIA (pai antes dos filhos, recursivo)
         const raiz = lista.filter(x => x.pai_id == null);
         const empilhar = (nos, acc) => nos
           .sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id))
