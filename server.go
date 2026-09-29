@@ -211,7 +211,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/vinculos", a.auth(false, a.hVinculoAdd)) // legado: fora da UI (R12)
 	m.Handle("GET /api/perfil", a.auth(false, a.hPerfilGet))
 	m.Handle("PATCH /api/perfil", a.auth(false, a.hPerfilSet))
-	m.Handle("PATCH /api/usuarios/{id}/mover", a.auth(true, a.hMoverConta))
+	m.Handle("PATCH /api/usuarios/{id}/mover", a.auth(false, a.hMoverConta)) // v9.5: admin qualquer; gerente dentro da própria árvore
 	m.Handle("POST /api/comentarios", confAuth(a.hComentariosAdd))
 	m.Handle("GET /api/comentarios/{id}", confAuth(a.hComentariosList))
 
@@ -1815,7 +1815,10 @@ func (a *App) hPerfilSet(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
-// hMoverConta: admin MOVE gerente/operador entre grupos (conta = credencial; função vem do grupo).
+// hMoverConta (v9.5): MOVE conta entre grupos. Admin: qualquer origem → qualquer
+// destino. Gerente: origem = próprio grupo ou subordinado; destino = próprio grupo
+// ou subordinado (dentro da hierarquia dele). Nunca move admin. Gerente não pode
+// deixar seu grupo sem gerente (vira operador no destino ou bloqueia se for o único).
 func (a *App) hMoverConta(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -1823,21 +1826,90 @@ func (a *App) hMoverConta(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		GrupoID *int64 `json:"grupo_id"`
+		GrupoID int64 `json:"grupo_id"`
 	}
-	if err := decodificar(r, &req); err != nil {
-		jsonErro(w, http.StatusBadRequest, "corpo inválido")
+	if err := decodificar(r, &req); err != nil || req.GrupoID == 0 {
+		jsonErro(w, http.StatusBadRequest, "grupo_id obrigatório")
 		return
 	}
-	_, err = a.st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, req.GrupoID, id)
+	u := usuarioDoCtx(r)
+	var alvoPapel string
+	var origem int64
+	if err := a.st.db.QueryRow(`SELECT papel, COALESCE(grupo_id,0) FROM usuarios WHERE id = ?`, id).Scan(&alvoPapel, &origem); err != nil {
+		jsonErro(w, http.StatusNotFound, "usuário inexistente")
+		return
+	}
+	if alvoPapel == "admin" {
+		jsonErro(w, http.StatusForbidden, "conta admin não é movida")
+		return
+	}
+	dentroDaArvore := func(g int64) bool { return g == *u.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*u.GrupoID), g) }
+	if u.Papel == "gerente" {
+		if u.GrupoID == nil {
+			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
+			return
+		}
+		if !dentroDaArvore(origem) || !dentroDaArvore(req.GrupoID) {
+			jsonErro(w, http.StatusForbidden, "mover só dentro da sua hierarquia (próprio grupo + subordinados)")
+			return
+		}
+	}
+	// destino precisa existir
+	var existe int
+	if a.st.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE id = ?`, req.GrupoID).Scan(&existe) != nil || existe == 0 {
+		jsonErro(w, http.StatusNotFound, "grupo de destino inexistente")
+		return
+	}
+	if origem == req.GrupoID {
+		jsonOK(w, map[string]bool{"ok": true}) // nada a fazer
+		return
+	}
+	// gerente que se move: se for o único do grupo de origem, rebaixa a operador no destino
+	vaiRebaixar := false
+	if alvoPapel == "gerente" {
+		var outros int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE grupo_id = ? AND papel = 'gerente' AND id <> ? AND ativo = 1`,
+			origem, id).Scan(&outros)
+		if outros == 0 {
+			vaiRebaixar = true
+		}
+	}
+	tx, err := a.st.db.Begin()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	u := usuarioDoCtx(r)
+	defer tx.Rollback()
+	if vaiRebaixar {
+		if _, err = tx.Exec(`UPDATE usuarios SET grupo_id = ?, papel = 'operador' WHERE id = ?`, req.GrupoID, id); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// grupo de origem ficou vago: promove o operador mais antigo ativo (nunca grupo sem gerente)
+		var novoGer int64
+		err = tx.QueryRow(`SELECT id FROM usuarios WHERE grupo_id = ? AND papel = 'operador' AND ativo = 1 ORDER BY criado_em LIMIT 1`,
+			origem).Scan(&novoGer)
+		if err != nil {
+			jsonErro(w, http.StatusConflict, "grupo de origem ficaria sem gerente — crie/defina um gerente antes de mover")
+			return
+		}
+		if _, err = tx.Exec(`UPDATE usuarios SET papel = 'gerente' WHERE id = ?`, novoGer); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		if _, err = tx.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, req.GrupoID, id); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	a.st.Auditoria(&u.ID, "mover", "usuarios", &id,
-		fmt.Sprintf("novo grupo: %v", req.GrupoID), ipDe(r))
-	jsonOK(w, map[string]bool{"ok": true})
+		fmt.Sprintf("origem=%d destino=%d rebaixado=%v", origem, req.GrupoID, vaiRebaixar), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "rebaixado": vaiRebaixar})
 }
 
 // hGruposAdd movido para a seção v9.3 (R7: exige gerente no ato).

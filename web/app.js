@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.5 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.6 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -349,8 +349,9 @@ async function viewGrupos() {
 
   /* --- operadores --- */
   const linhasOp = operadores.map(o => `
-    <tr><td><b>${esc(o.login)}</b></td><td>${o.ativo ? 'ativa' : 'desativada'}</td><td>${(o.criado_em || '').slice(0, 10)}</td>
+    <tr data-login="${esc(o.login)}"><td><b>${esc(o.login)}</b></td><td>${o.ativo ? 'ativa' : 'desativada'}</td><td>${(o.criado_em || '').slice(0, 10)}</td>
     <td><button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
+    <button class="acao-linha" data-mv="${o.id}" data-login="${esc(o.login)}">mover</button>
     <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button></td></tr>`).join('');
 
   /* --- abas do Gerenciar (v9.5): Pessoal · Tags · Grupos · Operadores --- */
@@ -387,6 +388,7 @@ async function viewGrupos() {
     </div>
     <div id="gerOperadores" class="oculto">
       <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
+      <div class="campo" style="margin-bottom:8px"><label>Filtrar operadores</label><input id="fOp" placeholder="buscar login…"></div>
       <div class="form-linha"><div class="campo"><label>Login do operador</label><input id="opLogin"></div>
       <div class="campo"><label>Senha (mín. 8)</label><input id="opSenha" type="password"></div>
       <div class="campo" style="align-self:end"><button class="primario" id="opGo">Criar operador</button></div></div>
@@ -469,13 +471,41 @@ async function viewGrupos() {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     };
   });
-  /* --- operadores: criar, senha, excluir --- */
+  /* --- operadores: criar, senha, mover, excluir + filtro --- */
   $('#opGo').onclick = async () => {
     const login = $('#opLogin').value.trim(), senha = $('#opSenha').value;
     if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
     await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'operador' }) });
     toast('Operador criado'); viewGrupos();
   };
+  $('#fOp').oninput = () => {
+    const q = $('#fOp').value.trim().toLowerCase();
+    document.querySelectorAll('#gerOperadores tbody tr[data-login]').forEach(tr => {
+      tr.style.display = !q || tr.dataset.login.toLowerCase().includes(q) ? '' : 'none';
+    });
+  };
+  const optsMoverGer = `<option value="">— destino (dentro da sua hierarquia) —</option>` +
+    grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
+  document.querySelectorAll('#gerOperadores [data-mv]').forEach(b => b.onclick = () => {
+    const div = document.createElement('div');
+    div.className = 'modal-mask';
+    div.innerHTML = `<div class="modal"><h3>Mover conta — ${b.dataset.login}</h3>
+      <div class="campo"><label>Grupo de destino</label><select id="mG">${optsMoverGer}</select></div>
+      <p style="color:var(--tx2);font-size:12px">Permitido apenas entre o seu grupo e seus subordinados.</p>
+      <div class="modal-acoes"><button class="fantasma" id="mX">Cancelar</button>
+      <button class="primario" id="mGo">Mover</button></div></div>`;
+    document.body.appendChild(div);
+    div.querySelector('#mX').onclick = () => div.remove();
+    div.onclick = ev => { if (ev.target === div) div.remove(); };
+    div.querySelector('#mGo').onclick = async () => {
+      const g = div.querySelector('#mG').value;
+      if (!g) { toast('Escolha o grupo de destino', 'erro'); return; }
+      try {
+        await api(`/api/usuarios/${b.dataset.mv}/mover`, { method: 'PATCH', body: JSON.stringify({ grupo_id: +g }) });
+        toast('Conta movida'); div.remove(); viewGrupos();
+      } catch (e) {}
+    };
+  });
   document.querySelectorAll('[data-senha]').forEach(b => b.onclick = () => {
     const div = document.createElement('div');
     div.className = 'modal-mask';
@@ -650,24 +680,41 @@ async function viewAdmin() {
   else admBackup();
 }
 
-/* --- Usuários: criar, redefinir senha, EXCLUIR com confirmação (R6) --- */
+/* --- Usuários (admin): SOMENTE tabela — mover · senha · excluir (v9.5: sem criar conta, sem admin) + filtros --- */
 async function admUsuarios() {
-  const lista = await api('/api/usuarios');
-  $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Criar conta</h3>
-    <div class="form-linha"><div class="campo"><label>Login</label><input id="uLogin"></div>
-    <div class="campo"><label>Senha (mín. 8)</label><input id="uSenha" type="password"></div>
-    <div class="campo"><label>Papel</label><select id="uPapel"><option value="gerente">gerente</option><option value="admin">admin</option></select></div></div>
-    <button class="primario" id="uCriar">Criar conta</button>
-    <p style="color:var(--tx2);font-size:12px">Operadores nascem dentro do grupo (o gerente cria os do seu). Excluir: contas com histórico são desativadas, o resto é removido.</p></div>
-    <div class="cartao"><table><thead><tr><th>Login</th><th>Papel</th><th>Grupo</th><th>Status</th><th>Criada</th><th></th></tr></thead>
-    <tbody>${lista.map(u => `<tr><td><b>${esc(u.login)}</b></td><td>${rotuloPapel(u.papel)}</td><td>${u.grupo_id || '—'}</td>
+  const [lista, grupos] = await Promise.all([api('/api/usuarios'), api('/api/grupos')]);
+  const gerenciaveis = lista.filter(u => u.papel !== 'admin');
+  const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
+  const optsGrupos = `<option value="">— destino —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
+  $('#adm').innerHTML = `<div class="cartao">
+    <div class="form-linha" style="margin-bottom:8px">
+      <div class="campo" style="flex:1"><label>Filtrar por login</label><input id="fULogin" placeholder="buscar login…"></div>
+      <div class="campo"><label>Grupo</label><select id="fUGrupo"><option value="">todos</option>${grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('')}</select></div>
+      <div class="campo"><label>Status</label><select id="fUAtivo"><option value="">todas</option><option value="1">ativa</option><option value="0">desativada</option></select></div>
+    </div>
+    <div class="rolagem"><table id="tabU"><thead><tr><th>Login</th><th>Papel</th><th>Grupo</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
+    <tbody>${gerenciaveis.map(u => `<tr data-login="${esc(u.login)}" data-gid="${u.grupo_id || 0}" data-ativo="${u.ativo ? 1 : 0}">
+      <td><b>${esc(u.login)}</b></td><td>${rotuloPapel(u.papel)}</td><td>${esc(nomeGrupo(u.grupo_id))}</td>
       <td>${u.ativo ? 'ativa' : 'desativada'}</td><td>${(u.criado_em || '').slice(0, 10)}</td>
       <td><button class="acao-linha" data-id="${u.id}" data-login="${esc(u.login)}">🔑 senha</button>
-      ${u.papel !== 'admin' ? `<button class="acao-linha" data-exc="${u.id}" data-login="${esc(u.login)}">excluir</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`;
-  $('#uCriar').onclick = async () => {
-    await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login: $('#uLogin').value.trim(), senha: $('#uSenha').value, papel: $('#uPapel').value }) });
-    toast('Conta criada'); viewAdmin();
+      <button class="acao-linha" data-mv="${u.id}" data-login="${esc(u.login)}" data-papel="${u.papel}">➡ mover</button>
+      <button class="acao-linha" data-exc="${u.id}" data-login="${esc(u.login)}">excluir</button></td></tr>`).join('')}</tbody></table></div>
+    <p style="color:var(--tx2);font-size:12px;margin-top:8px">Mover: admin transfere entre grupos quaisquer; gerente só dentro da própria hierarquia. Contas com histórico são desativadas ao excluir, o resto é removido.</p></div>`;
+  // filtros
+  const aplicarFiltro = () => {
+    const q = $('#fULogin').value.trim().toLowerCase();
+    const gid = $('#fUGrupo').value;
+    const at = $('#fUAtivo').value;
+    document.querySelectorAll('#tabU tbody tr').forEach(tr => {
+      const ok = (!q || tr.dataset.login.toLowerCase().includes(q)) &&
+                 (!gid || tr.dataset.gid === gid) &&
+                 (at === '' || tr.dataset.ativo === at);
+      tr.style.display = ok ? '' : 'none';
+    });
   };
+  $('#fULogin').oninput = aplicarFiltro;
+  $('#fUGrupo').onchange = aplicarFiltro;
+  $('#fUAtivo').onchange = aplicarFiltro;
   document.querySelectorAll('#adm button[data-id]').forEach(b => b.onclick = () => {
     const div = document.createElement('div');
     div.className = 'modal-mask';
@@ -687,12 +734,33 @@ async function admUsuarios() {
       toast('Senha redefinida'); div.remove();
     };
   });
+  document.querySelectorAll('#adm button[data-mv]').forEach(b => b.onclick = () => {
+    const div = document.createElement('div');
+    div.className = 'modal-mask';
+    div.innerHTML = `<div class="modal"><h3>Mover conta — ${b.dataset.login} (${rotuloPapel(b.dataset.papel)})</h3>
+      <div class="campo"><label>Grupo de destino</label><select id="mG">${optsGrupos}</select></div>
+      <p style="color:var(--tx2);font-size:12px">Se for o único gerente do grupo de origem, virará operador no destino e o operador mais antigo assumirá o grupo.</p>
+      <div class="modal-acoes"><button class="fantasma" id="mX">Cancelar</button>
+      <button class="primario" id="mGo">Mover</button></div></div>`;
+    document.body.appendChild(div);
+    div.querySelector('#mX').onclick = () => div.remove();
+    div.onclick = ev => { if (ev.target === div) div.remove(); };
+    div.querySelector('#mGo').onclick = async () => {
+      const g = div.querySelector('#mG').value;
+      if (!g) { toast('Escolha o grupo de destino', 'erro'); return; }
+      try {
+        const r = await api(`/api/usuarios/${b.dataset.mv}/mover`, { method: 'PATCH', body: JSON.stringify({ grupo_id: +g }) });
+        toast(r.rebaixado ? 'Movido e rebaixado a operador (grupo de origem recebeu novo gerente)' : 'Conta movida');
+        div.remove(); admUsuarios();
+      } catch (e) {}
+    };
+  });
   document.querySelectorAll('#adm button[data-exc]').forEach(b => b.onclick = async () => {
     if (!confirm(`Excluir a conta "${b.dataset.login}"?`)) return;
     try {
       const r = await api(`/api/usuarios/${b.dataset.exc}`, { method: 'DELETE' });
       toast(r.desativado ? 'Conta desativada (histórico preservado)' : 'Conta excluída');
-      viewAdmin();
+      admUsuarios();
     } catch (e) {}
   });
 }
@@ -727,6 +795,7 @@ async function admGrupos() {
       <small style="color:var(--tx2)"> · gerente: <b>${esc(gerenteDe[n.id] || '—')}</b> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
     </div>` + (n.filhos && n.filhos.length ? n.filhos.map(f => noHTML(f, nivel + 1)).join('') : '');
   $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Hierarquia dos grupos (subordinados indentados)</h3>
+      <div class="campo" style="margin-bottom:8px"><label>Filtrar grupos</label><input id="fGNome" placeholder="buscar grupo…"></div>
       <div id="arvoreAdm">${(arvore && arvore.length) ? arvore.map(n => noHTML(n, 0)).join('') : '<span class="vazio">nenhum grupo</span>'}</div></div>
     <div class="cartao"><h3 style="margin-top:0">Criar grupo — nasce com gerente</h3>
     <div class="form-linha">
@@ -736,7 +805,8 @@ async function admGrupos() {
       <div class="campo"><label>Nome de guerra do gerente</label><input id="gGuerra"></div></div>
     <button class="primario" id="gGo">Criar grupo</button>
     <p style="color:var(--tx2);font-size:12px">O grupo exige gerente no ato da criação — sem gerente, sem grupo.</p></div>
-    ${linhas || '<div class="cartao"><span class="vazio">nenhum grupo</span></div>'}`;
+    <div class="cartao"><div class="campo" style="margin-bottom:8px"><label>Filtrar grupos (painel)</label><input id="fGPainel" placeholder="buscar grupo…"></div>
+    ${linhas || '<span class="vazio">nenhum grupo</span>'}</div>`;
   $('#gGo').onclick = async () => {
     const nome = $('#gNome').value.trim(), login = $('#gLogin').value.trim(),
           senha = $('#gSenha').value, guerra = $('#gGuerra').value.trim();
@@ -744,6 +814,29 @@ async function admGrupos() {
     const r = await api('/api/grupos', { method: 'POST', body: JSON.stringify({ nome, login, senha, nome_guerra: guerra }) });
     toast(`Grupo criado — código ${r.codigo}, gerente ${login}`); viewAdmin();
   };
+  // filtros de grupo: árvore (esconde nós que não casam, mantendo ancestral visível) e painel de cartões
+  const casarArvore = (n, q) => {
+    const eu = n.nome.toLowerCase().includes(q) || n.codigo.toLowerCase().includes(q);
+    const filhos = (n.filhos || []).map(f => casarArvore(f, q)).filter(Boolean);
+    if (!eu && !filhos.length) return null;
+    return { ...n, filhos };
+  };
+  const noHTMLF = (n, nivel) => noHTML(n, nivel); // render usa o mesmo noHTML
+  const ligarFiltroArvore = () => {
+    $('#fGNome').oninput = () => {
+      const q = $('#fGNome').value.trim().toLowerCase();
+      if (!q) { $('#arvoreAdm').innerHTML = arvore.map(n => noHTML(n, 0)).join(''); return; }
+      const filtrada = (arvore || []).map(n => casarArvore(n, q)).filter(Boolean);
+      $('#arvoreAdm').innerHTML = filtrada.length ? filtrada.map(n => noHTML(n, 0)).join('') : '<span class="vazio">nenhum grupo casa com a busca</span>';
+    };
+    $('#fGPainel').oninput = () => {
+      const q = $('#fGPainel').value.trim().toLowerCase();
+      document.querySelectorAll('#adm div.cartao[data-g]').forEach(c => {
+        c.style.display = !q || c.querySelector('h3').textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    };
+  };
+  ligarFiltroArvore();
   document.querySelectorAll('#adm button[data-trocar]').forEach(b => b.onclick = async () => {
     const gid = b.dataset.trocar;
     const login = $('#tg-' + gid) ? $('#tg-' + gid).value : '';
