@@ -531,8 +531,8 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "justificada exige destino")
 		return
 	}
-	// v9.15.3: marcado_em em horário de BRASÍLIA
-	marcadoEm := time.Now().In(a.horaLocal).Format("2006-01-02T15:04:05.000Z")
+	// v9.15.3: marcado_em em UTC REAL (exibição converte p/ Brasília)
+	marcadoEm := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	_, err = a.st.db.Exec(`INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(conferencia_id, pessoa_id) DO UPDATE SET
@@ -667,8 +667,8 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	// (o bloqueio anterior de "1 aberta por grupo" foi removido). Cada conferência tem o
 	// próprio ID; o /hoje (edição) usa ?id= quando informado, senão a mais recente.
 	var id int64
-	// v9.15.3: criado_em gravado em horário de BRASÍLIA (DEFAULT do schema é UTC)
-	criadoEm := time.Now().In(a.horaLocal).Format("2006-01-02T15:04:05.000Z")
+	// v9.15.3: banco grava UTC REAL (sufixo Z verdadeiro); EXIBIÇÃO converte p/ Brasília
+	criadoEm := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	res, e := a.st.db.Exec(
 		`INSERT INTO conferencias (data, tipo_id, local, grupo_id, criado_por, criado_em) VALUES (?,?,?,?,?,?)`,
 		data, tipoID, req.Local, grupoID, u.ID, criadoEm)
@@ -760,7 +760,7 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err = tx.Exec(
 		`UPDATE conferencias SET status = 'fechada', fechada_em = ? WHERE id = ?`,
-		time.Now().In(a.horaLocal).Format("2006-01-02T15:04:05.000Z"), req.ID); err != nil {
+		time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), req.ID); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
