@@ -19,10 +19,14 @@
   // abrirModal (core) insere o .modal-mask no body e devolve o elemento; aqui só
   // completamos com fechar por ESC / clique fora, como nos modais do protótipo.
   function modal(html) {
-    const m = abrirModal(html);
-    if (!m) return null;
-    m.addEventListener('click', ev => { if (ev.target === m) m.remove(); });
-    m.addEventListener('keydown', ev => { if (ev.key === 'Escape') m.remove(); });
+    // v9.16.2 FIX: abrirModal devolve {fechar, mask, modal}; expor o ELEMENTO mask com helper fechar
+    const h = abrirModal(html);
+    if (!h) return null;
+    const m = h.mask;
+    m.fechar = h.fechar;
+    m.querySelector = sel => h.modal.querySelector(sel);
+    m.querySelectorAll = sel => h.modal.querySelectorAll(sel);
+    m.addEventListener('click', ev => { if (ev.target === m) h.fechar(); });
     return m;
   }
 
@@ -63,14 +67,14 @@
       <div class="modal-acoes"><button class="fantasma" id="rX">Cancelar</button>
       <button class="primario" id="rGo">Redefinir</button></div></div>`);
     if (!div) return;
-    div.querySelector('#rX').onclick = () => div.remove();
+    div.querySelector('#rX').onclick = () => div.fechar && div.fechar();
     div.querySelector('#rGo').onclick = async () => {
       const n = div.querySelector('#rN').value;
       const c = comConfirmar ? div.querySelector('#rC').value : n;
       if (n.length < 8) { toast('Mínimo 8 caracteres', 'erro'); return; }
       if (n !== c) { toast('Senhas não conferem', 'erro'); return; }
       await api(`/api/usuarios/${id}/senha`, { method: 'POST', body: JSON.stringify({ senha: n }) });
-      toast('Senha redefinida'); div.remove();
+      toast('Senha redefinida'); div.fechar && div.fechar();
       if (aoFim) aoFim();
     };
   }
@@ -83,14 +87,14 @@
       <div class="modal-acoes"><button class="fantasma" id="mX">Cancelar</button>
       <button class="primario" id="mGo">Mover</button></div></div>`);
     if (!div) return;
-    div.querySelector('#mX').onclick = () => div.remove();
+    div.querySelector('#mX').onclick = () => div.fechar && div.fechar();
     div.querySelector('#mGo').onclick = async () => {
       const g = div.querySelector('#mG').value;
       if (!g) { toast('Escolha o grupo de destino', 'erro'); return; }
       try {
         const r = await api(`/api/usuarios/${id}/mover`, { method: 'PATCH', body: JSON.stringify({ grupo_id: +g }) });
         toast(r.rebaixado ? 'Movido e rebaixado a operador (grupo de origem recebeu novo gerente)' : 'Conta movida');
-        div.remove();
+        div.fechar && div.fechar();
         if (aoFim) aoFim();
       } catch (e) {}
     };
@@ -279,11 +283,11 @@
           <div class="modal-acoes"><button class="perigo" id="mForce">Excluir forçadamente</button></div>
         </div></div>`);
       if (!div) return;
-      div.querySelector('#mX').onclick = () => div.remove();
+      div.querySelector('#mX').onclick = () => div.fechar && div.fechar();
       div.querySelector('#mGo').onclick = async () => {
         try {
           await api(`/api/grupos/${gid}`, { method: 'DELETE' });
-          toast('Grupo excluído'); div.remove(); window.ViewAdmin();
+          toast('Grupo excluído'); div.fechar && div.fechar(); window.ViewAdmin();
         } catch (e) {}
       };
       div.querySelector('#mForce').onclick = async () => {
@@ -292,7 +296,7 @@
         try {
           const r = await api(`/api/grupos/${gid}?forcar=1`, { method: 'DELETE', body: JSON.stringify({ senha }) });
           toast(`Grupo excluído forçadamente — ${r.contas_removidas} conta(s), ${r.pessoas_removidas} pessoa(s) removidas`);
-          div.remove(); window.ViewAdmin();
+          div.fechar && div.fechar(); window.ViewAdmin();
         } catch (e) {}
       };
     });
@@ -523,13 +527,13 @@
         <div class="modal-acoes"><button class="fantasma" id="lX">Cancelar</button>
         <button class="primario" id="lGo">Aplicar a ${sel.length}</button></div></div>`);
       if (!div) return;
-      div.querySelector('#lX').onclick = () => div.remove();
+      div.querySelector('#lX').onclick = () => div.fechar && div.fechar();
       div.querySelector('#lGo').onclick = async () => {
         const sid = div.querySelector('#lSetor').value;
         const fid = div.querySelector('#lFuncao').value;
         const st = div.querySelector('#lStatus').value;
         if (!sid && !fid && !st) { toast('Nada para alterar — todos em manter', 'erro'); return; }
-        div.remove();
+        div.fechar && div.fechar();
         const r = await processar(async () => {
           let ok = 0; const erros = [];
           for (const id of sel) {

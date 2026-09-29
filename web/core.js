@@ -387,37 +387,34 @@ window.EfetivoAtualHTML = async function () {
   const hoje = d.hoje;
   const dias = s => Math.floor((new Date(hoje + 'T12:00:00') - new Date(s + 'T12:00:00')) / 864e5);
   const frescor = p => {
-    if (!p.ultima_data) return { cls: 'alerta-verm', rot: 'nunca conferido' };
+    if (!p.ultima_data) return 'verm';
     const dd = dias(p.ultima_data);
-    if (dd >= 7) return { cls: 'alerta-verm', rot: dd + ' dias' };
-    if (dd >= 1) return { cls: 'alerta-ama', rot: dd + (dd === 1 ? ' dia' : ' dias') };
-    return { cls: 'alerta-ok', rot: 'hoje' };
+    if (dd >= 7) return 'verm';
+    if (dd >= 1) return 'ama';
+    return 'ok';
   };
-  const ps = (d.pessoas || []).slice().sort((a, b) =>
-    (a.setor || '').localeCompare(b.setor || '', 'pt') ||
-    (a.nome_guerra || '').localeCompare(b.nome_guerra || '', 'pt', { sensitivity: 'base' }));
+  const ps = d.pessoas || [];
+  // v9.16.2 (ordem Tenente): lista de nomes NÃO aparece na tela — só o necessário p/ filtrar
+  // e gerar relatório; o detalhe por militar está no PDF.
+  let nOk = 0, nAma = 0, nVerm = 0;
   const porSetor = {};
-  ps.forEach(p => { (porSetor[p.setor || 'Sem setor'] = porSetor[p.setor || 'Sem setor'] || []).push(p); });
-  let secoes = '';
-  for (const setor of Object.keys(porSetor).sort()) {
-    const linhas = porSetor[setor].map(p => {
-      const fr = frescor(p);
-      const sit = p.situacao ? pill(p.situacao) : '<span style="color:var(--tx3)">—</span>';
-      return `<tr><td><b>${esc(p.nome_guerra)}</b> <span class="${fr.cls}" title="última conferência">●</span> <small style="color:var(--tx3)">${fr.rot}</small></td>` +
-        `<td>${esc(p.funcao || '—')}</td><td>${sit}</td>` +
-        `<td>${p.ultima_data ? fmtData(p.ultima_data) : '—'}</td><td>${esc(p.grupo)}</td></tr>`;
-    }).join('');
-    secoes += `<h4 style="margin:12px 0 6px">${esc(setor)} · ${porSetor[setor].length}</h4>
-      <div class="rolagem"><table><thead><tr><th>Nome</th><th>Função</th><th>Situação atual</th><th>Última conferência</th><th>Grupo</th></tr></thead>
-      <tbody>${linhas}</tbody></table></div>`;
-  }
-  const n = ps.length;
-  const nAma = ps.filter(p => { const f = frescor(p); return f.cls === 'alerta-ama'; }).length;
-  const nVerm = ps.filter(p => { const f = frescor(p); return f.cls === 'alerta-verm'; }).length;
+  ps.forEach(p => {
+    const f = frescor(p);
+    if (f === 'verm') nVerm++; else if (f === 'ama') nAma++; else nOk++;
+    const s = porSetor[p.setor || 'Sem setor'] = porSetor[p.setor || 'Sem setor'] || { total: 0, ok: 0, ama: 0, verm: 0 };
+    s.total++; s[f]++;
+  });
+  const linhas = Object.keys(porSetor).sort().map(s => {
+    const q = porSetor[s];
+    return `<tr><td>${esc(s)}</td><td class="num">${q.total}</td><td class="num">${q.ok}</td>` +
+      `<td class="num">${q.ama ? '<span class="alerta-ama">' + q.ama + '</span>' : '0'}</td>` +
+      `<td class="num">${q.verm ? '<span class="alerta-verm">' + q.verm + '</span>' : '0'}</td></tr>`;
+  }).join('');
   return `<div class="cartao" style="margin-bottom:14px">
-    <h3 style="margin:0 0 4px">EFETIVO — ESTADO ATUAL <small style="color:var(--tx3);font-weight:400">(estado da última conferência de cada militar)</small></h3>
-    <p style="color:var(--tx2);font-size:12px;margin:0 0 8px">${n} militares · <span style="color:var(--ambar-txt)">● ${nAma} sem conferência há 1+ dia</span> · <span style="color:var(--verm-txt)">● ${nVerm} há 1+ semana ou nunca</span></p>
-    ${secoes}</div>`;
+    <h3 style="margin:0 0 4px">EFETIVO — ESTADO ATUAL <small style="color:var(--tx3);font-weight:400">(estado da última conferência de cada militar · detalhes no PDF)</small></h3>
+    <p style="color:var(--tx2);font-size:12px;margin:0 0 8px">${ps.length} militares · <span style="color:var(--verde-claro)">● ${nOk} conferidos hoje</span> · <span style="color:var(--ambar-txt)">● ${nAma} há 1+ dia</span> · <span style="color:var(--verm-txt)">● ${nVerm} há 1+ semana ou nunca</span></p>
+    <div class="rolagem"><table><thead><tr><th>Setor</th><th class="num">Total</th><th class="num">● Hoje</th><th class="num">● 1+ dia</th><th class="num">● 1+ semana/nunca</th></tr></thead>
+    <tbody>${linhas}</tbody></table></div></div>`;
 };
 
 /* ---------- router ---------- */
