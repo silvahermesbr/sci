@@ -194,6 +194,8 @@ func (a *App) rotas() {
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
 	m.Handle("POST /api/pessoas", a.auth(false, a.hPessoasAdd))
 	m.Handle("PATCH /api/pessoas/{id}", a.auth(false, a.hPessoasEdit))
+	m.Handle("DELETE /api/pessoas/{id}", a.auth(false, a.hPessoaExcluir)) // v9.7: admin/gerente excluem (com histórico → desativa)
+	m.Handle("DELETE /api/grupos/{id}", a.auth(true, a.hGrupoExcluir))    // v9.7: só admin, só grupo vazio
 
 	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4)
 	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
@@ -947,15 +949,19 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	}
 
 	ftP2 := a.filtroArvore(escopo, "f2")
+	// v9.7 (ordem Tenente): relatórios organizados por ANTIGUIDADE DE FUNÇÃO
+	// (funcao_id menor = mais antigo), depois alfabetica. ID da função visível no relatório.
 	rows, err = a.st.db.Query(`
 		SELECT p.id, p.nome_guerra, COALESCE(s.nome,'Sem setor'),
 		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0),
 		       COALESCE(SUM(pr.situacao='atraso'),0),
 		       COALESCE(SUM(pr.situacao='falta'),0),
 		       COALESCE(SUM(pr.situacao='justificada'),0),
-		       COUNT(pr.id)
+		       COUNT(pr.id), p.funcao_id, COALESCE(fu.nome,''),
+		       ROW_NUMBER() OVER (ORDER BY p.funcao_id IS NULL, p.funcao_id, p.nome_guerra) AS antig
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
 		/* FIX S4-P1 (verif5): escopo filtrado DENTRO do join de presencas —
 		   pessoa ativa sem lançamento no período permanece na lista (zeros),
 		   e lançamentos fora da árvore não contam (COUNT(pr.id) só vê pr
@@ -967,13 +973,17 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		ftP2.clause+`
 		       )
 		WHERE p.status='ativo'`+a.filtroArvore(escopo, "p").clause+`
-		GROUP BY p.id ORDER BY 7 DESC, 6 DESC, p.nome_guerra`,
+		GROUP BY p.id ORDER BY p.funcao_id IS NULL, p.funcao_id, p.nome_guerra`,
 		append(append([]any{de, ate}, ftP2.args...), a.filtroArvore(escopo, "p").args...)...)
 	if err == nil {
 		for rows.Next() {
 			var r PessoaStat
+			var funcaoID *int64
+			var antig int
 			if rows.Scan(&r.ID, &r.NomeGuerra, &r.Setor, &r.Presencas, &r.Atrasos,
-				&r.Faltas, &r.Justificadas, &r.Lancados) == nil {
+				&r.Faltas, &r.Justificadas, &r.Lancados, &funcaoID, &r.Funcao, &antig) == nil {
+				r.FuncaoID = funcaoID
+				r.Antiguidade = antig
 				if b.Convocacoes > 0 {
 					r.Pct = round1(100 * float64(r.Presencas) / float64(b.Convocacoes))
 				}
@@ -1468,6 +1478,93 @@ func (a *App) pessoasTodas(escopo int64) []map[string]any {
 	return out
 }
 
+// hPessoaExcluir (v9.7): admin/gerente EXCLUEM pessoa do banco de pessoal.
+// Gerente: só do próprio grupo. Com histórico em conferências (FK presencas) →
+// desativa (status='inativo') e responde {desativado:true}; sem histórico → DELETE físico.
+func (a *App) hPessoaExcluir(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	var grupoID *int64
+	if err := a.st.db.QueryRow(`SELECT grupo_id FROM pessoas WHERE id = ?`, id).Scan(&grupoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "pessoa inexistente")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 {
+		if grupoID == nil || *grupoID != esc {
+			jsonErro(w, http.StatusForbidden, "pessoa de outro grupo")
+			return
+		}
+	}
+	var lanc int
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM presencas WHERE pessoa_id = ?`, id).Scan(&lanc)
+	if lanc > 0 {
+		if _, err = a.st.db.Exec(`UPDATE pessoas SET status='inativo',
+		 atualizado_em=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, id); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		a.st.Auditoria(&u.ID, "desativar", "pessoas", &id, "histórico preservado (lançamentos)", ipDe(r))
+		jsonOK(w, map[string]bool{"desativado": true})
+		return
+	}
+	if _, err = a.st.db.Exec(`DELETE FROM pessoas WHERE id = ?`, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "excluir", "pessoas", &id, "", ipDe(r))
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// hGrupoExcluir (v9.7): admin EXCLUI grupo — só se VAZIO: sem pessoas, sem contas
+// ativas, sem vínculos de subordinação. Qualquer histórico de conferência impede
+// (imutabilidade histórica) — nesse caso sugerir manter.
+func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	var nome string
+	if err := a.st.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, id).Scan(&nome); err != nil {
+		jsonErro(w, http.StatusNotFound, "grupo inexistente")
+		return
+	}
+	var pessoas, contas, vinculos, confs int
+	_ = a.st.db.QueryRow(`SELECT
+		(SELECT COUNT(*) FROM pessoas WHERE grupo_id = ?),
+		(SELECT COUNT(*) FROM usuarios WHERE grupo_id = ? AND ativo = 1),
+		(SELECT COUNT(*) FROM grupo_vinculos WHERE superior_id = ? OR subordinado_id = ?),
+		(SELECT COUNT(*) FROM conferencias WHERE grupo_id = ?)`,
+		id, id, id, id, id).Scan(&pessoas, &contas, &vinculos, &confs)
+	if pessoas > 0 {
+		jsonErro(w, http.StatusConflict, fmt.Sprintf("grupo tem %d pessoa(s) no banco de pessoal — mova ou exclua antes", pessoas))
+		return
+	}
+	if contas > 0 {
+		jsonErro(w, http.StatusConflict, fmt.Sprintf("grupo tem %d conta(s) ativa(s) — mova ou exclua as contas antes", contas))
+		return
+	}
+	if vinculos > 0 {
+		jsonErro(w, http.StatusConflict, "grupo tem vínculos de subordinação — remova-os antes (painel de grupos)")
+		return
+	}
+	if confs > 0 {
+		jsonErro(w, http.StatusConflict, "grupo tem histórico de conferências — exclusão negada (imutabilidade histórica)")
+		return
+	}
+	if _, err = a.st.db.Exec(`DELETE FROM grupos WHERE id = ?`, id); err != nil {
+		jsonErro(w, http.StatusConflict, "grupo não pôde ser excluído (referências históricas): "+err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "excluir", "grupos", &id, nome, ipDe(r))
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
 func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		NomeGuerra   string `json:"nome_guerra"`
@@ -1502,6 +1599,15 @@ func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
 		grupoID = u.GrupoID
 	} else {
 		jsonErro(w, http.StatusForbidden, "somente admin e gerente cadastram pessoal")
+		return
+	}
+	// v9.7: safeguard anti-duplicata — mesma pessoa (guerra+completo, case-insensitive,
+	// trim) não nasce duas vezes no mesmo grupo (índice único do schema v7 é a 2ª barreira)
+	var dup int
+	if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM pessoas
+		WHERE grupo_id IS ? AND LOWER(TRIM(nome_guerra)) = LOWER(TRIM(?)) AND LOWER(TRIM(nome_completo)) = LOWER(TRIM(?))`,
+		grupoID, strings.TrimSpace(req.NomeGuerra), strings.TrimSpace(req.NomeCompleto)).Scan(&dup); err == nil && dup > 0 {
+		jsonErro(w, http.StatusConflict, "pessoa já cadastrada neste grupo (mesmo nome de guerra e nome completo)")
 		return
 	}
 	res, err := a.st.db.Exec(

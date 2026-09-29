@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,6 +60,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	if err := s.migrarV5(); err != nil {
+		return nil, err
+	}
+	if err := s.migrarV7(); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -389,6 +393,79 @@ func (s *Store) migrarV5() error {
 	return s.marcarVersao(5)
 }
 
+// migrarV7 (v9.7): safeguard anti-duplicata de pessoa — mesmo militar cadastrado
+// duas vezes no MESMO grupo (nome de guerra + nome completo idênticos, case-insensitive).
+// Funde duplicatas existentes (mantém a mais antiga, remigra lançamentos) e cria índice único.
+func (s *Store) migrarV7() error {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE versao = 7`).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	// 1) fundir duplicatas: para cada par (grupo_id, nome_guerra, nome_completo) com >1,
+	// preserva o id mais antigo e aponta os lançamentos para ele antes de apagar os demais.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	idsManter := []int64{}
+	rows, err := tx.Query(`
+		SELECT MIN(id) FROM pessoas
+		GROUP BY grupo_id, LOWER(TRIM(nome_guerra)), LOWER(TRIM(nome_completo))
+		HAVING COUNT(*) > 1`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	for rows.Next() {
+		var manter int64
+		if rows.Scan(&manter) == nil {
+			idsManter = append(idsManter, manter)
+		}
+	}
+	rows.Close()
+	for _, manter := range idsManter {
+		if _, err = tx.Exec(`
+			UPDATE presencas SET pessoa_id = ? WHERE pessoa_id IN (
+				SELECT p2.id FROM pessoas p1 JOIN pessoas p2
+				  ON p2.id <> ? AND p1.id = ?
+				 AND p2.grupo_id IS p1.grupo_id
+				 AND LOWER(TRIM(p2.nome_guerra)) = LOWER(TRIM(p1.nome_guerra))
+				 AND LOWER(TRIM(p2.nome_completo)) = LOWER(TRIM(p1.nome_completo))
+			)`, manter, manter, manter); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("fusão de duplicatas (pessoa %d): %w", manter, err)
+		}
+		if _, err = tx.Exec(`
+			DELETE FROM pessoas WHERE id <> ? AND id NOT IN (
+				SELECT pessoa_id FROM presencas
+			) AND id IN (
+				SELECT p2.id FROM pessoas p1 JOIN pessoas p2
+				  ON p2.id <> ? AND p1.id = ?
+				 AND p2.grupo_id IS p1.grupo_id
+				 AND LOWER(TRIM(p2.nome_guerra)) = LOWER(TRIM(p1.nome_guerra))
+				 AND LOWER(TRIM(p2.nome_completo)) = LOWER(TRIM(p1.nome_completo))
+			)`, manter, manter, manter); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("remoção de duplicatas (pessoa %d): %w", manter, err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	// 2) índice único (NULL grupo_id conta como grupo distinto — coluna com IS NULL)
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_pessoas_identidade
+		ON pessoas(grupo_id, LOWER(TRIM(nome_guerra)), LOWER(TRIM(nome_completo)))`); err != nil {
+		// se ainda houver duplicata (caso raríssimo com lançamentos em ambas), segue sem índice —
+		// a checagem no hPessoasAdd continua bloqueando novas duplicatas
+		log.Printf("sci migrarV7: índice único adiado (duplicatas com histórico): %v", err)
+		return s.marcarVersao(7)
+	}
+	return s.marcarVersao(7)
+}
+
 // gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos
 // 32 símbolos legíveis) — revisão de leitura humana em campo.
 func gerarCodigoGrupo() string {
@@ -561,7 +638,10 @@ func (s *Store) ReabrirComArquivo(novoArquivo string) error {
 	if err := s.migrarV5(); err != nil {
 		return err
 	}
-	return s.migrarV6()
+	if err := s.migrarV6(); err != nil {
+		return err
+	}
+	return s.migrarV7()
 }
 
 // migrarV6: papéis limpos — 'usuario' passa a se chamar 'operador' (v9.3).

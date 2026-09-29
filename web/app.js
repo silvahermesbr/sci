@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.6 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.8 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -308,11 +308,25 @@ async function viewPerfil() {
 /* ---------- GERENCIAR (gerente — v9.4: MEU GRUPO · BANCO DE PESSOAL · OPERADORES · árvore nested READ ONLY) ---------- */
 function arvoreHTML(nos, nivel) {
   const pad = nivel * 22;
-  return nos.map(n => `
-    <div style="margin-left:${pad}px;padding:5px 8px;border-left:3px solid var(--verde);margin-bottom:4px;background:#f4f8f4;border-radius:0 6px 6px 0">
-      <b style="color:#000">${esc(n.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
-      <small style="color:var(--tx2)"> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
-    </div>` + (n.filhos && n.filhos.length ? arvoreHTML(n.filhos, nivel + 1) : '')).join('');
+  return nos.map(n => {
+    const temFilhos = n.filhos && n.filhos.length;
+    const id = 'no' + n.id + '_' + nivel + Math.random().toString(36).slice(2, 6);
+    return `<div style="margin-left:${pad}px;padding:5px 8px;border-left:3px solid var(--verde);margin-bottom:4px;background:#f4f8f4;border-radius:0 6px 6px 0">
+      ${nivel === 0 && temFilhos ? `<span data-tgl="${id}" style="cursor:pointer;font-weight:700;color:#000">▸ </span>` : ''}
+      <b style="color:#000">${esc(n.nome)}</b> <small style="color:#000">#${n.id}</small>
+      <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
+      <small style="color:#000"> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
+      ${temFilhos ? `<div id="${id}" class="oculto" style="margin-top:4px">${arvoreHTML(n.filhos, nivel + 1)}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+function ligarTogglesArvore(raiz) {
+  (raiz || document).querySelectorAll('[data-tgl]').forEach(s => s.onclick = () => {
+    const alvo = document.getElementById(s.dataset.tgl);
+    const aberto = !alvo.classList.contains('oculto');
+    alvo.classList.toggle('oculto', aberto);
+    s.textContent = aberto ? '▸ ' : '▾ ';
+  });
 }
 async function viewGrupos() {
   navAtiva('#/grupos');
@@ -341,19 +355,17 @@ async function viewGrupos() {
       <textarea id="csv" rows="5" placeholder="SILVA;José da Silva;Comando;Motorista&#10;SOUSA;Maria de Sousa;Serviços&#10;PERES;Bruno Peres"></textarea>
       <button class="acao-linha" id="csvGo" style="margin-top:8px">Importar linhas</button></div>`;
 
-  /* --- tabela de pessoal --- */
+  /* --- tabela de pessoal (checkbox p/ operações batch — v9.7) --- */
   const linhasP = (pessoas.pessoas || []).map(p =>
-    `<tr data-p='${esc(JSON.stringify(p))}'><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
-     <td>${esc(p.setor)}</td><td>${esc(p.funcao)}</td><td>${pill(p.status === 'ativo' ? 'presente' : 'justificada')} ${p.status}</td>
-     <td><button class="acao-linha" data-edit="${p.id}">editar</button></td></tr>`).join('');
+    `<tr data-p='${esc(JSON.stringify(p))}'><td><input type="checkbox" class="chkP" data-id="${p.id}"></td>
+     <td class="num">#${p.id}</td><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
+     <td>${esc(p.setor)}${p.setor_id ? ` <small style="color:#000">#${p.setor_id}</small>` : ''}</td>
+     <td>${esc(p.funcao)}${p.funcao_id ? ` <small style="color:#000">#${p.funcao_id}</small>` : ''}</td>
+     <td>${pill(p.status === 'ativo' ? 'presente' : 'justificada')} ${p.status}</td>
+     <td><button class="acao-linha" data-edit="${p.id}">editar</button>
+     <button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button></td></tr>`).join('');
 
   /* --- operadores --- */
-  const linhasOp = operadores.map(o => `
-    <tr data-login="${esc(o.login)}"><td><b>${esc(o.login)}</b></td><td>${o.ativo ? 'ativa' : 'desativada'}</td><td>${(o.criado_em || '').slice(0, 10)}</td>
-    <td><button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
-    <button class="acao-linha" data-mv="${o.id}" data-login="${esc(o.login)}">mover</button>
-    <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button></td></tr>`).join('');
-
   /* --- abas do Gerenciar (v9.5): Pessoal · Tags · Grupos · Operadores --- */
   $('#app').innerHTML = `<h2>Gerenciar</h2>
     <div class="abas" id="abasGer">
@@ -364,8 +376,12 @@ async function viewGrupos() {
     <div id="gerPessoal">
       ${formPessoa}
       <div class="cartao"><h3 style="margin-top:0">BANCO DE PESSOAL (${(pessoas.pessoas || []).length})</h3>
-        <div class="rolagem"><table><thead><tr><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Status</th><th></th></tr></thead>
-        <tbody id="tabP">${linhasP || '<tr><td colspan="6"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+          <label style="font-size:13px"><input type="checkbox" id="chkTodosP"> todos</label>
+          <button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel">0</span>)</button>
+          <span style="color:var(--tx2);font-size:12px">com histórico de conferência: vira inativo (histórico preservado)</span></div>
+        <div class="rolagem"><table><thead><tr><th></th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Status</th><th></th></tr></thead>
+        <tbody id="tabP">${linhasP || '<tr><td colspan="7"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
     </div>
     <div id="gerTags" class="oculto">
       <div class="cartao"><h3 style="margin-top:0">TAGS do meu grupo — Setores · Funções · Tags</h3>
@@ -392,8 +408,12 @@ async function viewGrupos() {
       <div class="form-linha"><div class="campo"><label>Login do operador</label><input id="opLogin"></div>
       <div class="campo"><label>Senha (mín. 8)</label><input id="opSenha" type="password"></div>
       <div class="campo" style="align-self:end"><button class="primario" id="opGo">Criar operador</button></div></div>
-      <div class="rolagem" style="margin-top:10px"><table><thead><tr><th>Login</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
-      <tbody>${linhasOp || '<tr><td colspan="4"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div></div>
+      <div class="rolagem" style="margin-top:10px"><table><thead><tr><th>ID</th><th>Login</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
+      <tbody>${operadores.map(o => `
+        <tr data-login="${esc(o.login)}"><td class="num">#${o.id}</td><td><b>${esc(o.login)}</b></td><td>${o.ativo ? 'ativa' : 'desativada'}</td><td>${(o.criado_em || '').slice(0, 10)}</td>
+        <td><button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
+        <button class="acao-linha" data-mv="${o.id}" data-login="${esc(o.login)}">mover</button>
+        <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button></td></tr>`).join('') || '<tr><td colspan="5"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div></div>
     </div>`;
 
   /* --- alternância de abas --- */
@@ -403,6 +423,7 @@ async function viewGrupos() {
   };
   document.querySelectorAll('#abasGer button').forEach(b => b.onclick = () => mostrarGer(b.dataset.g));
   mostrarGer('pessoal');
+  ligarTogglesArvore($('#app'));
 
   /* --- salvar militar (criar/editar) --- */
   $('#pSalvar').onclick = async () => {
@@ -424,7 +445,7 @@ async function viewGrupos() {
       let lista = [];
       try { lista = await api('/api/catalogo/' + t); } catch (e) {}
       html += `<div class="cat-bloco"><b>${rotCat[t]}</b><div class="cat-itens">` +
-        (lista.length ? lista.map(x => `<span class="cat-item">${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
+        (lista.length ? lista.map(x => `<span class="cat-item"><small style="color:#000;font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
           <button class="cat-x" data-ct="${t}" data-cid="${x.id}" title="excluir">✕</button>
           ${x.ativo ? `<button class="cat-off" data-ct="${t}" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span>`).join(' ')
           : '<span class="vazio">— vazio —</span>') + '</div></div>';
@@ -445,6 +466,41 @@ async function viewGrupos() {
     toast('Item adicionado'); $('#cgN').value = ''; carregarCats();
   };
   carregarCats();
+  /* --- exclusão de militar (individual + batch com checkboxes — v9.7) --- */
+  const excPessoa = async (id, nome) => {
+    if (!confirm(`Excluir "${nome}" do banco de pessoal? (com histórico de conferência virará inativo)`)) return;
+    try {
+      const r = await api(`/api/pessoas/${id}`, { method: 'DELETE' });
+      toast(r.desativado ? 'Desativado (histórico preservado)' : 'Excluído');
+      viewGrupos();
+    } catch (e) {}
+  };
+  document.querySelectorAll('[data-excP]').forEach(b => b.onclick = () => excPessoa(b.dataset.excP, b.dataset.nome));
+  const selCount = () => document.querySelectorAll('.chkP:checked').length;
+  const refreshSel = () => {
+    const n = selCount();
+    $('#nSel').textContent = n;
+    $('#btExcLote').disabled = n === 0;
+  };
+  document.querySelectorAll('.chkP').forEach(ch => ch.onchange = refreshSel);
+  $('#chkTodosP').onchange = () => {
+    document.querySelectorAll('.chkP').forEach(ch => { ch.checked = $('#chkTodosP').checked; });
+    refreshSel();
+  };
+  $('#btExcLote').onclick = async () => {
+    const ids = [...document.querySelectorAll('.chkP:checked')].map(c => +c.dataset.id);
+    if (!ids.length) return;
+    if (!confirm(`Excluir ${ids.length} militar(es)? (com histórico de conferência virarão inativos)`)) return;
+    let ok = 0, des = 0, falha = 0;
+    for (const id of ids) {
+      try {
+        const r = await api(`/api/pessoas/${id}`, { method: 'DELETE' });
+        r.desativado ? des++ : ok++;
+      } catch (e) { falha++; }
+    }
+    toast(`Excluídos: ${ok} · desativados: ${des}${falha ? ' · falhas: ' + falha : ''}`, falha && !ok ? 'erro' : 'ok');
+    if (ok || des) viewGrupos();
+  };
   /* --- adição em lote --- */
   $('#csvGo').onclick = async () => {
     const linhas = $('#csv').value.split('\n').map(l => l.trim()).filter(Boolean);
@@ -569,7 +625,9 @@ function renderRelatorio(b, titulo) {
     <div class="caixa"><b>${b.pct_geral}%</b><span>% válidas (P+A)</span></div>
     <div class="caixa" style="border-color:var(--verde)"><b>${b.pct_pronto}%</b><span>ef. pronto</span></div></div>`;
   const linhas = (b.pessoas || []).map(p =>
-    `<tr><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.setor)}</td><td class="num">${p.presencas}</td>
+    `<tr><td class="num">#${p.antiguidade ?? ''}</td><td><b>${esc(p.nome_guerra)}</b></td>
+     <td>${esc(p.funcao || '—')}${p.funcao_id ? ` <small style="color:#000">#${p.funcao_id}</small>` : ''}</td>
+     <td>${esc(p.setor)}</td><td class="num">${p.presencas}</td>
      <td class="num">${p.atrasos}</td><td class="num">${p.faltas}</td><td class="num">${p.justificadas}</td>
      <td class="num">${pill(p.pct >= 90 ? 'presente' : p.pct >= 70 ? 'atraso' : 'falta')} ${p.pct}%</td></tr>`).join('');
   const forms = (b.formaturas || []).map(f =>
@@ -579,7 +637,7 @@ function renderRelatorio(b, titulo) {
     <h3 style="margin:0">${titulo} — ${b.convocacoes} conferências no período</h3>
     <a href="/api/relatorio.pdf?de=${b.De}&ate=${b.Ate}${$('#fGrupo') && $('#fGrupo').value ? `&grupo=${$('#fGrupo').value}` : ''}" target="_blank"><button class="primario">ABRIR PDF</button></a></div>
     ${forms ? `<div class="rolagem" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Tipo</th><th>Hora</th><th>Status</th><th class="num">Presentes</th><th class="num">Faltas</th></tr></thead><tbody>${forms}</tbody></table></div>` : ''}
-    <div class="rolagem"><table><thead><tr><th>Nome</th><th>Setor</th><th class="num">Pres.</th><th class="num">Atraso</th>
+    <div class="rolagem"><table><thead><tr><th class="num">Antig.</th><th>Nome</th><th>Função</th><th>Setor</th><th class="num">Pres.</th><th class="num">Atraso</th>
     <th class="num">Falta</th><th class="num">Just.</th><th class="num">%</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
 }
 async function viewRelatorios() {
@@ -692,9 +750,9 @@ async function admUsuarios() {
       <div class="campo"><label>Grupo</label><select id="fUGrupo"><option value="">todos</option>${grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('')}</select></div>
       <div class="campo"><label>Status</label><select id="fUAtivo"><option value="">todas</option><option value="1">ativa</option><option value="0">desativada</option></select></div>
     </div>
-    <div class="rolagem"><table id="tabU"><thead><tr><th>Login</th><th>Papel</th><th>Grupo</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
+    <div class="rolagem"><table id="tabU"><thead><tr><th>ID</th><th>Login</th><th>Papel</th><th>Grupo</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
     <tbody>${gerenciaveis.map(u => `<tr data-login="${esc(u.login)}" data-gid="${u.grupo_id || 0}" data-ativo="${u.ativo ? 1 : 0}">
-      <td><b>${esc(u.login)}</b></td><td>${rotuloPapel(u.papel)}</td><td>${esc(nomeGrupo(u.grupo_id))}</td>
+      <td class="num">#${u.id}</td><td><b>${esc(u.login)}</b></td><td>${rotuloPapel(u.papel)}</td><td>${esc(nomeGrupo(u.grupo_id))}</td>
       <td>${u.ativo ? 'ativa' : 'desativada'}</td><td>${(u.criado_em || '').slice(0, 10)}</td>
       <td><button class="acao-linha" data-id="${u.id}" data-login="${esc(u.login)}">🔑 senha</button>
       <button class="acao-linha" data-mv="${u.id}" data-login="${esc(u.login)}" data-papel="${u.papel}">➡ mover</button>
@@ -787,13 +845,21 @@ async function admGrupos() {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="primario" data-trocar="${g.id}">Trocar gerente</button>
         <button class="acao-linha" data-remover="${g.id}">Remover subordinação</button>
+        <button class="perigo" data-excluir="${g.id}" data-nome="${esc(g.nome)}">Excluir grupo</button>
       </div></div>`;
   }).join('');
-  const noHTML = (n, nivel) => `
-    <div style="margin-left:${nivel * 24}px;padding:6px 10px;border-left:3px solid var(--verde);margin-bottom:5px;background:#f4f8f4;border-radius:0 6px 6px 0">
-      <b style="color:#000">${esc(n.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
-      <small style="color:var(--tx2)"> · gerente: <b>${esc(gerenteDe[n.id] || '—')}</b> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
-    </div>` + (n.filhos && n.filhos.length ? n.filhos.map(f => noHTML(f, nivel + 1)).join('') : '');
+  const noHTML = (n, nivel) => {
+    const temFilhos = n.filhos && n.filhos.length;
+    const id = 'admNo' + n.id + '_' + Math.random().toString(36).slice(2, 6);
+    return `<div style="margin-left:${nivel * 24}px;padding:6px 10px;border-left:3px solid var(--verde);margin-bottom:5px;background:#f4f8f4;border-radius:0 6px 6px 0">
+      ${temFilhos ? `<span data-tgl="${id}" style="cursor:pointer;font-weight:700;color:#000">▸ </span>` : ''}
+      <b style="color:#000;cursor:${temFilhos ? 'pointer' : 'default'}" data-tgl="${temFilhos ? id : ''}">${esc(n.nome)}</b>
+      <small style="color:#000">#${n.id}</small>
+      <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
+      <small style="color:#000"> · gerente: <b style="color:#000">${esc(gerenteDe[n.id] || '—')}</b> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
+      ${temFilhos ? `<div id="${id}" class="oculto" style="margin-top:4px">${n.filhos.map(f => noHTML(f, nivel + 1)).join('')}</div>` : ''}
+    </div>`;
+  };
   $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Hierarquia dos grupos (subordinados indentados)</h3>
       <div class="campo" style="margin-bottom:8px"><label>Filtrar grupos</label><input id="fGNome" placeholder="buscar grupo…"></div>
       <div id="arvoreAdm">${(arvore && arvore.length) ? arvore.map(n => noHTML(n, 0)).join('') : '<span class="vazio">nenhum grupo</span>'}</div></div>
@@ -821,13 +887,26 @@ async function admGrupos() {
     if (!eu && !filhos.length) return null;
     return { ...n, filhos };
   };
-  const noHTMLF = (n, nivel) => noHTML(n, nivel); // render usa o mesmo noHTML
   const ligarFiltroArvore = () => {
+    const render = nos => { $('#arvoreAdm').innerHTML = nos.length ? nos.map(n => noHTML(n, 0)).join('') : '<span class="vazio">nenhum grupo casa com a busca</span>'; ligarTogglesArvore($('#arvoreAdm')); };
     $('#fGNome').oninput = () => {
       const q = $('#fGNome').value.trim().toLowerCase();
-      if (!q) { $('#arvoreAdm').innerHTML = arvore.map(n => noHTML(n, 0)).join(''); return; }
-      const filtrada = (arvore || []).map(n => casarArvore(n, q)).filter(Boolean);
-      $('#arvoreAdm').innerHTML = filtrada.length ? filtrada.map(n => noHTML(n, 0)).join('') : '<span class="vazio">nenhum grupo casa com a busca</span>';
+      if (!q) { render(arvore || []); return; }
+      // busca: mostra EXPANDIDO o caminho até o nó que casa (ancestrais visíveis)
+      const mostrar = n => {
+        const eu = n.nome.toLowerCase().includes(q) || n.codigo.toLowerCase().includes(q);
+        const filhos = (n.filhos || []).map(f => mostrar(f)).filter(Boolean);
+        if (!eu && !filhos.length) return null;
+        const aberto = filhos.length > 0;
+        const node = { ...n, filhos: filhos.length ? filhos : (n.filhos || []) };
+        node._abrir = aberto;
+        return node;
+      };
+      const filtrada = (arvore || []).map(mostrar).filter(Boolean);
+      render(filtrada);
+      // expandir automaticamente os ramos com resultado
+      $('#arvoreAdm').querySelectorAll('.oculto').forEach(d => d.classList.remove('oculto'));
+      $('#arvoreAdm').querySelectorAll('[data-tgl]').forEach(s => { if (s.dataset.tgl) s.textContent = '▾ '; });
     };
     $('#fGPainel').oninput = () => {
       const q = $('#fGPainel').value.trim().toLowerCase();
@@ -837,6 +916,7 @@ async function admGrupos() {
     };
   };
   ligarFiltroArvore();
+  ligarTogglesArvore($('#adm'));
   document.querySelectorAll('#adm button[data-trocar]').forEach(b => b.onclick = async () => {
     const gid = b.dataset.trocar;
     const login = $('#tg-' + gid) ? $('#tg-' + gid).value : '';
@@ -853,6 +933,13 @@ async function admGrupos() {
     try {
       await api('/api/admin/grupos/vinculo?superior_id=' + sel.value + '&subordinado_id=' + gid, { method: 'DELETE', body: '{}' });
       toast('Subordinação removida'); viewAdmin();
+    } catch (e) {}
+  });
+  document.querySelectorAll('#adm button[data-excluir]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Excluir o grupo "${b.dataset.nome}"? Só é possível se estiver vazio (sem pessoas, contas e vínculos).`)) return;
+    try {
+      await api(`/api/grupos/${b.dataset.excluir}`, { method: 'DELETE' });
+      toast('Grupo excluído'); viewAdmin();
     } catch (e) {}
   });
   document.querySelectorAll('#adm select[id^="sub-"]').forEach(sel => sel.onchange = async () => {

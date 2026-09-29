@@ -43,6 +43,9 @@ type PessoaStat struct {
 	ID           int64   `json:"id"`
 	NomeGuerra   string  `json:"nome_guerra"`
 	Setor        string  `json:"setor"`
+	Funcao       string  `json:"funcao"`
+	FuncaoID     *int64  `json:"funcao_id"`
+	Antiguidade  int     `json:"antiguidade"`
 	Presencas    int     `json:"presencas"`
 	Atrasos      int     `json:"atrasos"`
 	Faltas       int     `json:"faltas"`
@@ -283,10 +286,10 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 	}
 	pdf.SetFont("Helvetica", "B", 9.5)
 	pdf.SetTextColor(verdeR, verdeG, verdeB)
-	pdf.Cell(0, 6, T("EFETIVO — ORDEM DE MÉRITO (PIORES PRIMEIRO)"))
+	pdf.Cell(0, 6, T("EFETIVO — POR ANTIGUIDADE DE FUNÇÃO (ID menor = mais antigo)"))
 	pdf.Ln(7)
-	cab := []string{"Nome de guerra", "Setor", "Pres.", "Atraso", "Falta", "Just.", "%"}
-	larg := []float64{52, 44, 18, 18, 18, 18, 12}
+	cab := []string{"Nome de guerra", "Função (ID)", "Setor", "Pres.", "Atraso", "Falta", "Just.", "%"}
+	larg := []float64{38, 40, 26, 15, 15, 15, 15, 12}
 	pdf.SetFont("Helvetica", "B", 8)
 	pdf.SetFillColor(verdeR, verdeG, verdeB)
 	pdf.SetTextColor(255, 255, 255)
@@ -324,8 +327,14 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 			pdf.SetFillColor(255, 255, 255)
 		}
 		pdf.SetTextColor(30, 30, 30)
+		fnCell := "—"
+		if p.Funcao != "" {
+			fnCell = T(p.Funcao) + " (#" + strconv.FormatInt(*p.FuncaoID, 10) + ")"
+		} else if p.FuncaoID != nil {
+			fnCell = "(#" + strconv.FormatInt(*p.FuncaoID, 10) + ")"
+		}
 		vals := []string{
-			T(p.NomeGuerra), T(p.Setor),
+			T(p.NomeGuerra), fnCell, T(p.Setor),
 			strconv.Itoa(p.Presencas), strconv.Itoa(p.Atrasos),
 			strconv.Itoa(p.Faltas), strconv.Itoa(p.Justificadas),
 			fmt.Sprintf("%.0f%%", p.Pct),
