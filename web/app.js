@@ -66,7 +66,7 @@ async function viewHoje() {
     if (v.observacao) obs[pid] = v.observacao;
     verif.add(+pid);
   }
-  ESTADO = { c: d.conferencia, pessoas: d.pessoas, est, dest, obs, verif };
+  ESTADO = { c: d.conferencia, pessoas: d.pessoas, est, dest, obs, verif, temComentario };
   renderHoje();
 }
 function renderHoje(filtro = '') {
