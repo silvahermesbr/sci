@@ -1484,6 +1484,11 @@ func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
 	if req.Status == "" {
 		req.Status = "ativo"
 	}
+	// v9.4 (ordem Tenente): status de pessoal só ATIVO ou INATIVO
+	if req.Status != "ativo" && req.Status != "inativo" {
+		jsonErro(w, http.StatusBadRequest, "status só pode ser ativo ou inativo")
+		return
+	}
 	u := usuarioDoCtx(r)
 	// REGRA (28/09): admin e gerente cadastram; gerente SEMPRE no próprio grupo
 	var grupoID *int64
@@ -1531,6 +1536,11 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Status == "" {
 		req.Status = "ativo"
+	}
+	// v9.4 (ordem Tenente): status de pessoal só ATIVO ou INATIVO
+	if req.Status != "ativo" && req.Status != "inativo" {
+		jsonErro(w, http.StatusBadRequest, "status só pode ser ativo ou inativo")
+		return
 	}
 	u := usuarioDoCtx(r)
 	// REGRA (28/09): gerente só edita pessoal DO PRÓPRIO grupo (admin edita tudo)

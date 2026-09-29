@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.4 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.5 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -310,16 +310,17 @@ function arvoreHTML(nos, nivel) {
   const pad = nivel * 22;
   return nos.map(n => `
     <div style="margin-left:${pad}px;padding:5px 8px;border-left:3px solid var(--verde);margin-bottom:4px;background:#f4f8f4;border-radius:0 6px 6px 0">
-      <b>${esc(n.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
+      <b style="color:#000">${esc(n.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
       <small style="color:var(--tx2)"> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
     </div>` + (n.filhos && n.filhos.length ? arvoreHTML(n.filhos, nivel + 1) : '')).join('');
 }
 async function viewGrupos() {
   navAtiva('#/grupos');
   $('#app').innerHTML = '<div class="carregando">…</div>';
-  const [grupos, arvore, pessoas, setores, funcoes, contas] = await Promise.all([
+  const [grupos, arvore, pessoas, setores, funcoes, contas, tags] = await Promise.all([
     api('/api/grupos'), api('/api/grupos/arvore'), api('/api/pessoas'),
-    api('/api/catalogo/setores'), api('/api/catalogo/funcoes'), api('/api/usuarios')]);
+    api('/api/catalogo/setores'), api('/api/catalogo/funcoes'), api('/api/usuarios'),
+    api('/api/catalogo/tags').catch(() => [])]);
   const meus = grupos.filter(g => g.id === ME.grupo_id);
   const ativos = l => (l || []).filter(x => x.ativo === 1 || x.ativo === true);
   const optSetores = ativos(setores), optFuncoes = ativos(funcoes);
@@ -333,7 +334,7 @@ async function viewGrupos() {
       <div class="campo"><label>Nome completo</label><input id="pNc"></div></div>
       <div class="form-linha"><div class="campo"><label>Setor</label><select id="pSetor"><option value="">—</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
       <div class="campo"><label>Função</label><select id="pFuncao"><option value="">—</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-      <div class="campo"><label>Status</label><select id="pStatus"><option value="ativo">ativo</option><option value="inativo">inativo</option><option value="movido">movido</option></select></div></div>
+      <div class="campo"><label>Status</label><select id="pStatus"><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
       <button class="primario" id="pSalvar">Salvar</button>
       <h3 style="margin-top:16px">Adição em lote — cole as linhas e importe</h3>
       <p style="color:var(--tx2);font-size:12px;margin:4px 0">Formato (1 por linha, separado por ponto-e-vírgula): <code>nome de guerra ; nome completo ; setor ; função</code> — setor e função são opcionais e devem já existir no catálogo.</p>
@@ -352,23 +353,54 @@ async function viewGrupos() {
     <td><button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
     <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button></td></tr>`).join('');
 
+  /* --- abas do Gerenciar (v9.5): Pessoal · Tags · Grupos · Operadores --- */
   $('#app').innerHTML = `<h2>Gerenciar</h2>
-    <div class="cartao"><h3 style="margin-top:0">MEU GRUPO</h3>` +
+    <div class="abas" id="abasGer">
+      <button data-g="pessoal" class="ativo">Pessoal</button>
+      <button data-g="tags">Tags</button>
+      <button data-g="grupos">Grupos</button>
+      <button data-g="operadores">Operadores</button></div>
+    <div id="gerPessoal">
+      ${formPessoa}
+      <div class="cartao"><h3 style="margin-top:0">BANCO DE PESSOAL (${(pessoas.pessoas || []).length})</h3>
+        <div class="rolagem"><table><thead><tr><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Status</th><th></th></tr></thead>
+        <tbody id="tabP">${linhasP || '<tr><td colspan="6"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
+    </div>
+    <div id="gerTags" class="oculto">
+      <div class="cartao"><h3 style="margin-top:0">TAGS do meu grupo — Setores · Funções · Tags</h3>
+        <p style="color:var(--tx2);font-size:12px;margin:4px 0">Itens próprios do grupo + <b>herdados dos grupos de cima</b> (o que existe acima vale aqui; o que o grupo cria não sobe). ✕ exclui (em uso → desativa), ⏸ desativa preservando histórico.</p>
+        <div id="catGer">…</div>
+        <div class="form-linha" style="margin-top:10px">
+          <div class="campo"><label>Catálogo</label><select id="cgT"><option value="setores">Setores</option><option value="funcoes">Funções</option><option value="tags">Tags</option></select></div>
+          <div class="campo"><label>Novo item</label><input id="cgN" placeholder="nome"></div>
+          <div class="campo" style="align-self:end"><button class="primario" id="cgGo">Adicionar</button></div></div></div>
+      <div class="cartao"><h3 style="margin-top:0">SUBORDINAÇÃO — árvore do meu grupo (leitura; organização definida pela Administração)</h3>
+        <div id="arvore">${(arvore && arvore.length) ? arvoreHTML(arvore, 0) : '<span class="vazio">sem grupos</span>'}</div></div>
+    </div>
+    <div id="gerGrupos" class="oculto">
+      <div class="cartao"><h3 style="margin-top:0">MEU GRUPO</h3>` +
     (meus.map(g => `<div style="margin-bottom:8px">
       • <b>${esc(g.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700">${esc(g.codigo)}</code>
       — ${g.efetivo} no efetivo · ${g.contas} conta(s)</div>`).join('') || '<span class="vazio">nenhum grupo</span>') + `</div>
-    <div class="cartao"><h3 style="margin-top:0">SUBORDINAÇÃO — árvore do meu grupo (leitura; organização definida pela Administração)</h3>
-      <div id="arvore">${(arvore && arvore.length) ? arvoreHTML(arvore, 0) : '<span class="vazio">sem grupos</span>'}</div></div>
-    ${formPessoa}
-    <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
+      <div class="cartao"><h3 style="margin-top:0">SUBORDINAÇÃO — árvore do meu grupo (leitura)</h3>
+        <div id="arvore2">${(arvore && arvore.length) ? arvoreHTML(arvore, 0) : '<span class="vazio">sem grupos</span>'}</div></div>
+    </div>
+    <div id="gerOperadores" class="oculto">
+      <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
       <div class="form-linha"><div class="campo"><label>Login do operador</label><input id="opLogin"></div>
       <div class="campo"><label>Senha (mín. 8)</label><input id="opSenha" type="password"></div>
       <div class="campo" style="align-self:end"><button class="primario" id="opGo">Criar operador</button></div></div>
       <div class="rolagem" style="margin-top:10px"><table><thead><tr><th>Login</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
       <tbody>${linhasOp || '<tr><td colspan="4"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div></div>
-    <div class="cartao"><h3 style="margin-top:0">BANCO DE PESSOAL (${(pessoas.pessoas || []).length})</h3>
-      <div class="rolagem"><table><thead><tr><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Status</th><th></th></tr></thead>
-      <tbody id="tabP">${linhasP || '<tr><td colspan="6"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>`;
+    </div>`;
+
+  /* --- alternância de abas --- */
+  const mostrarGer = qual => {
+    ['pessoal', 'tags', 'grupos', 'operadores'].forEach(k => { $('#ger' + k[0].toUpperCase() + k.slice(1)).classList.toggle('oculto', k !== qual); });
+    document.querySelectorAll('#abasGer button').forEach(b => b.classList.toggle('ativo', b.dataset.g === qual));
+  };
+  document.querySelectorAll('#abasGer button').forEach(b => b.onclick = () => mostrarGer(b.dataset.g));
+  mostrarGer('pessoal');
 
   /* --- salvar militar (criar/editar) --- */
   $('#pSalvar').onclick = async () => {
@@ -380,6 +412,37 @@ async function viewGrupos() {
     else await api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) });
     toast('Salvo'); viewGrupos();
   };
+  /* --- aba TAGS: catálogos do grupo (setores/funções/tags) --- */
+  const rotCat = { setores: 'Setores', funcoes: 'Funções', tags: 'Tags' };
+  const carregarCats = async () => {
+    const cont = $('#catGer');
+    if (!cont) return;
+    let html = '';
+    for (const t of ['setores', 'funcoes', 'tags']) {
+      let lista = [];
+      try { lista = await api('/api/catalogo/' + t); } catch (e) {}
+      html += `<div class="cat-bloco"><b>${rotCat[t]}</b><div class="cat-itens">` +
+        (lista.length ? lista.map(x => `<span class="cat-item">${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
+          <button class="cat-x" data-ct="${t}" data-cid="${x.id}" title="excluir">✕</button>
+          ${x.ativo ? `<button class="cat-off" data-ct="${t}" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span>`).join(' ')
+          : '<span class="vazio">— vazio —</span>') + '</div></div>';
+    }
+    cont.innerHTML = html;
+    cont.querySelectorAll('.cat-x').forEach(b => b.onclick = async () => {
+      if (!confirm('Excluir este item?')) return;
+      try { await api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}`, { method: 'DELETE' }); toast('Excluído'); carregarCats(); } catch (e) {}
+    });
+    cont.querySelectorAll('.cat-off').forEach(b => b.onclick = async () => {
+      try { await api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}?modo=desativar`, { method: 'DELETE' }); toast('Desativado'); carregarCats(); } catch (e) {}
+    });
+  };
+  $('#cgGo').onclick = async () => {
+    const t = $('#cgT').value, nome = $('#cgN').value.trim();
+    if (!nome) { toast('Informe o nome do item', 'erro'); return; }
+    await api('/api/catalogo/' + t, { method: 'POST', body: JSON.stringify({ nome }) });
+    toast('Item adicionado'); $('#cgN').value = ''; carregarCats();
+  };
+  carregarCats();
   /* --- adição em lote --- */
   $('#csvGo').onclick = async () => {
     const linhas = $('#csv').value.split('\n').map(l => l.trim()).filter(Boolean);
@@ -660,7 +723,7 @@ async function admGrupos() {
   }).join('');
   const noHTML = (n, nivel) => `
     <div style="margin-left:${nivel * 24}px;padding:6px 10px;border-left:3px solid var(--verde);margin-bottom:5px;background:#f4f8f4;border-radius:0 6px 6px 0">
-      <b>${esc(n.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
+      <b style="color:#000">${esc(n.nome)}</b> <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
       <small style="color:var(--tx2)"> · gerente: <b>${esc(gerenteDe[n.id] || '—')}</b> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
     </div>` + (n.filhos && n.filhos.length ? n.filhos.map(f => noHTML(f, nivel + 1)).join('') : '');
   $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Hierarquia dos grupos (subordinados indentados)</h3>
