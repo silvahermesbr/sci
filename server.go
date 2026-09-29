@@ -1679,7 +1679,7 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	// v9.11: pai_id em TODOS os catálogos de organização + ordenação hierárquica
 	// (raízes primeiro, cada pai seguido de seus filhos; dentro do nível, alfabético)
 	// v9.16.8: grupo_id no retorno — o front separa HERDADO (grupo superior) x DO GRUPO
-	q := `SELECT id, nome` + extra + `, pai_id, ativo, grupo_id FROM ` + t
+	q := `SELECT id, nome` + extra + `, pai_id, ativo, grupo_id, antiguidade FROM ` + t
 	var args []any
 	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
 		// escopo + HERANÇA (ordem Tenente 28/09 noite): grupo vê os globais (NULL),
