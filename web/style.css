@@ -115,12 +115,12 @@ code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-s
 /* menu do usuário */
 #menuUsuario{position:relative}
 #quem{
-  display:inline-flex;align-items:center;gap:6px;max-width:260px;
-  padding:7px 12px;border-radius:8px;border:1px solid transparent;
-  font-weight:700;font-size:13.5px;color:var(--tx);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  display:inline-flex;align-items:center;justify-content:center;
+  width:38px;height:38px;padding:0;border-radius:9px;border:1px solid transparent;
+  color:var(--tx);
   transition:border-color .15s,background-color .15s;
 }
+#quem svg{display:block}
 #quem::after{content:"▾";font-size:10px;color:var(--tx3);font-weight:400}
 #quem:hover{border-color:var(--borda2);background:var(--painel2)}
 #menuUsuarioItens{

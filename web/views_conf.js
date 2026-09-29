@@ -84,9 +84,8 @@
       ? `<div class="cartao"><p style="color:var(--tx2)">Nenhuma conferência aberta. Ao iniciar, a data e o horário de Brasília são registrados automaticamente.</p>
          <div style="display:flex;gap:8px;align-items:end;margin-top:10px">
            <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div></div>`
-      : `<div class="cartao" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-         <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''} · situação pelo menu de cada militar, ✅ para verificar</span>
-         <button class="perigo" id="btFechar">✕ Fechar conferência</button></div>`;
+      : `<div class="cartao">
+         <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span></div>`;
     $('#app').innerHTML = `<h2>Conferência de pessoal</h2>${banner}
       ${semC ? '' : `<div class="barra-fixa">
         <input id="busca" placeholder="buscar nome…">
@@ -140,7 +139,6 @@
     });
     document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => { C.dest[+s.dataset.id] = +s.value || null; });
     document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => { ev.stopPropagation(); confModalComentarios(+b.dataset.id); });
-    $('#btFechar').onclick = confFechar;
     confHistorico();
   }
 

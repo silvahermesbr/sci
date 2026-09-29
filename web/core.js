@@ -252,7 +252,13 @@ function montarShell(usuario) {
     if (papel === 'gerente') itens.push(['#/grupos', 'GERENCIAR']);
   }
   $('#nav', topbar).innerHTML = itens.map(it => '<a href="' + it[0] + '">' + it[1] + '</a>').join('');
-  $('#quem', topbar).textContent = usuario ? usuario.login + ' · ' + rotuloPapel(papel) : '';
+  // botão de usuário GENÉRICO (ícone) — ordem Tenente 29/09: login/função truncavam
+  $('#quem', topbar).innerHTML =
+    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+    '<circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/>' +
+    '<path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
+    '</svg>';
+  $('#quem', topbar).title = usuario ? usuario.login + ' · ' + rotuloPapel(papel) : '';
 
   const menu = $('#menuUsuarioItens', topbar);
   $('#btPerfil', topbar).classList.toggle('oculto', papel === 'admin'); // admin não tem perfil (R3)
