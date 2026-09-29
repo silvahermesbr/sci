@@ -193,6 +193,7 @@ func (a *App) rotas() {
 	m.Handle("GET /api/catalogo/{t}", a.auth(false, a.hCatalogoList))
 	m.Handle("POST /api/catalogo/{t}", a.auth(false, a.hCatalogoAdd))
 	m.Handle("DELETE /api/catalogo/{t}/{id}", a.auth(false, a.hCatalogoDel))
+	m.Handle("PATCH /api/catalogo/{t}/{id}/pai", a.auth(false, a.hCatalogoReparentar))
 
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
 	m.Handle("POST /api/pessoas", a.auth(false, a.hPessoasAdd))
@@ -868,6 +869,96 @@ func (a *App) hConferenciaDescartar(w http.ResponseWriter, r *http.Request) {
 	}
 	a.st.Auditoria(&u.ID, "descartar", "conferencias", &id, "conferência aberta descartada", ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "descartada": id})
+}
+
+// hCatalogoReparentar (v9.16, ordem Tenente 29/09): hierarquia via DRAG & DROP — muda o pai
+// de um item de catálogo. Regras: só gerente; item e novo pai do grupo do gerente (herdados
+// de cima não se movem); pai não pode ser descendente do item (anti-ciclo); profundidade ≤ 8.
+func (a *App) hCatalogoReparentar(w http.ResponseWriter, r *http.Request) {
+	t, err := tabelaDeCatalogo(r.PathValue("t"))
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	if u == nil || u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
+		return
+	}
+	esc := escopoDoUsuario(u)
+	var req struct {
+		PaiID *int64 `json:"pai_id"`
+	}
+	if err = decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	// item precisa ser do grupo do gerente (dono)
+	var donoGrupo int64
+	if e := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); e != nil {
+		jsonErro(w, http.StatusNotFound, "item inexistente")
+		return
+	}
+	if esc > 0 && donoGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item herdado de grupo superior — não pode ser movido")
+		return
+	}
+	if req.PaiID != nil {
+		// pai válido: existe, do mesmo grupo, não é o próprio item
+		if *req.PaiID == id {
+			jsonErro(w, http.StatusBadRequest, "um item não pode ser pai de si mesmo")
+			return
+		}
+		var paiDono int64
+		if e := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, *req.PaiID).Scan(&paiDono); e != nil || paiDono != donoGrupo {
+			jsonErro(w, http.StatusForbidden, "pai de outro grupo")
+			return
+		}
+		// anti-ciclo: subir a ancestralidade do novo pai; se encontrar o item → ciclo
+		pai := *req.PaiID
+		prof := 0
+		for pai != 0 && prof < 16 {
+			var avo *int64
+			if e := a.st.db.QueryRow(`SELECT pai_id FROM `+t+` WHERE id = ?`, pai).Scan(&avo); e != nil {
+				break
+			}
+			if avo != nil && *avo == id {
+				jsonErro(w, http.StatusBadRequest, "não é possível: o item é ancestral do novo pai (ciclo)")
+				return
+			}
+			if avo == nil {
+				break
+			}
+			pai = *avo
+			prof++
+		}
+		// profundidade resultante do item ≤ 8
+		prof = 1
+		pai = *req.PaiID
+		for pai != 0 && prof <= 8 {
+			var avo *int64
+			if e := a.st.db.QueryRow(`SELECT pai_id FROM `+t+` WHERE id = ?`, pai).Scan(&avo); e != nil || avo == nil {
+				break
+			}
+			pai = *avo
+			prof++
+		}
+		if prof > 8 {
+			jsonErro(w, http.StatusBadRequest, "profundidade máxima da hierarquia é 8")
+			return
+		}
+	}
+	if _, err = a.st.db.Exec(`UPDATE `+t+` SET pai_id = ? WHERE id = ?`, req.PaiID, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "reparentar", t, &id, "novo pai", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": id, "pai_id": req.PaiID})
 }
 
 // hConferenciaGet: dados completos de UMA conferência (para o relatório na tela).

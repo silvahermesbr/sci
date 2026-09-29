@@ -559,13 +559,68 @@
       for (const t of ['setores', 'funcoes', 'tags', 'destinos']) {
         let lista = [];
         try { lista = await api('/api/catalogo/' + t); } catch (e) {}
-        html += `<div class="cat-bloco"><b>${rotCat[t]}</b><div class="cat-itens">` +
-          (lista.length ? lista.map(x => `<span class="cat-item"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
-            <button class="cat-x" data-ct="${t}" data-cid="${x.id}" title="excluir">✕</button>
-            ${x.ativo ? `<button class="cat-off" data-ct="${t}" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span>`).join(' ')
-            : '<span class="vazio">— vazio —</span>') + '</div></div>';
+        if (t === 'tags' && lista.length) {
+          /* --- v9.16: TAGs em ÁRVORE com DRAG & DROP de hierarquia --- */
+          const filhosDe = pai => lista.filter(x => (x.pai_id || null) === (pai || null) && x.pai_id !== null || (pai === null && x.pai_id === null));
+          const arv = (pai, nivel) => lista
+            .filter(x => (x.pai_id ?? null) === (pai ?? null))
+            .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt'))
+            .map(x => {
+              const dentro = lista.some(y => y.pai_id === x.id);
+              return `<div class="cat-arv-item ${dentro ? 'tem-filhos' : ''}" draggable="true" data-tagid="${x.id}" style="margin-left:${nivel * 22}px">
+                <span class="cat-arv-dot"></span>
+                <span class="cat-item" draggable="false"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
+                <button class="cat-x" data-ct="tags" data-cid="${x.id}" title="excluir">✕</button>
+                ${x.ativo ? `<button class="cat-off" data-ct="tags" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span></div>` + arv(x.id, nivel + 1);
+            }).join('');
+          html += `<div class="cat-bloco"><b>${rotCat[t]}</b>
+            <p style="color:var(--tx2);font-size:11.5px;margin:4px 0">Arraste uma tag sobre outra para torná-la subordinada; arraste até a área pontilhada para voltar à raiz.</p>
+            <div class="cat-arv" id="arvTags">${arv(null, 0)}</div>
+            <div class="cat-arv-raiz" id="arvRaiz">⟲ soltar aqui para voltar à raiz</div></div>`;
+        } else {
+          html += `<div class="cat-bloco"><b>${rotCat[t]}</b><div class="cat-itens">` +
+            (lista.length ? lista.map(x => `<span class="cat-item"><small style="color:var(--tx2);font-weight:700">#${x.id}</small> ${esc(x.nome)}${x.ativo ? '' : ' <i>(inativo)</i>'}
+              <button class="cat-x" data-ct="${t}" data-cid="${x.id}" title="excluir">✕</button>
+              ${x.ativo ? `<button class="cat-off" data-ct="${t}" data-cid="${x.id}" title="desativar">⏸</button>` : ''}</span>`).join(' ')
+              : '<span class="vazio">— vazio —</span>') + '</div></div>';
+        }
       }
       cont.innerHTML = html;
+      /* --- liga o DRAG & DROP da árvore de tags --- */
+      let dragId = null;
+      cont.querySelectorAll('.cat-arv-item').forEach(item => {
+        item.addEventListener('dragstart', ev => { dragId = +item.dataset.tagid; ev.dataTransfer.effectAllowed = 'move'; });
+        item.addEventListener('dragover', ev => { ev.preventDefault(); item.classList.add('drop-alvo'); });
+        item.addEventListener('dragleave', () => item.classList.remove('drop-alvo'));
+        item.addEventListener('drop', async ev => {
+          ev.preventDefault(); ev.stopPropagation();
+          item.classList.remove('drop-alvo');
+          const pai = +item.dataset.tagid;
+          if (!dragId || dragId === pai) return;
+          try {
+            await api(`/api/catalogo/tags/${dragId}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: pai }) });
+            toast('Tag subordinada');
+            carregarCats();
+          } catch (e) {}
+          dragId = null;
+        });
+      });
+      const raiz = cont.querySelector('#arvRaiz');
+      if (raiz) {
+        raiz.addEventListener('dragover', ev => { ev.preventDefault(); raiz.classList.add('drop-alvo'); });
+        raiz.addEventListener('dragleave', () => raiz.classList.remove('drop-alvo'));
+        raiz.addEventListener('drop', async ev => {
+          ev.preventDefault();
+          raiz.classList.remove('drop-alvo');
+          if (!dragId) return;
+          try {
+            await api(`/api/catalogo/tags/${dragId}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: null }) });
+            toast('Tag voltou à raiz');
+            carregarCats();
+          } catch (e) {}
+          dragId = null;
+        });
+      }
       cont.querySelectorAll('.cat-x').forEach(b => b.onclick = async () => {
         if (!(await confirmar('Excluir este item?'))) return;
         try { await api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}`, { method: 'DELETE' }); toast('Excluído'); carregarCats(); } catch (e) {}
