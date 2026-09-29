@@ -185,7 +185,7 @@ td{padding:10px;border-bottom:1px solid var(--borda);vertical-align:middle}
 tbody tr{transition:background-color .12s}
 tbody tr:hover td{background:var(--painel2)}
 td.num,th.num{text-align:center;font-variant-numeric:tabular-nums}
-.rolagem{overflow-x:auto;border-radius:var(--raio)}
+.rolagem{overflow-x:auto;border-radius:var(--raio);-webkit-overflow-scrolling:touch}
 .vazio{color:var(--tx3);text-align:center;padding:26px 14px;font-size:13px;letter-spacing:.03em}
 
 /* ---------- 7. Pílulas de situação (indicadores — única cor fora de gráficos) ---------- */
