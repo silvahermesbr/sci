@@ -330,22 +330,19 @@
   function relRender(b, titulo, grupoQ) {
     const totalFaltas = b.total_faltas ?? ((b.falta || 0) + (b.justificadas || 0));
     const res = `<div class="resumo">
-      <div class="caixa"><b>${b.convocacoes}</b><span>conferências</span></div>
       <div class="caixa"><b>${b.efetivo_ativo}</b><span>efetivo</span></div>
       <div class="caixa"><b>${b.presentes}</b><span>presentes</span></div>
       <div class="caixa"><b>${b.atrasos}</b><span>atrasos</span></div>
       <div class="caixa"><b>${b.falta}</b><span>faltas</span></div>
       <div class="caixa"><b>${b.justificadas}</b><span>justificadas</span></div>
       <div class="caixa"><b>${totalFaltas}</b><span>faltas tot. (J+NJ)</span></div>
-      <div class="caixa"><b>${b.pct_geral}%</b><span>% válidas (P+A)</span></div>
       <div class="caixa" style="border-color:var(--verde)"><b>${b.pct_pronto}%</b><span>ef. pronto</span></div></div>`;
     /* ordem do Tenente: efetivo em ORDEM ALFABÉTICA (backend pode vir agrupado
        por função — o前端 garante a ordem e a antiguidade é o posto alfabético) */
     const pessoas = (b.pessoas || []).slice()
       .sort((a, x) => String(a.nome_guerra || '').localeCompare(String(x.nome_guerra || ''), 'pt', { sensitivity: 'base' }));
     const linhas = pessoas.map(p =>
-      `<tr><td class="num">#${p.antiguidade ?? ''}</td><td><b>${esc(p.nome_guerra)}</b></td>
-       <td>${esc(p.funcao || '—')}${p.funcao_id ? ` <small style="color:var(--tx2)">#${p.funcao_id}</small>` : ''}</td>
+      `<tr><td class="num">${p.antiguidade ?? ''}</td><td>${esc(p.funcao || '—')}</td><td><b>${esc(p.nome_guerra)}</b></td>
        <td>${esc(p.setor)}</td><td>${esc(p.grupo || '—')}</td><td class="num">${p.presencas}</td>
        <td class="num">${p.atrasos}</td><td class="num">${p.faltas}</td><td class="num">${p.justificadas}</td></tr>`).join('');
     const forms = (b.formaturas || []).map(f =>
@@ -356,7 +353,7 @@
       <h3 style="margin:0">${titulo} — ${b.convocacoes} conferências no período</h3>
       <a href="/api/relatorio.pdf?de=${encodeURIComponent(b.De)}&ate=${encodeURIComponent(b.Ate)}${grupoQ}&t=${Date.now()}" target="_blank"><button class="primario">ABRIR PDF</button></a></div>
       ${forms ? `<div class="rolagem" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Tipo</th><th>Hora</th><th>Status</th><th class="num">Presentes</th><th class="num">Faltas</th></tr></thead><tbody>${forms}</tbody></table></div>` : ''}
-      <div class="rolagem"><table><thead><tr><th class="num">Antig.</th><th>Nome</th><th>Função</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
+      <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Função</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
       <th class="num">Falta</th><th class="num">Just.</th></tr></thead><tbody>${linhas || '<tr><td colspan="9"><span class="vazio">sem efetivo ativo no escopo</span></td></tr>'}</tbody></table></div></div>`;
   }
 

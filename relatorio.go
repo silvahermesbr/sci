@@ -148,16 +148,13 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 	pdf.SetTextColor(verdeR, verdeG, verdeB)
 	pdf.Cell(0, 6, T("RESUMO DO PERÍODO"))
 	pdf.Ln(7)
-	pctStr := fmt.Sprintf("%.1f%%", b.PctGeral)
 	pctProntoStr := fmt.Sprintf("%.1f%%", b.PctPronto)
 	caixas := [][2]string{
-		{"CONVOCACOES", strconv.Itoa(b.Convocacoes)},
 		{"EFETIVO ATIVO", strconv.Itoa(b.EfetivoAtivo)},
 		{"PRESENTE", strconv.Itoa(b.Presentes)},
 		{"ATRASO", strconv.Itoa(b.Atrasos)},
 		{"FALTA", strconv.Itoa(b.Faltas)},
 		{"JUSTIFICADA", strconv.Itoa(b.Justificadas)},
-		{"% VÁLIDAS", pctStr},
 		{"% EF.PRONTO", pctProntoStr},
 	}
 	pdf.SetFont("Helvetica", "", 7)
@@ -293,8 +290,8 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 	pdf.SetTextColor(verdeR, verdeG, verdeB)
 	pdf.Cell(0, 6, T("EFETIVO — POR ANTIGUIDADE DE FUNÇÃO (ID menor = mais antigo)"))
 	pdf.Ln(7)
-	cab := []string{"Nome de guerra", "Função (ID)", "Setor", "Grupo", "Pres.", "Atraso", "Falta", "Just."}
-	larg := []float64{36, 38, 26, 28, 15, 15, 15, 15}
+	cab := []string{"ORD", "Função", "Nome de guerra", "Setor", "Grupo", "Pres.", "Atraso", "Falta", "Just."}
+	larg := []float64{11, 34, 32, 24, 24, 14, 14, 14, 14}
 	pdf.SetFont("Helvetica", "B", 8)
 	pdf.SetFillColor(verdeR, verdeG, verdeB)
 	pdf.SetTextColor(255, 255, 255)
@@ -339,7 +336,7 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 			fnCell = "(#" + strconv.FormatInt(*p.FuncaoID, 10) + ")"
 		}
 		vals := []string{
-			T(p.NomeGuerra), fnCell, T(p.Setor), T(p.Grupo),
+			strconv.Itoa(p.Antiguidade), fnCell, T(p.NomeGuerra), T(p.Setor), T(p.Grupo),
 			strconv.Itoa(p.Presencas), strconv.Itoa(p.Atrasos),
 			strconv.Itoa(p.Faltas), strconv.Itoa(p.Justificadas),
 		}
@@ -438,8 +435,8 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 	pdf.SetTextColor(15, 15, 15)
 	pdf.Cell(0, 6, T("LANÇAMENTOS DA CONFERÊNCIA"))
 	pdf.Ln(7)
-	cab := []string{"Nome de guerra", "Setor", "Situação", "Destino", "Observação", "Por"}
-	larg := []float64{34, 30, 24, 30, 51, 21}
+	cab := []string{"ORD", "Função", "Nome de guerra", "Setor", "Situação", "Destino", "Observação"}
+	larg := []float64{12, 30, 32, 26, 22, 26, 40}
 	pdf.SetFont("Helvetica", "B", 7.6)
 	pdf.SetFillColor(15, 15, 15)
 	pdf.SetTextColor(255, 255, 255)
@@ -469,8 +466,8 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 		}
 		pdf.SetTextColor(30, 30, 30)
 		vals := []string{
-			T(str(l["nome_guerra"])), T(str(l["setor"])), T(str(l["situacao"])),
-			T(str(l["destino"])), T(str(l["observacao"])), T(str(l["marcado_por"])),
+			strconv.Itoa(l["ord"].(int)), T(str(l["funcao"])), T(str(l["nome_guerra"])),
+			T(str(l["setor"])), T(str(l["situacao"])), T(str(l["destino"])), T(str(l["observacao"])),
 		}
 		for i, v := range vals {
 			pdf.CellFormat(larg[i], 5.2, v, "1", 0, "L", zebra, 0, "")

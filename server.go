@@ -1105,15 +1105,29 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows, e := a.st.db.Query(`
+		WITH RECURSIVE cam_setor(id, caminho) AS (
+		  SELECT id, nome FROM setores WHERE pai_id IS NULL
+		  UNION ALL
+		  SELECT f.id, cs.caminho || ' > ' || f.nome FROM setores f JOIN cam_setor cs ON f.pai_id = cs.id
+		),
+		cam_funcao(id, caminho) AS (
+		  SELECT id, nome FROM funcoes WHERE pai_id IS NULL
+		  UNION ALL
+		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
+		)
 		SELECT p.nome_guerra, COALESCE(s.nome,'Sem setor'), pr.situacao,
-		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), u.login
+		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), u.login,
+		       COALESCE(fu.nome,''), COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor')
 		FROM presencas pr
 		JOIN pessoas p ON p.id = pr.pessoa_id
 		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN cam_setor cs2 ON cs2.id = s.id
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN cam_funcao cf2 ON cf2.id = fu.id
 		LEFT JOIN destinos d ON d.id = pr.destino_id
 		JOIN usuarios u ON u.id = pr.marcado_por
 		WHERE pr.conferencia_id = ?
-		ORDER BY pr.situacao, p.nome_guerra`, id)
+		ORDER BY COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor'), p.nome_guerra COLLATE NOCASE`, id)
 	if e != nil {
 		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
@@ -1121,12 +1135,14 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	lanc := []map[string]any{}
 	resumo := map[string]int{"presentes": 0, "atrasos": 0, "faltas": 0, "justificadas": 0}
+	ord := 0
 	for rows.Next() {
-		var ng, setor, sit, destino, obs, por string
-		if rows.Scan(&ng, &setor, &sit, &destino, &obs, &por) == nil {
+		var ng, setor, sit, destino, obs, por, funcao, camF, camS string
+		if rows.Scan(&ng, &setor, &sit, &destino, &obs, &por, &funcao, &camF, &camS) == nil {
+			ord++
 			lanc = append(lanc, map[string]any{
-				"nome_guerra": ng, "setor": setor, "situacao": sit,
-				"destino": destino, "observacao": obs, "marcado_por": por,
+				"ord": ord, "nome_guerra": ng, "funcao": funcao, "setor": setor, "situacao": sit,
+				"destino": destino, "observacao": obs,
 			})
 			switch sit {
 			case "presente":
@@ -1289,8 +1305,8 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		       COALESCE(SUM(pr.situacao='falta'),0),
 		       COALESCE(SUM(pr.situacao='justificada'),0),
 		       COUNT(pr.id), p.funcao_id, COALESCE(fu.nome,''),
-		       ROW_NUMBER() OVER (ORDER BY COALESCE(cs2.caminho,'~sem setor'),
-		                                  COALESCE(cf2.caminho,'~sem função'),
+		       ROW_NUMBER() OVER (ORDER BY COALESCE(cf2.caminho,'~sem função'),
+		                                  COALESCE(cs2.caminho,'~sem setor'),
 		                                  p.nome_guerra COLLATE NOCASE) AS antig,
 		       COALESCE(g2.nome,'—')
 		FROM pessoas p
@@ -1311,8 +1327,8 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		       )
 		WHERE p.status='ativo'`+a.filtroArvore(escopo, "p").clause+`
 		GROUP BY p.id
-		ORDER BY COALESCE(cs2.caminho,'~sem setor'),
-		         COALESCE(cf2.caminho,'~sem função'),
+		ORDER BY COALESCE(cf2.caminho,'~sem função'),
+		         COALESCE(cs2.caminho,'~sem setor'),
 		         p.nome_guerra COLLATE NOCASE`,
 		append(append([]any{de, ate}, ftP2.args...), a.filtroArvore(escopo, "p").args...)...)
 	if err == nil {
