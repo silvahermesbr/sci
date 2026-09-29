@@ -36,10 +36,67 @@
       catch (e) { toast('Falha ao salvar estado parcial', 'erro'); }
     }, 350);
   };
+  /* --- LISTAS (v9.14): #/hoje mostra SÓ as listas de conferências; a conferência
+     em si fica em #/conferencia (botão Abrir). Abertas editáveis; fechadas = PDF. --- */
   window.ViewHoje = async function () {
+    navAtiva('#/hoje');
+    $('#app').innerHTML = '<div class="carregando">Carregando conferências…</div>';
+    let lista = [];
+    try { lista = await api('/api/conferencia/lista'); } catch (e) { lista = []; }
+    let haAberta = null;
+    try { const d = await api('/api/conferencia/hoje'); haAberta = d.conferencia || null; } catch (e) {}
+    const linha = c => `
+      <tr data-cid="${c.id}"><td class="num"><b>#${c.id}</b></td>
+      <td>${c.status === 'aberta' ? 'Aberta' : 'Fechada'}</td>
+      <td>${c.status === 'aberta' ? fmtHora(c.criada_em) : fmtHora(c.fechada_em)}</td>
+      <td>${fmtData(c.data)}</td>
+      <td>${esc(c.grupo || '—')}</td>
+      <td>${esc(c.criado_por || '—')}</td>
+      <td class="num">${c.lancamentos}</td>
+      <td>${c.status === 'fechada'
+        ? `<a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>`
+        : `<button class="primario" data-abrir="${c.id}" style="min-height:36px;padding:8px 12px">Abrir</button>`}</td></tr>`;
+    const porData = (a, b) => String(b.data || '').localeCompare(String(a.data || '')) || b.id - a.id;
+    const abertas = lista.filter(c => c.status === 'aberta').sort(porData);
+    const fechadas = lista.filter(c => c.status === 'fechada').sort(porData);
+    const tabela = (titulo, itens) => `
+      <h3 style="margin:14px 0 8px">${titulo} (${itens.length})</h3>
+      <div class="cartao"><div class="rolagem"><table>
+      <thead><tr><th class="num">ID</th><th>Status</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th class="num">Lanç.</th><th>Ações</th></tr></thead>
+      <tbody>${itens.map(linha).join('') || '<tr><td colspan="8"><span class="vazio">nenhuma</span></td></tr>'}</tbody></table></div></div>`;
+    $('#app').innerHTML = `<h2>Conferências</h2>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        ${haAberta ? `<button class="primario" id="btAbrirAtiva" style="min-height:44px">▶ Abrir conferência #${haAberta.id} (em andamento)</button>`
+                   : `<button class="primario" id="btIniciarTopo" style="min-height:44px">▶ Iniciar conferência</button>`}
+        <span style="color:var(--tx2);font-size:12px">abertas podem ser editadas · fechadas viram relatório (PDF)</span></div>
+      <div class="cartao" style="margin-bottom:10px"><div class="campo" style="margin:0"><label>Pesquisar por ID da conferência</label><input id="fConfID" placeholder="ex.: 3"></div></div>` +
+      tabela('Abertas', abertas) + tabela('Fechadas', fechadas) +
+      `<p style="color:var(--tx2);font-size:12px">O relatório PDF só é gerado para conferências fechadas.</p>`;
+    const iniciar = async () => {
+      try {
+        await api('/api/conferencia/iniciar', { method: 'POST', body: '{}' });
+        location.hash = '#/conferencia';
+      } catch (e) {}
+    };
+    const bt = $('#btIniciarTopo');
+    if (bt) bt.onclick = iniciar;
+    const ab = $('#btAbrirAtiva');
+    if (ab) ab.onclick = () => { location.hash = '#/conferencia'; };
+    document.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => { location.hash = '#/conferencia'; });
+    $('#fConfID').oninput = () => {
+      const q = $('#fConfID').value.trim().replace('#', '');
+      document.querySelectorAll('#app tr[data-cid]').forEach(tr => {
+        tr.style.display = !q || tr.dataset.cid === q ? '' : 'none';
+      });
+    };
+  };
+
+  /* --- CONFERÊNCIA (edição): #/conferencia — aberta em andamento --- */
+  window.ViewConferencia = async function () {
     navAtiva('#/hoje');
     $('#app').innerHTML = '<div class="carregando">Carregando efetivo…</div>';
     const d = await api('/api/conferencia/hoje');
+    if (!d.conferencia) { location.hash = '#/hoje'; return; }
     let destinos = [];
     try { destinos = await api('/api/catalogo/destinos'); } catch (e) { destinos = []; }
     destinos = destinos.filter(x => x.ativo === 1 || x.ativo === true);
@@ -87,23 +144,11 @@
       : `<div class="cartao">
          <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span></div>`;
     $('#app').innerHTML = `<h2>Conferência de pessoal</h2>${banner}
-      ${semC ? '' : `<div class="barra-fixa">
+      <div class="barra-fixa">
         <input id="busca" placeholder="buscar nome…">
         <button class="primario" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>
-      </div>`}
-      <div id="lista">${semC ? '' : listas}</div>
-      <div id="listaConf"><div class="carregando">…</div></div>`;
-    if (semC) {
-      $('#btIniciar').onclick = async () => {
-        try {
-          await api('/api/conferencia/iniciar', { method: 'POST', body: JSON.stringify({}) });
-          toast('Conferência iniciada — data e hora de Brasília registradas');
-          window.ViewHoje();
-        } catch (err) {}
-      };
-      confHistorico();
-      return;
-    }
+      </div>
+      <div id="lista">${listas}</div>`;
     const contSpan = () => `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
     const atualizar = () => {
       const barra = document.querySelector('.barra-fixa');
@@ -139,46 +184,8 @@
     });
     document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => { C.dest[+s.dataset.id] = +s.value || null; });
     document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => { ev.stopPropagation(); confModalComentarios(+b.dataset.id); });
-    confHistorico();
   }
 
-  /* --- histórico embutido: filtro por ID + tabelas Abertas/Fechadas --- */
-  async function confHistorico() {
-    const alvo = $('#listaConf');
-    if (!alvo) return;
-    let lista = [];
-    try { lista = await api('/api/conferencia/lista'); }
-    catch (e) { alvo.innerHTML = ''; return; }
-    const linha = c => `
-      <tr data-cid="${c.id}"><td class="num"><b>#${c.id}</b></td>
-      <td>${c.status === 'aberta' ? 'Aberta' : 'Fechada'}</td>
-      <td>${c.status === 'aberta' ? fmtHora(c.criada_em) : fmtHora(c.fechada_em)}</td>
-      <td>${fmtData(c.data)}</td>
-      <td>${esc(c.grupo || '—')}</td>
-      <td>${esc(c.criado_por || '—')}</td>
-      <td class="num">${c.lancamentos}</td>
-      <td>${c.status === 'fechada'
-        ? `<a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>`
-        : `<span style="color:var(--ambar);font-size:13px">em andamento</span>`}</td></tr>`;
-    const porData = (a, b) => String(b.data || '').localeCompare(String(a.data || '')) || b.id - a.id;
-    const abertas = lista.filter(c => c.status === 'aberta').sort(porData);
-    const fechadas = lista.filter(c => c.status === 'fechada').sort(porData);
-    const tabela = (titulo, itens) => `
-      <h3 style="margin:14px 0 8px">${titulo} (${itens.length})</h3>
-      <div class="cartao"><div class="rolagem"><table>
-      <thead><tr><th class="num">ID</th><th>Status</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th class="num">Lanç.</th><th>Relatório</th></tr></thead>
-      <tbody>${itens.map(linha).join('') || '<tr><td colspan="8"><span class="vazio">nenhuma</span></td></tr>'}</tbody></table></div></div>`;
-    alvo.innerHTML = `<h2 style="margin-top:22px">Histórico de conferências</h2>
-      <div class="cartao" style="margin-bottom:10px"><div class="campo" style="margin:0"><label>Pesquisar por ID da conferência</label><input id="fConfID" placeholder="ex.: 3"></div></div>` +
-      tabela('Abertas', abertas) + tabela('Fechadas', fechadas) +
-      `<p style="color:var(--tx2);font-size:12px">O relatório PDF só é gerado para conferências fechadas.</p>`;
-    $('#fConfID').oninput = () => {
-      const q = $('#fConfID').value.trim().replace('#', '');
-      document.querySelectorAll('#listaConf tr[data-cid]').forEach(tr => {
-        tr.style.display = !q || tr.dataset.cid === q ? '' : 'none';
-      });
-    };
-  }
 
   /* --- comentários: append-only, por conferência --- */
   async function confModalComentarios(pessoaId) {
@@ -272,8 +279,8 @@
     try {
       const r = await api('/api/conferencia/fechar', { method: 'POST', body: JSON.stringify({ id: C.c.id, lancamentos: lanc }) });
       toast(`Conferência fechada — ${r.gravados} lançamentos gravados`);
-      location.hash = '#/hoje';
-      location.reload(); // ordem do Tenente: fechar = recarga completa da página
+      location.hash = '#/hoje'; // volta para as listas
+      location.reload(); // recarga completa da página
     } catch (err) {}
   }
 

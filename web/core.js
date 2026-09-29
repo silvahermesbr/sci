@@ -382,6 +382,7 @@ function rotear() {
   if (papel !== 'admin' && h === '#/dashboard') { irPara(rotaInicial()); return; }
 
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
+  if (h === '#/conferencia') { chamarView('ViewConferencia'); return; } // edição da conf aberta (v9.14)
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
   if (h === '#/dashboard') { chamarView('ViewDashboard'); return; }
   if (h === '#/admin') {
