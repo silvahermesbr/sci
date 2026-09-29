@@ -183,6 +183,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/conferencia/marcar", confAuth(a.hConferenciaMarcar))
 	m.Handle("GET /api/conferencia/lista", confAuth(a.hConferenciaList))
 	m.Handle("GET /api/conferencia/{id}", confAuth(a.hConferenciaGet))
+	m.Handle("DELETE /api/conferencia/{id}", confAuth(a.hConferenciaDescartar))
 	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", confAuth(a.hConferenciaPDF))
 
 	m.Handle("GET /api/presenca/periodo", confAuth(a.hPresencaPeriodo))
@@ -755,6 +756,59 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonOK(w, out)
+}
+
+// hConferenciaDescartar (v9.14.4, ordem Tenente 29/09): DESCARTAR conferência ABERTA —
+// apaga a conferência, presenças parciais e comentários dela. Conferência FECHADA é
+// histórico imutável → 409. Escopo: só o grupo dono.
+func (a *App) hConferenciaDescartar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var gid *int64
+	var status string
+	if e := a.st.db.QueryRow(`SELECT grupo_id, status FROM conferencias WHERE id = ?`, id).Scan(&gid, &status); e != nil {
+		jsonErro(w, http.StatusNotFound, "conferência inexistente")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 {
+		if gid == nil || *gid != esc {
+			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
+			return
+		}
+	} else if u.Papel != "admin" {
+		jsonErro(w, http.StatusForbidden, "sem acesso")
+		return
+	}
+	if status != "aberta" {
+		jsonErro(w, http.StatusConflict, "conferência fechada é histórico — não pode ser descartada")
+		return
+	}
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM comentarios WHERE conferencia_id = ?`,
+		`DELETE FROM presencas WHERE conferencia_id = ?`,
+		`DELETE FROM conferencias WHERE id = ?`,
+	} {
+		if _, e := tx.Exec(q, id); e != nil {
+			jsonErro(w, http.StatusInternalServerError, e.Error())
+			return
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "descartar", "conferencias", &id, "conferência aberta descartada", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "descartada": id})
 }
 
 // hConferenciaGet: dados completos de UMA conferência (para o relatório na tela).

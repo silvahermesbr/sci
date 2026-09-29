@@ -112,6 +112,16 @@
     }
     C = { c: d.conferencia, pessoas: d.pessoas || [], destinos, est, dest, obs, verif, temComentario };
     confRender();
+    $('#btVoltar').onclick = () => { location.hash = '#/hoje'; };
+    $('#btDescartar').onclick = async () => {
+      if (!(await confirmar(`DESCARTAR a conferência #${C.c.id}? O estado parcial gravado será apagado. Esta ação não pode ser desfeita.`))) return;
+      try {
+        await api('/api/conferencia/' + C.c.id, { method: 'DELETE' });
+        toast('Conferência descartada');
+        location.hash = '#/hoje';
+        location.reload();
+      } catch (e) {}
+    };
   };
 
   function confRender(filtro = '') {
@@ -148,12 +158,16 @@
            <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div></div>`
       : `<div class="cartao">
          <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span></div>`;
-    $('#app').innerHTML = `<h2>Conferência de pessoal</h2>${banner}
+    $('#app').innerHTML = `<div style="margin-bottom:10px"><button class="fantasma" id="btVoltar" style="min-height:38px">← Retornar</button></div>
+      <h2 style="margin-top:0">Conferência de pessoal</h2>${banner}
       <div class="barra-fixa">
         <input id="busca" placeholder="buscar nome…">
         <button class="primario" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>
       </div>
-      <div id="lista">${listas}</div>`;
+      <div id="lista">${listas}</div>
+      <div style="display:flex;justify-content:flex-end;margin-top:28px;padding-top:14px;border-top:1px solid var(--borda)">
+        <button class="perigo" id="btDescartar" style="min-height:40px">🗑 Descartar conferência</button>
+      </div>`;
     const contSpan = () => `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
     const atualizar = () => {
       const barra = document.querySelector('.barra-fixa');
