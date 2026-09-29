@@ -342,6 +342,7 @@
   /* =====================================================================
      #/grupos — GERENCIAR (gerente): Pessoal · Tags · Grupos · Operadores
      ===================================================================== */
+  let setoresCat = null, funcoesCat = null; // cache compartilhado (v9.16.9)
   window.ViewGrupos = async function () {
     const eu = quem();
     if (!eu || eu.papel !== 'gerente') { location.hash = '#/hoje'; return; }
@@ -352,6 +353,7 @@
       api('/api/catalogo/setores'), api('/api/catalogo/funcoes'), api('/api/usuarios')]);
     const meus = grupos.filter(g => g.id === eu.grupo_id);
     const optSetores = ativosDe(setores), optFuncoes = ativosDe(funcoes);
+    setoresCat = setores; funcoesCat = funcoes; // cache p/ carregarCats (v9.16.9)
     const operadores = contas.filter(c => c.grupo_id === eu.grupo_id && c.papel === 'operador');
 
     /* --- formulário de militar (criar/editar) + adição em lote --- */
@@ -574,8 +576,12 @@
       if (!cont) return;
       const tipos = ['setores', 'funcoes', 'tags', 'destinos'];
       const meusGrupos = new Set(((window.ME && window.ME.grupo_id) ? [window.ME.grupo_id] : []));
+      // v9.16.9: setores/funcoes JÁ vieram no carregamento da view — só tags/destinos vão à rede
+      const cache = { setores: setoresCat, funcoes: funcoesCat };
       const resultados = await Promise.all(tipos.map(t =>
-        api('/api/catalogo/' + t).then(l => [t, l]).catch(() => [t, []])));
+        Array.isArray(cache[t])
+          ? Promise.resolve([t, cache[t]])
+          : api('/api/catalogo/' + t).then(l => [t, l]).catch(() => [t, []])));
       let html = '';
       for (const [t, lista] of resultados) {
         // v9.16.8: HERDADO (grupo superior) vem primeiro, READ ONLY; DO GRUPO vem depois, gerenciável
@@ -617,7 +623,7 @@
       cont.querySelectorAll('.cat-x').forEach(b => b.onclick = async () => {
         if (!(await confirmar('Excluir este item?'))) return;
         const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
-        if (r.ok) { toast('Excluído'); carregarCats(); }
+        if (r.ok) { toast('Excluído'); if (b.dataset.ct === 'setores' || b.dataset.ct === 'funcoes') setoresCat = funcoesCat = null; carregarCats(); }
       });
       cont.querySelectorAll('.cat-off').forEach(b => b.onclick = async () => {
         const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}?modo=desativar`, { method: 'DELETE' }), 'Desativando item…');
@@ -706,7 +712,7 @@
       const t = $('#cgT').value, nome = $('#cgN').value.trim();
       if (!nome) { toast('Informe o nome do item', 'erro'); return; }
       const r = await processar(() => api('/api/catalogo/' + t, { method: 'POST', body: JSON.stringify({ nome }) }), 'Adicionando item…');
-      if (r.ok) { toast('Item adicionado'); $('#cgN').value = ''; carregarCats(); }
+      if (r.ok) { toast('Item adicionado'); $('#cgN').value = ''; setoresCat = funcoesCat = null; carregarCats(); }
     };
     if (abaGer === 'tags') carregarCats(); else $('#gerTags').addEventListener('renderTags', carregarCats, { once: true });
 
