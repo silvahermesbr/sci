@@ -678,7 +678,26 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ = res.LastInsertId()
-	a.st.Auditoria(&u.ID, "iniciar", "conferencias", &id, "data="+data, ipDe(r))
+
+	// v9.16.3 (ordem Tenente 29/09): CARRY OVER — a nova conferência herda o estado da última
+	// conferência fechada de cada militar, com regra de frescor:
+	//   última conf hoje ou ontem  → mantém situação + destino (serviço de ontem continua)
+	//   última conf há 2+ dias     → reseta para 'presente' (ex.: sexta → segunda)
+	//   nunca conferido            → nada a herdar (default 'presente')
+	// Herda APENAS pessoas ativas do grupo.
+	_, _ = a.st.db.Exec(`INSERT INTO presencas
+		(conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em)
+		SELECT ?, pr.pessoa_id, pr.situacao, pr.destino_id, pr.observacao, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		FROM presencas pr
+		JOIN conferencias c ON c.id = pr.conferencia_id AND c.status = 'fechada'
+		JOIN (SELECT pessoa_id, MAX(data || '#' || conferencia_id) AS ultima
+		      FROM presencas p2 JOIN conferencias c2 ON c2.id = p2.conferencia_id AND c2.status='fechada'
+		      GROUP BY pessoa_id) u2 ON u2.pessoa_id = pr.pessoa_id
+		     AND u2.ultima = c.data || '#' || c.id
+		WHERE julianday(?) - julianday(c.data) <= 1
+		  AND pr.pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ? AND status = 'ativo')`,
+		id, u.ID, data, grupoID) // herança best-effort: falha não impede a conferência
+	a.st.Auditoria(&u.ID, "iniciar", "conferencias", &id, "data="+data+" (carry over aplicado)", ipDe(r))
 	jsonOK(w, map[string]any{"id": id, "data": data})
 }
 
