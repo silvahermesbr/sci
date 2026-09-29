@@ -186,7 +186,7 @@ func (a *App) rotas() {
 	m.Handle("DELETE /api/conferencia/{id}", confAuth(a.hConferenciaDescartar))
 	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", confAuth(a.hConferenciaPDF))
 
-	m.Handle("GET /api/efetivo_atual", confAuth(a.hEfetivoAtual))
+	m.Handle("GET /api/efetivo_atual", a.auth(false, a.hEfetivoAtual)) // todos os papéis: admin vê todos, demais veem o escopo
 	m.Handle("GET /api/presenca/periodo", confAuth(a.hPresencaPeriodo))
 	m.Handle("GET /api/conferencias", confAuth(a.hConferenciaList))
 
