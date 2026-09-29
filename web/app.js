@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.6 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.7 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -399,7 +399,7 @@ async function viewGrupos() {
         <p style="color:var(--tx2);font-size:12px;margin:4px 0">Itens próprios do grupo + <b>herdados dos grupos de cima</b> (o que existe acima vale aqui; o que o grupo cria não sobe). ✕ exclui (em uso → desativa), ⏸ desativa preservando histórico.</p>
         <div id="catGer">…</div>
         <div class="form-linha" style="margin-top:10px">
-          <div class="campo"><label>Catálogo</label><select id="cgT"><option value="setores">Setores</option><option value="funcoes">Funções</option><option value="tags">Tags</option></select></div>
+          <div class="campo"><label>Catálogo</label><select id="cgT"><option value="setores">Setores</option><option value="funcoes">Funções</option><option value="tags">Tags</option><option value="destinos">Destinos</option></select></div>
           <div class="campo"><label>Novo item</label><input id="cgN" placeholder="nome"></div>
           <div class="campo" style="align-self:end"><button class="primario" id="cgGo">Adicionar</button></div></div></div>
       <div class="cartao"><h3 style="margin-top:0">SUBORDINAÇÃO — árvore do meu grupo (leitura; organização definida pela Administração)</h3>
@@ -447,12 +447,12 @@ async function viewGrupos() {
     toast('Salvo'); viewGrupos();
   };
   /* --- aba TAGS: catálogos do grupo (setores/funções/tags) --- */
-  const rotCat = { setores: 'Setores', funcoes: 'Funções', tags: 'Tags' };
+  const rotCat = { setores: 'Setores', funcoes: 'Funções', tags: 'Tags', destinos: 'Destinos' };
   const carregarCats = async () => {
     const cont = $('#catGer');
     if (!cont) return;
     let html = '';
-    for (const t of ['setores', 'funcoes', 'tags']) {
+    for (const t of ['setores', 'funcoes', 'tags', 'destinos']) {
       let lista = [];
       try { lista = await api('/api/catalogo/' + t); } catch (e) {}
       html += `<div class="cat-bloco"><b>${rotCat[t]}</b><div class="cat-itens">` +
