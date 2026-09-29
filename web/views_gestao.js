@@ -443,9 +443,11 @@
         setor_id: +$('#pSetor').value || null, funcao_id: +$('#pFuncao').value || null, status: $('#pStatus').value };
       if (!corpo.nome_guerra || !corpo.nome_completo) { toast('Nomes obrigatórios', 'erro'); return; }
       const id = $('#pId').value;
-      if (id) await api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) });
-      else await api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) });
-      toast('Salvo'); window.ViewGrupos();
+      await processar(() => id
+        ? api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) })
+        : api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) }),
+        id ? 'Salvando alterações…' : 'Cadastrando militar…');
+      window.ViewGrupos();
     };
 
     /* --- adição em lote --- */
@@ -453,14 +455,16 @@
       const linhas = $('#csv').value.split('\n').map(l => l.trim()).filter(Boolean);
       if (!linhas.length) { toast('Cole ao menos uma linha', 'erro'); return; }
       let ok = 0, falha = 0;
-      for (const l of linhas) {
-        const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
-        if (!ng || !nc) { falha++; continue; }
-        const sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
-        const fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
-        try { await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo' }) }); ok++; }
-        catch (e) { falha++; }
-      }
+      await processar(async () => {
+        for (const l of linhas) {
+          const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
+          if (!ng || !nc) { falha++; continue; }
+          const sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
+          const fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
+          try { await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo' }) }); ok++; }
+          catch (e) { falha++; }
+        }
+      }, `Importando ${linhas.length} linha(s)…`);
       toast(`${ok} importado(s)${falha ? ' · ' + falha + ' linha(s) com falha' : ''}`, falha && !ok ? 'erro' : 'ok');
       if (ok) window.ViewGrupos();
     };
@@ -468,11 +472,11 @@
     /* --- exclusão de militar (individual + lote; com histórico → desativa) --- */
     const excPessoa = async (id, nome) => {
       if (!(await confirmar(`Excluir "${nome}" do banco de pessoal? (com histórico de conferência virará inativo)`))) return;
-      try {
-        const r = await api(`/api/pessoas/${id}`, { method: 'DELETE' });
-        toast(r.desativado ? 'Desativado (histórico preservado)' : 'Excluído');
+      const r = await processar(() => api(`/api/pessoas/${id}`, { method: 'DELETE' }), `Excluindo ${nome}…`);
+      if (r.ok) {
+        toast(r.resultado.desativado ? 'Desativado (histórico preservado)' : 'Excluído');
         window.ViewGrupos();
-      } catch (e) {}
+      }
     };
     document.querySelectorAll('[data-excP]').forEach(b => b.onclick = () => excPessoa(b.dataset.excP, b.dataset.nome));
 
@@ -494,12 +498,14 @@
       if (!ids.length) return;
       if (!(await confirmar(`Excluir ${ids.length} militar(es)? (com histórico de conferência virarão inativos)`))) return;
       let ok = 0, des = 0, falha = 0;
-      for (const id of ids) {
-        try {
-          const r = await api(`/api/pessoas/${id}`, { method: 'DELETE' });
-          r.desativado ? des++ : ok++;
-        } catch (e) { falha++; }
-      }
+      await processar(async () => {
+        for (const id of ids) {
+          try {
+            const r = await api(`/api/pessoas/${id}`, { method: 'DELETE' });
+            r.desativado ? des++ : ok++;
+          } catch (e) { falha++; }
+        }
+      }, `Excluindo ${ids.length} militar(es)…`);
       toast(`Excluídos: ${ok} · desativados: ${des}${falha ? ' · falhas: ' + falha : ''}`, falha && !ok ? 'erro' : 'ok');
       if (ok || des) window.ViewGrupos();
     };
@@ -523,19 +529,26 @@
         const fid = div.querySelector('#lFuncao').value;
         const st = div.querySelector('#lStatus').value;
         if (!sid && !fid && !st) { toast('Nada para alterar — todos em manter', 'erro'); return; }
-        let ok = 0, falha = 0;
-        for (const id of sel) {
-          const p = (pessoas.pessoas || []).find(x => x.id === id);
-          if (!p) { falha++; continue; }
-          const corpo = { nome_guerra: p.nome_guerra, nome_completo: p.nome_completo,
-            setor_id: sid ? +sid : (p.setor_id ?? null), funcao_id: fid ? +fid : (p.funcao_id ?? null),
-            status: st || p.status };
-          try { await api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) }); ok++; }
-          catch (e) { falha++; }
-        }
-        toast(`Aplicado a ${ok} militar(es)${falha ? ' · falhas: ' + falha : ''}`, falha && !ok ? 'erro' : 'ok');
         div.remove();
-        if (ok) window.ViewGrupos();
+        const r = await processar(async () => {
+          let ok = 0; const erros = [];
+          for (const id of sel) {
+            const p = (pessoas.pessoas || []).find(x => x.id === id);
+            if (!p) { erros.push('#' + id + ' não encontrado'); continue; }
+            const corpo = { nome_guerra: p.nome_guerra, nome_completo: p.nome_completo,
+              setor_id: sid ? +sid : (p.setor_id ?? null), funcao_id: fid ? +fid : (p.funcao_id ?? null),
+              status: st || p.status };
+            try { await api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) }); ok++; }
+            catch (e) { erros.push('#' + id + ': ' + (e && e.message || 'falhou')); }
+          }
+          if (erros.length && !ok) throw new Error(erros[0]);
+          return { ok, erros };
+        }, `Editando ${sel.length} militar(es)…`);
+        if (r.ok) {
+          const info = r.resultado;
+          toast(`Aplicado a ${info.ok} militar(es)${info.erros.length ? ' · falhas: ' + info.erros.length : ''}`, info.erros.length ? 'erro' : 'ok');
+          window.ViewGrupos();
+        }
       };
     };
 
@@ -623,17 +636,19 @@
       }
       cont.querySelectorAll('.cat-x').forEach(b => b.onclick = async () => {
         if (!(await confirmar('Excluir este item?'))) return;
-        try { await api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}`, { method: 'DELETE' }); toast('Excluído'); carregarCats(); } catch (e) {}
+        const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
+        if (r.ok) { toast('Excluído'); carregarCats(); }
       });
       cont.querySelectorAll('.cat-off').forEach(b => b.onclick = async () => {
-        try { await api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}?modo=desativar`, { method: 'DELETE' }); toast('Desativado'); carregarCats(); } catch (e) {}
+        const r = await processar(() => api(`/api/catalogo/${b.dataset.ct}/${b.dataset.cid}?modo=desativar`, { method: 'DELETE' }), 'Desativando item…');
+        if (r.ok) { toast('Desativado'); carregarCats(); }
       });
     };
     $('#cgGo').onclick = async () => {
       const t = $('#cgT').value, nome = $('#cgN').value.trim();
       if (!nome) { toast('Informe o nome do item', 'erro'); return; }
-      await api('/api/catalogo/' + t, { method: 'POST', body: JSON.stringify({ nome }) });
-      toast('Item adicionado'); $('#cgN').value = ''; carregarCats();
+      const r = await processar(() => api('/api/catalogo/' + t, { method: 'POST', body: JSON.stringify({ nome }) }), 'Adicionando item…');
+      if (r.ok) { toast('Item adicionado'); $('#cgN').value = ''; carregarCats(); }
     };
     if (abaGer === 'tags') carregarCats(); else $('#gerTags').addEventListener('renderTags', carregarCats, { once: true });
 
@@ -641,8 +656,8 @@
     $('#opGo').onclick = async () => {
       const login = $('#opLogin').value.trim(), senha = $('#opSenha').value;
       if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
-      await api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'operador' }) });
-      toast('Operador criado'); window.ViewGrupos();
+      const r = await processar(() => api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'operador' }) }), `Criando operador ${login}…`);
+      if (r.ok) { toast('Operador criado'); window.ViewGrupos(); }
     };
     $('#fOp').oninput = () => {
       const q = $('#fOp').value.trim().toLowerCase();

@@ -521,6 +521,38 @@ async function viewDashboard() {
 }
 window.ViewDashboard = viewDashboard;
 
+
+/* ---------- v9.16.1: "Processando…" — aguarde global p/ toda ação de escrita ----------
+   processar(tarefa, rotulo) → executa tarefa(); mostra overlay c/ disco girando ao iniciar,
+   troca para ✅ Pronto! (verde) ou ❌ (vermelho X) ao terminar e fecha sozinho. */
+function processar(tarefa, rotulo) {
+  return new Promise(resolve => {
+    const mask = document.createElement('div');
+    mask.className = 'proc-mask';
+    mask.innerHTML = '<div class="proc-box">' +
+      '<div class="proc-disco"></div>' +
+      '<div class="proc-msg">' + esc(rotulo || 'Processando…') + '</div></div>';
+    document.body.appendChild(mask);
+    let resultado = null, erro = null;
+    Promise.resolve()
+      .then(() => tarefa())
+      .then(r => { resultado = r; })
+      .catch(e => { erro = e; })
+      .finally(() => {
+        const box = mask.querySelector('.proc-box');
+        box.innerHTML = erro
+          ? '<div class="proc-emoji proc-erro">❌</div><div class="proc-msg">Erro: ' + esc((erro && erro.message) || 'falha na operação') + '</div>'
+          : '<div class="proc-emoji proc-ok">✅</div><div class="proc-msg">Pronto!</div>';
+        setTimeout(() => {
+          mask.remove();
+          if (erro) { toast((erro && erro.message) || 'Falha na operação', 'erro'); }
+          resolve({ ok: !erro, resultado });
+        }, erro ? 2200 : 900);
+      });
+  });
+}
+window.processar = processar;
+
 /* ---------- boot ---------- */
 window.SCI_BOOT = function () {
   window.onhashchange = rotear;

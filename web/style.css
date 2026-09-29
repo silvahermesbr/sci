@@ -496,3 +496,28 @@ input[type="checkbox"]{width:auto;cursor:pointer;accent-color:var(--verde)}
   transition:border-color .15s,background-color .15s;
 }
 .cat-arv-raiz.drop-alvo{border-color:var(--verde);background:rgba(87,161,115,.08);color:var(--tx)}
+
+/* ---------- v9.16.1: overlay "Processando…" ---------- */
+.proc-mask{
+  position:fixed;inset:0;z-index:120; /* acima de modais (80) e toasts (100) */
+  display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);
+}
+.proc-box{
+  display:flex;flex-direction:column;align-items:center;gap:14px;
+  min-width:220px;max-width:86vw;padding:26px 30px;
+  background:var(--painel);border:1px solid var(--borda2);border-radius:var(--raio-g);
+  box-shadow:var(--sombra-g);text-align:center;
+}
+.proc-disco{
+  width:42px;height:42px;border-radius:50%;
+  border:4px solid var(--borda2);border-top-color:var(--verde);
+  animation:proc-giro .8s linear infinite;
+}
+@keyframes proc-giro{to{transform:rotate(360deg)}}
+.proc-msg{font-size:13.5px;color:var(--tx);letter-spacing:.03em}
+.proc-emoji{font-size:40px;line-height:1;animation:proc-pop .28s ease}
+.proc-ok{filter:drop-shadow(0 0 10px rgba(87,161,115,.5))}
+.proc-erro{filter:drop-shadow(0 0 10px rgba(201,107,98,.5))}
+@keyframes proc-pop{from{transform:scale(.4);opacity:0}to{transform:scale(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){.proc-disco{animation-duration:1.6s}}
