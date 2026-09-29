@@ -76,7 +76,7 @@
     if (btNova) btNova.onclick = async () => {
       try {
         const r = await api('/api/conferencia/iniciar', { method: 'POST', body: '{}' });
-        location.hash = '#/conferencia?id=' + r.conferencia.id;
+        location.hash = '#/conferencia?id=' + (r.conferencia ? r.conferencia.id : r.id);
       } catch (e) {}
     };
     document.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
