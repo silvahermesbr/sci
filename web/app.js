@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.5 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10.6 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -678,29 +678,29 @@ async function viewRelatorios() {
     <div class="cartao">
       ${gSel ? `<div class="form-linha" style="margin-bottom:8px">${gSel}</div>` : ''}
       <div class="abas" id="modos">
-        <button data-m="semana" class="ativo">Semana</button>
-        <button data-m="dia">Dia</button>
-        <button data-m="mes">Mês</button>
+        <button data-m="dia" class="ativo">Dia</button>
+        <button data-m="semana">Semana</button>
+        <button data-m="ano">Ano</button>
         <button data-m="livre">Período livre</button></div>
       <div class="form-linha" style="grid-template-columns:1fr auto;align-items:end">
         <div id="entrada"></div>
         <button class="primario" id="btGerar" style="min-height:44px">Gerar</button></div></div>
-    <div id="saida"><div class="carregando">Gerando semana atual…</div></div>`;
-  let modo = 'semana';
+    <div id="saida"><div class="carregando">Gerando dia atual…</div></div>`;
+  let modo = 'dia';
   const entrada = () => {
     const el = $('#entrada');
-    if (modo === 'semana') el.innerHTML = `<div class="campo"><label>Semana (escolha qualquer dia dela)</label><input type="date" id="fDia" value="${dataLocal(hoje)}"></div>`;
-    else if (modo === 'dia') el.innerHTML = `<div class="campo"><label>Dia específico</label><input type="date" id="fDia" value="${dataLocal(hoje)}"></div>`;
-    else if (modo === 'mes') el.innerHTML = `<div class="campo"><label>Mês</label><input type="month" id="fMes" value="${dataLocal(hoje).slice(0, 7)}"></div>`;
+    if (modo === 'dia') el.innerHTML = `<div class="campo"><label>Dia específico</label><input type="date" id="fDia" value="${dataLocal(hoje)}"></div>`;
+    else if (modo === 'semana') el.innerHTML = `<div class="campo"><label>Semana (escolha qualquer dia dela)</label><input type="date" id="fDia" value="${dataLocal(hoje)}"></div>`;
+    else if (modo === 'ano') el.innerHTML = `<div class="campo"><label>Ano</label><input type="number" id="fAno" min="2000" max="2100" value="${hoje.getFullYear()}"></div>`;
     else el.innerHTML = `<div class="campo"><label>De — até</label><div style="display:flex;gap:6px"><input type="date" id="fDe" value="${dataLocal(new Date(Date.now() - 29 * 864e5))}"><input type="date" id="fAte" value="${dataLocal(hoje)}"></div></div>`;
   };
   const periodos = () => {
-    if (modo === 'semana') return semanaDe($('#fDia').value);
     if (modo === 'dia') { const d = $('#fDia').value; return [d, d]; }
-    if (modo === 'mes') { const m = $('#fMes').value; return [m + '-01', fimDoMes(m)]; }
+    if (modo === 'semana') return semanaDe($('#fDia').value);
+    if (modo === 'ano') { const y = $('#fAno').value; return [y + '-01-01', y + '-12-31']; }
     return [$('#fDe').value, $('#fAte').value];
   };
-  const rotulos = { semana: 'Semana', dia: 'Dia', mes: 'Mês', livre: 'Período' };
+  const rotulos = { dia: 'Dia', semana: 'Semana', ano: 'Ano', livre: 'Período' };
   const gerar = async () => {
     const [de, ate] = periodos();
     if (!de || !ate) { toast('Escolha a data', 'erro'); return; }
