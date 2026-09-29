@@ -1,4 +1,4 @@
-/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.8 */
+/* SCI — front vanilla (sem build, sem framework). Hash routing. v9.10 */
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -851,12 +851,16 @@ async function admGrupos() {
   const noHTML = (n, nivel) => {
     const temFilhos = n.filhos && n.filhos.length;
     const id = 'admNo' + n.id + '_' + Math.random().toString(36).slice(2, 6);
+    const rec = n.efetivo_total !== undefined && n.efetivo_total !== n.efetivo;
+    const efetTxt = rec
+      ? `<small style="color:#000"> · efetivo total: <b style="color:#000">${n.efetivo_total}</b> <small>(próprio ${n.efetivo})</small></small>`
+      : `<small style="color:#000"> · ${n.efetivo} no efetivo</small>`;
     return `<div style="margin-left:${nivel * 24}px;padding:6px 10px;border-left:3px solid var(--verde);margin-bottom:5px;background:#f4f8f4;border-radius:0 6px 6px 0">
       ${temFilhos ? `<span data-tgl="${id}" style="cursor:pointer;font-weight:700;color:#000">▸ </span>` : ''}
       <b style="color:#000;cursor:${temFilhos ? 'pointer' : 'default'}" data-tgl="${temFilhos ? id : ''}">${esc(n.nome)}</b>
       <small style="color:#000">#${n.id}</small>
       <code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(n.codigo)}</code>
-      <small style="color:#000"> · gerente: <b style="color:#000">${esc(gerenteDe[n.id] || '—')}</b> · ${n.efetivo} no efetivo · ${n.contas} conta(s)</small>
+      <small style="color:#000"> · gerente: <b style="color:#000">${esc(gerenteDe[n.id] || '—')}</b> · ${efetTxt} · ${n.contas} conta(s)</small>
       ${temFilhos ? `<div id="${id}" class="oculto" style="margin-top:4px">${n.filhos.map(f => noHTML(f, nivel + 1)).join('')}</div>` : ''}
     </div>`;
   };
@@ -935,12 +939,37 @@ async function admGrupos() {
       toast('Subordinação removida'); viewAdmin();
     } catch (e) {}
   });
-  document.querySelectorAll('#adm button[data-excluir]').forEach(b => b.onclick = async () => {
-    if (!confirm(`Excluir o grupo "${b.dataset.nome}"? Só é possível se estiver vazio (sem pessoas, contas e vínculos).`)) return;
-    try {
-      await api(`/api/grupos/${b.dataset.excluir}`, { method: 'DELETE' });
-      toast('Grupo excluído'); viewAdmin();
-    } catch (e) {}
+  document.querySelectorAll('#adm button[data-excluir]').forEach(b => b.onclick = () => {
+    const gid = b.dataset.excluir, gnome = b.dataset.nome;
+    const div = document.createElement('div');
+    div.className = 'modal-mask';
+    div.innerHTML = `<div class="modal"><h3>Excluir grupo — ${gnome}</h3>
+      <p style="color:var(--tx2);font-size:13px;margin:6px 0">Exclusão normal: só se o grupo estiver vazio.</p>
+      <div class="modal-acoes"><button class="fantasma" id="mX">Cancelar</button>
+      <button class="perigo" id="mGo">Tentar exclusão normal</button></div>
+      <div style="border-top:1px solid #ccc;margin-top:12px;padding-top:10px">
+        <p style="color:#a00;font-size:13px;margin:4px 0"><b>Exclusão FORÇADA</b> — remove o grupo INTEIRO mesmo com contas e pessoal (tudo é apagado). Grupos com histórico de conferências são sempre preservados. Requer sua senha de admin.</p>
+        <div class="campo"><label>Senha de admin</label><input type="password" id="fSenha"></div>
+        <div class="modal-acoes"><button class="perigo" id="mForce">Excluir forçadamente</button></div>
+      </div></div>`;
+    document.body.appendChild(div);
+    div.querySelector('#mX').onclick = () => div.remove();
+    div.onclick = ev => { if (ev.target === div) div.remove(); };
+    div.querySelector('#mGo').onclick = async () => {
+      try {
+        await api(`/api/grupos/${gid}`, { method: 'DELETE' });
+        toast('Grupo excluído'); div.remove(); viewAdmin();
+      } catch (e) {}
+    };
+    div.querySelector('#mForce').onclick = async () => {
+      const senha = div.querySelector('#fSenha').value;
+      if (!senha) { toast('Digite a senha de admin', 'erro'); return; }
+      try {
+        const r = await api(`/api/grupos/${gid}?forcar=1`, { method: 'DELETE', body: JSON.stringify({ senha }) });
+        toast(`Grupo excluído forçadamente — ${r.contas_removidas} conta(s), ${r.pessoas_removidas} pessoa(s) removidas`);
+        div.remove(); viewAdmin();
+      } catch (e) {}
+    };
   });
   document.querySelectorAll('#adm select[id^="sub-"]').forEach(sel => sel.onchange = async () => {
     const gid = sel.id.split('-')[1];

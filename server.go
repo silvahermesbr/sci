@@ -1519,9 +1519,11 @@ func (a *App) hPessoaExcluir(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
-// hGrupoExcluir (v9.7): admin EXCLUI grupo — só se VAZIO: sem pessoas, sem contas
-// ativas, sem vínculos de subordinação. Qualquer histórico de conferência impede
-// (imutabilidade histórica) — nesse caso sugerir manter.
+// hGrupoExcluir (v9.7): admin EXCLUI grupo — vazio (sem pessoas/contas/vínculos/histórico).
+// v9.10: modo FORÇADO (?forcar=1 + senha de admin no corpo) exclui grupo INTEIRO mesmo
+// com contas e pessoas: contas do grupo são EXCLUÍDAS, pessoas também, subordinação do
+// grupo é removida. Histórico de conferências continua blindado (imutabilidade) — grupo
+// com conferências gravadas NÃO é excluído nem forçado.
 func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -1534,6 +1536,23 @@ func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "grupo inexistente")
 		return
 	}
+	forcar := r.URL.Query().Get("forcar") == "1"
+	if forcar {
+		var req struct {
+			Senha string `json:"senha"`
+		}
+		if err := decodificar(r, &req); err != nil || req.Senha == "" {
+			jsonErro(w, http.StatusBadRequest, "senha de admin obrigatória para exclusão forçada")
+			return
+		}
+		var hash string
+		if err := a.st.db.QueryRow(`SELECT senha_hash FROM usuarios WHERE id = ?`, u.ID).Scan(&hash); err != nil ||
+			!verificaSenha(req.Senha, hash) {
+			a.st.Auditoria(&u.ID, "excluir_grupo_negado", "grupos", &id, "senha incorreta", ipDe(r))
+			jsonErro(w, http.StatusUnauthorized, "senha de admin incorreta — exclusão negada")
+			return
+		}
+	}
 	var pessoas, contas, vinculos, confs int
 	_ = a.st.db.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM pessoas WHERE grupo_id = ?),
@@ -1541,28 +1560,56 @@ func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 		(SELECT COUNT(*) FROM grupo_vinculos WHERE superior_id = ? OR subordinado_id = ?),
 		(SELECT COUNT(*) FROM conferencias WHERE grupo_id = ?)`,
 		id, id, id, id, id).Scan(&pessoas, &contas, &vinculos, &confs)
-	if pessoas > 0 {
-		jsonErro(w, http.StatusConflict, fmt.Sprintf("grupo tem %d pessoa(s) no banco de pessoal — mova ou exclua antes", pessoas))
-		return
-	}
-	if contas > 0 {
-		jsonErro(w, http.StatusConflict, fmt.Sprintf("grupo tem %d conta(s) ativa(s) — mova ou exclua as contas antes", contas))
-		return
-	}
-	if vinculos > 0 {
-		jsonErro(w, http.StatusConflict, "grupo tem vínculos de subordinação — remova-os antes (painel de grupos)")
-		return
-	}
 	if confs > 0 {
-		jsonErro(w, http.StatusConflict, "grupo tem histórico de conferências — exclusão negada (imutabilidade histórica)")
+		jsonErro(w, http.StatusConflict, "grupo tem histórico de conferências — exclusão negada mesmo forçada (imutabilidade histórica)")
 		return
 	}
-	if _, err = a.st.db.Exec(`DELETE FROM grupos WHERE id = ?`, id); err != nil {
-		jsonErro(w, http.StatusConflict, "grupo não pôde ser excluído (referências históricas): "+err.Error())
+	if !forcar {
+		if pessoas > 0 {
+			jsonErro(w, http.StatusConflict, fmt.Sprintf("grupo tem %d pessoa(s) no banco de pessoal — mova ou exclua antes (ou use exclusão forçada com senha)", pessoas))
+			return
+		}
+		if contas > 0 {
+			jsonErro(w, http.StatusConflict, fmt.Sprintf("grupo tem %d conta(s) ativa(s) — mova ou exclua as contas antes (ou use exclusão forçada com senha)", contas))
+			return
+		}
+		if vinculos > 0 {
+			jsonErro(w, http.StatusConflict, "grupo tem vínculos de subordinação — remova-os antes (painel de grupos)")
+			return
+		}
+	}
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	a.st.Auditoria(&u.ID, "excluir", "grupos", &id, nome, ipDe(r))
-	jsonOK(w, map[string]bool{"ok": true})
+	defer tx.Rollback()
+	if _, err = tx.Exec(`DELETE FROM grupo_vinculos WHERE superior_id = ? OR subordinado_id = ?`, id, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err = tx.Exec(`DELETE FROM usuarios WHERE grupo_id = ?`, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err = tx.Exec(`DELETE FROM pessoas WHERE grupo_id = ?`, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err = tx.Exec(`DELETE FROM grupos WHERE id = ?`, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err = tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	detalhe := "vazio"
+	if forcar {
+		detalhe = fmt.Sprintf("FORÇADA: %d conta(s) e %d pessoa(s) removidas", contas, pessoas)
+	}
+	a.st.Auditoria(&u.ID, "excluir", "grupos", &id, nome+" ["+detalhe+"]", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "forçada": forcar, "contas_removidas": contas, "pessoas_removidas": pessoas})
 }
 
 func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
@@ -2085,11 +2132,13 @@ func nilToInts(ns sql.NullString) []int64 {
 // hArvoreGrupos (v9.4): árvore NESTED dos grupos. Admin: floresta completa a partir
 // das raízes. Gerente/operador: próprio grupo como raiz + subordinados (recursivo).
 // READ ONLY — subordinação só no painel admin.
+// v9.10: efetivo RECURSIVO — cada nó carrega o efetivo próprio + soma de toda a
+// subárvore (o painel mostra o total agregado; ao expandir, o valor se disseca por nível).
 func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	rows, err := a.st.db.Query(`
 		SELECT g.id, g.nome, COALESCE(g.codigo,''),
-		       (SELECT COUNT(*) FROM pessoas p WHERE p.grupo_id = g.id),
+		       (SELECT COUNT(*) FROM pessoas p WHERE p.grupo_id = g.id AND p.status = 'ativo'),
 		       (SELECT COUNT(*) FROM usuarios us WHERE us.grupo_id = g.id AND us.ativo = 1)
 		FROM grupos g ORDER BY g.nome`)
 	if err != nil {
@@ -2097,12 +2146,13 @@ func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type GrupoN struct {
-		ID      int64     `json:"id"`
-		Nome    string    `json:"nome"`
-		Codigo  string    `json:"codigo"`
-		Efetivo int       `json:"efetivo"`
-		Contas  int       `json:"contas"`
-		Filhos  []*GrupoN `json:"filhos"`
+		ID           int64     `json:"id"`
+		Nome         string    `json:"nome"`
+		Codigo       string    `json:"codigo"`
+		Efetivo      int       `json:"efetivo"`       // próprio (sem subordinados)
+		EfetivoTotal int       `json:"efetivo_total"` // recursivo: próprio + subárvore
+		Contas       int       `json:"contas"`
+		Filhos       []*GrupoN `json:"filhos"`
 	}
 	nos := map[int64]*GrupoN{}
 	filhosDe := map[int64][]int64{}
@@ -2137,9 +2187,11 @@ func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 		if no == nil || profundidade > 32 {
 			return nil
 		}
+		no.EfetivoTotal = no.Efetivo
 		for _, filho := range filhosDe[id] {
 			if f := montar(filho, profundidade+1); f != nil {
 				no.Filhos = append(no.Filhos, f)
+				no.EfetivoTotal += f.EfetivoTotal
 			}
 		}
 		return no
