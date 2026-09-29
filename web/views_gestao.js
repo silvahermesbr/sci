@@ -439,7 +439,8 @@
         const el = $('#ger' + k[0].toUpperCase() + k.slice(1));
         if (el) el.classList.toggle('oculto', k !== abaGer);
       });
-      document.querySelectorAll('#abasGer button').forEach(x => x.classList.toggle('ativo', x.dataset.g === abaGer));
+      document.querySelectorAll('.abas button[data-g]').forEach(x => x.classList.toggle('ativo', x.dataset.g === abaGer));
+      if (abaGer === 'tags') carregarCats(); // v9.16.9: carrega ao clicar (não só na 1ª renderização)
     });
     ligarToggles($('#app'));
 
