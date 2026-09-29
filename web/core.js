@@ -100,6 +100,14 @@ window.toast = toast;
 /* ---------- datas ---------- */
 function fmtData(s) {
   if (!s) return '—';
+  // v9.15.3: se vier ISO com hora (RFC3339), converter para o dia de BRASÍLIA
+  if (String(s).length > 10 && String(s).includes('T')) {
+    const d = new Date(s);
+    if (!isNaN(d)) {
+      const f = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric' }).format(d);
+      return f;
+    }
+  }
   const m = String(s).slice(0, 10).match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? m[3] + '/' + m[2] + '/' + m[1] : String(s);
 }
@@ -108,7 +116,8 @@ window.fmtData = fmtData;
 function fmtHora(iso) {
   if (!iso) return '—';
   const d = new Date(iso);
-  return isNaN(d) ? '—' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  // v9.15.3 (ordem Tenente): horário de BRASÍLIA obrigatório, independente do fuso do dispositivo
+  return isNaN(d) ? '—' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 }
 window.fmtHora = fmtHora;
 

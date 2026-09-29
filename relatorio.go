@@ -498,8 +498,13 @@ func str(v any) string {
 
 // fmtDataBR: 2026-09-28T15:04:05Z (ou local) -> 28/09/2026 15:04
 func fmtDataBR(iso string) string {
+	// v9.15.3 (ordem Tenente): TODOS os horários exibidos são de BRASÍLIA, sem exceção
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	if err != nil {
+		loc = time.FixedZone("BRT", -3*3600)
+	}
 	if t, err := time.Parse(time.RFC3339, iso); err == nil {
-		return t.Format("02/01/2006 15:04")
+		return t.In(loc).Format("02/01/2006 15:04")
 	}
 	if len(iso) >= 16 {
 		return iso[:10] + " " + iso[11:16]
