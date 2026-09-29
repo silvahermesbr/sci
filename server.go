@@ -1692,8 +1692,25 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 		}
 		q += ` WHERE grupo_id IS NULL OR grupo_id IN (` + ph + `)`
 	}
-	// v9.16.8: antiguidade primeiro, depois nome (front separa HERDADO x DO GRUPO)
-	q += ` ORDER BY antiguidade, nome`
+	// v9.16.10 (ordem Tenente): HIERARQUIA primeiro (caminho pai>filho via CTE), depois
+	// antiguidade, depois nome — nunca alfabética achatada
+	q = `WITH RECURSIVE cam(id, caminho) AS (
+		  SELECT id, nome FROM ` + t + ` WHERE pai_id IS NULL
+		  UNION ALL
+		  SELECT f.id, cm.caminho || ' > ' || f.nome FROM ` + t + ` f JOIN cam cm ON f.pai_id = cm.id
+		)
+		SELECT ` + t + `.id, ` + t + `.nome` + extra + `, ` + t + `.pai_id, ` + t + `.ativo, ` + t + `.grupo_id, ` + t + `.antiguidade
+		FROM ` + t + ` LEFT JOIN cam ON cam.id = ` + t + `.id`
+	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
+		ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		args = make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+		q += ` WHERE ` + t + `.grupo_id IS NULL OR ` + t + `.grupo_id IN (` + ph + `)`
+	}
+	q += ` ORDER BY cam.caminho, antiguidade, nome`
 	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())

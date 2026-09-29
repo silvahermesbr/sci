@@ -600,7 +600,8 @@
         if (t === 'tags' && minhas.length) {
           const arv = (pai, nivel) => minhas
             .filter(x => (x.pai_id ?? null) === (pai ?? null))
-            .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt'))
+            .sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999)
+              || (a.id - b.id))
             .map(x => {
               const temFilhos = minhas.some(y => y.pai_id === x.id);
               return `<div class="cat-arv-item" draggable="true" data-tagid="${x.id}" style="margin-left:${nivel * 22}px">` +
@@ -665,7 +666,13 @@
         const lista = (resultados.find(r => r[0] === t) || [null, []])[1]
           .filter(x => meusGrupos.has(x.grupo_id));
         if (lista.length < 2) return;
-        let ordem = lista.slice().sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt'));
+        // v9.16.10: ordem inicial segue a HIERARQUIA (pai antes dos filhos, recursivo)
+        const raiz = lista.filter(x => x.pai_id == null);
+        const empilhar = (nos, acc) => nos
+          .sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id))
+          .forEach(x => { acc.push(x); empilhar(lista.filter(y => y.pai_id === x.id), acc); });
+        let ordem = []; empilhar(raiz, ordem);
+        lista.filter(x => !ordem.includes(x)).forEach(x => ordem.push(x));
         const div = modal(`<div class="modal-inner"><h3>Antiguidade — ${rotCat[t]}</h3>
           <p style="color:var(--tx2);font-size:12px;margin:4px 0">Arraste para ordenar: o primeiro é o mais antigo.</p>
           <div id="antLista" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto"></div>
