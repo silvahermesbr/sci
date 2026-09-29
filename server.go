@@ -186,6 +186,7 @@ func (a *App) rotas() {
 	m.Handle("DELETE /api/conferencia/{id}", confAuth(a.hConferenciaDescartar))
 	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", confAuth(a.hConferenciaPDF))
 
+	m.Handle("GET /api/efetivo_atual", confAuth(a.hEfetivoAtual))
 	m.Handle("GET /api/presenca/periodo", confAuth(a.hPresencaPeriodo))
 	m.Handle("GET /api/conferencias", confAuth(a.hConferenciaList))
 
@@ -546,6 +547,61 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 	a.st.Auditoria(&u.ID, "marcar_parcial", "presencas", &confID,
 		"pessoa "+fmt.Sprintf("%d", req.PessoaID)+" → "+req.Situacao, ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "gravado": true, "conferencia_id": confID})
+}
+
+
+// hEfetivoAtual (v9.15, ordem Tenente 29/09): estado ATUAL de cada militar = estado na ÚLTIMA
+// conferência em que foi lançado (não agregação de período). Usado no dashboard de relatórios
+// com alertas de frescor: >1 dia = amarelo; >1 semana = vermelho (calculado no cliente pela data).
+func (a *App) hEfetivoAtual(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	q := `
+		SELECT p.id, p.nome_guerra, COALESCE(s.nome,''), COALESCE(fu.nome,''),
+		       COALESCE((SELECT g.nome FROM grupos g WHERE g.id = p.grupo_id),'—'),
+		       ult.data, ult.situacao, ult.conferencia_id
+		FROM pessoas p
+		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN (
+			SELECT pr.pessoa_id, c.data, pr.situacao, pr.conferencia_id,
+			       ROW_NUMBER() OVER (PARTITION BY pr.pessoa_id ORDER BY c.data DESC, c.id DESC) rn
+			FROM presencas pr
+			JOIN conferencias c ON c.id = pr.conferencia_id AND c.status = 'fechada'
+		) ult ON ult.pessoa_id = p.id AND ult.rn = 1
+		WHERE p.status = 'ativo'`
+	var args []any
+	if escopo > 0 {
+		q += ` AND p.grupo_id = ?`
+		args = append(args, escopo)
+	}
+	q += ` ORDER BY COALESCE(s.nome,''), p.nome_guerra`
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var ng, setor, funcao, grupo string
+		var data, sit *string
+		var confID *int64
+		if rows.Scan(&id, &ng, &setor, &funcao, &grupo, &data, &sit, &confID) == nil {
+			m := map[string]any{"id": id, "nome_guerra": ng, "setor": setor, "funcao": funcao, "grupo": grupo}
+			if data != nil {
+				m["ultima_data"] = *data
+				m["situacao"] = *sit
+				m["conferencia_id"] = *confID
+			} else {
+				m["ultima_data"] = nil
+				m["situacao"] = nil
+			}
+			out = append(out, m)
+		}
+	}
+	jsonOK(w, map[string]any{"pessoas": out, "hoje": time.Now().In(a.horaLocal).Format("2006-01-02")})
 }
 
 // pessoasAtivas(escopo): escopo 0 = todas (admin); N = só do grupo N.

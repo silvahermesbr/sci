@@ -472,3 +472,8 @@ input[type="checkbox"]{width:auto;cursor:pointer;accent-color:var(--verde)}
   #toasts{left:14px}
   .toast{max-width:none}
 }
+
+/* ---------- alertas de frescor do estado atual (v9.15) ---------- */
+.alerta-ok{color:var(--verde-claro)}
+.alerta-ama{color:var(--ambar-txt)}
+.alerta-verm{color:var(--verm-txt)}

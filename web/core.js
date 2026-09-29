@@ -368,6 +368,49 @@ function chamarView(nome) {
   }
 }
 
+
+/* ---------- efetivo: estado ATUAL (v9.15) ----------
+   Última conferência de cada militar = estado atual. Frescor:
+   hoje = ok · >1 dia = amarelo · >1 semana = vermelho · nunca conferido = vermelho. */
+window.EfetivoAtualHTML = async function () {
+  let d;
+  try { d = await api('/api/efetivo_atual'); } catch (e) { return ''; }
+  const hoje = d.hoje;
+  const dias = s => Math.floor((new Date(hoje + 'T12:00:00') - new Date(s + 'T12:00:00')) / 864e5);
+  const frescor = p => {
+    if (!p.ultima_data) return { cls: 'alerta-verm', rot: 'nunca conferido' };
+    const dd = dias(p.ultima_data);
+    if (dd >= 7) return { cls: 'alerta-verm', rot: dd + ' dias' };
+    if (dd >= 1) return { cls: 'alerta-ama', rot: dd + (dd === 1 ? ' dia' : ' dias') };
+    return { cls: 'alerta-ok', rot: 'hoje' };
+  };
+  const ps = (d.pessoas || []).slice().sort((a, b) =>
+    (a.setor || '').localeCompare(b.setor || '', 'pt') ||
+    (a.nome_guerra || '').localeCompare(b.nome_guerra || '', 'pt', { sensitivity: 'base' }));
+  const porSetor = {};
+  ps.forEach(p => { (porSetor[p.setor || 'Sem setor'] = porSetor[p.setor || 'Sem setor'] || []).push(p); });
+  let secoes = '';
+  for (const setor of Object.keys(porSetor).sort()) {
+    const linhas = porSetor[setor].map(p => {
+      const fr = frescor(p);
+      const sit = p.situacao ? pill(p.situacao) : '<span style="color:var(--tx3)">—</span>';
+      return `<tr><td><b>${esc(p.nome_guerra)}</b> <span class="${fr.cls}" title="última conferência">●</span> <small style="color:var(--tx3)">${fr.rot}</small></td>` +
+        `<td>${esc(p.funcao || '—')}</td><td>${sit}</td>` +
+        `<td>${p.ultima_data ? fmtData(p.ultima_data) : '—'}</td><td>${esc(p.grupo)}</td></tr>`;
+    }).join('');
+    secoes += `<h4 style="margin:12px 0 6px">${esc(setor)} · ${porSetor[setor].length}</h4>
+      <div class="rolagem"><table><thead><tr><th>Nome</th><th>Função</th><th>Situação atual</th><th>Última conferência</th><th>Grupo</th></tr></thead>
+      <tbody>${linhas}</tbody></table></div>`;
+  }
+  const n = ps.length;
+  const nAma = ps.filter(p => { const f = frescor(p); return f.cls === 'alerta-ama'; }).length;
+  const nVerm = ps.filter(p => { const f = frescor(p); return f.cls === 'alerta-verm'; }).length;
+  return `<div class="cartao" style="margin-bottom:14px">
+    <h3 style="margin:0 0 4px">EFETIVO — ESTADO ATUAL <small style="color:var(--tx3);font-weight:400">(estado da última conferência de cada militar)</small></h3>
+    <p style="color:var(--tx2);font-size:12px;margin:0 0 8px">${n} militares · <span style="color:var(--ambar-txt)">● ${nAma} sem conferência há 1+ dia</span> · <span style="color:var(--verm-txt)">● ${nVerm} há 1+ semana ou nunca</span></p>
+    ${secoes}</div>`;
+};
+
 /* ---------- router ---------- */
 function rotear() {
   garantirApp();
@@ -461,8 +504,10 @@ async function viewDashboard() {
   const b = await api('/api/relatorio?de=' + periodo[0] + '&ate=' + dataLocal(hoje));
   b.De = periodo[0];
   b.Ate = dataLocal(hoje);
+  const estadoAtual = await window.EfetivoAtualHTML(); // v9.15: estado atual do efetivo
   app.innerHTML = '<h2>Dashboard</h2>' +
     '<p style="color:var(--tx2);font-size:13px;margin-bottom:10px">Panorama da semana em curso — leitura.</p>' +
+    estadoAtual +
     renderRelatorio(b, 'Semana em curso');
 }
 window.ViewDashboard = viewDashboard;

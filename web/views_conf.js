@@ -387,6 +387,7 @@
         <div class="form-linha" style="grid-template-columns:1fr auto;align-items:end">
           <div id="entrada"></div>
           <button class="primario" id="btGerar" style="min-height:44px">Gerar</button></div></div>
+      <div id="estadoAtual"><div class="carregando">Carregando estado atual do efetivo…</div></div>
       <div id="saida"><div class="carregando">Gerando dia atual…</div></div>`;
     let modo = 'dia';
     const entrada = () => {
@@ -415,6 +416,14 @@
       } catch (e) { $('#saida').innerHTML = ''; }
     };
     entrada();
+    /* v9.15: estado ATUAL do efetivo no topo do dashboard de relatórios */
+    (async () => {
+      try {
+        const html = await window.EfetivoAtualHTML();
+        const alvo = document.querySelector('#estadoAtual');
+        if (alvo) alvo.innerHTML = html;
+      } catch (e) {}
+    })();
     gerar();
     document.querySelectorAll('#modos button').forEach(b => b.onclick = () => {
       modo = b.dataset.m;
