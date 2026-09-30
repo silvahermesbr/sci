@@ -1286,30 +1286,22 @@ input[type="checkbox"] {
 
 .login-cartao-topo {
   display: flex;
-  justify-content: space-between;
+  justify-content: center;
   align-items: center;
+  text-align: center;
   margin-bottom: 20px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--borda);
 }
 
-.login-cartao-topo h3 {
+.login-cartao-titulo {
   margin: 0;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
   color: var(--tx2);
   letter-spacing: 0.08em;
   text-transform: uppercase;
-}
-
-.login-badge-seguro {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--verde-claro);
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.25);
-  padding: 2px 9px;
-  border-radius: 99px;
+  text-align: center;
 }
 
 .login-form {
@@ -1320,6 +1312,7 @@ input[type="checkbox"] {
 
 .login-form .campo {
   margin: 0;
+  text-align: center;
 }
 
 .login-form .campo label {
@@ -1328,6 +1321,7 @@ input[type="checkbox"] {
   font-weight: 600;
   color: var(--tx2);
   margin-bottom: 6px;
+  text-align: center;
 }
 
 .login-form input {
@@ -1338,7 +1332,12 @@ input[type="checkbox"] {
   border-radius: var(--raio);
   padding: 0 14px;
   font-size: 14.5px;
+  text-align: center;
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.login-form input::placeholder {
+  text-align: center;
 }
 
 .login-form input:focus {

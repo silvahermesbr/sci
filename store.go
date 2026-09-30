@@ -752,7 +752,7 @@ func (s *Store) migrarV15() error {
 	defaults := map[string]string{
 		"NOME_SISTEMA":          "SCI",
 		"SUBTITULO_SISTEMA":     "Controle Interno",
-		"TITULO_ORGANIZACAO":    "3º B Com GE",
+		"TITULO_ORGANIZACAO":    "Organização",
 		"ROTULO_GRUPO":          "Companhia / Subunidade",
 		"ROTULO_SETOR":          "Pelotão / Seção",
 		"ROTULO_FUNCAO":         "Função",
@@ -1070,6 +1070,7 @@ func (s *Store) migrarV19() error {
 	_, _ = s.db.Exec(`INSERT INTO configuracoes (chave, valor)
 		SELECT 'WEBHOOK_ATRASOS_URL', ''
 		WHERE NOT EXISTS (SELECT 1 FROM configuracoes WHERE chave = 'WEBHOOK_ATRASOS_URL')`)
+	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = 'Organização' WHERE chave = 'TITULO_ORGANIZACAO' AND valor = '3º B Com GE'`)
 
 	return s.marcarVersao(19)
 }

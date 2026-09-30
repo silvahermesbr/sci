@@ -53,7 +53,7 @@
           </div>
           <div class="campo">
             <label>Nome / Título da Organização Militar ou Instituição</label>
-            <input id="c_TITULO_ORGANIZACAO" value="${esc(c.TITULO_ORGANIZACAO || '3º B Com GE')}" placeholder="ex.: 3º Batalhão de Comunicações, 15º BPM, Hospital Central">
+            <input id="c_TITULO_ORGANIZACAO" value="${esc(c.TITULO_ORGANIZACAO || 'Organização')}" placeholder="ex.: 3º Batalhão de Comunicações, 15º BPM, Hospital Central">
           </div>
         </div>
 

@@ -413,21 +413,20 @@ function viewLogin() {
 
         <div class="cartao login-cartao">
           <div class="login-cartao-topo">
-            <h3>Acesso ao Sistema</h3>
-            <span class="login-badge-seguro">🔒 Intranet</span>
+            <h3 class="login-cartao-titulo">Acesso ao Sistema</h3>
           </div>
 
           <form id="formLogin" onsubmit="return false;" class="login-form">
             <div class="campo">
-              <label for="lg">Usuário / Identificador</label>
-              <input id="lg" autocomplete="username" placeholder="Digite seu usuário…" autofocus required>
+              <label for="lg">Login</label>
+              <input id="lg" autocomplete="username" placeholder="Digite seu login…" autofocus required>
             </div>
             <div class="campo">
-              <label for="sn">Senha de Acesso</label>
+              <label for="sn">Senha</label>
               <input id="sn" type="password" autocomplete="current-password" placeholder="••••••••" required>
             </div>
             <button type="submit" class="primario bt-login" id="btEntrar">
-              <span>Entrar no Sistema</span>
+              <span>Entrar</span>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </button>
           </form>
