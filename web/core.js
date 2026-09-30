@@ -393,29 +393,74 @@ function viewLogin() {
   const tb = $('#topbar');
   if (tb) tb.classList.add('oculto');
   const app = garantirApp();
-  app.innerHTML =
-    '<div class="login-box">' +
-      '<div class="marca"><span class="logo">SCI</span></div>' +
-      '<div class="cartao">' +
-        '<div class="campo"><label>Usuário</label><input id="lg" autocomplete="username"></div>' +
-        '<div class="campo"><label>Senha</label><input id="sn" type="password" autocomplete="current-password"></div>' +
-        '<button type="button" class="primario" id="btEntrar">Entrar</button>' +
-      '</div>' +
-    '</div>';
+  const nomeSys = window.cfg ? window.cfg('NOME_SISTEMA', 'SCI') : 'SCI';
+  const subSys = window.cfg ? window.cfg('SUBTITULO_SISTEMA', 'Controle Interno') : 'Controle Interno';
+  const orgTitulo = window.cfg ? window.cfg('TITULO_ORGANIZACAO', '') : '';
+
+  app.innerHTML = `
+    <div class="login-wrapper">
+      <div class="login-box">
+        <div class="login-header">
+          <div class="login-logo">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 2.5l8 3.2v5.6c0 5-3.4 8.6-8 10.2-4.6-1.6-8-5.2-8-10.2V5.7l8-3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+              <path d="M8.4 12.2l2.5 2.5 4.7-5.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="login-nome">${esc(nomeSys)}</span>
+          </div>
+          <p class="login-sub">${esc(subSys)}${orgTitulo ? ' · ' + esc(orgTitulo) : ''}</p>
+        </div>
+
+        <div class="cartao login-cartao">
+          <div class="login-cartao-topo">
+            <h3>Acesso ao Sistema</h3>
+            <span class="login-badge-seguro">🔒 Intranet</span>
+          </div>
+
+          <form id="formLogin" onsubmit="return false;" class="login-form">
+            <div class="campo">
+              <label for="lg">Usuário / Identificador</label>
+              <input id="lg" autocomplete="username" placeholder="Digite seu usuário…" autofocus required>
+            </div>
+            <div class="campo">
+              <label for="sn">Senha de Acesso</label>
+              <input id="sn" type="password" autocomplete="current-password" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="primario bt-login" id="btEntrar">
+              <span>Entrar no Sistema</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </button>
+          </form>
+        </div>
+
+        <div class="login-rodape">
+          <span>Sistema de Controle Interno · Uso Restrito</span>
+        </div>
+      </div>
+    </div>
+  `;
+
   const entrar = async () => {
     const login = $('#lg').value.trim(), senha = $('#sn').value;
     if (!login || !senha) { toast('Informe usuário e senha', 'erro'); return; }
+    const btn = $('#btEntrar');
+    if (btn) btn.disabled = true;
     try {
       const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ login: login, senha: senha }) });
       definirUsuario(r.usuario);
       montarShell(r.usuario);
       toast('Bem-vindo, ' + r.usuario.login);
       irPara(rotaInicial());
-    } catch (e) { /* toast já exibido pelo api() */ }
+    } catch (e) {
+      if (btn) btn.disabled = false;
+      const snInp = $('#sn');
+      if (snInp) { snInp.value = ''; snInp.focus(); }
+    }
   };
+
+  const form = $('#formLogin');
+  if (form) form.addEventListener('submit', entrar);
   $('#btEntrar').addEventListener('click', entrar);
-  $('#lg').addEventListener('keydown', ev => { if (ev.key === 'Enter') entrar(); });
-  $('#sn').addEventListener('keydown', ev => { if (ev.key === 'Enter') entrar(); });
 }
 window.viewLogin = viewLogin;
 

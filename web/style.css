@@ -1196,3 +1196,225 @@ input[type="checkbox"] {
   from { transform: scale(0.4); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
 }
+
+/* ---------- 17. Tela de Login (Desktop, Tablet, Mobile) ---------- */
+.login-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - 80px);
+  width: 100%;
+  padding: 32px 20px;
+}
+
+.login-box {
+  width: 100%;
+  max-width: 410px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: login-surgir 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes login-surgir {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.login-header {
+  text-align: center;
+  padding: 0 8px;
+}
+
+.login-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.login-logo svg {
+  color: var(--verde);
+  filter: drop-shadow(0 0 14px rgba(16, 185, 129, 0.5));
+  flex-shrink: 0;
+}
+
+.login-nome {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: var(--tx);
+}
+
+.login-sub {
+  font-size: 12px;
+  color: var(--tx3);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.login-cartao {
+  background: var(--painel);
+  border: 1px solid var(--borda2);
+  border-radius: var(--raio-g);
+  padding: 28px 26px;
+  box-shadow: 0 16px 40px -8px rgba(0, 0, 0, 0.65), 0 0 0 1px var(--borda-brilho);
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+
+.login-cartao::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--verde), transparent);
+}
+
+.login-cartao-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--borda);
+}
+
+.login-cartao-topo h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--tx2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.login-badge-seguro {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--verde-claro);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  padding: 2px 9px;
+  border-radius: 99px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-form .campo {
+  margin: 0;
+}
+
+.login-form .campo label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--tx2);
+  margin-bottom: 6px;
+}
+
+.login-form input {
+  width: 100%;
+  height: 42px;
+  background: var(--campo-bg);
+  border: 1px solid var(--borda2);
+  border-radius: var(--raio);
+  padding: 0 14px;
+  font-size: 14.5px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.login-form input:focus {
+  border-color: var(--verde);
+  box-shadow: var(--foco);
+  outline: none;
+}
+
+.bt-login {
+  width: 100%;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  margin-top: 6px;
+  border-radius: var(--raio);
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
+  cursor: pointer;
+}
+
+.bt-login:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.45);
+}
+
+.login-rodape {
+  text-align: center;
+  font-size: 11px;
+  color: var(--tx3);
+  letter-spacing: 0.03em;
+  margin-top: 2px;
+}
+
+/* Tablet adjustments (768px <= width <= 1023px) */
+@media (max-width: 1023px) and (min-width: 768px) {
+  .login-wrapper {
+    min-height: calc(100vh - 60px);
+    padding: 24px;
+  }
+  .login-box {
+    max-width: 380px;
+    gap: 16px;
+  }
+  .login-cartao {
+    padding: 24px 22px;
+  }
+}
+
+/* Mobile adjustments (width < 768px) */
+@media (max-width: 767px) {
+  .login-wrapper {
+    min-height: calc(100vh - 40px);
+    padding: 16px 10px 40px;
+    align-items: center;
+  }
+  .login-box {
+    max-width: 100%;
+    width: 100%;
+    gap: 14px;
+  }
+  .login-nome {
+    font-size: 23px;
+  }
+  .login-sub {
+    font-size: 11px;
+  }
+  .login-cartao {
+    padding: 20px 16px;
+    border-radius: var(--raio);
+  }
+  .login-form input,
+  .bt-login {
+    min-height: 46px !important;
+  }
+}
