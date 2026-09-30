@@ -3,6 +3,7 @@ package main
 // Servidor HTTP do SCI: rotas da API, backup definitivo, front embutido (SPA).
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"database/sql"
 	"embed"
@@ -46,6 +47,7 @@ func NovaApp(st *Store) *App {
 	}
 	a := &App{st: st, lim: NovoLimiter(), mux: http.NewServeMux(), horaLocal: loc, omTitulo: titulo}
 	a.rotas()
+	a.iniciarWatchdogSLA()
 	return a
 }
 
@@ -215,6 +217,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/pessoas", a.auth(false, a.hPessoasAdd))
 	m.Handle("PATCH /api/pessoas/{id}", a.auth(false, a.hPessoasEdit))
 	m.Handle("DELETE /api/pessoas/{id}", a.auth(false, a.hPessoaExcluir)) // v9.7: admin/gerente excluem (com histórico → desativa)
+	m.Handle("GET /api/pessoas/{id}/qr", a.auth(false, a.hPessoaQRCode))
 	m.Handle("DELETE /api/grupos/{id}", a.auth(true, a.hGrupoExcluir))    // v9.7: só admin, só grupo vazio
 
 	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4)
@@ -240,6 +243,8 @@ func (a *App) rotas() {
 	m.Handle("GET /api/relatorio", a.auth(false, a.hRelatorioJSON))
 	m.Handle("GET /api/relatorio.pdf", a.auth(false, a.hRelatorioPDF))
 	m.Handle("GET /api/export/{t}", a.auth(false, a.hExportCSV))
+	m.Handle("GET /api/export", a.auth(false, a.hExportarDados))
+	m.Handle("GET /api/notificacoes", a.auth(false, a.hNotificacoesHub))
 
 	m.Handle("POST /api/backup", a.auth(true, a.hBackup))
 	m.Handle("POST /api/backup/importar", a.auth(true, a.hBackupImportar)) // R9
@@ -274,6 +279,7 @@ func (a *App) rotas() {
 	m.Handle("GET /api/material/itens", reservaAuth(a.hMaterialItensList))
 	m.Handle("POST /api/material/itens", reservaAuth(a.hMaterialItensSave))
 	m.Handle("DELETE /api/material/itens/{id}", reservaAuth(a.hMaterialItensDel))
+	m.Handle("GET /api/material/itens/{id}/qr", reservaAuth(a.hMaterialItemQRCode))
 	m.Handle("POST /api/material/cautelar", reservaAuth(a.hMaterialCautelar))
 	m.Handle("POST /api/material/devolver", reservaAuth(a.hMaterialDevolver))
 	m.Handle("GET /api/material/cautelas", reservaAuth(a.hMaterialCautelasList))
@@ -4223,7 +4229,7 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 	q := `
 		SELECT mi.id, mi.grupo_id, COALESCE(g.nome, ''), mi.categoria_id, COALESCE(mc.nome, 'Sem Categoria'),
 		       mi.nome, mi.codigo_patrimonio, COALESCE(mi.numero_serie, ''), mi.status, COALESCE(mi.observacao, ''),
-		       mi.criado_em,
+		       mi.criado_em, COALESCE(mi.nivel_sensibilidade, 'padrao'),
 		       caut.id, caut.pessoa_id, p.nome_guerra, p.nome_completo, caut.data_saida, COALESCE(caut.obs_saida, ''),
 		       ue.login
 		FROM material_itens mi
@@ -4258,24 +4264,25 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, gid int64
 		var catID *int64
-		var gNome, catNome, nome, cod, numSerie, status, obs, criadoEm string
+		var gNome, catNome, nome, cod, numSerie, status, obs, criadoEm, sens string
 		var cautID, pesID *int64
 		var pNomeGuerra, pNomeCompleto, dtSaida, obsSaida, opEntrega *string
-		if err := rows.Scan(&id, &gid, &gNome, &catID, &catNome, &nome, &cod, &numSerie, &status, &obs, &criadoEm,
+		if err := rows.Scan(&id, &gid, &gNome, &catID, &catNome, &nome, &cod, &numSerie, &status, &obs, &criadoEm, &sens,
 			&cautID, &pesID, &pNomeGuerra, &pNomeCompleto, &dtSaida, &obsSaida, &opEntrega); err == nil {
 
 			item := map[string]any{
-				"id":                id,
-				"grupo_id":          gid,
-				"grupo_nome":        gNome,
-				"categoria_id":      catID,
-				"categoria_nome":    catNome,
-				"nome":              nome,
-				"codigo_patrimonio": cod,
-				"numero_serie":      numSerie,
-				"status":            status,
-				"observacao":        obs,
-				"criado_em":         criadoEm,
+				"id":                  id,
+				"grupo_id":            gid,
+				"grupo_nome":          gNome,
+				"categoria_id":        catID,
+				"categoria_nome":      catNome,
+				"nome":                nome,
+				"codigo_patrimonio":   cod,
+				"numero_serie":        numSerie,
+				"status":              status,
+				"observacao":          obs,
+				"criado_em":           criadoEm,
+				"nivel_sensibilidade": sens,
 			}
 			if cautID != nil {
 				item["cautela_ativa"] = map[string]any{
@@ -4301,14 +4308,15 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ID               int64  `json:"id"`
-		GrupoID          *int64 `json:"grupo_id"`
-		CategoriaID      *int64 `json:"categoria_id"`
-		Nome             string `json:"nome"`
-		CodigoPatrimonio string `json:"codigo_patrimonio"`
-		NumeroSerie      string `json:"numero_serie"`
-		Status           string `json:"status"`
-		Observacao       string `json:"observacao"`
+		ID                 int64  `json:"id"`
+		GrupoID            *int64 `json:"grupo_id"`
+		CategoriaID        *int64 `json:"categoria_id"`
+		Nome               string `json:"nome"`
+		CodigoPatrimonio   string `json:"codigo_patrimonio"`
+		NumeroSerie        string `json:"numero_serie"`
+		Status             string `json:"status"`
+		Observacao         string `json:"observacao"`
+		NivelSensibilidade string `json:"nivel_sensibilidade"`
 	}
 	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" || strings.TrimSpace(req.CodigoPatrimonio) == "" {
 		jsonErro(w, http.StatusBadRequest, "Nome e Código de Patrimônio são obrigatórios")
@@ -4337,13 +4345,16 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	if req.Status == "" {
 		req.Status = "disponivel"
 	}
+	if req.NivelSensibilidade == "" {
+		req.NivelSensibilidade = "padrao"
+	}
 
 	if req.ID > 0 {
 		_, err := a.st.db.Exec(`
 			UPDATE material_itens
-			SET categoria_id = ?, nome = ?, codigo_patrimonio = ?, numero_serie = ?, status = ?, observacao = ?
+			SET categoria_id = ?, nome = ?, codigo_patrimonio = ?, numero_serie = ?, status = ?, observacao = ?, nivel_sensibilidade = ?
 			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
-			req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.ID, escopoDoUsuario(u), grupoID)
+			req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.ID, escopoDoUsuario(u), grupoID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
@@ -4354,9 +4365,9 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := a.st.db.Exec(`
-		INSERT INTO material_itens (grupo_id, categoria_id, nome, codigo_patrimonio, numero_serie, status, observacao)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		grupoID, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao)
+		INSERT INTO material_itens (grupo_id, categoria_id, nome, codigo_patrimonio, numero_serie, status, observacao, nivel_sensibilidade)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		grupoID, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -4675,6 +4686,7 @@ func (a *App) hConfiguracoesGet(w http.ResponseWriter, _ *http.Request) {
 		"ROTULO_GRUPO": true, "ROTULO_SETOR": true, "ROTULO_FUNCAO": true,
 		"ROTULO_PESSOA": true, "ROTULO_IDENTIFICADOR": true,
 		"COR_PRIMARIA": true, "COR_PRIMARIA_CLARO": true, "COR_PRIMARIA_ESCURO": true,
+		"CAUTELA_PRAZO_PADRAO_HORAS": true, "WEBHOOK_ATRASOS_URL": true,
 	}
 	rows, err := a.st.db.Query(`SELECT chave, valor FROM configuracoes`)
 	if err != nil {
@@ -4868,6 +4880,227 @@ func (a *App) hMaterialAnexoDel(w http.ResponseWriter, r *http.Request) {
 	}
 	a.st.Auditoria(&u.ID, "excluir_anexo", "material_cautela_anexos", &anexoID, "", ipDe(r))
 	jsonOK(w, map[string]any{"ok": true})
+}
+
+// =====================================================================
+// QR CODE, CONSCIÊNCIA SITUACIONAL & WATCHDOG SLA (v19)
+// =====================================================================
+
+func (a *App) hPessoaQRCode(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID de militar inválido")
+		return
+	}
+	var nomeGuerra string
+	var gid *int64
+	err = a.st.db.QueryRow(`SELECT nome_guerra, grupo_id FROM pessoas WHERE id = ?`, id).Scan(&nomeGuerra, &gid)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Militar não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && (gid == nil || *gid != esc) {
+		jsonErro(w, http.StatusForbidden, "Acesso restrito ao grupo")
+		return
+	}
+	payload := fmt.Sprintf("sci://p:%d:%s", id, nomeGuerra)
+	qr, err := GerarQRCode(payload)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "Erro ao gerar QR Code: "+err.Error())
+		return
+	}
+	if r.URL.Query().Get("format") == "svg" {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_ = qr.RenderSVG(w, 256)
+		return
+	}
+	pngData, err := qr.RenderPNG(8, 4)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "Erro ao renderizar PNG: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Length", strconv.Itoa(len(pngData)))
+	_, _ = w.Write(pngData)
+}
+
+func (a *App) hMaterialItemQRCode(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID de material inválido")
+		return
+	}
+	var codPatrimonio, nome string
+	var gid int64
+	err = a.st.db.QueryRow(`SELECT codigo_patrimonio, nome, grupo_id FROM material_itens WHERE id = ?`, id).Scan(&codPatrimonio, &nome, &gid)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Material não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && gid != esc {
+		jsonErro(w, http.StatusForbidden, "Acesso restrito ao grupo")
+		return
+	}
+	payload := fmt.Sprintf("sci://m:%d:%s", id, codPatrimonio)
+	qr, err := GerarQRCode(payload)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "Erro ao gerar QR Code: "+err.Error())
+		return
+	}
+	if r.URL.Query().Get("format") == "svg" {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_ = qr.RenderSVG(w, 256)
+		return
+	}
+	pngData, err := qr.RenderPNG(8, 4)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "Erro ao renderizar PNG: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Content-Length", strconv.Itoa(len(pngData)))
+	_, _ = w.Write(pngData)
+}
+
+func (a *App) hNotificacoesHub(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	prazoHoras := 24
+	var cfgPrazo string
+	_ = a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'CAUTELA_PRAZO_PADRAO_HORAS'`).Scan(&cfgPrazo)
+	if p, err := strconv.Atoi(cfgPrazo); err == nil && p > 0 {
+		prazoHoras = p
+	}
+
+	q := `SELECT mc.id, mc.item_id, mi.nome, mi.codigo_patrimonio, mc.pessoa_id, p.nome_guerra,
+	             mc.data_saida, COALESCE(mi.nivel_sensibilidade, 'padrao'),
+	             ROUND((strftime('%s', 'now') - strftime('%s', mc.data_saida)) / 3600.0, 1) as horas_fora
+	      FROM material_cautelas mc
+	      JOIN material_itens mi ON mi.id = mc.item_id
+	      JOIN pessoas p ON p.id = mc.pessoa_id
+	      WHERE mc.status = 'ativa'
+	        AND (strftime('%s', 'now') - strftime('%s', mc.data_saida)) > (? * 3600)`
+	args := []any{prazoHoras}
+	if escopo > 0 {
+		q += ` AND mi.grupo_id = ?`
+		args = append(args, escopo)
+	}
+	q += ` ORDER BY mc.data_saida ASC LIMIT 100`
+
+	rows, err := a.st.db.Query(q, args...)
+	var atrasadas []map[string]any
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var cid, iid, pid int64
+			var iNome, iCod, pGuerra, dts, sens string
+			var horas float64
+			if rows.Scan(&cid, &iid, &iNome, &iCod, &pid, &pGuerra, &dts, &sens, &horas) == nil {
+				atrasadas = append(atrasadas, map[string]any{
+					"cautela_id":          cid,
+					"item_id":             iid,
+					"item_nome":           iNome,
+					"codigo_patrimonio":   iCod,
+					"pessoa_id":           pid,
+					"pessoa_nome_guerra":  pGuerra,
+					"data_saida":          dts,
+					"nivel_sensibilidade": sens,
+					"horas_em_uso":        horas,
+				})
+			}
+		}
+	}
+
+	jsonOK(w, map[string]any{
+		"prazo_horas":        prazoHoras,
+		"total_atrasadas":    len(atrasadas),
+		"cautelas_atrasadas": atrasadas,
+	})
+}
+
+func (a *App) iniciarWatchdogSLA() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		for range ticker.C {
+			a.verificarAtrasosSLA()
+		}
+	}()
+}
+
+func (a *App) verificarAtrasosSLA() {
+	var webhookURL, cfgPrazo string
+	_ = a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'WEBHOOK_ATRASOS_URL'`).Scan(&webhookURL)
+	webhookURL = strings.TrimSpace(webhookURL)
+	if webhookURL == "" {
+		return
+	}
+
+	prazoHoras := 24
+	_ = a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'CAUTELA_PRAZO_PADRAO_HORAS'`).Scan(&cfgPrazo)
+	if p, err := strconv.Atoi(cfgPrazo); err == nil && p > 0 {
+		prazoHoras = p
+	}
+
+	q := `SELECT mc.id, mi.nome, mi.codigo_patrimonio, p.nome_guerra, mc.data_saida,
+	             ROUND((strftime('%s', 'now') - strftime('%s', mc.data_saida)) / 3600.0, 1) as horas_fora
+	      FROM material_cautelas mc
+	      JOIN material_itens mi ON mi.id = mc.item_id
+	      JOIN pessoas p ON p.id = mc.pessoa_id
+	      WHERE mc.status = 'ativa'
+	        AND (strftime('%s', 'now') - strftime('%s', mc.data_saida)) > (? * 3600)
+	      ORDER BY mc.data_saida ASC LIMIT 50`
+
+	rows, err := a.st.db.Query(q, prazoHoras)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var itens []map[string]any
+	for rows.Next() {
+		var cid int64
+		var iNome, iCod, pGuerra, dts string
+		var horas float64
+		if rows.Scan(&cid, &iNome, &iCod, &pGuerra, &dts, &horas) == nil {
+			itens = append(itens, map[string]any{
+				"cautela_id":        cid,
+				"item":              iNome,
+				"codigo_patrimonio": iCod,
+				"responsavel":       pGuerra,
+				"saida":             dts,
+				"horas_em_aberto":   horas,
+			})
+		}
+	}
+	if len(itens) == 0 {
+		return
+	}
+
+	payload := map[string]any{
+		"sistema":        "SCI",
+		"evento":         "ALERTA_CAUTELAS_ATRASADAS",
+		"total_atrasos":  len(itens),
+		"prazo_config_h": prazoHoras,
+		"disparado_em":   time.Now().UTC().Format(time.RFC3339),
+		"cautelas":       itens,
+	}
+	corpo, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest("POST", webhookURL, bytes.NewReader(corpo))
+	if err == nil {
+		req.Header.Set("Content-Type", "application/json")
+		resp, errPost := client.Do(req)
+		if errPost == nil && resp != nil {
+			_ = resp.Body.Close()
+		}
+	}
 }
 
 

@@ -681,22 +681,98 @@
 
   /* --- ADMIN › backup: gerar download .db + IMPORTAR upload com confirmação --- */
   function admBackup() {
-    $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Backup</h3>
-      <p style="color:var(--tx2);font-size:13px">O SCI faz backup automático a cada conferência fechada e no boot
-      (<code>VACUUM INTO</code> + SHA-256 + MANIFEST). Aqui você força uma cópia agora — o download do .db começa em seguida.</p>
-      <button class="primario" id="bkGo">Fazer backup agora</button>
-      <pre id="bkOut" style="margin-top:10px;color:var(--tx2);font-size:12px"></pre></div>
+    const anoAtual = new Date().getFullYear();
+    $('#adm').innerHTML = `
+      <div class="cartao"><h3 style="margin-top:0">Backup Integral do Sistema</h3>
+        <p style="color:var(--tx2);font-size:13px">O SCI faz backup automático a cada conferência fechada e no boot
+        (<code>VACUUM INTO</code> + SHA-256 + MANIFEST). Aqui você força uma cópia agora — o download do .db começa em seguida.</p>
+        <button class="primario" id="bkGo">Fazer backup agora</button>
+        <pre id="bkOut" style="margin-top:10px;color:var(--tx2);font-size:12px"></pre>
+      </div>
+
+      <!-- Exportação Granular e Retenção Anual (Dual Mode) -->
+      <div class="cartao">
+        <h3 style="margin-top:0; display:flex; align-items:center; gap:8px">
+          <span>📦</span> <span>Exportação Avançada & Retenção Anual de Dados</span>
+        </h3>
+        <p style="color:var(--tx2);font-size:13px; margin-bottom:14px">
+          Extraia recortes específicos dos registros do sistema com total flexibilidade (exercício anual, período personalizado ou módulo).
+          Você pode escolher entre formato analítico aberto (JSON para auditoria/BI) ou banco de dados relacional frio (SQLite desanexado).
+        </p>
+
+        <div class="form-linha" style="gap:10px; margin-bottom:12px; flex-wrap:wrap">
+          <div class="campo" style="max-width:140px">
+            <label>Ano de Exercício</label>
+            <input type="number" id="fExpAno" value="${anoAtual}" min="2020" max="2050">
+          </div>
+          <div class="campo" style="max-width:160px">
+            <label>Data Inicial (Opcional)</label>
+            <input type="date" id="fExpDe">
+          </div>
+          <div class="campo" style="max-width:160px">
+            <label>Data Final (Opcional)</label>
+            <input type="date" id="fExpAte">
+          </div>
+          <div class="campo" style="flex:1; min-width:200px">
+            <label>Módulo / Tabela Alvo</label>
+            <select id="fExpTabela">
+              <option value="tudo">Todos os Módulos (Conferências + Reserva de Material)</option>
+              <option value="conferencias">Apenas Conferências de Pessoal & Presenças</option>
+              <option value="material">Apenas Reserva de Material & Cautelas</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px">
+          <button class="primario" id="btExpJSON" style="box-shadow: 0 2px 8px rgba(16,185,129,0.25)">
+            📥 Exportar Relatório Analítico (JSON)
+          </button>
+          <button class="primario" id="btExpSQLite" style="background:#1e293b; border-color:#334155; box-shadow: 0 2px 8px rgba(0,0,0,0.3)">
+            💾 Exportar Base Histórica Desanexada (SQLite .db)
+          </button>
+        </div>
+      </div>
+
       <div class="cartao"><h3 style="margin-top:0">Importar backup (.db)</h3>
-      <p style="color:var(--tx2);font-size:13px">Valida o arquivo (SQLite + integridade + versão de schema), grava um backup de segurança do estado atual e troca o banco. Arquivo inválido é rejeitado sem tocar em nada.</p>
-      <input type="file" id="bkArq" accept=".db">
-      <button class="primario" id="bkImp" style="margin-top:8px">Importar</button>
-      <pre id="bkImpOut" style="margin-top:10px;color:var(--tx2);font-size:12px"></pre></div>`;
+        <p style="color:var(--tx2);font-size:13px">Valida o arquivo (SQLite + integridade + versão de schema), grava um backup de segurança do estado atual e troca o banco. Arquivo inválido é rejeitado sem tocar em nada.</p>
+        <input type="file" id="bkArq" accept=".db">
+        <button class="primario" id="bkImp" style="margin-top:8px">Importar</button>
+        <pre id="bkImpOut" style="margin-top:10px;color:var(--tx2);font-size:12px"></pre>
+      </div>
+    `;
+
     $('#bkGo').onclick = async () => {
       const r = await api('/api/backup', { method: 'POST', body: '{}' });
       $('#bkOut').textContent = `${r.arquivo}\nsha256: ${r.sha256}\n→ download iniciado no navegador`;
       toast('Backup gerado — download iniciado');
       window.location.href = '/api/backup/download?nome=' + encodeURIComponent(r.arquivo.split('/').pop());
     };
+
+    const obterUrlExport = (tipo) => {
+      const ano = $('#fExpAno').value.trim();
+      const de = $('#fExpDe').value.trim();
+      const ate = $('#fExpAte').value.trim();
+      const tabela = $('#fExpTabela').value;
+      const params = new URLSearchParams({ tipo: tipo, tabela: tabela });
+      if (de && ate) {
+        params.set('de', de);
+        params.set('ate', ate);
+      } else if (ano) {
+        params.set('ano', ano);
+      }
+      return '/api/export?' + params.toString();
+    };
+
+    $('#btExpJSON').onclick = () => {
+      toast('Gerando exportação analítica JSON…');
+      window.location.href = obterUrlExport('json');
+    };
+
+    $('#btExpSQLite').onclick = () => {
+      toast('Gerando base SQLite desanexada…');
+      window.location.href = obterUrlExport('sqlite');
+    };
+
     $('#bkImp').onclick = async () => {
       const f = $('#bkArq').files[0];
       if (!f) { toast('Escolha o arquivo .db', 'erro'); return; }

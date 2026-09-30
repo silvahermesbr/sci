@@ -364,7 +364,16 @@ function montarShell(usuario) {
       const m = $('#menuUsuarioItens'), mu = $('#menuUsuario');
       if (m && mu && !m.classList.contains('oculto') && !mu.contains(ev.target)) m.classList.add('oculto');
     });
+  /* --- Hub de Notificações & Consciência Situacional --- */
+  const btSino = $('#btSinoNotif', topbar);
+  if (btSino) {
+    btSino.onclick = ev => {
+      ev.stopPropagation();
+      modalNotificacoes();
+    };
+    checarNotificacoesHub();
   }
+
   navAtiva(location.hash);
 }
 window.montarShell = montarShell;
@@ -640,5 +649,90 @@ window.SCI_BOOT = function () {
     }
   })();
 };
+
+/* ---------- Notificações & Consciência Situacional ---------- */
+async function checarNotificacoesHub() {
+  if (!ME) return;
+  try {
+    const res = await api('/api/notificacoes');
+    const badge = $('#badgeNotif');
+    if (!badge) return;
+    const n = (res && res.total_atrasadas) || 0;
+    if (n > 0) {
+      badge.textContent = n > 99 ? '99+' : n;
+      badge.classList.remove('oculto');
+    } else {
+      badge.classList.add('oculto');
+    }
+  } catch (e) { /* silencioso */ }
+}
+window.checarNotificacoesHub = checarNotificacoesHub;
+
+// Polling suave a cada 60s
+setInterval(() => { if (ME) checarNotificacoesHub(); }, 60000);
+
+function modalNotificacoes() {
+  api('/api/notificacoes').then(res => {
+    const atrasos = (res && res.cautelas_atrasadas) || [];
+    const prazo = (res && res.prazo_horas) || 24;
+    const html = `
+      <div style="min-width:320px; max-width:540px">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+          <h3 style="margin:0; display:flex; align-items:center; gap:8px">
+            <span>🔔</span> <span>Consciência Situacional & Alertas</span>
+          </h3>
+          <span style="font-size:12px; color:var(--tx3)">SLA Padrão: ${prazo}h</span>
+        </div>
+        ${atrasos.length ? `
+          <div style="color:var(--verm); font-size:13px; font-weight:600; margin-bottom:10px">
+            ⚠️ Atenção: ${atrasos.length} cautela(s) excederam o prazo regulamentar de devolução!
+          </div>
+          <div style="display:flex; flex-direction:column; gap:8px; max-height:360px; overflow-y:auto; margin-bottom:16px">
+            ${atrasos.map(a => `
+              <div style="background:var(--painel2); border:1px solid ${a.nivel_sensibilidade === 'restrito' ? 'var(--verm)' : 'var(--ambar)'}; border-radius:var(--raio); padding:10px 12px">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start">
+                  <div>
+                    <b style="font-size:13.5px">${esc(a.item_nome)}</b>
+                    <span style="font-size:11.5px; color:var(--tx3); margin-left:6px">#${esc(a.codigo_patrimonio)}</span>
+                  </div>
+                  <span style="font-size:10px; font-weight:700; text-transform:uppercase; padding:2px 6px; border-radius:4px; ${a.nivel_sensibilidade === 'restrito' ? 'background:rgba(239,68,68,0.2); color:var(--verm)' : 'background:rgba(245,158,11,0.2); color:var(--ambar-txt)'}">
+                    ${esc(a.nivel_sensibilidade)}
+                  </span>
+                </div>
+                <div style="font-size:12.5px; color:var(--tx2); margin-top:4px">
+                  Responsável: <b style="color:var(--tx)">${esc(a.pessoa_nome_guerra)}</b> ·
+                  <span style="color:var(--verm); font-weight:600">Fora há ${a.horas_em_uso}h</span>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        ` : `
+          <div class="vazio" style="padding:24px 0; text-align:center">
+            <span style="font-size:28px">🛡️</span>
+            <div style="margin-top:8px; font-weight:600">Nenhum alerta pendente</div>
+            <p style="font-size:12.5px; color:var(--tx3); margin:4px 0 0">Todas as cautelas de material estão dentro do prazo de SLA configurado.</p>
+          </div>
+        `}
+        <div style="display:flex; justify-content:flex-end; gap:8px">
+          ${atrasos.length && ME && ME.papel !== 'admin' ? `
+            <button class="primario" id="btIrMaterialNotif" style="font-size:13px; padding:6px 14px">Ir para Balcão de Material</button>
+          ` : ''}
+          <button class="acao-linha" id="btFecharNotif" style="font-size:13px; padding:6px 14px">Fechar</button>
+        </div>
+      </div>
+    `;
+    const m = abrirModal(html);
+    const btFechar = m.querySelector('#btFecharNotif');
+    if (btFechar) btFechar.onclick = () => m.remove();
+    const btIr = m.querySelector('#btIrMaterialNotif');
+    if (btIr) {
+      btIr.onclick = () => {
+        m.remove();
+        irPara('#/material');
+      };
+    }
+  }).catch(() => toast('Falha ao obter notificações', 'erro'));
+}
+window.modalNotificacoes = modalNotificacoes;
 
 })();

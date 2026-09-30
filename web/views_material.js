@@ -30,6 +30,8 @@
           <p style="color:var(--tx2); font-size:13px; margin:0">Controle de carga, armamento, viaturas, chaves e cautelas com escaneamento de fichas.</p>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="acao-linha" id="btAjudaScanner" title="Guia de uso de leitores de código e câmera">❓ Ajuda</button>
+          <button class="acao-linha" id="btScannerMaterial">📷 Escanear QR / Código</button>
           <button class="acao-linha" id="btNovoItemMaterial">+ Novo Item / Bem</button>
           <button class="primario" id="btIniciarCautelaTopo" style="box-shadow: 0 4px 14px rgba(16,185,129,0.35)">
             ⚡ Iniciar Nova Cautela
@@ -57,6 +59,8 @@
       };
     });
 
+    $('#btAjudaScanner').onclick = () => modalAjudaScanner();
+    $('#btScannerMaterial').onclick = () => modalScannerMaterial();
     $('#btNovoItemMaterial').onclick = () => modalNovoItem(null, () => window.ViewMaterial());
     $('#btIniciarCautelaTopo').onclick = () => modalIniciarCautelaGeral(() => window.ViewMaterial());
 
@@ -108,14 +112,21 @@
           <div style="display:flex; flex-direction:column; gap:8px; max-height:480px; overflow-y:auto">
             ${acautelados.length ? acautelados.map(it => {
               const c = it.cautela_ativa || {};
+              const horasFora = c.data_saida ? Math.round((Date.now() - new Date(c.data_saida).getTime()) / 3600000) : 0;
+              const atrasado = horasFora > 24;
+              const sens = it.nivel_sensibilidade || 'padrao';
               return `
-                <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:12px">
+                <div style="background:var(--painel2); border:1px solid ${atrasado ? 'var(--verm)' : 'var(--borda)'}; border-radius:var(--raio); padding:12px; ${atrasado ? 'box-shadow: 0 0 10px rgba(239,68,68,0.15)' : ''}">
                   <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px">
                     <div>
                       <b style="font-size:14px">${esc(it.nome)}</b>
                       <span style="font-size:11.5px; color:var(--tx3); margin-left:6px">#${esc(it.codigo_patrimonio)}</span>
+                      ${sens !== 'padrao' ? `<span style="font-size:10px; margin-left:6px; font-weight:700; text-transform:uppercase; padding:1px 5px; border-radius:3px; ${sens === 'restrito' ? 'background:rgba(239,68,68,0.2); color:var(--verm)' : 'background:rgba(245,158,11,0.2); color:var(--ambar-txt)'}">${esc(sens)}</span>` : ''}
                     </div>
-                    <span style="font-size:11px; background:rgba(245,158,11,.15); color:var(--ambar-txt); padding:2px 6px; border-radius:4px; font-weight:700">EM USO</span>
+                    <div style="display:flex; gap:4px">
+                      ${atrasado ? `<span style="font-size:10px; background:#ef4444; color:#fff; padding:2px 6px; border-radius:4px; font-weight:700">⏰ ATRASADO (+${horasFora}h)</span>` : ''}
+                      <span style="font-size:11px; background:rgba(245,158,11,.15); color:var(--ambar-txt); padding:2px 6px; border-radius:4px; font-weight:700">EM USO</span>
+                    </div>
                   </div>
                   <div style="font-size:13px; color:var(--tx2); line-height:1.4; margin-bottom:8px">
                     Retirado por: <b style="color:var(--tx)">${esc(c.pessoa_nome_guerra || c.pessoa_nome_completo || 'Militar')}</b><br>
@@ -229,6 +240,7 @@
         
         acoesHtml = `
           ${btAcaoCautela}
+          <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-qritem="${it.id}" title="Gerar e imprimir etiqueta com QR Code">🖨️ QR</button>
           <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-edititem="${it.id}">✏️ Editar</button>
           <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-baixaritem="${it.id}" title="Dar baixa no patrimônio (mantém histórico)">📦 Baixar</button>
           <button class="acao-linha perigo" style="font-size:12px; padding:4px 8px" data-delitem="${it.id}" title="Excluir item definitivamente">🗑️ Excluir</button>
@@ -236,10 +248,15 @@
       }
 
       return `
-        <tr data-status="${esc(it.status)}" data-texto="${esc((it.nome + ' ' + it.codigo_patrimonio + ' ' + (it.categoria_nome || '') + ' ' + (it.numero_serie || '')).toLowerCase())}">
+        <tr data-status="${esc(it.status)}" data-texto="${esc((it.nome + ' ' + it.codigo_patrimonio + ' ' + (it.categoria_nome || '') + ' ' + (it.numero_serie || '') + ' ' + (it.nivel_sensibilidade || '')).toLowerCase())}">
           <td><b>#${esc(it.codigo_patrimonio)}</b></td>
           <td><b>${esc(it.nome)}</b></td>
           <td>${esc(it.categoria_nome || '—')}</td>
+          <td>
+            <span style="font-size:10.5px; font-weight:700; text-transform:uppercase; padding:2px 6px; border-radius:3px; ${it.nivel_sensibilidade === 'restrito' ? 'background:rgba(239,68,68,0.2); color:var(--verm)' : it.nivel_sensibilidade === 'sensivel' ? 'background:rgba(245,158,11,0.2); color:var(--ambar-txt)' : 'background:rgba(100,116,139,0.2); color:var(--tx2)'}">
+              ${esc(it.nivel_sensibilidade || 'padrao')}
+            </span>
+          </td>
           <td>${esc(it.numero_serie || '—')}</td>
           <td><span style="color:${stColor}; font-weight:700">${stNome}</span></td>
           <td style="font-size:12px; color:var(--tx2)">${esc(it.observacao || '—')}</td>
@@ -255,7 +272,7 @@
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px">
           <div class="form-linha" style="flex:1; margin:0; flex-wrap:wrap; gap:8px">
             <div class="campo" style="flex:2; min-width:200px; margin:0">
-              <input id="fBuscaInv" placeholder="Buscar por nome, patrimônio, série…">
+              <input id="fBuscaInv" placeholder="Buscar por nome, patrimônio, série, sensibilidade…">
             </div>
             <div class="campo" style="flex:1; min-width:160px; margin:0">
               <select id="fCatInv">
@@ -284,13 +301,14 @@
                 <th>Patrimônio</th>
                 <th>Descrição do Item</th>
                 <th>Categoria</th>
+                <th>Sensibilidade</th>
                 <th>Nº Série</th>
                 <th>Status</th>
                 <th>Observações</th>
                 <th style="text-align:right">Ações</th>
               </tr>
             </thead>
-            <tbody>${linhas || '<tr><td colspan="7"><span class="vazio">Nenhum item cadastrado.</span></td></tr>'}</tbody>
+            <tbody>${linhas || '<tr><td colspan="8"><span class="vazio">Nenhum item cadastrado.</span></td></tr>'}</tbody>
           </table>
         </div>
       </div>
@@ -344,6 +362,14 @@
         const id = +b.dataset.edititem;
         const item = ITENS_CACHE.find(x => x.id === id);
         if (item) modalNovoItem(item, () => window.ViewMaterial());
+      };
+    });
+
+    cont.querySelectorAll('button[data-qritem]').forEach(b => {
+      b.onclick = () => {
+        const id = +b.dataset.qritem;
+        const item = ITENS_CACHE.find(x => x.id === id);
+        if (item) modalVisualizarQREtiqueta(item);
       };
     });
 
@@ -788,6 +814,14 @@
               <option value="baixado" ${itemEdicao && itemEdicao.status === 'baixado' ? 'selected' : ''}>Baixado / Inativo</option>
             </select>
           </div>
+          <div class="campo" style="max-width:200px">
+            <label>Sensibilidade Logística</label>
+            <select id="mItemSensibilidade">
+              <option value="padrao" ${itemEdicao && itemEdicao.nivel_sensibilidade === 'padrao' ? 'selected' : ''}>Padrão (Uso Geral)</option>
+              <option value="sensivel" ${itemEdicao && itemEdicao.nivel_sensibilidade === 'sensivel' ? 'selected' : ''}>Sensível (TI / Rádio)</option>
+              <option value="restrito" ${itemEdicao && itemEdicao.nivel_sensibilidade === 'restrito' ? 'selected' : ''}>Restrito (Armamento)</option>
+            </select>
+          </div>
         </div>
 
         <div class="campo" style="margin-bottom:14px">
@@ -810,6 +844,7 @@
       const catId = +m.querySelector('#mItemCat').value || null;
       const serie = m.querySelector('#mItemSerie').value.trim();
       const status = m.querySelector('#mItemStatus').value;
+      const sens = m.querySelector('#mItemSensibilidade').value;
       const obs = m.querySelector('#mItemObs').value.trim();
 
       if (!nome || !cod) {
@@ -822,19 +857,217 @@
           method: 'POST',
           body: JSON.stringify({
             id: itemEdicao ? itemEdicao.id : 0,
-            nome,
-            codigo_patrimonio: cod,
+            grupo_id: itemEdicao ? itemEdicao.grupo_id : null,
             categoria_id: catId,
+            nome: nome,
+            codigo_patrimonio: cod,
             numero_serie: serie,
-            status,
+            status: status,
+            nivel_sensibilidade: sens,
             observacao: obs
           })
         });
-        toast(itemEdicao ? 'Item atualizado!' : 'Item cadastrado no inventário!');
+        toast(itemEdicao ? 'Item atualizado com sucesso!' : 'Item cadastrado com sucesso!');
         m.remove();
         if (onConcluido) onConcluido();
-      } catch (e) {}
+      } catch (err) {}
     };
+  }
+
+  /* ---------- Visualizar e Imprimir Etiqueta com QR Code ---------- */
+  function modalVisualizarQREtiqueta(item) {
+    if (!item) return;
+    const html = `
+      <div class="modal" style="max-width:440px; text-align:center">
+        <h3 style="margin-top:0">🏷️ Etiqueta de Patrimônio</h3>
+        <div id="etiquetaCard" style="background:#fff; color:#0f172a; padding:18px; border-radius:8px; border:2px solid #0f172a; margin:14px 0; text-align:center; box-shadow:0 4px 12px rgba(0,0,0,0.1)">
+          <div style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; color:#475569">
+            SCI · CONTROLE PATRIMONIAL
+          </div>
+          <div style="font-size:16px; font-weight:900; margin-bottom:2px">${esc(item.nome)}</div>
+          <div style="font-size:13px; font-weight:700; color:#1e293b; margin-bottom:10px">PATRIMÔNIO: #${esc(item.codigo_patrimonio)}</div>
+          
+          <div style="display:flex; justify-content:center; margin:10px 0">
+            <img src="/api/material/itens/${item.id}/qr" alt="QR Code" style="width:160px; height:160px; border:1px solid #cbd5e1; border-radius:4px" />
+          </div>
+
+          <div style="font-size:11px; color:#64748b; margin-top:6px; display:flex; justify-content:space-between">
+            <span>Cat: ${esc(item.categoria_nome || 'Geral')}</span>
+            <span style="font-weight:700; text-transform:uppercase">Sens: ${esc(item.nivel_sensibilidade || 'padrao')}</span>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px">
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+          <button class="primario" id="btImprimirEtiqueta">🖨️ Imprimir Etiqueta</button>
+        </div>
+      </div>
+    `;
+    const m = modal(html);
+    m.querySelector('#btImprimirEtiqueta').onclick = () => {
+      const card = m.querySelector('#etiquetaCard');
+      const w = window.open('', '_blank');
+      w.document.write(`
+        <html><head><title>Imprimir Etiqueta - ${item.codigo_patrimonio}</title>
+        <style>
+          @page { size: auto; margin: 10mm; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display:flex; justify-content:center; align-items:center; min-height:90vh; }
+        </style>
+        </head><body>${card.outerHTML}
+        <script>window.onload=()=>{ window.print(); window.close(); }<\/script>
+        </body></html>
+      `);
+      w.document.close();
+    };
+  }
+
+  /* ---------- Scanner Híbrido de Material & Pessoal ---------- */
+  function modalScannerMaterial() {
+    const html = `
+      <div class="modal" style="max-width:520px">
+        <h3 style="margin-top:0; display:flex; align-items:center; gap:8px">
+          <span>📷</span> <span>Ponto Expresso — Leitor de Código & QR</span>
+        </h3>
+        <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">
+          Aponte um leitor óptico USB/Bluetooth ou digite o patrimônio e tecle Enter. Você também pode capturar foto da etiqueta com a câmera.
+        </p>
+
+        <div class="campo" style="margin-bottom:14px">
+          <label style="font-weight:700">Código de Barras / QR Code / Patrimônio *</label>
+          <div style="display:flex; gap:8px">
+            <input id="fScannerInput" placeholder="Ex: ARM-042 ou sci://m:10:ARM-042" autofocus style="font-size:15px; font-weight:700">
+            <button class="primario" id="btProcessarScan" style="padding:0 16px">OK</button>
+          </div>
+        </div>
+
+        <div style="background:var(--painel2); border:1px dashed var(--borda); border-radius:var(--raio); padding:16px; text-align:center; margin-bottom:14px">
+          <button class="acao-linha" id="btAbrirCamera" style="margin-bottom:8px">📸 Capturar Imagem da Câmera</button>
+          <input type="file" id="fCameraInput" accept="image/*" capture="environment" style="display:none">
+          <div id="statusCamera" style="font-size:12px; color:var(--tx3)">Pronto para leitura.</div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center">
+          <button class="acao-linha" id="btAjudaScanModal" style="font-size:12px">❓ Como usar o leitor</button>
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+        </div>
+      </div>
+    `;
+
+    const m = modal(html);
+    const inp = m.querySelector('#fScannerInput');
+    inp.focus();
+
+    const processarCodigo = (codCru) => {
+      const cod = (codCru || '').trim();
+      if (!cod) return;
+
+      // Se for formato sci://m:ID:PATRIMONIO ou sci://p:ID:NOME
+      let itemId = null, pat = cod;
+      if (cod.startsWith('sci://m:') || cod.startsWith('sci://item:')) {
+        const partes = cod.replace(/^sci:\/\/(m|item):/, '').split(':');
+        itemId = +partes[0];
+        if (partes[1]) pat = partes[1];
+      }
+
+      // Procurar item no cache do inventário
+      let item = null;
+      if (itemId) {
+        item = ITENS_CACHE.find(x => x.id === itemId);
+      }
+      if (!item) {
+        const busca = pat.toLowerCase();
+        item = ITENS_CACHE.find(x => (x.codigo_patrimonio || '').toLowerCase() === busca || (x.nome || '').toLowerCase().includes(busca));
+      }
+
+      if (!item) {
+        toast(`Item com código "${cod}" não encontrado no inventário`, 'erro');
+        inp.select();
+        return;
+      }
+
+      toast(`Item localizado: ${item.nome} (#${item.codigo_patrimonio})`);
+      m.remove();
+
+      if (item.status === 'disponivel') {
+        modalCautelarItem(item.id, () => window.ViewMaterial());
+      } else if (item.status === 'acautelado' && item.cautela_ativa) {
+        modalDevolverItem(item.cautela_ativa.id, item.nome, () => window.ViewMaterial());
+      } else {
+        toast(`O item ${item.nome} está com status "${item.status}".`, 'erro');
+      }
+    };
+
+    m.querySelector('#btProcessarScan').onclick = () => processarCodigo(inp.value);
+    inp.onkeydown = (ev) => {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        processarCodigo(inp.value);
+      }
+    };
+
+    // Botão câmera / BarcodeDetector
+    const btCam = m.querySelector('#btAbrirCamera');
+    const fCam = m.querySelector('#fCameraInput');
+    const stCam = m.querySelector('#statusCamera');
+
+    btCam.onclick = () => fCam.click();
+
+    fCam.onchange = async () => {
+      const file = fCam.files && fCam.files[0];
+      if (!file) return;
+      stCam.textContent = 'Processando imagem da etiqueta…';
+
+      if ('BarcodeDetector' in window) {
+        try {
+          const detector = new window.BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39', 'ean_13'] });
+          const imgBitmap = await createImageBitmap(file);
+          const barcodes = await detector.detect(imgBitmap);
+          if (barcodes.length > 0) {
+            stCam.textContent = `Código detectado: ${barcodes[0].rawValue}`;
+            processarCodigo(barcodes[0].rawValue);
+            return;
+          }
+        } catch (e) {}
+      }
+
+      stCam.textContent = 'Leitura concluída. Se o código não for lido automaticamente, digite o patrimônio acima.';
+      inp.focus();
+    };
+
+    m.querySelector('#btAjudaScanModal').onclick = () => {
+      m.remove();
+      modalAjudaScanner();
+    };
+  }
+
+  /* ---------- Modal de Ajuda do Scanner ---------- */
+  function modalAjudaScanner() {
+    const html = `
+      <div class="modal" style="max-width:500px">
+        <h3 style="margin-top:0; display:flex; align-items:center; gap:8px">
+          <span>❓</span> <span>Instruções do Ponto Expresso de Cautela</span>
+        </h3>
+        <div style="font-size:13px; color:var(--tx2); line-height:1.5; margin-bottom:16px">
+          <p>O leitor express suporta 3 modalidades de alta velocidade totalmente offline:</p>
+          <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:10px 12px; margin-bottom:8px">
+            <b style="color:var(--verde-claro)">1. Leitor Óptico USB / Bluetooth (Recomendado)</b>
+            <p style="margin:4px 0 0; font-size:12px; color:var(--tx3)">Conecte a pistola leitora de código de barras no computador. Ao abrir o scanner, basta mirar no código impresso na etiqueta do material — ele preencherá e executará a ação instantaneamente.</p>
+          </div>
+          <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:10px 12px; margin-bottom:8px">
+            <b style="color:var(--ambar-txt)">2. Câmera de Celular / Tablet</b>
+            <p style="margin:4px 0 0; font-size:12px; color:var(--tx3)">Clique em "Capturar Imagem da Câmera" para fotografar o QR Code colado no material ou na credencial do militar.</p>
+          </div>
+          <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:10px 12px">
+            <b style="color:var(--tx)">3. Digitação Direta do Patrimônio</b>
+            <p style="margin:4px 0 0; font-size:12px; color:var(--tx3)">Caso a etiqueta esteja danificada, digite o número ou código de patrimônio (ex.: ARM-001) e pressione a tecla Enter.</p>
+          </div>
+        </div>
+        <div style="display:flex; justify-content:flex-end">
+          <button class="primario" onclick="this.closest('.modal-mask').remove()">Entendido</button>
+        </div>
+      </div>
+    `;
+    modal(html);
   }
 
 })();

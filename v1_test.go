@@ -78,8 +78,8 @@ func TestMigrationsAndSeeds(t *testing.T) {
 	// 1. Validar versão de schema
 	var versao int
 	err := st.db.QueryRow(`SELECT MAX(versao) FROM schema_migrations`).Scan(&versao)
-	if err != nil || versao != 18 {
-		t.Fatalf("esperado schema versão 18, obtido: %d (err: %v)", versao, err)
+	if err != nil || versao != 19 {
+		t.Fatalf("esperado schema versão 19, obtido: %d (err: %v)", versao, err)
 	}
 
 	// 2. Validar que as tabelas de Escalas, Material e Configurações existem

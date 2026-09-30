@@ -5,7 +5,12 @@ package main
 
 import (
 	"bytes"
+	"database/sql"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -518,4 +523,326 @@ func fmtDataBR(iso string) string {
 		return iso[:10] + " " + iso[11:16]
 	}
 	return iso
+}
+
+// hExportarDados: Motor de exportação analítica e fria (Dual-Mode: JSON e SQLite).
+// Permite extração granular por Ano, Período (De..Ate), Tabela, Pessoa ou Item.
+func (a *App) hExportarDados(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	tipo := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tipo")))
+	if tipo == "" {
+		tipo = "json"
+	}
+	ano := strings.TrimSpace(r.URL.Query().Get("ano"))
+	de := strings.TrimSpace(r.URL.Query().Get("de"))
+	ate := strings.TrimSpace(r.URL.Query().Get("ate"))
+	if ano != "" && de == "" && ate == "" {
+		de = ano + "-01-01"
+		ate = ano + "-12-31"
+	}
+	tabela := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tabela")))
+	if tabela == "" {
+		tabela = "tudo"
+	}
+	pessoaID, _ := strconv.ParseInt(r.URL.Query().Get("pessoa_id"), 10, 64)
+	itemID, _ := strconv.ParseInt(r.URL.Query().Get("item_id"), 10, 64)
+
+	ts := time.Now().Format("20060102_150405")
+
+	if tipo == "sqlite" {
+		tempDir := os.TempDir()
+		tempFile := filepath.Join(tempDir, fmt.Sprintf("sci_export_%s_%d.db", ts, time.Now().UnixNano()))
+		defer os.Remove(tempFile)
+
+		dbTemp, err := sql.Open("sqlite", tempFile)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao criar base temporária de exportação: "+err.Error())
+			return
+		}
+		defer dbTemp.Close()
+
+		_, _ = dbTemp.Exec(`BEGIN TRANSACTION`)
+		_, _ = dbTemp.Exec(`CREATE TABLE export_meta (chave TEXT PRIMARY KEY, valor TEXT)`)
+		_, _ = dbTemp.Exec(`INSERT INTO export_meta VALUES ('gerado_em', ?), ('operador', ?), ('filtros', ?)`,
+			time.Now().UTC().Format(time.RFC3339), u.Login, fmt.Sprintf("ano=%s de=%s ate=%s tabela=%s", ano, de, ate, tabela))
+
+		// Exportar conferências
+		if tabela == "tudo" || tabela == "conferencias" {
+			_, _ = dbTemp.Exec(`
+				CREATE TABLE conferencias (
+					id INTEGER PRIMARY KEY, grupo_id INTEGER, data TEXT, local TEXT,
+					status TEXT, aberta_em TEXT, fechada_em TEXT, criado_por TEXT
+				);
+				CREATE TABLE presencas (
+					id INTEGER PRIMARY KEY, conferencia_id INTEGER, pessoa_id INTEGER,
+					nome_guerra TEXT, situacao TEXT, destino TEXT, observacao TEXT, verificado INTEGER
+				);
+			`)
+			qConf := `SELECT c.id, c.grupo_id, c.data, COALESCE(c.local,''), c.status, c.criado_em, COALESCE(c.fechada_em,''), COALESCE(u.login,'')
+			          FROM conferencias c LEFT JOIN usuarios u ON u.id = c.criado_por WHERE 1=1`
+			var argsConf []any
+			if escopo > 0 {
+				qConf += ` AND c.grupo_id = ?`
+				argsConf = append(argsConf, escopo)
+			}
+			if de != "" && ate != "" {
+				qConf += ` AND c.data BETWEEN ? AND ?`
+				argsConf = append(argsConf, de, ate)
+			}
+			qConf += ` ORDER BY c.data DESC, c.id DESC`
+			rows, err := a.st.db.Query(qConf, argsConf...)
+			if err == nil {
+				for rows.Next() {
+					var cid, gid int64
+					var dt, loc, st, cri, fec, por string
+					if rows.Scan(&cid, &gid, &dt, &loc, &st, &cri, &fec, &por) == nil {
+						_, _ = dbTemp.Exec(`INSERT INTO conferencias VALUES (?,?,?,?,?,?,?,?)`, cid, gid, dt, loc, st, cri, fec, por)
+					}
+				}
+				rows.Close()
+			}
+			// Presenças associadas
+			qPres := `SELECT pr.id, pr.conferencia_id, pr.pessoa_id, p.nome_guerra, pr.situacao, COALESCE(d.nome,''), COALESCE(pr.observacao,''), pr.verificado
+			          FROM presencas pr
+			          JOIN conferencias c ON c.id = pr.conferencia_id
+			          JOIN pessoas p ON p.id = pr.pessoa_id
+			          LEFT JOIN destinos d ON d.id = pr.destino_id
+			          WHERE 1=1`
+			var argsPres []any
+			if escopo > 0 {
+				qPres += ` AND c.grupo_id = ?`
+				argsPres = append(argsPres, escopo)
+			}
+			if de != "" && ate != "" {
+				qPres += ` AND c.data BETWEEN ? AND ?`
+				argsPres = append(argsPres, de, ate)
+			}
+			if pessoaID > 0 {
+				qPres += ` AND pr.pessoa_id = ?`
+				argsPres = append(argsPres, pessoaID)
+			}
+			rPres, errP := a.st.db.Query(qPres, argsPres...)
+			if errP == nil {
+				for rPres.Next() {
+					var pid, cid, pesId int64
+					var ng, sit, dest, obs string
+					var ver int
+					if rPres.Scan(&pid, &cid, &pesId, &ng, &sit, &dest, &obs, &ver) == nil {
+						_, _ = dbTemp.Exec(`INSERT INTO presencas VALUES (?,?,?,?,?,?,?,?)`, pid, cid, pesId, ng, sit, dest, obs, ver)
+					}
+				}
+				rPres.Close()
+			}
+		}
+
+		// Exportar Cautelas
+		if tabela == "tudo" || tabela == "material" {
+			_, _ = dbTemp.Exec(`
+				CREATE TABLE material_cautelas (
+					id INTEGER PRIMARY KEY, item_id INTEGER, item_nome TEXT, codigo_patrimonio TEXT,
+					pessoa_id INTEGER, pessoa_nome TEXT, data_saida TEXT, data_devolucao TEXT,
+					status TEXT, responsavel_entrega TEXT, obs_saida TEXT
+				)
+			`)
+			qCaut := `SELECT mc.id, mc.item_id, mi.nome, mi.codigo_patrimonio, mc.pessoa_id, p.nome_guerra,
+			                 mc.data_saida, COALESCE(mc.data_devolucao,''), mc.status, COALESCE(u.login,''), COALESCE(mc.obs_saida,'')
+			          FROM material_cautelas mc
+			          JOIN material_itens mi ON mi.id = mc.item_id
+			          JOIN pessoas p ON p.id = mc.pessoa_id
+			          LEFT JOIN usuarios u ON u.id = mc.responsavel_entrega_id
+			          WHERE 1=1`
+			var argsCaut []any
+			if escopo > 0 {
+				qCaut += ` AND mi.grupo_id = ?`
+				argsCaut = append(argsCaut, escopo)
+			}
+			if de != "" && ate != "" {
+				qCaut += ` AND substr(mc.data_saida, 1, 10) BETWEEN ? AND ?`
+				argsCaut = append(argsCaut, de, ate)
+			}
+			if itemID > 0 {
+				qCaut += ` AND mc.item_id = ?`
+				argsCaut = append(argsCaut, itemID)
+			}
+			if pessoaID > 0 {
+				qCaut += ` AND mc.pessoa_id = ?`
+				argsCaut = append(argsCaut, pessoaID)
+			}
+			rCaut, errC := a.st.db.Query(qCaut, argsCaut...)
+			if errC == nil {
+				for rCaut.Next() {
+					var cid, iid, pesId int64
+					var inome, icod, png, dts, dtd, st, resp, obs string
+					if rCaut.Scan(&cid, &iid, &inome, &icod, &pesId, &png, &dts, &dtd, &st, &resp, &obs) == nil {
+						_, _ = dbTemp.Exec(`INSERT INTO material_cautelas VALUES (?,?,?,?,?,?,?,?,?,?,?)`, cid, iid, inome, icod, pesId, png, dts, dtd, st, resp, obs)
+					}
+				}
+				rCaut.Close()
+			}
+		}
+
+		_, _ = dbTemp.Exec(`COMMIT`)
+		_ = dbTemp.Close()
+
+		conteudo, err := os.ReadFile(tempFile)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao ler arquivo exportado: "+err.Error())
+			return
+		}
+		a.st.Auditoria(&u.ID, "exportar_sqlite", "sistema", nil, fmt.Sprintf("de=%s ate=%s tab=%s tam=%d", de, ate, tabela, len(conteudo)), ipDe(r))
+		w.Header().Set("Content-Type", "application/vnd.sqlite3")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="sci_export_%s.db"`, ts))
+		w.Header().Set("Content-Length", strconv.Itoa(len(conteudo)))
+		_, _ = w.Write(conteudo)
+		return
+	}
+
+	// Modalidade JSON
+	resultado := map[string]any{
+		"sistema":   "SCI — Sistema de Controle Interno",
+		"gerado_em": time.Now().UTC().Format(time.RFC3339),
+		"operador":  u.Login,
+		"filtros": map[string]any{
+			"ano":       ano,
+			"de":        de,
+			"ate":       ate,
+			"tabela":    tabela,
+			"pessoa_id": pessoaID,
+			"item_id":   itemID,
+		},
+	}
+
+	// Conferências e Presenças
+	if tabela == "tudo" || tabela == "conferencias" {
+		qConf := `SELECT c.id, c.grupo_id, c.data, COALESCE(c.local,''), c.status, c.criado_em, COALESCE(c.fechada_em,''), COALESCE(u.login,'')
+		          FROM conferencias c LEFT JOIN usuarios u ON u.id = c.criado_por WHERE 1=1`
+		var argsConf []any
+		if escopo > 0 {
+			qConf += ` AND c.grupo_id = ?`
+			argsConf = append(argsConf, escopo)
+		}
+		if de != "" && ate != "" {
+			qConf += ` AND c.data BETWEEN ? AND ?`
+			argsConf = append(argsConf, de, ate)
+		}
+		qConf += ` ORDER BY c.data DESC, c.id DESC LIMIT 1000`
+		rows, err := a.st.db.Query(qConf, argsConf...)
+		var confList []map[string]any
+		if err == nil {
+			for rows.Next() {
+				var cid, gid int64
+				var dt, loc, st, cri, fec, por string
+				if rows.Scan(&cid, &gid, &dt, &loc, &st, &cri, &fec, &por) == nil {
+					confList = append(confList, map[string]any{
+						"id": cid, "grupo_id": gid, "data": dt, "local": loc,
+						"status": st, "criada_em": cri, "fechada_em": fec, "criado_por": por,
+					})
+				}
+			}
+			rows.Close()
+		}
+		resultado["conferencias"] = confList
+
+		// Presenças
+		qPres := `SELECT pr.id, pr.conferencia_id, pr.pessoa_id, p.nome_guerra, pr.situacao, COALESCE(d.nome,''), COALESCE(pr.observacao,''), pr.verificado
+		          FROM presencas pr
+		          JOIN conferencias c ON c.id = pr.conferencia_id
+		          JOIN pessoas p ON p.id = pr.pessoa_id
+		          LEFT JOIN destinos d ON d.id = pr.destino_id
+		          WHERE 1=1`
+		var argsPres []any
+		if escopo > 0 {
+			qPres += ` AND c.grupo_id = ?`
+			argsPres = append(argsPres, escopo)
+		}
+		if de != "" && ate != "" {
+			qPres += ` AND c.data BETWEEN ? AND ?`
+			argsPres = append(argsPres, de, ate)
+		}
+		if pessoaID > 0 {
+			qPres += ` AND pr.pessoa_id = ?`
+			argsPres = append(argsPres, pessoaID)
+		}
+		qPres += ` ORDER BY pr.id DESC LIMIT 5000`
+		rPres, errP := a.st.db.Query(qPres, argsPres...)
+		var presList []map[string]any
+		if errP == nil {
+			for rPres.Next() {
+				var pid, cid, pesId int64
+				var ng, sit, dest, obs string
+				var ver int
+				if rPres.Scan(&pid, &cid, &pesId, &ng, &sit, &dest, &obs, &ver) == nil {
+					presList = append(presList, map[string]any{
+						"id": pid, "conferencia_id": cid, "pessoa_id": pesId,
+						"pessoa_nome_guerra": ng, "situacao": sit, "destino": dest,
+						"observacao": obs, "verificado": ver == 1,
+					})
+				}
+			}
+			rPres.Close()
+		}
+		resultado["presencas"] = presList
+	}
+
+	// Cautelas
+	if tabela == "tudo" || tabela == "material" {
+		qCaut := `SELECT mc.id, mc.item_id, mi.nome, mi.codigo_patrimonio, mc.pessoa_id, p.nome_guerra,
+		                 mc.data_saida, COALESCE(mc.data_devolucao,''), mc.status, COALESCE(u.login,''), COALESCE(mc.obs_saida,''),
+		                 COALESCE(mi.nivel_sensibilidade, 'padrao')
+		          FROM material_cautelas mc
+		          JOIN material_itens mi ON mi.id = mc.item_id
+		          JOIN pessoas p ON p.id = mc.pessoa_id
+		          LEFT JOIN usuarios u ON u.id = mc.responsavel_entrega_id
+		          WHERE 1=1`
+		var argsCaut []any
+		if escopo > 0 {
+			qCaut += ` AND mi.grupo_id = ?`
+			argsCaut = append(argsCaut, escopo)
+		}
+		if de != "" && ate != "" {
+			qCaut += ` AND substr(mc.data_saida, 1, 10) BETWEEN ? AND ?`
+			argsCaut = append(argsCaut, de, ate)
+		}
+		if itemID > 0 {
+			qCaut += ` AND mc.item_id = ?`
+			argsCaut = append(argsCaut, itemID)
+		}
+		if pessoaID > 0 {
+			qCaut += ` AND mc.pessoa_id = ?`
+			argsCaut = append(argsCaut, pessoaID)
+		}
+		qCaut += ` ORDER BY mc.id DESC LIMIT 5000`
+		rCaut, errC := a.st.db.Query(qCaut, argsCaut...)
+		var cautList []map[string]any
+		if errC == nil {
+			for rCaut.Next() {
+				var cid, iid, pesId int64
+				var inome, icod, png, dts, dtd, st, resp, obs, sens string
+				if rCaut.Scan(&cid, &iid, &inome, &icod, &pesId, &png, &dts, &dtd, &st, &resp, &obs, &sens) == nil {
+					cautList = append(cautList, map[string]any{
+						"id": cid, "item_id": iid, "item_nome": inome, "codigo_patrimonio": icod,
+						"pessoa_id": pesId, "pessoa_nome_guerra": png, "data_saida": dts,
+						"data_devolucao": dtd, "status": st, "responsavel_entrega": resp,
+						"obs_saida": obs, "nivel_sensibilidade": sens,
+					})
+				}
+			}
+			rCaut.Close()
+		}
+		resultado["cautelas"] = cautList
+	}
+
+	dadosJSON, err := json.MarshalIndent(resultado, "", "  ")
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao serializar json: "+err.Error())
+		return
+	}
+
+	a.st.Auditoria(&u.ID, "exportar_json", "sistema", nil, fmt.Sprintf("de=%s ate=%s tab=%s tam=%d", de, ate, tabela, len(dadosJSON)), ipDe(r))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="sci_export_%s.json"`, ts))
+	w.Header().Set("Content-Length", strconv.Itoa(len(dadosJSON)))
+	_, _ = w.Write(dadosJSON)
 }

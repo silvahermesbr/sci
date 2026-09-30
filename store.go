@@ -98,6 +98,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV18(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV19(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1045,4 +1048,28 @@ func (s *Store) migrarV6() error {
 		return err
 	}
 	return s.marcarVersao(6)
+}
+
+// migrarV19: nível de sensibilidade em itens de material + SLA de devolução e Webhooks
+func (s *Store) migrarV19() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 19`).Scan(&v)
+	if v == 19 {
+		return nil
+	}
+	if !s.colunaExiste("material_itens", "nivel_sensibilidade") {
+		if _, err := s.db.Exec(`ALTER TABLE material_itens ADD COLUMN nivel_sensibilidade TEXT NOT NULL DEFAULT 'padrao'`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migração v19 nivel_sensibilidade: %w", err)
+			}
+		}
+	}
+	_, _ = s.db.Exec(`INSERT INTO configuracoes (chave, valor)
+		SELECT 'CAUTELA_PRAZO_PADRAO_HORAS', '24'
+		WHERE NOT EXISTS (SELECT 1 FROM configuracoes WHERE chave = 'CAUTELA_PRAZO_PADRAO_HORAS')`)
+	_, _ = s.db.Exec(`INSERT INTO configuracoes (chave, valor)
+		SELECT 'WEBHOOK_ATRASOS_URL', ''
+		WHERE NOT EXISTS (SELECT 1 FROM configuracoes WHERE chave = 'WEBHOOK_ATRASOS_URL')`)
+
+	return s.marcarVersao(19)
 }

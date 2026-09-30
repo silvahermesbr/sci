@@ -54,10 +54,26 @@
 
       <!-- Lista de Turnos do Mês -->
       <div class="cartao">
-        <h3 style="margin:0 0 10px">📅 Grade de Turnos Programados</h3>
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px">
+          <h3 style="margin:0">📅 Grade de Turnos Programados</h3>
+          <div style="display:flex; gap:6px">
+            <button class="acao-linha" id="btModoTabela" style="font-size:12px; font-weight:700">📋 Tabela</button>
+            <button class="acao-linha" id="btModoGantt" style="font-size:12px; font-weight:700">📊 Cronograma (Gantt)</button>
+          </div>
+        </div>
         <div id="listaTurnos"><div class="carregando">Carregando grade de escalas…</div></div>
       </div>
     `;
+
+    $('#btModoTabela').onclick = () => { modoEscala = 'tabela'; alternarBotoesModo(); renderGradeTurnos(TURNOS_CACHE); };
+    $('#btModoGantt').onclick = () => { modoEscala = 'gantt'; alternarBotoesModo(); renderGanttTurnos(TURNOS_CACHE); };
+
+    function alternarBotoesModo() {
+      const bT = $('#btModoTabela'), bG = $('#btModoGantt');
+      if (bT) bT.style.background = modoEscala === 'tabela' ? 'var(--verde)' : 'transparent';
+      if (bG) bG.style.background = modoEscala === 'gantt' ? 'var(--verde)' : 'transparent';
+    }
+    alternarBotoesModo();
 
     // Carregar dados
     await carregarEscalas();
@@ -69,6 +85,8 @@
     $('#btTiposEscala').onclick = () => modalGerenciarTipos(() => carregarEscalas());
   };
 
+  let modoEscala = 'tabela';
+  let diaGantt = new Date().toISOString().slice(0, 10);
   let TURNOS_CACHE = [];
 
   async function carregarEscalas() {
@@ -81,7 +99,8 @@
 
       renderServicosHoje(resHoje.escalados || []);
       TURNOS_CACHE = resTurnos.turnos || [];
-      renderGradeTurnos(TURNOS_CACHE);
+      if (modoEscala === 'gantt') renderGanttTurnos(TURNOS_CACHE);
+      else renderGradeTurnos(TURNOS_CACHE);
     } catch (e) {
       $('#gridHoje').innerHTML = '<span class="vazio">Sem dados de escala para hoje.</span>';
       $('#listaTurnos').innerHTML = '<span class="vazio">Falha ao carregar turnos do período.</span>';
@@ -199,6 +218,116 @@
     document.querySelectorAll('#tabGradeTurnos tbody tr').forEach(tr => {
       const txt = tr.dataset.texto || '';
       tr.style.display = (!q || txt.includes(q)) ? '' : 'none';
+    });
+  }
+
+  /* ---------- Visualização Gantt (Cronograma 24 Horas) ---------- */
+  function renderGanttTurnos(turnos) {
+    const cont = $('#listaTurnos');
+    if (!cont) return;
+
+    const horasMarcas = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24];
+
+    const turnosDoDia = (turnos || []).filter(t => {
+      const dIni = (t.data_inicio || '').slice(0, 10);
+      const dFim = (t.data_fim || '').slice(0, 10);
+      return diaGantt >= dIni && diaGantt <= dFim;
+    });
+
+    const porPosto = {};
+    turnosDoDia.forEach(t => {
+      const posto = t.tipo_nome || 'Geral';
+      if (!porPosto[posto]) porPosto[posto] = [];
+      porPosto[posto].push(t);
+    });
+    const postos = Object.keys(porPosto);
+
+    let linhasHtml = '';
+    if (!postos.length) {
+      linhasHtml = '<div class="vazio" style="padding:30px 0; text-align:center">Nenhum serviço escalado para a data selecionada (' + fmtData(diaGantt) + ').</div>';
+    } else {
+      linhasHtml = postos.map(posto => {
+        const turnosPosto = porPosto[posto];
+        const blocos = turnosPosto.map(t => {
+          let hIni = 0, hFim = 24;
+          if (t.data_inicio && t.data_inicio.includes('T')) {
+            const horaPart = t.data_inicio.split('T')[1] || '';
+            const [hh, mm] = horaPart.split(':').map(Number);
+            if (!isNaN(hh)) hIni = hh + (mm || 0) / 60;
+          }
+          if (t.data_fim && t.data_fim.includes('T')) {
+            const horaPart = t.data_fim.split('T')[1] || '';
+            const [hh, mm] = horaPart.split(':').map(Number);
+            if (!isNaN(hh)) hFim = hh + (mm || 0) / 60;
+          }
+          if (hFim <= hIni) hFim = 24;
+          const leftPct = (hIni / 24) * 100;
+          const widthPct = Math.max(5, ((hFim - hIni) / 24) * 100);
+
+          const nomes = (t.pessoas || []).map(p => esc(p.nome_guerra || p.nome_completo)).join(', ') || 'Sem efetivo';
+
+          return `
+            <div class="gantt-bloco" data-turno="${t.id}" title="${esc(posto)}: ${nomes} (${(t.data_inicio||'').slice(11,16) || '00:00'} às ${(t.data_fim||'').slice(11,16) || '24:00'})"
+                 style="position:absolute; left:${leftPct}%; width:${widthPct}%; top:6px; bottom:6px; background:linear-gradient(135deg, var(--verde), #065f46); color:#fff; border-radius:6px; padding:4px 8px; font-size:11.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.2); display:flex; align-items:center">
+              <span>👤 ${nomes}</span>
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div style="display:flex; border-bottom:1px solid var(--borda); min-height:48px; align-items:stretch">
+            <div style="width:200px; padding:10px 12px; font-weight:700; font-size:13px; background:var(--painel2); border-right:1px solid var(--borda); display:flex; align-items:center; flex-shrink:0">
+              🛡️ ${esc(posto)}
+            </div>
+            <div style="flex:1; position:relative; min-width:600px; background:var(--bg)">
+              ${horasMarcas.map(h => `<div style="position:absolute; left:${(h/24)*100}%; top:0; bottom:0; width:1px; background:rgba(255,255,255,0.04)"></div>`).join('')}
+              ${blocos}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    cont.innerHTML = `
+      <div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px">
+        <div style="display:flex; align-items:center; gap:8px">
+          <label style="font-size:13px; font-weight:700">Data de Observação:</label>
+          <input type="date" id="fDataGantt" value="${diaGantt}" style="max-width:160px; font-size:13px; padding:4px 8px">
+        </div>
+        <div style="font-size:12px; color:var(--tx3)">
+          Clique em qualquer bloco horizontal para editar o turno.
+        </div>
+      </div>
+
+      <div style="border:1px solid var(--borda); border-radius:var(--raio); overflow-x:auto; background:var(--painel)">
+        <!-- Régua de Horas -->
+        <div style="display:flex; border-bottom:2px solid var(--borda); background:var(--painel2); font-size:11px; font-weight:700; color:var(--tx2)">
+          <div style="width:200px; padding:8px 12px; border-right:1px solid var(--borda); flex-shrink:0">Posto / Serviço</div>
+          <div style="flex:1; position:relative; min-width:600px; height:28px">
+            ${horasMarcas.map(h => `
+              <div style="position:absolute; left:${(h/24)*100}%; top:6px; transform:translateX(-50%); font-size:10.5px">
+                ${String(h).padStart(2, '0')}:00
+              </div>
+            `).join('')}
+          </div>
+        </div>
+
+        <!-- Linhas de Postos -->
+        <div>${linhasHtml}</div>
+      </div>
+    `;
+
+    $('#fDataGantt').onchange = (ev) => {
+      diaGantt = ev.target.value;
+      renderGanttTurnos(turnos);
+    };
+
+    cont.querySelectorAll('.gantt-bloco').forEach(el => {
+      el.onclick = () => {
+        const tid = +el.dataset.turno;
+        const t = (turnos || []).find(x => x.id === tid);
+        if (t) modalNovoTurno(t, () => carregarEscalas());
+      };
     });
   }
 
