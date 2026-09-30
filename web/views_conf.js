@@ -41,6 +41,25 @@
       catch (e) { toast('Falha ao salvar estado parcial', 'erro'); }
     }, 350);
   };
+  /* ordem Tenente 30/09: RASCUNHO PERMANENTE — abre na terça à noite, fecha a página,
+     quarta continua de onde parou. Se a página fecha com gravação pendente no debounce,
+     descarrega NA HORA (fetch keepalive sobrevive ao unload; X-SCI segue exigido). */
+  const descarregarPendentes = () => {
+    for (const [pid, corpo] of Object.entries(marcaPend)) {
+      clearTimeout(marcaTimer[pid]);
+      delete marcaTimer[pid];
+      try {
+        fetch('/api/conferencia/marcar' + (CONF_ID ? '?id=' + CONF_ID : ''), {
+          method: 'POST', keepalive: true,
+          headers: { 'Content-Type': 'application/json', 'X-SCI': '1' },
+          body: JSON.stringify({ pessoa_id: +pid, ...corpo })
+        }).catch(() => {});
+      } catch (e) {}
+    }
+    marcaPend = {};
+  };
+  window.addEventListener('beforeunload', descarregarPendentes);
+  window.addEventListener('pagehide', descarregarPendentes);
   /* --- LISTAS (v9.14): #/hoje mostra SÓ as listas de conferências; a conferência
      em si fica em #/conferencia (botão Abrir). Abertas editáveis; fechadas = PDF. --- */
   window.ViewHoje = async function () {
@@ -222,7 +241,19 @@
       if (ch.checked) marcarParcial(id, C.est[id] || 'presente', C.dest[id] ?? null, C.obs[id] ?? null, true);
       else marcarParcial(id, null, C.dest[id] ?? null, C.obs[id] ?? null, false);
     });
-    document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => { C.dest[+s.dataset.id] = +s.value || null; });
+    document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => {
+      const id = +s.dataset.id;
+      const novo = +s.value || null;
+      if ((C.est[id] || '') === 'justificada' && !novo) {
+        toast('Justificada exige destino', 'erro'); // volta ao anterior; não grava estado inválido
+        s.value = C.dest[id] || '';
+        return;
+      }
+      C.dest[id] = novo;
+      // ordem Tenente 30/09: destino TAMBÉM grava na hora (antes ficava só na RAM
+      // e a mudança se perdia num reload acidental)
+      marcarParcial(id, C.est[id] || 'presente', novo, C.obs[id] ?? null, C.verif.has(id));
+    });
     document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => { ev.stopPropagation(); confModalComentarios(+b.dataset.id); });
     atualizar(); // contador de verificados acompanha o re-render (v9.15.2)
     ligarBarra(); // v9.16.5b: barra é recriada no innerHTML — religar FECHAR e busca
