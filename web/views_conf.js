@@ -62,13 +62,30 @@
   window.addEventListener('pagehide', descarregarPendentes);
   /* --- LISTAS (v9.14): #/hoje mostra SÓ as listas de conferências; a conferência
      em si fica em #/conferencia (botão Abrir). Abertas editáveis; fechadas = PDF. --- */
-  window.ViewHoje = async function () {
+  window.ViewHoje = async function (modoTela) {
     navAtiva('#/hoje');
     $('#app').innerHTML = '<div class="carregando">Carregando conferências…</div>';
+    modoTela = modoTela || 'conferencias';
+    // ordem Tenente 30/09: aba ARQUIVO (arquivadas, sem limite de período) × CONFERÊNCIAS
+    // (abertas + fechadas com filtro Dia/Semana/Mês/Ano/Livre — mesmo seletor do relatório)
+    const hojeD = new Date();
+    let qs = '';
+    if (modoTela === 'arquivo') {
+      qs = '?arq=1';
+    } else {
+      const p = (window.__perConfSel || { m: 'semana' });
+      const sem = d => { const dd = new Date(d + 'T12:00:00'); const dow = (dd.getDay() + 6) % 7; const i = new Date(dd.getTime() - dow * 864e5); return [dataLocal(i), dataLocal(new Date(i.getTime() + 6 * 864e5))]; };
+      if (p.m === 'dia') qs = '?de=' + p.dia + '&ate=' + p.dia;
+      else if (p.m === 'semana') { const [a, b] = sem(p.dia); qs = '?de=' + a + '&ate=' + b; }
+      else if (p.m === 'mes') { const d = new Date(p.dia + 'T12:00:00'); const i = new Date(d.getFullYear(), d.getMonth(), 1); const f = new Date(d.getFullYear(), d.getMonth() + 1, 0); qs = '?de=' + dataLocal(i) + '&ate=' + dataLocal(f); }
+      else if (p.m === 'ano') qs = '?de=' + p.dia.slice(0, 4) + '-01-01&ate=' + p.dia.slice(0, 4) + '-12-31';
+      else if (p.m === 'livre') qs = '?de=' + (p.de || '') + '&ate=' + (p.ate || '');
+    }
     let lista = [];
-    try { lista = await api('/api/conferencia/lista'); } catch (e) { lista = []; }
+    try { lista = await api('/api/conferencia/lista' + qs); } catch (e) { lista = []; }
     let haAberta = null;
     try { const d = await api('/api/conferencia/hoje'); haAberta = d.conferencia || null; } catch (e) {}
+    const souAdmin = (window.ME && window.ME.papel) === 'admin';
     const linha = c => `
       <tr data-cid="${c.id}"><td class="num"><b>#${c.id}</b></td>
       <td>${c.status === 'aberta' ? 'Aberta' : 'Fechada'}</td>
@@ -77,24 +94,70 @@
       <td>${esc(c.grupo || '—')}</td>
       <td>${esc(c.criado_por || '—')}</td>
       <td class="num">${c.lancamentos}</td>
-      <td>${c.status === 'fechada'
-        ? `<a href="/api/conferencia/${c.id}/relatorio.pdf?t=${Date.now()}" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>`
-        : `<button class="primario" data-abrir="${c.id}" style="min-height:36px;padding:8px 12px">Abrir</button>`}</td></tr>`;
+      <td>${modoTela === 'arquivo'
+        ? `<button class="perigo" data-excluir-arq="${c.id}" style="min-height:36px;padding:8px 12px">Excluir</button>`
+        : (c.status === 'fechada'
+          ? `<a href="/api/conferencia/${c.id}/relatorio.pdf?t=${Date.now()}" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>
+             <button data-arquivar="${c.id}" style="min-height:36px;padding:8px 12px">Arquivar</button>`
+          : `<button class="primario" data-abrir="${c.id}" style="min-height:36px;padding:8px 12px">Abrir</button>`)}</td></tr>`;
     const porData = (a, b) => String(b.data || '').localeCompare(String(a.data || '')) || b.id - a.id;
     const abertas = lista.filter(c => c.status === 'aberta').sort(porData);
     const fechadas = lista.filter(c => c.status === 'fechada').sort(porData);
-    const tabela = (titulo, itens) => `
+    const tabela = (titulo, itens, cols) => `
       <h3 style="margin:14px 0 8px">${titulo} (${itens.length})</h3>
       <div class="cartao"><div class="rolagem"><table>
       <thead><tr><th class="num">ID</th><th>Status</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th class="num">Lanç.</th><th>Ações</th></tr></thead>
-      <tbody>${itens.map(linha).join('') || '<tr><td colspan="8"><span class="vazio">nenhuma</span></td></tr>'}</tbody></table></div></div>`;
-    $('#app').innerHTML = `<h2>Conferências</h2>
-      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+      <tbody>${itens.map(linha).join('') || `<tr><td colspan="8"><span class="vazio">${cols || 'nenhuma'}</span></td></tr>`}</tbody></table></div></div>`;
+    const abasTela = `
+      <div class="abas" style="margin:10px 0">
+        <button data-t="conferencias" class="${modoTela !== 'arquivo' ? 'ativo' : ''}">CONFERÊNCIAS</button>
+        <button data-t="arquivo" class="${modoTela === 'arquivo' ? 'ativo' : ''}">ARQUIVO</button></div>`;
+    let seletor = '';
+    if (modoTela !== 'arquivo') {
+      const p = window.__perConfSel || { m: 'semana', dia: dataLocal(hojeD) };
+      if (!p.dia) p.dia = dataLocal(hojeD);
+      seletor = `<div class="cartao" style="margin-bottom:10px">
+        <div class="abas" id="perConf">
+          <button data-p="dia" class="${p.m === 'dia' ? 'ativo' : ''}">Dia</button>
+          <button data-p="semana" class="${p.m === 'semana' ? 'ativo' : ''}">Semana</button>
+          <button data-p="mes" class="${p.m === 'mes' ? 'ativo' : ''}">Mês</button>
+          <button data-p="ano" class="${p.m === 'ano' ? 'ativo' : ''}">Ano</button>
+          <button data-p="livre" class="${p.m === 'livre' ? 'ativo' : ''}">Período livre</button></div>
+        <div class="form-linha" style="margin-top:8px"><div id="perConfEntrada"></div>
+        <button class="primario" id="perConfIr" style="min-height:40px">Aplicar</button></div></div>`;
+    }
+    $('#app').innerHTML = `<h2>Conferências</h2>${abasTela}${seletor}
+      ${modoTela !== 'arquivo' ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
         <button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>
         <span style="color:var(--tx2);font-size:12px">abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)</span></div>
       <div class="cartao" style="margin-bottom:10px"><div class="campo" style="margin:0"><label>Pesquisar por ID da conferência</label><input id="fConfID" placeholder="ex.: 3"></div></div>` +
-      tabela('Abertas', abertas) + tabela('Fechadas', fechadas) +
-      `<p style="color:var(--tx2);font-size:12px">O relatório PDF só é gerado para conferências fechadas.</p>`;
+      tabela('Abertas', abertas) + tabela('Fechadas', fechadas)
+      : tabela('Arquivadas', lista, 'nenhuma conferência arquivada')}
+      <p style="color:var(--tx2);font-size:12px">${modoTela === 'arquivo'
+        ? 'Arquivadas ficam fora da listagem normal. Excluir arquivada é ação exclusiva do ADMIN e apaga conferência, lançamentos e comentários.'
+        : 'O relatório PDF só é gerado para conferências fechadas. Arquivar tira a conferência desta listagem (vai para o ARQUIVO).'}`;
+    document.querySelectorAll('.abas button[data-t]').forEach(b => b.onclick = () => window.ViewHoje(b.dataset.t));
+    const pc = $('#perConfEntrada');
+    if (pc) {
+      const p = window.__perConfSel || (window.__perConfSel = { m: 'semana', dia: dataLocal(hojeD) });
+      const inp = () => {
+        if (p.m === 'livre') pc.innerHTML = `<div class="campo"><label>De — até</label><div style="display:flex;gap:6px"><input type="date" id="pcDe" value="${p.de || ''}"><input type="date" id="pcAte" value="${p.ate || ''}"></div></div>`;
+        else pc.innerHTML = `<div class="campo"><label>${p.m === 'ano' ? 'Ano (qualquer dia do ano)' : p.m === 'mes' ? 'Mês (qualquer dia do mês)' : p.m === 'dia' ? 'Dia' : 'Semana (qualquer dia dela)'}</label><input type="date" id="pcDia" value="${p.dia || dataLocal(hojeD)}"></div>`;
+      };
+      inp();
+      document.querySelectorAll('#perConf button').forEach(b => b.onclick = () => {
+        p.m = b.dataset.p; window.__perConfSel = p;
+        document.querySelectorAll('#perConf button').forEach(x => x.classList.toggle('ativo', x === b));
+        inp();
+      });
+      $('#perConfIr').onclick = () => {
+        const d = $('#pcDia'); const de = $('#pcDe'); const ate = $('#pcAte');
+        if (d) p.dia = d.value;
+        if (de) p.de = de.value;
+        if (ate) p.ate = ate.value;
+        window.ViewHoje('conferencias');
+      };
+    }
     const btNova = $('#btNovaConf');
     if (btNova) btNova.onclick = async () => {
       try {
@@ -105,8 +168,20 @@
     document.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
       location.hash = '#/conferencia?id=' + b.dataset.abrir;
     });
-    $('#fConfID').oninput = () => {
-      const q = $('#fConfID').value.trim().replace('#', '');
+    document.querySelectorAll('[data-arquivar]').forEach(b => b.onclick = async () => {
+      if (!(await confirmar(`Arquivar a conferência #${b.dataset.arquivar}? Ela sai desta listagem e vai para o ARQUIVO.`))) return;
+      try { await api(`/api/conferencia/${b.dataset.arquivar}/arquivar`, { method: 'POST', body: '{}' }); toast('Conferência arquivada'); window.ViewHoje('conferencias'); } catch (e) {}
+    });
+    document.querySelectorAll('[data-excluir-arq]').forEach(b => {
+      if (!souAdmin) { b.style.display = 'none'; return; } // exclusão é exclusiva do admin
+      b.onclick = async () => {
+        if (!(await confirmar(`☢️ Excluir do ARQUIVO a conferência #${b.dataset.excluirArq}? Apaga conferência, lançamentos e comentários — não tem volta.`))) return;
+        try { await api(`/api/conferencia/arquivada/${b.dataset.excluirArq}`, { method: 'DELETE', body: '{}' }); toast('Conferência excluída do arquivo'); window.ViewHoje('arquivo'); } catch (e) {}
+      };
+    });
+    const fID = $('#fConfID');
+    if (fID) fID.oninput = () => {
+      const q = fID.value.trim().replace('#', '');
       document.querySelectorAll('#app tr[data-cid]').forEach(tr => {
         tr.style.display = !q || tr.dataset.cid === q ? '' : 'none';
       });
@@ -484,5 +559,144 @@
       entrada();
     });
     $('#btGerar').onclick = gerar;
+
+    /* ============ BUSCA INDIVIDUAL (ordem Tenente 30/09) ============
+       Pesquisa por militar → registros → clique abre modal com ficha + comentários
+       (com TAGs do catálogo). Filtros complexos multi-seleção: TAG × período em OU. */
+    (async () => {
+      let tags = [];
+      try { tags = await api('/api/relatorio/tags'); } catch (e) { tags = []; }
+      let filtroId = 0;
+      const regras = [];
+      const cartao = document.createElement('div');
+      cartao.className = 'cartao';
+      cartao.style.margin = '10px 0';
+      cartao.innerHTML = `
+        <h3 style="margin-top:0">Busca individual</h3>
+        <div class="form-linha" style="align-items:end">
+          <div class="campo" style="margin:0"><label>Militar (nome de guerra)</label>
+            <input id="biNome" placeholder="digite o nome…"></div>
+          <div class="campo" style="margin:0"><label>De</label><input type="date" id="biDe" value="${dataLocal(new Date(Date.now() - 29 * 864e5))}"></div>
+          <div class="campo" style="margin:0"><label>Até</label><input type="date" id="biAte" value="${dataLocal(hoje)}"></div>
+          <button class="primario" id="biIr" style="min-height:44px">Buscar</button></div>
+        <div id="biRes" style="margin-top:10px"></div>
+        <details style="margin-top:10px"><summary style="cursor:pointer;color:var(--tx2);font-size:13px">Filtros por TAG (multi-seleção, cruza com OU)</summary>
+          <div id="biFiltros" style="margin-top:8px"></div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button id="biAddF" style="min-height:36px">+ Adicionar filtro</button>
+            <button class="primario" id="biAplicarF" style="min-height:36px">Aplicar filtros</button></div>
+          <div id="biFRes" style="margin-top:10px"></div></details>`;
+      const saida = $('#saida');
+      saida.parentNode.insertBefore(cartao, saida);
+
+      const linhaModal = (rg, tab) => `<tr><td>${fmtData(rg.data)}</td><td>#${rg.conferencia_id}</td>
+        ${tab === 'filtros' ? `<td><b>${esc(rg.tag)}</b></td><td>${esc(rg.comentario)}</td>` :
+        `<td><b>${esc(rg.situacao_rotulo || rg.situacao || '')}</b></td><td>${esc(rg.destino || '')}</td><td>${esc(rg.tags || '')}</td>`}
+        </tr>`;
+      const rotuloSit = s => ({ presente: 'Presente', atraso: 'Atraso', falta: 'Falta', justificada: 'Justificada', nao_verificado: 'NÃO VERIFICADO' })[s] || s;
+
+      const abrirFicha = async (pessoaId, listaRegs, tab) => {
+        let ficha = {};
+        try { ficha = await api('/api/pessoas/' + pessoaId + '/ficha'); } catch (e) {}
+        const div = modal(`
+          <div class="modal-inner" style="max-width:640px">
+            <h3>${esc(ficha.nome_guerra || '')} <small style="color:var(--tx2);font-weight:400">${esc(ficha.nome_completo || '')}</small></h3>
+            <p style="color:var(--tx2);font-size:13px;margin:4px 0">Setor: <b>${esc(ficha.setor || 'INDEFINIDO')}</b> · Função: <b>${esc(ficha.funcao || 'INDEFINIDO')}</b> · Grupo: <b>${esc(ficha.grupo || '—')}</b> · Status: <b>${esc(ficha.status || '')}</b></p>
+            <div class="rolagem" style="max-height:220px;margin:8px 0"><table><thead><tr><th>Data</th><th>Conf.</th>${tab === 'filtros' ? '<th>Tag</th><th>Comentário</th>' : '<th>Situação</th><th>Destino</th><th>Tag</th>'}</tr></thead>
+            <tbody>${(listaRegs || []).map(r => linhaModal(r, tab)).join('') || '<tr><td colspan="6"><span class="vazio">sem registros</span></td></tr>'}</tbody></table></div>
+            <div class="cartao" style="margin:0">
+              <h4 style="margin:0 0 6px">Comentário com TAG</h4>
+              <div class="campo"><label>Tag</label><select id="mcTag"><option value="">— sem tag —</option>${tags.map(t => `<option value="${t.id}">${esc(t.nome)}</option>`).join('')}</select></div>
+              <div class="campo"><label>Comentário</label><textarea id="mcTxt" rows="2"></textarea></div>
+              <button class="primario" id="mcGo" style="min-height:38px">Gravar comentário</button>
+            </div>
+            <div class="modal-acoes"><button class="fantasma" id="mcX">Fechar</button></div>
+          </div>`);
+        if (!div) return;
+        div.querySelector('#mcX').onclick = () => div.fechar && div.fechar();
+        div.querySelector('#mcGo').onclick = async () => {
+          const txt = div.querySelector('#mcTxt').value.trim();
+          if (!txt) { toast('Escreva o comentário', 'erro'); return; }
+          const tagVal = div.querySelector('#mcTag').value;
+          try {
+            await api('/api/comentarios', { method: 'POST', body: JSON.stringify({
+              conferencia_id: parseInt((listaRegs && listaRegs[0] && listaRegs[0].conferencia_id) || 0),
+              pessoa_id: pessoaId, comentario: txt,
+              tag_id: tagVal ? parseInt(tagVal) : null }) });
+            toast('Comentário gravado');
+            div.fechar && div.fechar();
+          } catch (e) {}
+        };
+      };
+
+      const buscarPessoa = async () => {
+        const q = $('#biNome').value.trim().toLowerCase();
+        if (!q) { toast('Digite o nome do militar', 'erro'); return; }
+        const de = $('#biDe').value, ate = $('#biAte').value;
+        $('#biRes').innerHTML = '<div class="carregando">Buscando…</div>';
+        try {
+          const ps = await api('/api/pessoas'); // lista do escopo (ativas; nome de guerra)
+          const todas = (ps.pessoas || []);
+          const cand = todas.filter(x => (x.nome_guerra || '').toLowerCase().includes(q) && (x.status || 'ativo') === 'ativo');
+          if (!cand.length) { $('#biRes').innerHTML = '<span class="vazio">nenhum militar com esse nome no seu escopo</span>'; return; }
+          if (cand.length > 1) {
+            $('#biRes').innerHTML = `<div class="cartao" style="margin:0"><h4 style="margin:0 0 6px">${cand.length} militares com esse nome — escolha:</h4>` +
+              cand.map((x, i) => `<button data-pcand="${i}" style="min-height:36px;margin:2px">${esc(x.nome_guerra)}</button>`).join(' ') + '</div>';
+            document.querySelectorAll('#biRes [data-pcand]').forEach(b => b.onclick = () => carregar(cand[+b.dataset.pcand].id));
+            return;
+          }
+          carregar(cand[0].id);
+        } catch (e) { $('#biRes').innerHTML = '<span class="vazio">falha na busca</span>'; }
+      };
+      const carregar = async (pid) => {
+        const de = $('#biDe').value, ate = $('#biAte').value;
+        try {
+          const r = await api(`/api/relatorio/registros?pessoa=${pid}&de=${encodeURIComponent(de)}&ate=${encodeURIComponent(ate)}`);
+          const regs = (r.registros || []).map(x => ({ ...x, situacao_rotulo: rotuloSit(x.situacao) }));
+          $('#biRes').innerHTML = `
+            <div class="cartao" style="margin:0">
+              <h4 style="margin:0 0 6px">${esc(r.pessoa && r.pessoa.nome_guerra || '')} — ${regs.length} registro(s)</h4>
+              <div class="rolagem"><table><thead><tr><th>Data</th><th>Conf.</th><th>Situação</th><th>Destino</th><th>Tag</th></tr></thead>
+              <tbody>${regs.map((rg, i) => `<tr data-bi="${i}" style="cursor:pointer"><td>${fmtData(rg.data)}</td><td>#${rg.conferencia_id}</td><td><b>${esc(rg.situacao_rotulo)}</b></td><td>${esc(rg.destino || '')}</td><td>${esc(rg.tags || '')}</td></tr>`).join('') || '<tr><td colspan="5"><span class="vazio">sem registros no período</span></td></tr>'}</tbody></table></div></div>`;
+          document.querySelectorAll('#biRes tr[data-bi]').forEach(tr => tr.onclick = () => abrirFicha(pid, regs, 'pessoa'));
+        } catch (e) { $('#biRes').innerHTML = '<span class="vazio">falha na busca</span>'; }
+      };
+      $('#biIr').onclick = buscarPessoa;
+      $('#biNome').addEventListener('keydown', ev => { if (ev.key === 'Enter') buscarPessoa(); });
+
+      const pintaFiltros = () => {
+        $('#biFiltros').innerHTML = regras.map((rg, i) => `
+          <div class="form-linha" data-fid="${i}" style="align-items:end;margin-bottom:4px">
+            <div class="campo"><label>Tag</label><select data-c="tag">${tags.map(t => `<option value="${t.id}" ${rg.tag == t.id ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}</select></div>
+            <div class="campo"><label>De</label><input type="date" data-c="de" value="${rg.de || ''}"></div>
+            <div class="campo"><label>Até</label><input type="date" data-c="ate" value="${rg.ate || ''}"></div>
+            <button data-rm="${i}" style="min-height:36px">✕</button></div>`).join('') ||
+          '<span class="vazio">nenhum filtro — adicione regras TAG × período (o resultado é a UNIÃO de todas)</span>';
+        document.querySelectorAll('#biFiltros [data-rm]').forEach(b => b.onclick = () => { regras.splice(+b.dataset.rm, 1); pintaFiltros(); });
+        document.querySelectorAll('#biFiltros .form-linha').forEach(linha => {
+          const i = +linha.dataset.fid;
+          linha.querySelector('[data-c=tag]').onchange = e => regras[i].tag = +e.target.value;
+          linha.querySelector('[data-c=de]').onchange = e => regras[i].de = e.target.value;
+          linha.querySelector('[data-c=ate]').onchange = e => regras[i].ate = e.target.value;
+        });
+      };
+      $('#biAddF').onclick = () => {
+        regras.push({ tag: tags[0] ? tags[0].id : 0, de: dataLocal(new Date(Date.now() - 6 * 864e5)), ate: dataLocal(hoje) });
+        pintaFiltros();
+      };
+      $('#biAplicarF').onclick = async () => {
+        if (!regras.length) { toast('Adicione pelo menos um filtro', 'erro'); return; }
+        $('#biFRes').innerHTML = '<div class="carregando">Aplicando filtros…</div>';
+        try {
+          const r = await api('/api/relatorio/registros?filtros=' + encodeURIComponent(JSON.stringify(regras)));
+          const regs = r.registros || [];
+          $('#biFRes').innerHTML = `
+            <div class="cartao" style="margin:0">
+              <h4 style="margin:0 0 6px">Resultado dos filtros — ${regs.length} comentário(s) taggeado(s)</h4>
+              <div class="rolagem"><table><thead><tr><th>Data</th><th>Conf.</th><th>Tag</th><th>Militar</th><th>Comentário</th></tr></thead>
+              <tbody>${regs.map((rg, i) => `<tr data-bf="${i}" style="cursor:pointer"><td>${fmtData(rg.data)}</td><td>#${rg.conferencia_id}</td><td><b>${esc(rg.tag)}</b></td><td>${esc(rg.pessoa)}</td><td>${esc(rg.comentario)}</td></tr>`).join('') || '<tr><td colspan="5"><span class="vazio">nada encontrado</span></td></tr>'}</tbody></table></div></div>`;
+        } catch (e) { $('#biFRes').innerHTML = '<span class="vazio">falha nos filtros</span>'; }
+      };
+    })();
   };
 })();

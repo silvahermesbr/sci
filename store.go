@@ -95,6 +95,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV17(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV18(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 

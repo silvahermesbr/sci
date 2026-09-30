@@ -181,6 +181,17 @@ func (a *App) rotas() {
 
 	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria)
 	confAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
+
+	// Arquivo de conferências + filtro de período (ordem Tenente 30/09):
+	// FECHADAS × ARQUIVADAS; gerente arquiva, admin-only exclui arquivada.
+	m.Handle("POST /api/conferencia/{id}/arquivar", confAuth(a.hConferenciaArquivar))
+	m.Handle("DELETE /api/conferencia/arquivada/{id}", a.auth(true, a.hConferenciaExcluirArquivada))
+
+	// Busca individual nos relatórios (ordem Tenente 30/09): registros por pessoa+período
+	// e filtros complexos multi-seleção (TAG × período em OU).
+	m.Handle("GET /api/relatorio/registros", a.auth(false, a.hRegistrosBusca))
+	m.Handle("GET /api/relatorio/tags", a.auth(false, a.hTagsDisponiveis))
+	m.Handle("GET /api/pessoas/{id}/ficha", a.auth(false, a.hPessoaFicha))
 	m.Handle("GET /api/conferencia/hoje", confAuth(a.hConferenciaHoje))
 	m.Handle("POST /api/conferencia/iniciar", confAuth(a.hConferenciaIniciar))
 	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
@@ -913,6 +924,325 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"conferencia_id": req.ID, "gravados": gravados})
 }
 
+// ====================== ARQUIVO DE CONFERÊNCIAS (ordem Tenente 30/09) ======================
+// FECHADAS × ARQUIVADAS: `conferencias.arquivada_em` (migração v18) marca a arquivada.
+// Arquivar = botão do gerente (só conferência FECHADA); excluir arquivada = só ADMIN,
+// apaga conferência + presenças + comentários ( NUKE pontual do arquivo).
+
+// migração v18 (ordem Tenente 30/09): arquivo de conferências (arquivada_em) +
+// tag_id nos comentários (TAGs do catálogo nos comentários da busca individual)
+func (s *Store) migrarV18() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 18`).Scan(&v)
+	if v == 18 {
+		return nil
+	}
+	if !s.colunaExiste("conferencias", "arquivada_em") {
+		if _, err := s.db.Exec(`ALTER TABLE conferencias ADD COLUMN arquivada_em TEXT`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migração v18: %w", err)
+			}
+		}
+	}
+	if !s.colunaExiste("comentarios", "tag_id") {
+		if _, err := s.db.Exec(`ALTER TABLE comentarios ADD COLUMN tag_id INTEGER REFERENCES tags(id)`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migração v18 comentarios: %w", err)
+			}
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_conferencias_arq ON conferencias(arquivada_em)`); err != nil {
+		return fmt.Errorf("migração v18 idx: %w", err)
+	}
+	return s.marcarVersao(18)
+}
+
+// hConferenciaArquivar (ordem Tenente 30/09): FECHADA → ARQUIVADA. Gerente do grupo.
+func (a *App) hConferenciaArquivar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var gid *int64
+	var status string
+	if e := a.st.db.QueryRow(`SELECT grupo_id, status FROM conferencias WHERE id = ?`, id).Scan(&gid, &status); e != nil {
+		jsonErro(w, http.StatusNotFound, "conferência inexistente")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 {
+		if gid == nil || *gid != esc {
+			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
+			return
+		}
+	} else if u.Papel != "admin" && u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "sem acesso")
+		return
+	}
+	if status != "fechada" {
+		jsonErro(w, http.StatusConflict, "só conferência FECHADA pode ser arquivada")
+		return
+	}
+	if _, err := a.st.db.Exec(`UPDATE conferencias SET arquivada_em = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "arquivar", "conferencias", &id, "", ipDe(r))
+	a.backupAssincrono("arquivar")
+	jsonOK(w, map[string]any{"ok": true, "arquivada": id})
+}
+
+// hConferenciaExcluirArquivada (ordem Tenente 30/09): apaga ARQUIVADA — só ADMIN.
+// É a única via de destruição de uma conferência fechada (o NUKE de grupo é o outro caso).
+func (a *App) hConferenciaExcluirArquivada(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r) // a.auth(true) já garantiu papel admin
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var gid *int64
+	var arq *string
+	if e := a.st.db.QueryRow(`SELECT grupo_id, arquivada_em FROM conferencias WHERE id = ?`, id).Scan(&gid, &arq); e != nil {
+		jsonErro(w, http.StatusNotFound, "conferência inexistente")
+		return
+	}
+	if arq == nil {
+		jsonErro(w, http.StatusConflict, "conferência não está arquivada — arquive antes de excluir")
+		return
+	}
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM comentarios WHERE conferencia_id = ?`,
+		`DELETE FROM presencas WHERE conferencia_id = ?`,
+		`DELETE FROM conferencias WHERE id = ?`,
+	} {
+		if _, e := tx.Exec(q, id); e != nil {
+			jsonErro(w, http.StatusInternalServerError, e.Error())
+			return
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "excluir_arquivada", "conferencias", &id, "", ipDe(r))
+	a.backupAssincrono("excluir_arquivada")
+	jsonOK(w, map[string]any{"ok": true, "excluida": id})
+}
+
+// hRegistrosBusca (ordem Tenente 30/09): busca INDIVIDUAL nos relatórios.
+// ?pessoa=ID&de=&ate=  → todos os lançamentos da pessoa no período (data, conf, local,
+// situação, destino, observação, tags).
+// ?filtros=[{"tag":1,"de":"...","ate":"..."},...] → multi-seleção em OU: qualquer regra
+// casada entra no resultado (ex.: TAG A na última semana OU TAG B no último mês).
+func (a *App) hRegistrosBusca(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	de, ate := a.periodoPadrao(r)
+	filtrosJSON := r.URL.Query().Get("filtros")
+	pessoaQ := r.URL.Query().Get("pessoa")
+
+	cond := []string{"f.status='fechada'", "f.data BETWEEN ? AND ?"}
+	args := []any{de, ate}
+	if escopo > 0 {
+		ft := a.filtroArvore(escopo, "f")
+		cond = append(cond, strings.TrimPrefix(ft.clause, " AND "))
+		args = append(args, ft.args...)
+	}
+	var pessoaID int64
+	if pessoaQ != "" {
+		p, err := strconv.ParseInt(pessoaQ, 10, 64)
+		if err != nil || p <= 0 {
+			jsonErro(w, http.StatusBadRequest, "pessoa inválida")
+			return
+		}
+		pessoaID = p
+		cond = append(cond, "pr.pessoa_id = ?")
+		args = append(args, pessoaID)
+	}
+	where := " WHERE " + strings.Join(cond, " AND ")
+
+	if filtrosJSON != "" {
+		// modo filtros: regras (tag × período) em OU; retorna REGISTROS DE COMENTÁRIO
+		var regras []struct {
+			Tag int64  `json:"tag"`
+			De  string `json:"de"`
+			Ate string `json:"ate"`
+		}
+		if err := json.Unmarshal([]byte(filtrosJSON), &regras); err != nil || len(regras) == 0 {
+			jsonErro(w, http.StatusBadRequest, "filtros inválidos")
+			return
+		}
+		ou := []string{}
+		oargs := []any{}
+		for _, rg := range regras {
+			if rg.Tag <= 0 || rg.De == "" || rg.Ate == "" {
+				jsonErro(w, http.StatusBadRequest, "cada filtro exige tag, de e ate")
+				return
+			}
+			ou = append(ou, "(t.tag_id = ? AND f.data BETWEEN ? AND ?)")
+			oargs = append(oargs, rg.Tag, rg.De, rg.Ate)
+		}
+		q := `
+		SELECT f.data, f.id, p.nome_guerra, COALESCE(tt.nome,''), t.comentario,
+		       COALESCE(NULLIF(u.nome_guerra,''), u.login), t.criado_em, t.tag_id
+		FROM comentarios t
+		JOIN tags tt ON tt.id = t.tag_id
+		JOIN conferencias f ON f.id = t.conferencia_id
+		JOIN pessoas p ON p.id = t.pessoa_id
+		JOIN usuarios u ON u.id = t.operador_id
+		WHERE ( ` + strings.Join(ou, " OR ") + ` ) AND f.status='fechada'`
+		qargs := oargs
+		if escopo > 0 {
+			ft := a.filtroArvore(escopo, "f")
+			q += ft.clause
+			qargs = append(qargs, ft.args...)
+		}
+		q += ` ORDER BY f.data DESC, f.id DESC, t.ordem DESC LIMIT 400`
+		rows, err := a.st.db.Query(q, qargs...)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var data, nome, tag, comentario, por, em string
+			var confID, tagID int64
+			if rows.Scan(&data, &confID, &nome, &tag, &comentario, &por, &em, &tagID) == nil {
+				out = append(out, map[string]any{
+					"data": data, "conferencia_id": confID, "pessoa": nome, "tag": tag,
+					"tag_id": tagID, "comentario": comentario, "operador": por,
+					"datahora": em, "tipo": "comentario",
+				})
+			}
+		}
+		jsonOK(w, map[string]any{"registros": out, "modo": "filtros"})
+		return
+	}
+
+	// modo padrão: lançamentos (com a TAG associada) da pessoa no período
+	q := `
+	SELECT f.data, f.id, COALESCE(f.local,''), pr.situacao, COALESCE(d.nome,''),
+	       COALESCE(pr.observacao,''), COALESCE(tg.nome,''), pr.id
+	FROM presencas pr
+	JOIN conferencias f ON f.id = pr.conferencia_id
+	LEFT JOIN destinos d ON d.id = pr.destino_id
+	LEFT JOIN tags tg ON tg.id = pr.tag_id` + where + `
+	ORDER BY f.data DESC, f.id DESC LIMIT 400`
+	if pessoaID == 0 {
+		jsonErro(w, http.StatusBadRequest, "informe pessoa=ID (ou filtros=...)")
+		return
+	}
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var data, local, sit, destino, obs string
+		var tags *string
+		var confID, prID int64
+		if rows.Scan(&data, &confID, &local, &sit, &destino, &obs, &tags, &prID) == nil {
+			tagsOut := ""
+			if tags != nil {
+				tagsOut = *tags
+			}
+			out = append(out, map[string]any{
+				"data": data, "conferencia_id": confID, "local": local, "situacao": sit,
+				"destino": destino, "observacao": obs, "tags": tagsOut, "presenca_id": prID,
+			})
+		}
+	}
+	// ficha mínima da pessoa para o modal
+	var nome, nomeCompleto string
+	var setor, funcao *string
+	_ = a.st.db.QueryRow(`SELECT p.nome_guerra, COALESCE(p.nome_completo,''),
+		s.nome, fu.nome FROM pessoas p
+		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id WHERE p.id = ?`, pessoaID).
+		Scan(&nome, &nomeCompleto, &setor, &funcao)
+	ficha := map[string]any{"id": pessoaID, "nome_guerra": nome, "nome_completo": nomeCompleto,
+		"setor": setor, "funcao": funcao}
+	jsonOK(w, map[string]any{"pessoa": ficha, "registros": out, "de": de, "ate": ate})
+}
+
+// hTagsDisponiveis: TAGs visíveis no escopo (próprias + herdadas) para montar os filtros.
+func (a *App) hTagsDisponiveis(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	var rows *sql.Rows
+	var err error
+	if escopo > 0 {
+		ids := append([]int64{escopo}, a.gruposSuperioresAtivos(escopo)...)
+		marks := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+		args := make([]any, len(ids))
+		for i, v := range ids {
+			args[i] = v
+		}
+		rows, err = a.st.db.Query(`SELECT id, nome FROM tags WHERE ativo = 1 AND grupo_id IN (`+marks+`) ORDER BY nome`, args...)
+	} else {
+		rows, err = a.st.db.Query(`SELECT id, nome FROM tags WHERE ativo = 1 ORDER BY nome`)
+	}
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var nome string
+		if rows.Scan(&id, &nome) == nil {
+			out = append(out, map[string]any{"id": id, "nome": nome})
+		}
+	}
+	jsonOK(w, out)
+}
+
+// hPessoaFicha (ordem Tenente 30/09): dados pessoais para o modal da busca individual.
+func (a *App) hPessoaFicha(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	q := `SELECT p.id, p.nome_guerra, COALESCE(p.nome_completo,''),
+		COALESCE(s.nome,'INDEFINIDO'), COALESCE(fu.nome,'INDEFINIDO'), COALESCE(g.nome,'—'),
+		p.status
+		FROM pessoas p
+		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN grupos g ON g.id = p.grupo_id
+		WHERE p.id = ?`
+	if escopo > 0 {
+		q += ` AND p.grupo_id = ?`
+	}
+	args := []any{id}
+	if escopo > 0 {
+		args = append(args, escopo)
+	}
+	var fid int64
+	var ng, nc, setor, funcao, grupo, status string
+	if e := a.st.db.QueryRow(q, args...).Scan(&fid, &ng, &nc, &setor, &funcao, &grupo, &status); e != nil {
+		jsonErro(w, http.StatusNotFound, "pessoa não encontrada no seu escopo")
+		return
+	}
+	jsonOK(w, map[string]any{"id": fid, "nome_guerra": ng, "nome_completo": nc,
+		"setor": setor, "funcao": funcao, "grupo": grupo, "status": status})
+}
+
 // hConferenciaList: conferências DO ESCOPO (grupo não vê grupo; admin vê todas).
 func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
@@ -921,17 +1251,33 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 		SELECT c.id, c.data, COALESCE(c.hora,''), COALESCE(c.local,''), c.status,
 		       COALESCE(NULLIF(u.nome_guerra,''), u.login), c.criado_em, c.fechada_em,
 		       (SELECT COUNT(*) FROM presencas p WHERE p.conferencia_id = c.id) AS lanc,
-		       COALESCE(c.grupo_id,0), COALESCE((SELECT g.nome FROM grupos g WHERE g.id = c.grupo_id),'—')
+		       COALESCE(c.grupo_id,0), COALESCE((SELECT g.nome FROM grupos g WHERE g.id = c.grupo_id),'—'),
+		       c.arquivada_em
 		FROM conferencias c
 		LEFT JOIN usuarios u ON u.id = c.criado_por`
 	var rows *sql.Rows
 	var err error
-	if escopo > 0 {
-		rows, err = a.st.db.Query(q+` WHERE c.grupo_id = ?
-			ORDER BY c.data DESC, c.id DESC`, escopo)
+	// ordem Tenente 30/09: aba CONFERÊNCIAS tem filtro de período (padrão: últimos 7 dias);
+	// arquivadas vêm SÓ na aba ARQUIVO (?arq=1, sem limite de período)
+	if r.URL.Query().Get("arq") == "1" {
+		if escopo > 0 {
+			rows, err = a.st.db.Query(q+` WHERE c.grupo_id = ? AND c.arquivada_em IS NOT NULL
+				ORDER BY c.data DESC, c.id DESC`, escopo)
+		} else {
+			rows, err = a.st.db.Query(q+` WHERE c.arquivada_em IS NOT NULL
+				ORDER BY c.data DESC, c.id DESC`)
+		}
 	} else {
-		rows, err = a.st.db.Query(q + `
-			ORDER BY c.data DESC, c.id DESC`)
+		de, ate := a.periodoPadrao(r)
+		if escopo > 0 {
+			rows, err = a.st.db.Query(q+` WHERE c.grupo_id = ? AND c.arquivada_em IS NULL
+				AND c.data BETWEEN ? AND ?
+				ORDER BY c.data DESC, c.id DESC`, escopo, de, ate)
+		} else {
+			rows, err = a.st.db.Query(q+` WHERE c.arquivada_em IS NULL
+				AND c.data BETWEEN ? AND ?
+				ORDER BY c.data DESC, c.id DESC`, de, ate)
+		}
 	}
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -945,11 +1291,12 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 		var fechada *string
 		var lanc int
 		var grupoNome string
-		if rows.Scan(&id, &data, &hora, &local, &status, &criado, &criadaEm, &fechada, &lanc, &grupoID, &grupoNome) == nil {
+		var arquivada *string
+		if rows.Scan(&id, &data, &hora, &local, &status, &criado, &criadaEm, &fechada, &lanc, &grupoID, &grupoNome, &arquivada) == nil {
 			out = append(out, map[string]any{
 				"id": id, "data": data, "hora": hora, "local": local, "status": status,
 				"criado_por": criado, "criada_em": criadaEm, "fechada_em": fechada, "lancamentos": lanc,
-				"grupo_id": grupoID, "grupo": grupoNome,
+				"grupo_id": grupoID, "grupo": grupoNome, "arquivada_em": arquivada,
 			})
 		}
 	}
@@ -2839,6 +3186,7 @@ func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 		ConferenciaID int64  `json:"conferencia_id"`
 		PessoaID      int64  `json:"pessoa_id"`
 		Comentario    string `json:"comentario"`
+		TagID         *int64 `json:"tag_id"` // ordem Tenente 30/09: TAGs do catálogo nos comentários
 	}
 	if err := decodificar(r, &req); err != nil || req.ConferenciaID == 0 || req.PessoaID == 0 ||
 		strings.TrimSpace(req.Comentario) == "" {
@@ -2858,9 +3206,30 @@ func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 	var ord int64
 	_ = a.st.db.QueryRow(`SELECT COALESCE(MAX(ordem),0)+1 FROM comentarios WHERE conferencia_id = ?`,
 		req.ConferenciaID).Scan(&ord)
+	// TAG (ordem Tenente 30/09): se informada, precisa existir e ser visível no escopo
+	if req.TagID != nil && *req.TagID > 0 {
+		var n int
+		var q2 string
+		args2 := []any{*req.TagID}
+		if esc := escopoDoUsuario(u); esc > 0 {
+			ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
+			marks := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
+			q2 = `SELECT COUNT(*) FROM tags WHERE id = ? AND ativo = 1 AND (grupo_id IS NULL OR grupo_id IN (` + marks + `))`
+			for _, v := range ids {
+				args2 = append(args2, v)
+			}
+		} else {
+			q2 = `SELECT COUNT(*) FROM tags WHERE id = ? AND ativo = 1`
+		}
+		_ = a.st.db.QueryRow(q2, args2...).Scan(&n)
+		if n == 0 {
+			jsonErro(w, http.StatusBadRequest, "tag inválida")
+			return
+		}
+	}
 	res, err := a.st.db.Exec(
-		`INSERT INTO comentarios (ordem, conferencia_id, pessoa_id, operador_id, comentario) VALUES (?,?,?,?,?)`,
-		ord, req.ConferenciaID, req.PessoaID, u.ID, strings.TrimSpace(req.Comentario))
+		`INSERT INTO comentarios (ordem, conferencia_id, pessoa_id, operador_id, comentario, tag_id) VALUES (?,?,?,?,?,?)`,
+		ord, req.ConferenciaID, req.PessoaID, u.ID, strings.TrimSpace(req.Comentario), req.TagID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2887,10 +3256,11 @@ func (a *App) hComentariosList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rows, err := a.st.db.Query(`
-		SELECT c.ordem, c.criado_em, p.nome_guerra, u.login, c.comentario
+		SELECT c.ordem, c.criado_em, p.nome_guerra, u.login, c.comentario, COALESCE(tt.nome,'')
 		FROM comentarios c
 		JOIN pessoas p ON p.id = c.pessoa_id
 		JOIN usuarios u ON u.id = c.operador_id
+		LEFT JOIN tags tt ON tt.id = c.tag_id
 		WHERE c.conferencia_id = ? ORDER BY c.ordem`, id)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -2900,11 +3270,11 @@ func (a *App) hComentariosList(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var ord int64
-		var em, nome, por, comentario string
-		if rows.Scan(&ord, &em, &nome, &por, &comentario) == nil {
+		var em, nome, por, comentario, tag string
+		if rows.Scan(&ord, &em, &nome, &por, &comentario, &tag) == nil {
 			out = append(out, map[string]any{
 				"ordem": ord, "datahora": em, "pessoa": nome,
-				"operador": por, "comentario": comentario,
+				"operador": por, "comentario": comentario, "tag": tag,
 			})
 		}
 	}

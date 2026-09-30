@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -77,8 +78,8 @@ func TestMigrationsAndSeeds(t *testing.T) {
 	// 1. Validar versão de schema
 	var versao int
 	err := st.db.QueryRow(`SELECT MAX(versao) FROM schema_migrations`).Scan(&versao)
-	if err != nil || versao != 17 {
-		t.Fatalf("esperado schema versão 17, obtido: %d (err: %v)", versao, err)
+	if err != nil || versao != 18 {
+		t.Fatalf("esperado schema versão 18, obtido: %d (err: %v)", versao, err)
 	}
 
 	// 2. Validar que as tabelas de Escalas, Material e Configurações existem
@@ -588,4 +589,119 @@ func TestModulosReserva(t *testing.T) {
 		t.Fatalf("MODO_RESERVA=0 deveria liberar escalas (200), obtido: %d", rrFree.Code)
 	}
 	_ = st
+}
+
+// TestArquivoEBuscaIndividual (ordem Tenente 30/09): arquivo FECHADAS×ARQUIVADAS,
+// busca individual por pessoa, comentário com TAG e filtros multi-seleção (TAG×período OU).
+func TestArquivoEBuscaIndividual(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	adminCookie := loginAs(t, app, "admin", "admin123")
+	resGrupo, _ := st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('Cia ARQ', 'AR0001')`)
+	grupoID, _ := resGrupo.LastInsertId()
+	hashGer, _ := hashSenha("gerarq123")
+	_, _ = st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, ativo) VALUES ('gerarq', ?, 'gerente', ?, 1)`, hashGer, grupoID)
+	gerente := loginAs(t, app, "gerarq", "gerarq123")
+
+	resP, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('BUSCAVEL', 'Pessoa Buscavel', ?, 'ativo')`, grupoID)
+	pID, _ := resP.LastInsertId()
+
+	// TAG do catálogo do grupo
+	resTag, _ := st.db.Exec(`INSERT INTO tags (nome, ativo, grupo_id) VALUES ('SERVIÇO EXTERNO', 1, ?)`, grupoID)
+	tagID, _ := resTag.LastInsertId()
+
+	// conferência 1: fecha (vira FECHADA); conferência 2: fecha e arquiva
+	_, rc1 := doJSONReq(app, "POST", "/api/conferencia/iniciar", map[string]string{"local": "A"}, gerente)
+	c1 := int64(rc1["id"].(float64))
+	rrF1, _ := doJSONReq(app, "POST", "/api/conferencia/fechar", map[string]any{
+		"id": c1, "lancamentos": []map[string]any{{"pessoa_id": pID, "situacao": "presente", "verificado": true}}}, gerente)
+	if rrF1.Code != http.StatusOK {
+		t.Fatalf("fechar c1: %d", rrF1.Code)
+	}
+	_, rc2 := doJSONReq(app, "POST", "/api/conferencia/iniciar", map[string]string{"local": "B"}, gerente)
+	c2 := int64(rc2["id"].(float64))
+	rrF2, _ := doJSONReq(app, "POST", "/api/conferencia/fechar", map[string]any{
+		"id": c2, "lancamentos": []map[string]any{{"pessoa_id": pID, "situacao": "falta", "verificado": true}}}, gerente)
+	if rrF2.Code != http.StatusOK {
+		t.Fatalf("fechar c2: %d", rrF2.Code)
+	}
+
+	// comentário COM TAG na c1 (base da busca por TAG)
+	rrC, respC := doJSONReq(app, "POST", "/api/comentarios", map[string]any{
+		"conferencia_id": c1, "pessoa_id": pID, "comentario": "cumpriu serviço externo", "tag_id": tagID}, gerente)
+	if rrC.Code != http.StatusOK {
+		t.Fatalf("comentario com tag: %v", respC)
+	}
+	rrCT, _ := doJSONReq(app, "GET", fmt.Sprintf("/api/comentarios/%d", c1), nil, gerente)
+	if rrCT.Code != http.StatusOK {
+		t.Fatalf("listar comentarios: %d", rrCT.Code)
+	}
+	var lst []map[string]any
+	_ = json.Unmarshal(rrCT.Body.Bytes(), &lst)
+	if len(lst) == 0 || lst[0]["tag"] == "" {
+		t.Fatalf("tag não aparece no comentário: %s", rrCT.Body.String())
+	}
+
+	// busca individual por pessoa: 2 registros (c1 e c2)
+	rrB, respB := doJSONReq(app, "GET", fmt.Sprintf("/api/relatorio/registros?pessoa=%d&de=2000-01-01&ate=2100-01-01", pID), nil, gerente)
+	if rrB.Code != http.StatusOK {
+		t.Fatalf("registros: %v", respB)
+	}
+	regs, _ := respB["registros"].([]any)
+	if len(regs) != 2 {
+		t.Fatalf("esperava 2 lançamentos da pessoa, tive %d: %v", len(regs), respB)
+	}
+
+	// filtro multi-seleção: [TAG no período largo] OU [tag inexistente em período vazio]
+	filtros := fmt.Sprintf(`[{"tag":%d,"de":"2000-01-01","ate":"2100-01-01"},{"tag":99999,"de":"2000-01-01","ate":"2000-01-02"}]`, tagID)
+	rrFl, respFl := doJSONReq(app, "GET", "/api/relatorio/registros?filtros="+url.QueryEscape(filtros), nil, gerente)
+	if rrFl.Code != http.StatusOK {
+		t.Fatalf("filtros: %v (%s)", respFl, rrFl.Body.String())
+	}
+	fregs, _ := respFl["registros"].([]any)
+	if len(fregs) == 0 {
+		t.Fatalf("filtro por TAG não achou o comentário: %v", respFl)
+	}
+
+	// arquivar c2 (gerente) — some das FECHADAS, aparece no ARQUIVO
+	rrA, respA := doJSONReq(app, "POST", fmt.Sprintf("/api/conferencia/%d/arquivar", c2), map[string]any{}, gerente)
+	if rrA.Code != http.StatusOK {
+		t.Fatalf("arquivar: %v", respA)
+	}
+	rrL, _ := doJSONReq(app, "GET", "/api/conferencia/lista", nil, gerente)
+	var lista []map[string]any
+	_ = json.Unmarshal(rrL.Body.Bytes(), &lista)
+	for _, m := range lista {
+		if m["id"].(float64) == float64(c2) {
+			t.Fatalf("c2 arquivada não devia estar na lista de conferências")
+		}
+	}
+	rrLA, _ := doJSONReq(app, "GET", "/api/conferencia/lista?arq=1", nil, gerente)
+	var listaA []map[string]any
+	_ = json.Unmarshal(rrLA.Body.Bytes(), &listaA)
+	achou := false
+	for _, m := range listaA {
+		if m["id"].(float64) == float64(c2) {
+			achou = true
+		}
+	}
+	if !achou {
+		t.Fatalf("c2 não aparece no arquivo: %s", rrLA.Body.String())
+	}
+
+	// excluir arquivada: gerente 403, admin OK e some do banco
+	rrG, _ := doJSONReq(app, "DELETE", fmt.Sprintf("/api/conferencia/arquivada/%d", c2), nil, gerente)
+	if rrG.Code != http.StatusForbidden {
+		t.Fatalf("gerente excluindo arquivada deveria 403, veio %d", rrG.Code)
+	}
+	rrD, respD := doJSONReq(app, "DELETE", fmt.Sprintf("/api/conferencia/arquivada/%d", c2), nil, adminCookie)
+	if rrD.Code != http.StatusOK {
+		t.Fatalf("admin excluir arquivada: %v", respD)
+	}
+	var n int
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM conferencias WHERE id = ?`, c2).Scan(&n)
+	if n != 0 {
+		t.Fatalf("arquivada não foi apagada do banco")
+	}
 }
