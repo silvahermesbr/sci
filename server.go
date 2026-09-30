@@ -198,14 +198,14 @@ func (a *App) rotas() {
 	m.Handle("POST /api/conferencia/iniciar", confAuth(a.hConferenciaIniciar))
 	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
 	m.Handle("POST /api/conferencia/marcar", confAuth(a.hConferenciaMarcar))
-	m.Handle("GET /api/conferencia/lista", confAuth(a.hConferenciaList))
-	m.Handle("GET /api/conferencia/{id}", confAuth(a.hConferenciaGet))
+	m.Handle("GET /api/conferencia/lista", a.auth(false, a.hConferenciaList))
+	m.Handle("GET /api/conferencia/{id}", a.auth(false, a.hConferenciaGet))
 	m.Handle("DELETE /api/conferencia/{id}", confAuth(a.hConferenciaDescartar))
-	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", confAuth(a.hConferenciaPDF))
+	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.auth(false, a.hConferenciaPDF))
 
 	m.Handle("GET /api/efetivo_atual", a.auth(false, a.hEfetivoAtual)) // todos os papéis: admin vê todos, demais veem o escopo
-	m.Handle("GET /api/presenca/periodo", confAuth(a.hPresencaPeriodo))
-	m.Handle("GET /api/conferencias", confAuth(a.hConferenciaList))
+	m.Handle("GET /api/presenca/periodo", a.auth(false, a.hPresencaPeriodo))
+	m.Handle("GET /api/conferencias", a.auth(false, a.hConferenciaList))
 
 	m.Handle("GET /api/catalogo/{t}", a.auth(false, a.hCatalogoList))
 	m.Handle("POST /api/catalogo/{t}", a.auth(false, a.hCatalogoAdd))

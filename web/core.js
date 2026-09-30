@@ -279,24 +279,58 @@ function montarShell(usuario) {
     document.body.prepend(topbar);
   }
   topbar.classList.remove('oculto');
+  
+  const papel = usuario && usuario.papel;
   topbar.innerHTML =
     '<button type="button" id="btBurger" aria-label="menu" aria-expanded="false">' +
       '<span class="burg-x"></span><span class="burg-x"></span><span class="burg-x"></span>' +
     '</button>' +
-    '<div class="marca"><span class="logo">SCI</span><span class="sub">Controle Interno</span></div>' +
+    '<div class="marca"><span class="logo">' +
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.5l8 3.2v5.6c0 5-3.4 8.6-8 10.2-4.6-1.6-8-5.2-8-10.2V5.7l8-3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.4 12.2l2.5 2.5 4.7-5.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
+      ' SCI' +
+    '</span><span class="sub">Controle Interno</span></div>' +
     '<div id="tituloMob"></div>' +
     '<nav id="nav"></nav>' +
     '<div id="burgMask" class="oculto"></div>' +
-    '<div class="sessao"><div id="menuUsuario">' +
-      '<button type="button" id="quem" title="conta"></button>' +
-      '<div id="menuUsuarioItens" class="oculto">' +
-        '<button type="button" id="btPerfil">Meu usuário</button>' +
-        '<button type="button" id="btSenha">Mudar senha</button>' +
-        '<button type="button" id="btnSair">Logout</button>' +
+    '<div class="sessao">' +
+      '<div id="hubNotificacoes">' +
+        '<button id="btSinoNotif" type="button" title="Consciência Situacional & Alertas" class="btn-topbar-sino">' +
+          '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>' +
+          '<span id="badgeNotif" class="badge-notif oculto">0</span>' +
+        '</button>' +
       '</div>' +
-    '</div></div>';
+      '<div id="menuUsuario" class="menu-usuario-wrapper">' +
+        '<button type="button" id="quem" class="btn-usuario-gatilho" title="Minha Conta">' +
+          '<div class="user-avatar-ico">' +
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
+          '</div>' +
+          '<span class="user-login-txt">' + esc(usuario ? usuario.login : '') + '</span>' +
+          '<span class="user-papel-tag ' + esc(papel || '') + '">' + rotuloPapel(papel) + '</span>' +
+          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="user-seta"><path d="M6 9l6 6 6-6"/></svg>' +
+        '</button>' +
+        '<div id="menuUsuarioItens" class="menu-dropdown-custom oculto">' +
+          '<div class="menu-dropdown-header">' +
+            '<div class="menu-dropdown-user">' + esc(usuario ? (usuario.nome_guerra || usuario.login) : '') + '</div>' +
+            '<div class="menu-dropdown-sub">' + esc(usuario ? usuario.login : '') + ' · ' + rotuloPapel(papel) + '</div>' +
+          '</div>' +
+          '<div class="menu-dropdown-div"></div>' +
+          '<button type="button" id="btPerfil" class="menu-dropdown-item' + (papel === 'admin' ? ' oculto' : '') + '">' +
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' +
+            '<span>Meu Perfil</span>' +
+          '</button>' +
+          '<button type="button" id="btSenha" class="menu-dropdown-item">' +
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' +
+            '<span>Mudar Senha</span>' +
+          '</button>' +
+          '<div class="menu-dropdown-div"></div>' +
+          '<button type="button" id="btnSair" class="menu-dropdown-item item-sair">' +
+            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>' +
+            '<span>Encerrar Sessão</span>' +
+          '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
 
-  const papel = usuario && usuario.papel;
   let itens;
   if (papel === 'admin') {
     itens = [
@@ -314,16 +348,8 @@ function montarShell(usuario) {
     }
   }
   $('#nav', topbar).innerHTML = itens.map(it => '<a href="' + it[0] + '">' + it[1] + '</a>').join('');
-  // botão de usuário GENÉRICO (ícone) — ordem Tenente 29/09: login/função truncavam
-  $('#quem', topbar).innerHTML =
-    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
-    '<circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.8"/>' +
-    '<path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>' +
-    '</svg>';
-  $('#quem', topbar).title = usuario ? usuario.login + ' · ' + rotuloPapel(papel) : '';
 
   const menu = $('#menuUsuarioItens', topbar);
-  $('#btPerfil', topbar).classList.toggle('oculto', papel === 'admin'); // admin não tem perfil (R3)
   $('#quem', topbar).addEventListener('click', ev => { ev.stopPropagation(); menu.classList.toggle('oculto'); });
   $('#btPerfil', topbar).addEventListener('click', () => { menu.classList.add('oculto'); irPara('#/perfil'); });
   $('#btSenha', topbar).addEventListener('click', () => { menu.classList.add('oculto'); modalSenha(); });
@@ -463,9 +489,19 @@ function viewLogin() {
 }
 window.viewLogin = viewLogin;
 
+function animarEntradaView() {
+  const app = $('#app');
+  if (!app) return;
+  app.classList.remove('view-blur-enter');
+  void app.offsetWidth; // trigger reflow for smooth restart
+  app.classList.add('view-blur-enter');
+}
+window.animarEntradaView = animarEntradaView;
+
 /* ---------- invocação de view tolerante a módulo ausente ---------- */
 function chamarView(nome) {
   const app = garantirApp();
+  animarEntradaView();
   const fn = window[nome];
   if (typeof fn !== 'function') {
     app.innerHTML = '<div class="carregando">módulo ausente: ' + esc(nome) + '</div>';

@@ -758,9 +758,9 @@ func (s *Store) migrarV15() error {
 		"ROTULO_FUNCAO":         "Função",
 		"ROTULO_PESSOA":         "Militar",
 		"ROTULO_IDENTIFICADOR":  "Nome de Guerra",
-		"COR_PRIMARIA":          "#57a173",
-		"COR_PRIMARIA_CLARO":    "#8fd2a9",
-		"COR_PRIMARIA_ESCURO":   "#275e42",
+		"COR_PRIMARIA":          "#10b981",
+		"COR_PRIMARIA_CLARO":    "#34d399",
+		"COR_PRIMARIA_ESCURO":   "#065f46",
 	}
 	for k, v := range defaults {
 		_, _ = s.db.Exec(`INSERT INTO configuracoes (chave, valor)
@@ -1071,6 +1071,9 @@ func (s *Store) migrarV19() error {
 		SELECT 'WEBHOOK_ATRASOS_URL', ''
 		WHERE NOT EXISTS (SELECT 1 FROM configuracoes WHERE chave = 'WEBHOOK_ATRASOS_URL')`)
 	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = 'Organização' WHERE chave = 'TITULO_ORGANIZACAO' AND valor = '3º B Com GE'`)
+	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '#10b981' WHERE chave = 'COR_PRIMARIA' AND valor = '#57a173'`)
+	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '#34d399' WHERE chave = 'COR_PRIMARIA_CLARO' AND valor = '#8fd2a9'`)
+	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '#065f46' WHERE chave = 'COR_PRIMARIA_ESCURO' AND valor = '#275e42'`)
 
 	return s.marcarVersao(19)
 }
