@@ -3,6 +3,7 @@ sci
 sci.new
 sci_test
 *.exe
+*.exe~
 
 # dados e backups (nunca versionar dados de pessoal)
 dados/

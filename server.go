@@ -1492,8 +1492,20 @@ func (a *App) hCatalogoEditar(w http.ResponseWriter, r *http.Request) {
 	nome := strings.TrimSpace(req.Nome)
 	if esc := escopoDoUsuario(u); esc > 0 {
 		var donoGrupo int64
-		if e := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); e != nil || donoGrupo != esc {
-			jsonErro(w, http.StatusForbidden, "item herdado de grupo superior — somente leitura")
+		if e := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); e != nil {
+			jsonErro(w, http.StatusNotFound, "item não encontrado")
+			return
+		}
+		subordinados := a.gruposSubordinadosAtivos(esc)
+		ehSubordinado := false
+		for _, sub := range subordinados {
+			if sub == donoGrupo {
+				ehSubordinado = true
+				break
+			}
+		}
+		if donoGrupo != esc && !ehSubordinado {
+			jsonErro(w, http.StatusForbidden, "item herdado de grupo superior ou global — somente leitura")
 			return
 		}
 	}
@@ -2193,25 +2205,8 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	case "tags":
 		extra = ", cor"
 	}
-	// v9.11: pai_id em TODOS os catálogos de organização + ordenação hierárquica
-	// (raízes primeiro, cada pai seguido de seus filhos; dentro do nível, alfabético)
-	// v9.16.8: grupo_id no retorno — o front separa HERDADO (grupo superior) x DO GRUPO
-	q := `SELECT id, nome` + extra + `, pai_id, ativo, grupo_id, antiguidade FROM ` + t
 	var args []any
-	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
-		// escopo + HERANÇA (ordem Tenente 28/09 noite): grupo vê os globais (NULL),
-		// os do PRÓPRIO grupo e os dos grupos SUPERIORES com vínculo ativo
-		ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
-		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-		args = make([]any, len(ids))
-		for i, id := range ids {
-			args[i] = id
-		}
-		q += ` WHERE grupo_id IS NULL OR grupo_id IN (` + ph + `)`
-	}
-	// v9.16.10 (ordem Tenente): HIERARQUIA primeiro (caminho pai>filho via CTE), depois
-	// antiguidade, depois nome — nunca alfabética achatada
-	q = `WITH RECURSIVE cam(id, caminho) AS (
+	q := `WITH RECURSIVE cam(id, caminho) AS (
 		  SELECT id, nome FROM ` + t + ` WHERE pai_id IS NULL
 		  UNION ALL
 		  SELECT f.id, cm.caminho || ' > ' || f.nome FROM ` + t + ` f JOIN cam cm ON f.pai_id = cm.id
@@ -2219,7 +2214,9 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 		SELECT ` + t + `.id, ` + t + `.nome` + extra + `, ` + t + `.pai_id, ` + t + `.ativo, ` + t + `.grupo_id, ` + t + `.antiguidade
 		FROM ` + t + ` LEFT JOIN cam ON cam.id = ` + t + `.id`
 	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
+		// Doutrina: todos os membros da hierarquia têm visibilidade das tags de superiores, do próprio grupo e de subordinados
 		ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
+		ids = append(ids, a.gruposSubordinadosAtivos(esc)...)
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 		args = make([]any, len(ids))
 		for i, id := range ids {
@@ -2329,8 +2326,20 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 	}
 	if esc := escopoDoUsuario(u); esc > 0 {
 		var donoGrupo int64
-		if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); err != nil || donoGrupo != esc {
-			jsonErro(w, http.StatusForbidden, "catálogo de outro grupo ou global (só o admin)")
+		if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); err != nil {
+			jsonErro(w, http.StatusNotFound, "item não encontrado")
+			return
+		}
+		subordinados := a.gruposSubordinadosAtivos(esc)
+		ehSubordinado := false
+		for _, sub := range subordinados {
+			if sub == donoGrupo {
+				ehSubordinado = true
+				break
+			}
+		}
+		if donoGrupo != esc && !ehSubordinado {
+			jsonErro(w, http.StatusForbidden, "catálogo herdado de grupo superior ou global — somente leitura")
 			return
 		}
 	}

@@ -814,7 +814,7 @@
           if (grupo) url += '&grupo=' + encodeURIComponent(grupo);
 
           const r = await api(url);
-          listaConfs = (r && r.conferencias) || [];
+          listaConfs = Array.isArray(r) ? r : ((r && r.conferencias) || []);
           if (status === 'fechada') listaConfs = listaConfs.filter(x => x.status === 'fechada');
           else if (status === 'aberta') listaConfs = listaConfs.filter(x => x.status === 'aberta');
           
@@ -923,28 +923,50 @@
        3. ABA: BUSCA INDIVIDUAL POR MILITAR & TAGS
        ========================================================================= */
     const viewRelBuscaIndividual = async () => {
-      let tags = [];
-      try { tags = await api('/api/relatorio/tags'); } catch (e) { tags = []; }
+      let [tags, setores, funcoes] = await Promise.all([
+        api('/api/relatorio/tags').catch(() => []),
+        api('/api/catalogo/setores').catch(() => []),
+        api('/api/catalogo/funcoes').catch(() => [])
+      ]);
       const regras = [];
+
+      const optSetores = (setores || []).filter(s => s.ativo !== 0);
+      const optFuncoes = (funcoes || []).filter(f => f.ativo !== 0);
 
       const alvo = $('#corpoRelatorios');
       alvo.innerHTML = `
         <div class="cartao">
           <h3 style="margin-top:0">🔍 Busca Individual por Militar</h3>
-          <div class="form-linha" style="align-items:end">
-            <div class="campo" style="margin:0">
-              <label>Militar (Nome de Guerra)</label>
+          <div class="form-linha" style="align-items:end; margin-bottom:8px">
+            <div class="campo" style="margin:0; flex:1">
+              <label>Militar (Nome de Guerra ou Completo)</label>
               <input id="biNome" placeholder="Digite o nome de guerra…">
             </div>
-            <div class="campo" style="margin:0">
+            <div class="campo" style="margin:0; width:180px">
+              <label>Seção / Setor</label>
+              <select id="biSetor">
+                <option value="">— Todas as Seções —</option>
+                ${optSetores.map(s => `<option value="${s.id}">${esc(s.nome)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo" style="margin:0; width:180px">
+              <label>Função</label>
+              <select id="biFuncao">
+                <option value="">— Todas as Funções —</option>
+                ${optFuncoes.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="form-linha" style="align-items:end">
+            <div class="campo" style="margin:0; flex:1">
               <label>De</label>
               <input type="date" id="biDe" value="${dataLocal(new Date(Date.now() - 29 * 864e5))}">
             </div>
-            <div class="campo" style="margin:0">
+            <div class="campo" style="margin:0; flex:1">
               <label>Até</label>
               <input type="date" id="biAte" value="${dataLocal(hoje)}">
             </div>
-            <button class="primario" id="biIr" style="min-height:44px; padding:0 20px">Buscar</button>
+            <button class="primario" id="biIr" style="min-height:44px; padding:0 24px">Buscar</button>
           </div>
           <div id="biRes" style="margin-top:12px"></div>
 
@@ -1056,23 +1078,31 @@
       };
 
       const buscarPessoa = async () => {
-        const q = $('#biNome').value.trim().toLowerCase();
-        if (!q) { toast('Digite o nome do militar', 'erro'); return; }
+        const q = ($('#biNome').value || '').trim().toLowerCase();
+        const sid = $('#biSetor') ? $('#biSetor').value : '';
+        const fid = $('#biFuncao') ? $('#biFuncao').value : '';
+
+        if (!q && !sid && !fid) { toast('Informe o nome, setor ou função para buscar', 'erro'); return; }
         $('#biRes').innerHTML = '<div class="carregando">Buscando…</div>';
         try {
           const ps = await api('/api/pessoas');
           const todas = (ps.pessoas || []);
-          const cand = todas.filter(x => (x.nome_guerra || '').toLowerCase().includes(q) && (x.status || 'ativo') === 'ativo');
+          const cand = todas.filter(x => {
+            const matchNome = !q || (x.nome_guerra || '').toLowerCase().includes(q) || (x.nome_completo || '').toLowerCase().includes(q);
+            const matchSetor = !sid || String(x.setor_id) === String(sid);
+            const matchFuncao = !fid || String(x.funcao_id) === String(fid);
+            return matchNome && matchSetor && matchFuncao && (x.status || 'ativo') === 'ativo';
+          });
           if (!cand.length) {
-            $('#biRes').innerHTML = '<span class="vazio">Nenhum militar com esse nome no seu escopo.</span>';
+            $('#biRes').innerHTML = '<span class="vazio">Nenhum militar encontrado com os filtros informados.</span>';
             return;
           }
           if (cand.length > 1) {
             $('#biRes').innerHTML = `
               <div class="cartao" style="margin:0">
-                <h4 style="margin:0 0 6px">${cand.length} militares com esse nome — escolha:</h4>
+                <h4 style="margin:0 0 6px">${cand.length} militar(es) encontrado(s) — clique para ver o histórico:</h4>
                 <div style="display:flex; gap:6px; flex-wrap:wrap">
-                  ${cand.map((x, i) => `<button type="button" class="acao-linha" data-pcand="${i}">${esc(x.nome_guerra)} (${esc(x.posto || x.setor || '')})</button>`).join('')}
+                  ${cand.map((x, i) => `<button type="button" class="acao-linha" data-pcand="${i}"><b>${esc(x.nome_guerra)}</b> <small style="color:var(--tx3)">(${esc(x.setor || '—')} · ${esc(x.funcao || '—')})</small></button>`).join('')}
                 </div>
               </div>
             `;

@@ -55,7 +55,7 @@
     return null;
   }
 
-  // Card interativo de nó da árvore com expansão e foco recursivo
+  // Card interativo de nó da árvore com expansão e foco recursivo (Obsidian Graph View Style)
   const noCardHTML = (n, nivel, comGerente, arvoreTotal) => {
     const temFilhos = !!(n.filhos && n.filhos.length);
     const idCollapse = 'noArv_' + n.id + '_' + nivel + '_' + Math.random().toString(36).slice(2, 6);
@@ -65,45 +65,51 @@
       : `<span style="font-weight:600">${n.efetivo}</span>`;
 
     const isFocado = FOCO_GRUPO_ID === n.id;
-    const margemEsq = Math.min(nivel * 16, 120);
+    const margemEsq = Math.min(nivel * 20, 160);
+
+    const corBordaEsq = isFocado ? 'var(--verde-claro)' : nivel === 0 ? '#10b981' : temFilhos ? '#3b82f6' : '#8b5cf6';
+    const tagNivel = nivel === 0 ? '🏛️ Unidade Raiz' : `🌲 Nível ${nivel + 1}`;
 
     return `
       <div class="grupo-node-card" data-gid="${n.id}"
-           style="margin-left:${margemEsq}px; margin-bottom:10px; background:var(--painel2); border:1px solid ${isFocado ? 'var(--verde-claro)' : 'var(--borda)'}; border-left:4px solid ${isFocado ? 'var(--verde-claro)' : temFilhos ? '#3b82f6' : 'var(--tx3)'}; border-radius:8px; padding:12px 14px; box-shadow:0 2px 8px rgba(0,0,0,0.2)">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
-          <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:240px">
+           style="margin-left:${margemEsq}px; margin-bottom:12px; background:linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%), var(--painel2); border:1px solid ${isFocado ? 'var(--verde-claro)' : 'var(--borda)'}; border-left:5px solid ${corBordaEsq}; border-radius:10px; padding:14px 16px; box-shadow:${isFocado ? '0 0 16px rgba(16,185,129,0.25)' : '0 3px 12px rgba(0,0,0,0.25)'}; transition:all 0.2s ease">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px">
+          <div style="display:flex; align-items:center; gap:10px; flex:1; min-width:250px">
             ${temFilhos
-              ? `<button type="button" data-tgl="${idCollapse}" style="background:var(--painel3); border:1px solid var(--borda); color:var(--tx); border-radius:4px; width:26px; height:26px; cursor:pointer; font-weight:bold; display:flex; align-items:center; justify-content:center; padding:0; flex-shrink:0" title="Expandir/Recolher subgrupos">▾</button>`
-              : `<span style="width:26px; display:inline-block; text-align:center; color:var(--tx3); font-size:11px; flex-shrink:0">•</span>`}
+              ? `<button type="button" data-tgl="${idCollapse}" style="background:var(--painel3); border:1px solid var(--borda); color:var(--tx); border-radius:6px; width:28px; height:28px; cursor:pointer; font-weight:bold; display:flex; align-items:center; justify-content:center; padding:0; flex-shrink:0; font-size:13px; transition:transform 0.15s ease" title="Expandir/Recolher subgrupos">▾</button>`
+              : `<span style="width:28px; display:inline-block; text-align:center; color:var(--tx3); font-size:14px; flex-shrink:0">•</span>`}
             
-            <div style="cursor:pointer" data-focargrupo="${n.id}" title="Clique no nome para focar neste grupo e em seus subordinados">
-              <span style="font-size:14.5px; font-weight:700; color:${isFocado ? 'var(--verde-claro)' : 'var(--tx)'}; text-decoration:underline dotted">
-                ${esc(n.nome)}
-              </span>
-              <span style="font-size:11.5px; color:var(--tx3); margin-left:4px">#${n.id}</span>
-              <span style="margin-left:6px">${codigoChip(n.codigo)}</span>
+            <div style="cursor:pointer" data-focargrupo="${n.id}" title="Clique para expandir e focar nesta unidade e seus subordinados">
+              <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+                <span style="font-size:15px; font-weight:700; color:${isFocado ? 'var(--verde-claro)' : 'var(--tx)'}; letter-spacing:0.2px">
+                  ${esc(n.nome)}
+                </span>
+                <span style="font-size:11px; color:var(--tx3); font-family:monospace">#${n.id}</span>
+                <span>${codigoChip(n.codigo)}</span>
+                <span style="font-size:10.5px; font-weight:600; padding:1px 6px; border-radius:4px; background:rgba(255,255,255,0.06); color:var(--tx3); border:1px solid var(--borda)">${tagNivel}</span>
+              </div>
             </div>
           </div>
 
           <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--tx2); flex-wrap:wrap">
-            ${comGerente ? `<span style="background:var(--painel3); padding:3px 8px; border-radius:6px; border:1px solid var(--borda)">👤 <b>${esc(n.gerente || 'Sem gerente')}</b></span>` : ''}
-            <span style="background:var(--painel3); padding:3px 8px; border-radius:6px; border:1px solid var(--borda)">👥 Efetivo: ${efetTxt}</span>
-            <span style="background:var(--painel3); padding:3px 8px; border-radius:6px; border:1px solid var(--borda)">🔑 ${n.contas || 0} conta(s)</span>
-            ${temFilhos ? `<span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:3px 8px; border-radius:6px; border:1px solid rgba(59,130,246,0.3)">🌲 ${n.filhos.length} subgrupo(s)</span>` : ''}
+            ${comGerente ? `<span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda); display:flex; align-items:center; gap:4px">👤 <b>${esc(n.gerente || 'Sem gerente')}</b></span>` : ''}
+            <span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda)">👥 Efetivo: ${efetTxt}</span>
+            <span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda)">🔑 ${n.contas || 0} conta(s)</span>
+            ${temFilhos ? `<span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:4px 9px; border-radius:6px; border:1px solid rgba(59,130,246,0.3); font-weight:600">🌲 ${n.filhos.length} subgrupo(s)</span>` : ''}
           </div>
         </div>
 
-        <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; flex-wrap:wrap">
-          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-focargrupo="${n.id}">🔍 Focar</button>
-          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-novosub="${n.id}" data-nome="${esc(n.nome)}">+ Subgrupo</button>
-          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-trocarger="${n.id}" data-nome="${esc(n.nome)}">👤 Trocar Gerente</button>
-          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-subordinar="${n.id}" data-nome="${esc(n.nome)}">⛓️ Subordinação</button>
-          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-contas="${n.id}" data-nome="${esc(n.nome)}">📊 Auditar</button>
-          <button class="acao-linha perigo" style="font-size:11.5px; padding:3px 8px" data-excluir="${n.id}" data-nome="${esc(n.nome)}">🗑️ Excluir</button>
+        <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:10px; border-top:1px solid rgba(255,255,255,0.06); padding-top:10px; flex-wrap:wrap">
+          <button class="acao-linha" style="font-size:12px; padding:4px 10px; font-weight:600" data-focargrupo="${n.id}">🔍 Focar / Drilldown</button>
+          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-novosub="${n.id}" data-nome="${esc(n.nome)}">+ Subgrupo</button>
+          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-trocarger="${n.id}" data-nome="${esc(n.nome)}">👤 Trocar Gerente</button>
+          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-subordinar="${n.id}" data-nome="${esc(n.nome)}">⛓️ Subordinação</button>
+          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-contas="${n.id}" data-nome="${esc(n.nome)}">📊 Auditar</button>
+          <button class="acao-linha perigo" style="font-size:12px; padding:4px 10px" data-excluir="${n.id}" data-nome="${esc(n.nome)}">🗑️ Excluir</button>
         </div>
 
         ${temFilhos ? `
-          <div id="${idCollapse}" class="subgrupos-container" style="margin-top:8px; border-left:2px dashed rgba(16,185,129,0.3); padding-left:6px">
+          <div id="${idCollapse}" class="subgrupos-container" style="margin-top:10px; border-left:2px dashed rgba(16,185,129,0.35); padding-left:10px; transition:all 0.2s ease">
             ${n.filhos.map(f => noCardHTML(f, nivel + 1, comGerente, arvoreTotal)).join('')}
           </div>
         ` : ''}
@@ -123,18 +129,18 @@
       if (noFocado) {
         nosParaExibir = [noFocado];
         htmlBreadcrumb = `
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.3); border-radius:8px; padding:10px 14px; margin-bottom:14px">
-            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:13px">
-              <span style="color:var(--tx3)">Hierarquia Focada:</span>
-              <button class="acao-linha" style="font-size:12px; padding:2px 8px" data-focargrupo="0">🏛️ Raiz Geral</button>
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:linear-gradient(90deg, rgba(16,185,129,0.12) 0%, rgba(16,185,129,0.03) 100%); border:1px solid rgba(16,185,129,0.35); border-radius:10px; padding:12px 16px; margin-bottom:16px">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13.5px">
+              <span style="color:var(--tx3); font-weight:600">📍 Visualização Focada:</span>
+              <button class="acao-linha" style="font-size:12px; padding:3px 10px; border-radius:6px" data-focargrupo="0">🏛️ Raiz Geral</button>
               ${caminho.map((p, idx) => `
                 <span style="color:var(--tx3)">›</span>
-                <button class="acao-linha ${idx === caminho.length - 1 ? 'primario' : ''}" style="font-size:12px; padding:2px 8px" data-focargrupo="${p.id}">
+                <button class="acao-linha ${idx === caminho.length - 1 ? 'primario' : ''}" style="font-size:12px; padding:3px 10px; border-radius:6px" data-focargrupo="${p.id}">
                   ${esc(p.nome)}
                 </button>
               `).join('')}
             </div>
-            <button class="acao-linha" data-focargrupo="0" style="font-size:12px">🌐 Ver Estrutura Completa</button>
+            <button class="acao-linha" data-focargrupo="0" style="font-size:12px; padding:4px 12px">🌐 Ver Estrutura Completa</button>
           </div>
         `;
       }
@@ -855,13 +861,49 @@
           <tbody id="tabP">${linhasP || '<tr><td colspan="8"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
       </div>
       <div id="gerTags" class="${abaGer === 'tags' ? '' : 'oculto'}">
-        <div class="cartao"><h3 style="margin-top:0">Catálogos do meu grupo — Setores · Funções · Tags · Destinos</h3>
-          <p style="color:var(--tx2);font-size:12px;margin:4px 0">Itens próprios do grupo + <b>herdados dos grupos de cima</b> (o que existe acima vale aqui; o que o grupo cria não sobe). ✕ exclui (em uso → desativa), ⏸ desativa preservando histórico.</p>
-          <div id="catGer"><div class="carregando">…</div></div>
-          <div class="form-linha" style="margin-top:10px">
-            <div class="campo"><label>Catálogo</label><select id="cgT"><option value="setores">Setores</option><option value="funcoes">Funções</option><option value="tags">Tags</option><option value="destinos">Destinos</option></select></div>
-            <div class="campo"><label>Novo item</label><input id="cgN" placeholder="nome"></div>
-            <div class="campo" style="align-self:end"><button class="primario" id="cgGo">Adicionar</button></div></div></div>
+        <div class="cartao">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px">
+            <div>
+              <h3 style="margin:0 0 4px">Catálogos & TAGS Organizacionais</h3>
+              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Tags, Setores, Funções e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
+            </div>
+          </div>
+
+          <!-- Formulário de Adição no Topo -->
+          <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:14px; margin-bottom:16px">
+            <h4 style="margin:0 0 10px; font-size:13.5px; display:flex; align-items:center; gap:6px">
+              <span>➕</span> <span>Adicionar Novo Item ao Catálogo</span>
+            </h4>
+            <div class="form-linha" style="align-items:flex-end">
+              <div class="campo" style="width:160px; margin:0">
+                <label>Tipo de Catálogo</label>
+                <select id="cgT">
+                  <option value="tags">🏷️ Tags</option>
+                  <option value="setores">🏢 Setores / Seções</option>
+                  <option value="funcoes">💼 Funções</option>
+                  <option value="destinos">📍 Destinos</option>
+                </select>
+              </div>
+              <div class="campo" style="flex:1; margin:0">
+                <label>Nome do Item</label>
+                <input id="cgN" placeholder="ex.: MISSÃO EXTERNA, Comandante, Almoxarifado…">
+              </div>
+              <div class="campo" id="cgCorWrap" style="width:100px; margin:0">
+                <label>Cor (Tag)</label>
+                <input type="color" id="cgCor" value="#10b981" style="width:100%; height:40px; padding:2px; cursor:pointer">
+              </div>
+              <div class="campo" id="cgSiglaWrap" style="width:110px; margin:0; display:none">
+                <label>Sigla</label>
+                <input id="cgSigla" placeholder="ex.: 1º PEL">
+              </div>
+              <div class="campo" style="margin:0">
+                <button class="primario" id="cgGo" style="min-height:40px; padding:0 22px">Adicionar</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="catGer"><div class="carregando">Carregando catálogos…</div></div>
+        </div>
       </div>
       <div id="gerGrupos" class="${abaGer === 'grupos' ? '' : 'oculto'}">
         <div class="cartao"><h3 style="margin-top:0">MEU GRUPO</h3>` +
@@ -1023,73 +1065,188 @@
       };
     });
 
-    /* --- aba TAGS: 4 catálogos (herança só desce) --- */
-    const rotCat = { setores: 'Setores', funcoes: 'Funções', tags: 'Tags', destinos: 'Destinos' };
+    /* --- aba TAGS: 4 catálogos com nova doutrina hierárquica --- */
+    const rotCat = { tags: 'Tags', setores: 'Setores / Seções', funcoes: 'Funções', destinos: 'Destinos' };
+    
+    // Toggle de campos no form do topo
+    const cgTSel = $('#cgT');
+    if (cgTSel) {
+      cgTSel.onchange = () => {
+        const val = cgTSel.value;
+        const corWrap = $('#cgCorWrap');
+        const siglaWrap = $('#cgSiglaWrap');
+        if (corWrap) corWrap.style.display = val === 'tags' ? 'block' : 'none';
+        if (siglaWrap) siglaWrap.style.display = val === 'setores' ? 'block' : 'none';
+      };
+    }
+
     const carregarCats = async () => {
       const cont = $('#catGer');
       if (!cont) return;
-      const tipos = ['setores', 'funcoes', 'tags', 'destinos'];
-      const meusGrupos = new Set(((window.ME && window.ME.grupo_id) ? [window.ME.grupo_id] : []));
-      // v9.16.9: setores/funcoes JÁ vieram no carregamento da view — só tags/destinos vão à rede
+      const tipos = ['tags', 'setores', 'funcoes', 'destinos'];
+      const meuGid = (window.ME && window.ME.grupo_id) || null;
+      
+      // Coletar IDs de grupos subordinados a partir da árvore
+      const coletarSubordinados = (no, acc = new Set()) => {
+        if (!no) return acc;
+        if (Array.isArray(no)) {
+          no.forEach(n => coletarSubordinados(n, acc));
+          return acc;
+        }
+        if (no.id && no.id !== meuGid) acc.add(no.id);
+        if (no.filhos) no.filhos.forEach(f => coletarSubordinados(f, acc));
+        return acc;
+      };
+      const subsIds = coletarSubordinados(arvore);
+      const mapGrupos = {};
+      (grupos || []).forEach(g => { mapGrupos[g.id] = g.nome; });
+
       const cache = { setores: setoresCat, funcoes: funcoesCat };
       const resultados = await Promise.all(tipos.map(t =>
         Array.isArray(cache[t])
           ? Promise.resolve([t, cache[t]])
           : api('/api/catalogo/' + t).then(l => [t, l]).catch(() => [t, []])));
+      
       let html = '';
       for (const [t, lista] of resultados) {
-        // v9.16.11: LISTA com EDITAR/EXCLUIR; HERDADO read only primeiro
-        const herdadas = lista.filter(x => !meusGrupos.has(x.grupo_id));
-        const minhas = lista.filter(x => meusGrupos.has(x.grupo_id));
+        const minhas = lista.filter(x => x.grupo_id === meuGid);
+        const subordinadas = lista.filter(x => x.grupo_id && subsIds.has(x.grupo_id));
+        const herdadas = lista.filter(x => x.grupo_id !== meuGid && (!x.grupo_id || !subsIds.has(x.grupo_id)));
+
         const nivelTag = x => {
           let n = 0, pai = x.pai_id;
           while (pai != null) { const p = lista.find(y => y.id === pai); if (!p) break; n++; pai = p.pai_id; }
           return n;
         };
-        const linhaLista = (x, herdado) => `<div class="cat-linha ${herdado ? 'herdado' : ''}" ${t === 'tags' && !herdado ? `style="margin-left:${nivelTag(x) * 20}px"` : ''}>
-            <small class="num" style="width:34px">#${x.id}</small>
-            <span style="flex:1">${esc(x.nome)}${x.ativo ? '' : ' <i style="color:var(--tx3)">(inativo)</i>'}</span>
-            ${herdado ? '<small style="color:var(--tx3)">herdado</small>' :
-              `<button class="acao-linha" data-editcat="${t}" data-cid="${x.id}" data-nome="${esc(x.nome)}">editar</button>
-               <button class="acao-linha" data-delcat="${t}" data-cid="${x.id}">excluir</button>`}</div>`;
+
+        const chipCorTag = x => t === 'tags' && x.cor
+          ? `<span style="display:inline-block; width:12px; height:12px; border-radius:50%; background:${esc(x.cor)}; margin-right:6px; vertical-align:middle; border:1px solid rgba(255,255,255,0.2)"></span>`
+          : '';
+
+        const linhaLista = (x, tipoPermissao, nomeOrigem) => {
+          const podeGerenciar = tipoPermissao === 'meu' || tipoPermissao === 'subordinado';
+          const recuo = (t === 'tags' && tipoPermissao === 'meu') ? `margin-left:${nivelTag(x) * 18}px` : '';
+
+          return `
+            <div class="cat-linha ${!podeGerenciar ? 'herdado' : ''}" style="${recuo}; display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:4px; background:var(--painel2); border:1px solid var(--borda); border-radius:6px">
+              <small class="num" style="width:34px; color:var(--tx3)">#${x.id}</small>
+              <div style="flex:1; display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+                ${chipCorTag(x)}
+                <span style="font-weight:600">${esc(x.nome)}</span>
+                ${x.sigla ? `<code style="font-size:11px; padding:1px 5px; background:var(--painel3); border-radius:4px; color:var(--tx2)">${esc(x.sigla)}</code>` : ''}
+                ${!x.ativo ? '<i style="color:var(--tx3); font-size:12px">(inativo)</i>' : ''}
+                ${tipoPermissao === 'subordinado' ? `<span style="font-size:10.5px; padding:1px 6px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3)">🌲 ${esc(nomeOrigem || 'Subordinado')}</span>` : ''}
+              </div>
+              <div style="display:flex; align-items:center; gap:6px">
+                ${podeGerenciar ? `
+                  <button class="acao-linha" style="font-size:11.5px; padding:2px 8px" data-editcat="${t}" data-cid="${x.id}" data-nome="${esc(x.nome)}" data-cor="${esc(x.cor || '')}" data-sigla="${esc(x.sigla || '')}">editar</button>
+                  <button class="acao-linha perigo" style="font-size:11.5px; padding:2px 8px" data-delcat="${t}" data-cid="${x.id}">excluir</button>
+                ` : `
+                  <span style="color:var(--tx3); font-size:11.5px; display:inline-flex; align-items:center; gap:3px">
+                    🔒 ${esc(nomeOrigem || 'Superior')}
+                  </span>
+                `}
+              </div>
+            </div>
+          `;
+        };
+
         let corpo = '';
-        if (herdadas.length) corpo += `<div class="cat-secao">HERDADO <small>(de grupos superiores — somente leitura)</small></div>` +
-          herdadas.map(x => linhaLista(x, true)).join('');
-        corpo += `<div class="cat-secao">DO MEU GRUPO</div>` + (minhas.length
-          ? minhas.sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id))
-              .map(x => linhaLista(x, false)).join('')
-          : '<span class="vazio">— nenhuma —</span>');
+        
+        // 1. Do Meu Grupo
+        corpo += `
+          <div class="cat-secao" style="font-weight:700; font-size:12px; color:var(--verde-claro); margin:10px 0 6px; display:flex; align-items:center; gap:6px">
+            <span>🛡️ DO MEU GRUPO (${minhas.length})</span>
+          </div>
+          ${minhas.length ? minhas.sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id)).map(x => linhaLista(x, 'meu')).join('') : '<span class="vazio" style="padding:6px 0; display:block">— Nenhum item próprio criado —</span>'}
+        `;
+
+        // 2. De Subordinados (Superiores têm permissão total de edição/exclusão)
+        if (subordinadas.length) {
+          corpo += `
+            <div class="cat-secao" style="font-weight:700; font-size:12px; color:#60a5fa; margin:14px 0 6px; display:flex; align-items:center; gap:6px">
+              <span>🌲 DE GRUPOS SUBORDINADOS (${subordinadas.length})</span>
+              <small style="font-weight:400; color:var(--tx3)">— Você pode editar/gerenciar</small>
+            </div>
+            ${subordinadas.map(x => linhaLista(x, 'subordinado', mapGrupos[x.grupo_id] || ('Grupo #' + x.grupo_id))).join('')}
+          `;
+        }
+
+        // 3. Herdados de Superiores / Globais (Somente Leitura)
+        if (herdadas.length) {
+          corpo += `
+            <div class="cat-secao" style="font-weight:700; font-size:12px; color:var(--tx3); margin:14px 0 6px; display:flex; align-items:center; gap:6px">
+              <span>🔒 HERDADO DE GRUPOS SUPERIORES / GLOBAL (${herdadas.length})</span>
+              <small style="font-weight:400; color:var(--tx3)">— Somente Leitura</small>
+            </div>
+            ${herdadas.map(x => linhaLista(x, 'superior', x.grupo_id ? (mapGrupos[x.grupo_id] || 'Grupo #' + x.grupo_id) : 'Global')).join('')}
+          `;
+        }
+
         const btAnt = (t === 'tags' || t === 'setores' || t === 'funcoes') && minhas.length >= 2
-          ? `<button class="fantasma" data-ant="${t}" style="min-height:34px;padding:6px 12px">⚖ Definir antiguidade</button>` : '';
-        html += `<div class="cat-bloco"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
-          <b>${rotCat[t]}</b>${btAnt}</div>${corpo}</div>`;
+          ? `<button class="fantasma" data-ant="${t}" style="min-height:30px; padding:4px 10px; font-size:12px">⚖ Definir antiguidade</button>` : '';
+
+        html += `
+          <div class="cat-bloco" style="margin-bottom:20px; background:var(--painel); border:1px solid var(--borda); border-radius:8px; padding:12px 14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid var(--borda); padding-bottom:8px; margin-bottom:8px">
+              <b style="font-size:14.5px">${rotCat[t]}</b>
+              ${btAnt}
+            </div>
+            ${corpo}
+          </div>
+        `;
       }
+
       cont.innerHTML = html;
+
       /* --- handlers: editar / excluir / desativar --- */
       cont.querySelectorAll('[data-editcat]').forEach(b => b.onclick = () => {
-        const t = b.dataset.editcat, cid = b.dataset.cid, nome = b.dataset.nome;
-        const div = modal(`<div class="modal-inner"><h3>Editar ${rotCat[t]}</h3>
-          <div class="campo"><label>Nome</label><input id="edNome" value="${nome}"></div>
-          <div class="modal-acoes"><button class="fantasma" id="edX">Cancelar</button>
-          <button class="primario" id="edGo">Salvar</button></div></div>`);
+        const t = b.dataset.editcat, cid = b.dataset.cid, nome = b.dataset.nome, cor = b.dataset.cor, sigla = b.dataset.sigla;
+        const div = modal(`
+          <div class="modal-inner" style="max-width:440px">
+            <h3 style="margin-top:0">Editar ${rotCat[t]}</h3>
+            <div class="campo"><label>Nome</label><input id="edNome" value="${esc(nome)}"></div>
+            ${t === 'tags' ? `<div class="campo"><label>Cor da Tag</label><input type="color" id="edCor" value="${esc(cor || '#10b981')}" style="width:100%; height:40px; padding:2px; cursor:pointer"></div>` : ''}
+            ${t === 'setores' ? `<div class="campo"><label>Sigla</label><input id="edSigla" value="${esc(sigla || '')}"></div>` : ''}
+            <div class="modal-acoes">
+              <button class="fantasma" id="edX">Cancelar</button>
+              <button class="primario" id="edGo">Salvar Alterações</button>
+            </div>
+          </div>
+        `);
         div.querySelector('#edNome').focus();
         div.querySelector('#edX').onclick = () => div.fechar();
         div.querySelector('#edGo').onclick = async () => {
           const novoNome = div.querySelector('#edNome').value.trim();
           if (!novoNome) { toast('Informe o nome', 'erro'); return; }
-          const r = await processar(() => api(`/api/catalogo/${t}/${cid}`, { method: 'PATCH', body: JSON.stringify({ nome: novoNome }) }), 'Salvando…');
-          if (r.ok) { toast('Editado'); if (t === 'setores' || t === 'funcoes') setoresCat = funcoesCat = null; carregarCats(); }
+          const corpo = { nome: novoNome };
+          if (t === 'tags' && div.querySelector('#edCor')) corpo.cor = div.querySelector('#edCor').value;
+          if (t === 'setores' && div.querySelector('#edSigla')) corpo.sigla = div.querySelector('#edSigla').value.trim();
+
+          const r = await processar(() => api(`/api/catalogo/${t}/${cid}`, { method: 'PATCH', body: JSON.stringify(corpo) }), 'Salvando alterações…');
+          if (r.ok) {
+            toast('Item atualizado com sucesso!');
+            div.fechar();
+            if (t === 'setores' || t === 'funcoes') setoresCat = funcoesCat = null;
+            carregarCats();
+          }
         };
       });
+
       cont.querySelectorAll('[data-delcat]').forEach(b => b.onclick = async () => {
-        if (!(await confirmar('Excluir este item?'))) return;
+        if (!(await confirmar('Excluir este item do catálogo?'))) return;
         const r = await processar(() => api(`/api/catalogo/${b.dataset.delcat}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
-        if (r.ok) { toast('Excluído'); if (b.dataset.delcat === 'setores' || b.dataset.delcat === 'funcoes') setoresCat = funcoesCat = null; carregarCats(); }
+        if (r.ok) {
+          toast('Item excluído com sucesso');
+          if (b.dataset.delcat === 'setores' || b.dataset.delcat === 'funcoes') setoresCat = funcoesCat = null;
+          carregarCats();
+        }
       });
+
       cont.querySelectorAll('[data-ant]').forEach(bt => bt.onclick = () => {
         const t = bt.dataset.ant;
         const lista = (resultados.find(r => r[0] === t) || [null, []])[1]
-          .filter(x => meusGrupos.has(x.grupo_id));
+          .filter(x => x.grupo_id === meuGid);
         if (lista.length < 2) return;
         const raiz = lista.filter(x => x.pai_id == null);
         const empilhar = (nos, acc) => nos
@@ -1140,11 +1297,22 @@
         };
       });
     };
+
     $('#cgGo').onclick = async () => {
       const t = $('#cgT').value, nome = $('#cgN').value.trim();
       if (!nome) { toast('Informe o nome do item', 'erro'); return; }
-      const r = await processar(() => api('/api/catalogo/' + t, { method: 'POST', body: JSON.stringify({ nome }) }), 'Adicionando item…');
-      if (r.ok) { toast('Item adicionado'); $('#cgN').value = ''; setoresCat = funcoesCat = null; carregarCats(); }
+      const payload = { nome };
+      if (t === 'tags') payload.cor = $('#cgCor').value;
+      if (t === 'setores') payload.sigla = $('#cgSigla').value.trim();
+
+      const r = await processar(() => api('/api/catalogo/' + t, { method: 'POST', body: JSON.stringify(payload) }), 'Adicionando item…');
+      if (r.ok) {
+        toast('Item adicionado com sucesso!');
+        $('#cgN').value = '';
+        if ($('#cgSigla')) $('#cgSigla').value = '';
+        setoresCat = funcoesCat = null;
+        carregarCats();
+      }
     };
     if (abaGer === 'tags') carregarCats(); else $('#gerTags').addEventListener('renderTags', carregarCats, { once: true });
 

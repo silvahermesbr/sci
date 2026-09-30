@@ -338,14 +338,16 @@ function montarShell(usuario) {
   topbar.classList.remove('oculto');
   
   const papel = usuario && usuario.papel;
+  const nomeSys = window.cfg ? window.cfg('NOME_SISTEMA', 'SCI') : 'SCI';
+  const subSys = window.cfg ? window.cfg('SUBTITULO_SISTEMA', 'Controle Interno') : 'Controle Interno';
   topbar.innerHTML =
     '<button type="button" id="btBurger" aria-label="menu" aria-expanded="false">' +
       '<span class="burg-x"></span><span class="burg-x"></span><span class="burg-x"></span>' +
     '</button>' +
     '<div class="marca"><span class="logo">' +
       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.5l8 3.2v5.6c0 5-3.4 8.6-8 10.2-4.6-1.6-8-5.2-8-10.2V5.7l8-3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.4 12.2l2.5 2.5 4.7-5.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-      ' SCI' +
-    '</span><span class="sub">Controle Interno</span></div>' +
+      ' ' + esc(nomeSys) +
+    '</span><span class="sub">' + esc(subSys) + '</span></div>' +
     '<div id="tituloMob"></div>' +
     '<nav id="nav"></nav>' +
     '<div id="burgMask" class="oculto"></div>' +
@@ -460,6 +462,9 @@ function montarShell(usuario) {
   }
 
   navAtiva(location.hash);
+  if (window.CONFIGS && Object.keys(window.CONFIGS).length > 0) {
+    aplicarConfiguracoes(window.CONFIGS);
+  }
 }
 window.montarShell = montarShell;
 
