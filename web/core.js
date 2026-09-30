@@ -307,12 +307,10 @@ function montarShell(usuario) {
   } else {
     itens = [
       ['#/hoje', 'CONFERÊNCIA'],
-      ['#/escalas', 'ESCALAS'],
-      ['#/material', 'MATERIAL'],
       ['#/relatorios', 'RELATÓRIOS']
     ];
     if (papel === 'gerente') {
-      itens.splice(3, 0, ['#/grupos', 'GERENCIAR']);
+      itens.push(['#/grupos', 'GERENCIAR']);
     }
   }
   $('#nav', topbar).innerHTML = itens.map(it => '<a href="' + it[0] + '">' + it[1] + '</a>').join('');
@@ -484,12 +482,13 @@ function rotear() {
 
   if (h === '' || h === '#' || h === '#/' || h === '#/login') { irPara(rotaInicial()); return; }
   if (h === '#/conferencias') { irPara('#/hoje'); return; }             // listas moram na Conferência
-  if (papel === 'admin' && (h === '#/hoje' || h === '#/conferencia' || h === '#/escalas' || h === '#/material')) { irPara('#/admin'); return; } // admin não tem grupo: restrito a gerentes/operadores
+  if (papel === 'admin' && (h === '#/hoje' || h === '#/conferencia')) { irPara('#/admin'); return; } // admin não tem grupo: restrito a gerentes/operadores
+  // Módulos ESCALAS e MATERIAL EM RESERVA (ordem Tenente 30/09): fora do ar no front —
+  // código preservado no repo; retorno pelo flag MODO_RESERVA=0 nas configurações
+  if (h === '#/escalas' || h === '#/material') { irPara(rotaInicial()); return; }
 
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
   if (h === '#/conferencia') { chamarView('ViewConferencia'); return; } // edição da conf aberta (v9.14)
-  if (h === '#/escalas') { chamarView('ViewEscalas'); return; }
-  if (h === '#/material') { chamarView('ViewMaterial'); return; }
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
   if (h === '#/admin') {
     if (papel === 'admin') chamarView('ViewAdmin');

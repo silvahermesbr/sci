@@ -5,11 +5,14 @@
 (() => {
   const $ = s => document.querySelector(s);
   const SITUACOES = ['presente', 'atraso', 'falta', 'justificada'];
-  const ROTULO = { presente: 'Presente', atraso: 'Atraso', falta: 'Falta', justificada: 'Justificada' };
+  const ROTULO = { presente: 'Presente', atraso: 'Atraso', falta: 'Falta', justificada: 'Justificada', nao_verificado: 'NÃO VERIFICADO' };
 
   /* estado da conferência em curso (RAM, como no protótipo — a fonte de verdade
      é o servidor: estados só vão para o banco no FECHAR) */
   let C = null;
+  // ordem Tenente 30/09: militar nunca nasce mais como "presente" implícito —
+  // quem ainda não foi verificado exibe NÃO VERIFICADO até o ✅ (ou escolha) do operador
+  const sitDe = p => C.est[p.id] || 'nao_verificado';
 
   /* abrirModal pode ou não devolver a raiz; garantir um nó consultável */
   const modalRaiz = html => {
@@ -143,7 +146,7 @@
     for (const setor of Object.keys(porSetor).sort()) {
       listas += `<div class="grupo-setor"><h4>${esc(setor)} · ${porSetor[setor].length}</h4><div class="lista-pessoa">` +
         porSetor[setor].map(p => {
-          const sit = C.est[p.id] || 'presente';
+          const sit = sitDe(p);
           const escInfo = (C.escalados || []).find(x => x.pessoa_id === p.id);
           const badgeEscala = escInfo
             ? `<span style="background:rgba(87,161,115,.2); color:var(--verde-claro); font-size:11px; padding:1px 6px; border-radius:4px; font-weight:700" title="Escalado em ${esc(escInfo.tipo_nome)}">🛡️ ${esc(escInfo.tipo_nome)}</span>`
@@ -156,7 +159,7 @@
           return `<div class="pessoa ${C.verif.has(p.id) ? 'verificado' : ''}" data-id="${p.id}">
             <input type="checkbox" class="chk" data-id="${p.id}" ${C.verif.has(p.id) ? 'checked' : ''} title="verifiquei esta pessoa">
             <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
-            <select class="sel-situacao" data-id="${p.id}" title="situação">${SITUACOES.map(optSit).join('')}</select>
+            <select class="sel-situacao" data-id="${p.id}" title="situação">${sit === 'nao_verificado' ? '<option value="nao_verificado" disabled selected>NÃO VERIFICADO</option>' : ''}${SITUACOES.map(optSit).join('')}</select>
             ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
         }).join('') + '</div></div>';
     }
@@ -202,7 +205,7 @@
     document.querySelectorAll('.sel-situacao').forEach(s => s.onchange = () => {
       const id = +s.dataset.id;
       const novo = s.value;
-      const atual = C.est[id] || 'presente';
+      const atual = C.est[id] || 'nao_verificado';
       if (novo === atual) return;
       C.est[id] = novo;
       C.verif.add(id);
@@ -214,8 +217,10 @@
       if (ch.checked) C.verif.add(id); else C.verif.delete(id);
       ch.closest('.pessoa').classList.toggle('verificado', ch.checked);
       atualizar();
-      // salvamento parcial: check grava o estado atual (ou presente) daquele nome + verificado
+      // salvamento parcial: check grava o estado atual + verificado; UNCHECK grava
+      // verificado=0 (situacao vazia) — senão o ✅ ressuscitava no reload
       if (ch.checked) marcarParcial(id, C.est[id] || 'presente', C.dest[id] ?? null, C.obs[id] ?? null, true);
+      else marcarParcial(id, null, C.dest[id] ?? null, C.obs[id] ?? null, false);
     });
     document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => { C.dest[+s.dataset.id] = +s.value || null; });
     document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => { ev.stopPropagation(); confModalComentarios(+b.dataset.id); });
@@ -311,7 +316,8 @@
       pessoa_id: p.id,
       situacao: C.est[p.id] || 'presente',
       destino_id: C.dest[p.id] || null,
-      observacao: C.obs[p.id] || null
+      observacao: C.obs[p.id] || null,
+      verificado: !!C.verif.has(p.id) // ordem Tenente 30/09: sem ✅ o SERVIDOR grava NÃO VERIFICADO
     }));
     try {
       const r = await api('/api/conferencia/fechar', { method: 'POST', body: JSON.stringify({ id: C.c.id, lancamentos: lanc }) });
@@ -341,6 +347,7 @@
       <div class="caixa"><b>${b.atrasos}</b><span>atrasos</span></div>
       <div class="caixa"><b>${b.falta}</b><span>faltas</span></div>
       <div class="caixa"><b>${b.justificadas}</b><span>justificadas</span></div>
+      <div class="caixa"><b>${b.nao_verificados || 0}</b><span>não verif.</span></div>
       <div class="caixa"><b>${totalFaltas}</b><span>faltas tot. (J+NJ)</span></div>
       <div class="caixa" style="border-color:var(--verde)"><b>${b.pct_pronto}%</b><span>ef. pronto</span></div></div>`;
     /* ordem do Tenente: efetivo em ORDEM ALFABÉTICA (backend pode vir agrupado
@@ -350,7 +357,7 @@
     const linhas = pessoas.map(p =>
       `<tr><td class="num">${esc(p.antiguidade ?? '')}</td><td>${esc(p.funcao || '—')}</td><td><b>${esc(p.nome_guerra)}</b></td>
        <td>${esc(p.setor)}</td><td>${esc(p.grupo || '—')}</td><td class="num">${esc(p.presencas)}</td>
-       <td class="num">${esc(p.atrasos)}</td><td class="num">${esc(p.faltas)}</td><td class="num">${esc(p.justificadas)}</td></tr>`).join('');
+       <td class="num">${esc(p.atrasos)}</td><td class="num">${esc(p.faltas)}</td><td class="num">${esc(p.justificadas)}</td><td class="num">${esc(p.nao_verificados || 0)}</td></tr>`).join('');
     const forms = (b.formaturas || []).map(f =>
       `<tr><td>${fmtData(f.data)}</td><td>${esc(f.tipo)}</td><td>${esc(f.hora || '—')}</td>
        <td>${f.status === 'fechada' ? 'Fechada' : 'Aberta'}</td>
@@ -360,7 +367,7 @@
       <a href="/api/relatorio.pdf?de=${encodeURIComponent(b.De)}&ate=${encodeURIComponent(b.Ate)}${grupoQ}&t=${Date.now()}" target="_blank"><button class="primario">ABRIR PDF</button></a></div>
       ${forms ? `<div class="rolagem" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Tipo</th><th>Hora</th><th>Status</th><th class="num">Presentes</th><th class="num">Faltas</th></tr></thead><tbody>${forms}</tbody></table></div>` : ''}
       <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Função</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
-      <th class="num">Falta</th><th class="num">Just.</th></tr></thead><tbody>${linhas || '<tr><td colspan="9"><span class="vazio">sem efetivo ativo no escopo</span></td></tr>'}</tbody></table></div></div>`;
+      <th class="num">Falta</th><th class="num">Just.</th><th class="num">N.V.</th></tr></thead><tbody>${linhas || '<tr><td colspan="10"><span class="vazio">sem efetivo ativo no escopo</span></td></tr>'}</tbody></table></div></div>`;
   }
 
   window.ViewRelatorios = async function () {

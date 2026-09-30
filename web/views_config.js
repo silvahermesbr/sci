@@ -172,7 +172,8 @@
         ROTULO_IDENTIFICADOR: $('#c_ROTULO_IDENTIFICADOR').value.trim(),
         COR_PRIMARIA: $('#c_COR_PRIMARIA').value.trim(),
         COR_PRIMARIA_CLARO: $('#c_COR_PRIMARIA_CLARO').value.trim(),
-        COR_PRIMARIA_ESCURO: $('#c_COR_PRIMARIA_ESCURO').value.trim()
+        COR_PRIMARIA_ESCURO: $('#c_COR_PRIMARIA_ESCURO').value.trim(),
+        MODO_RESERVA: '1' // ordem Tenente 30/09: escala/material em reserva (reativar = '0')
       };
 
       try {

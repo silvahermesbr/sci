@@ -234,31 +234,42 @@ func (a *App) rotas() {
 	m.Handle("POST /api/backup/importar", a.auth(true, a.hBackupImportar)) // R9
 	m.Handle("GET /api/backup/download", a.auth(true, a.hBackupDownload))
 
-	// Módulo de Escalas e Serviços Integrados (v1.0) - Restrito aos papéis do Grupo (Gerente / Operador)
-	escalaAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
-	m.Handle("GET /api/escalas/tipos", escalaAuth(a.hEscalasTiposList))
-	m.Handle("POST /api/escalas/tipos", escalaAuth(a.hEscalasTiposAdd))
-	m.Handle("DELETE /api/escalas/tipos/{id}", escalaAuth(a.hEscalasTiposDel))
-	m.Handle("GET /api/escalas/turnos", escalaAuth(a.hEscalasTurnosList))
-	m.Handle("POST /api/escalas/turnos", escalaAuth(a.hEscalasTurnosSave))
-	m.Handle("DELETE /api/escalas/turnos/{id}", escalaAuth(a.hEscalasTurnosDel))
-	m.Handle("GET /api/escalas/hoje", escalaAuth(a.hEscalasHoje))
+	// Módulos ESCALA e MATERIAL EM RESERVA (ordem Tenente 30/09): fora do frontend e
+	// APIs desativadas por flag MODO_RESERVA=1 em `configuracoes`. Código INTACTO —
+	// retorno no horizonte basta MODO_RESERVA=0 (não exposto na UI de configurações).
+	reservaAuth := func(next http.HandlerFunc) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if a.reservaAtivo() {
+				jsonErro(w, http.StatusLocked, "módulo em reserva (indisponível nesta instalação)")
+				return
+			}
+			a.authPapeis([]string{"gerente", "operador"}, next).ServeHTTP(w, r)
+		})
+	}
 
-	// Módulo de Material e Cautelas (v1.0) - Restrito aos papéis do Grupo (Gerente / Operador)
-	materialAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
-	m.Handle("GET /api/material/categorias", materialAuth(a.hMaterialCategoriasList))
-	m.Handle("POST /api/material/categorias", materialAuth(a.hMaterialCategoriasAdd))
-	m.Handle("DELETE /api/material/categorias/{id}", materialAuth(a.hMaterialCategoriasDel))
-	m.Handle("GET /api/material/itens", materialAuth(a.hMaterialItensList))
-	m.Handle("POST /api/material/itens", materialAuth(a.hMaterialItensSave))
-	m.Handle("DELETE /api/material/itens/{id}", materialAuth(a.hMaterialItensDel))
-	m.Handle("POST /api/material/cautelar", materialAuth(a.hMaterialCautelar))
-	m.Handle("POST /api/material/devolver", materialAuth(a.hMaterialDevolver))
-	m.Handle("GET /api/material/cautelas", materialAuth(a.hMaterialCautelasList))
-	m.Handle("POST /api/material/cautelas/{id}/anexos", materialAuth(a.hMaterialAnexoAdd))
-	m.Handle("GET /api/material/cautelas/{id}/anexos", materialAuth(a.hMaterialAnexoList))
-	m.Handle("GET /api/material/anexos/{id}", materialAuth(a.hMaterialAnexoGet))
-	m.Handle("DELETE /api/material/anexos/{id}", materialAuth(a.hMaterialAnexoDel))
+	// Módulo de Escalas e Serviços Integrados (v1.0) — EM RESERVA (ordem Tenente 30/09)
+	m.Handle("GET /api/escalas/tipos", reservaAuth(a.hEscalasTiposList))
+	m.Handle("POST /api/escalas/tipos", reservaAuth(a.hEscalasTiposAdd))
+	m.Handle("DELETE /api/escalas/tipos/{id}", reservaAuth(a.hEscalasTiposDel))
+	m.Handle("GET /api/escalas/turnos", reservaAuth(a.hEscalasTurnosList))
+	m.Handle("POST /api/escalas/turnos", reservaAuth(a.hEscalasTurnosSave))
+	m.Handle("DELETE /api/escalas/turnos/{id}", reservaAuth(a.hEscalasTurnosDel))
+	m.Handle("GET /api/escalas/hoje", reservaAuth(a.hEscalasHoje))
+
+	// Módulo de Material e Cautelas (v1.0) — EM RESERVA (ordem Tenente 30/09)
+	m.Handle("GET /api/material/categorias", reservaAuth(a.hMaterialCategoriasList))
+	m.Handle("POST /api/material/categorias", reservaAuth(a.hMaterialCategoriasAdd))
+	m.Handle("DELETE /api/material/categorias/{id}", reservaAuth(a.hMaterialCategoriasDel))
+	m.Handle("GET /api/material/itens", reservaAuth(a.hMaterialItensList))
+	m.Handle("POST /api/material/itens", reservaAuth(a.hMaterialItensSave))
+	m.Handle("DELETE /api/material/itens/{id}", reservaAuth(a.hMaterialItensDel))
+	m.Handle("POST /api/material/cautelar", reservaAuth(a.hMaterialCautelar))
+	m.Handle("POST /api/material/devolver", reservaAuth(a.hMaterialDevolver))
+	m.Handle("GET /api/material/cautelas", reservaAuth(a.hMaterialCautelasList))
+	m.Handle("POST /api/material/cautelas/{id}/anexos", reservaAuth(a.hMaterialAnexoAdd))
+	m.Handle("GET /api/material/cautelas/{id}/anexos", reservaAuth(a.hMaterialAnexoList))
+	m.Handle("GET /api/material/anexos/{id}", reservaAuth(a.hMaterialAnexoGet))
+	m.Handle("DELETE /api/material/anexos/{id}", reservaAuth(a.hMaterialAnexoDel))
 
 	// Módulo de Configurações e White-Label (v1.0)
 	m.HandleFunc("GET /api/configuracoes", a.hConfiguracoesGet)
@@ -513,6 +524,7 @@ type lancamentoReq struct {
 	DestinoID  *int64 `json:"destino_id"`
 	TagID      *int64 `json:"tag_id"`
 	Observacao string `json:"observacao"`
+	Verificado bool   `json:"verificado"` // ordem Tenente 30/09: ✅ no fechamento decide NÃO VERIFICADO
 }
 
 // hConferenciaMarcar (v9.13, ordem Tenente 29/09): salvamento PARCIAL — grava imediatamente
@@ -558,15 +570,21 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Situacao == "" {
-		// "desmarcar" o check: mantém lançamento existente; se não existe, nada a gravar
+		// "desmarcar" o check (ordem Tenente 30/09): REMOVE a verificação — grava
+		// verificado=0 no lançamento existente (antes o uncheck não persistia e o ✅
+		// ressuscitava no reload); sem lançamento, nada a gravar.
 		var jahExiste int
 		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM presencas WHERE conferencia_id = ? AND pessoa_id = ?`,
 			confID, req.PessoaID).Scan(&jahExiste)
+		if jahExiste > 0 {
+			_, _ = a.st.db.Exec(`UPDATE presencas SET verificado = 0, alterado_por = ?, alterado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+				WHERE conferencia_id = ? AND pessoa_id = ?`, u.ID, confID, req.PessoaID)
+		}
 		jsonOK(w, map[string]any{"ok": true, "gravado": jahExiste > 0})
 		return
 	}
 	switch req.Situacao {
-	case "presente", "atraso", "falta", "justificada":
+	case "presente", "atraso", "falta", "justificada", "nao_verificado":
 	default:
 		jsonErro(w, http.StatusBadRequest, "situação inválida")
 		return
@@ -802,7 +820,7 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, l := range req.Lancamentos {
 		switch l.Situacao {
-		case "presente", "atraso", "falta", "justificada":
+		case "presente", "atraso", "falta", "justificada", "nao_verificado":
 		default:
 			jsonErro(w, http.StatusBadRequest, "situação inválida: "+l.Situacao)
 			return
@@ -845,6 +863,14 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 	}
 	gravados := 0
 	for _, l := range req.Lancamentos {
+		// ordem Tenente 30/09: conferência NÃO fecha com membro "presente" implícito —
+		// quem está sem ✅ (verificado=0 no corpo do front) grava NAO_VERIFICADO
+		// (pune no % de presença como tudo que não é presente). Destino cai fora:
+		// NÃO VERIFICADO não tem destino (lançamento efetivo não aconteceu).
+		if !l.Verificado {
+			l.Situacao = "nao_verificado"
+			l.DestinoID = nil
+		}
 		_, err = tx.Exec(`
 			INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, tag_id, observacao, marcado_por)
 			VALUES (?,?,?,?,?,?,?)
@@ -1270,7 +1296,7 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	lanc := []map[string]any{}
-	resumo := map[string]int{"presentes": 0, "atrasos": 0, "faltas": 0, "justificadas": 0}
+	resumo := map[string]int{"presentes": 0, "atrasos": 0, "faltas": 0, "justificadas": 0, "nao_verificados": 0}
 	ord := 0
 	for rows.Next() {
 		var ng, setor, sit, destino, obs, por, funcao, camF, camS string
@@ -1287,6 +1313,8 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 				resumo["atrasos"]++
 			case "falta":
 				resumo["faltas"]++
+			case "nao_verificado":
+				resumo["nao_verificados"]++
 			case "justificada":
 				resumo["justificadas"]++
 			}
@@ -1327,9 +1355,10 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	_ = a.st.db.QueryRow(`
 		SELECT COUNT(*),
 		       COALESCE(SUM(p.situacao='presente'),0), COALESCE(SUM(p.situacao='atraso'),0),
-		       COALESCE(SUM(p.situacao='falta'),0), COALESCE(SUM(p.situacao='justificada'),0)
+		       COALESCE(SUM(p.situacao='falta'),0), COALESCE(SUM(p.situacao='justificada'),0),
+		       COALESCE(SUM(p.situacao='nao_verificado'),0)
 		FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro,
-		args...).Scan(&b.TotalLanc, &b.Presentes, &b.Atrasos, &b.Faltas, &b.Justificadas)
+		args...).Scan(&b.TotalLanc, &b.Presentes, &b.Atrasos, &b.Faltas, &b.Justificadas, &b.NaoVerificados)
 	// "efetivo pronto" = presentes SEM ressalva (ordem do Tenente, 28/09)
 	_ = a.st.db.QueryRow(`
 		SELECT COALESCE(SUM(p.situacao='presente'),0)
@@ -1365,7 +1394,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	denom := b.Convocacoes * b.EfetivoAtivo
 	// FIX S4-P1: total_faltas é contagem de lançamentos — independe do denominador;
 	// antes ficava 0 junto com os % quando denom=0 (falta real escondida).
-	b.TotalFaltas = b.Faltas + b.Justificadas
+	b.TotalFaltas = b.Faltas + b.Justificadas + b.NaoVerificados // ordem Tenente 30/09: NÃO VERIFICADO pune como falta
 	if denom > 0 {
 		b.PctGeral = round1(100 * float64(validas) / float64(denom))
 		b.PctPronto = round1(100 * float64(b.PresentesPuros) / float64(denom))
@@ -1440,6 +1469,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		       COALESCE(SUM(pr.situacao='atraso'),0),
 		       COALESCE(SUM(pr.situacao='falta'),0),
 		       COALESCE(SUM(pr.situacao='justificada'),0),
+		       COALESCE(SUM(pr.situacao='nao_verificado'),0),
 		       COUNT(pr.id), p.funcao_id, COALESCE(fu.nome,''),
 		       ROW_NUMBER() OVER (ORDER BY COALESCE(cf2.caminho,'~sem função'),
 		                                  COALESCE(cs2.caminho,'~sem setor'),
@@ -1473,7 +1503,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 			var funcaoID *int64
 			var antig int
 			if rows.Scan(&r.ID, &r.NomeGuerra, &r.Setor, &r.Presencas, &r.Atrasos,
-				&r.Faltas, &r.Justificadas, &r.Lancados, &funcaoID, &r.Funcao, &antig, &r.Grupo) == nil {
+				&r.Faltas, &r.Justificadas, &r.NaoVerificados, &r.Lancados, &funcaoID, &r.Funcao, &antig, &r.Grupo) == nil {
 				r.FuncaoID = funcaoID
 				r.Antiguidade = antig
 				if b.Convocacoes > 0 {
@@ -1488,7 +1518,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	rows, err = a.st.db.Query(`
 		SELECT f.data, COALESCE(ft.nome,''), COALESCE(f.hora,''), f.status,
 		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0),
-		       COALESCE(SUM(pr.situacao='falta'),0)
+		       COALESCE(SUM(pr.situacao IN ('falta','nao_verificado')),0)
 		FROM conferencias f
 		JOIN conferencia_tipos ft ON ft.id = f.tipo_id
 		LEFT JOIN presencas pr ON pr.conferencia_id = f.id
@@ -2050,8 +2080,12 @@ func (a *App) hPessoaExcluir(w http.ResponseWriter, r *http.Request) {
 // hGrupoExcluir (v9.7): admin EXCLUI grupo — vazio (sem pessoas/contas/vínculos/histórico).
 // v9.10: modo FORÇADO (?forcar=1 + senha de admin no corpo) exclui grupo INTEIRO mesmo
 // com contas e pessoas: contas do grupo são EXCLUÍDAS, pessoas também, subordinação do
-// grupo é removida. Histórico de conferências continua blindado (imutabilidade) — grupo
-// com conferências gravadas NÃO é excluído nem forçado.
+// grupo é removida. Histórico de conferências continua blindado — grupo com conferências
+// gravadas NÃO é excluído nem forçado.
+// v1.1 (ordem Tenente 30/09): MODO NUKE (?nuke=1 + senha de admin) — exclusão FORÇADA
+// TOTAL: apaga TUDO do grupo, INCLUSIVE o histórico de conferências (presenças,
+// comentários), catálogos e dados dos módulos em reserva. Reversível? NÃO. A dupla
+// confirmação é no FRONT; o servidor prova autoridade com a senha de admin.
 func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -2065,7 +2099,8 @@ func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	forcar := r.URL.Query().Get("forcar") == "1"
-	if forcar {
+	nuke := r.URL.Query().Get("nuke") == "1"
+	if forcar || nuke {
 		var req struct {
 			Senha string `json:"senha"`
 		}
@@ -2076,7 +2111,11 @@ func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 		var hash string
 		if err := a.st.db.QueryRow(`SELECT senha_hash FROM usuarios WHERE id = ?`, u.ID).Scan(&hash); err != nil ||
 			!verificaSenha(req.Senha, hash) {
-			a.st.Auditoria(&u.ID, "excluir_grupo_negado", "grupos", &id, "senha incorreta", ipDe(r))
+			modo := "forcar"
+			if nuke {
+				modo = "nuke"
+			}
+			a.st.Auditoria(&u.ID, "excluir_grupo_negado", "grupos", &id, "senha incorreta ("+modo+")", ipDe(r))
 			jsonErro(w, http.StatusUnauthorized, "senha de admin incorreta — exclusão negada")
 			return
 		}
@@ -2088,11 +2127,11 @@ func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 		(SELECT COUNT(*) FROM grupo_vinculos WHERE superior_id = ? OR subordinado_id = ?),
 		(SELECT COUNT(*) FROM conferencias WHERE grupo_id = ?)`,
 		id, id, id, id, id).Scan(&pessoas, &contas, &vinculos, &confs)
-	if confs > 0 {
-		jsonErro(w, http.StatusConflict, "grupo tem histórico de conferências — exclusão negada mesmo forçada (imutabilidade histórica)")
+	if confs > 0 && !nuke {
+		jsonErro(w, http.StatusConflict, fmt.Sprintf("grupo tem %d conferência(s) no histórico — exclusão negada (imutabilidade histórica); exclusão TOTAL exige o MODO NUKE com dupla confirmação", confs))
 		return
 	}
-	if !forcar {
+	if !forcar && !nuke {
 		if pessoas > 0 {
 			jsonErro(w, http.StatusConflict, fmt.Sprintf("grupo tem %d pessoa(s) no banco de pessoal — mova ou exclua antes (ou use exclusão forçada com senha)", pessoas))
 			return
@@ -2116,6 +2155,41 @@ func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if nuke {
+		// MODO NUKE (ordem Tenente 30/09): apaga TODO o rastro do grupo. Ordem respeita
+		// FKs: histórico → vínculos com módulos → catálogos do grupo. Backup automático
+		// é gravado logo após o commit (backupAssincrono no fim do handler).
+		for _, q := range []string{
+			// 0) auditoria dos usuários do grupo: vínculo anulado (rastro forense
+			// preservado — auditoria.usuario_id não tem CASCADE)
+			`UPDATE auditoria SET usuario_id = NULL WHERE usuario_id IN (SELECT id FROM usuarios WHERE grupo_id = ?)`,
+			// 1) histórico de conferências do grupo (presenças/comentários caem por CASCADE)
+			`DELETE FROM presencas WHERE pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ?)`,
+			`DELETE FROM comentarios WHERE pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ?)`,
+			`DELETE FROM conferencias WHERE grupo_id = ?`,
+			// 2) módulos em reserva (escala/material) ligados ao grupo ou ao pessoal dele
+			`DELETE FROM escala_pessoas WHERE pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ?)`,
+			`DELETE FROM escala_turnos WHERE grupo_id = ?`,
+			`DELETE FROM escala_tipos WHERE grupo_id = ?`,
+			`DELETE FROM material_cautelas WHERE item_id IN (SELECT id FROM material_itens WHERE grupo_id = ?)`,
+			`DELETE FROM material_itens WHERE grupo_id = ?`,
+			`DELETE FROM material_categorias WHERE grupo_id = ?`,
+			// 3) catálogos de organização do grupo (referências já apagadas acima).
+			// setores/funções: 2 passes — filho (pai_id) antes do pai, self-FK exige
+			`DELETE FROM setores WHERE pai_id IS NOT NULL AND grupo_id = ?`,
+			`DELETE FROM funcoes WHERE pai_id IS NOT NULL AND grupo_id = ?`,
+			`DELETE FROM tags WHERE grupo_id = ?`,
+			`DELETE FROM destinos WHERE grupo_id = ?`,
+			`DELETE FROM setores WHERE grupo_id = ?`,
+			`DELETE FROM funcoes WHERE grupo_id = ?`,
+			`DELETE FROM conferencia_tipos WHERE grupo_id = ?`,
+		} {
+			if _, err = tx.Exec(q, id); err != nil {
+				jsonErro(w, http.StatusInternalServerError, "nuke: "+err.Error())
+				return
+			}
+		}
+	}
 	if _, err = tx.Exec(`DELETE FROM usuarios WHERE grupo_id = ?`, id); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -2133,11 +2207,14 @@ func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detalhe := "vazio"
-	if forcar {
+	if nuke {
+		detalhe = fmt.Sprintf("NUKE: %d conta(s), %d pessoa(s) e %d conferência(s) APAGADAS", contas, pessoas, confs)
+	} else if forcar {
 		detalhe = fmt.Sprintf("FORÇADA: %d conta(s) e %d pessoa(s) removidas", contas, pessoas)
 	}
 	a.st.Auditoria(&u.ID, "excluir", "grupos", &id, nome+" ["+detalhe+"]", ipDe(r))
-	jsonOK(w, map[string]any{"ok": true, "forçada": forcar, "contas_removidas": contas, "pessoas_removidas": pessoas})
+	jsonOK(w, map[string]any{"ok": true, "forçada": forcar || nuke, "nuke": nuke,
+		"contas_removidas": contas, "pessoas_removidas": pessoas, "conferencias_removidas": confs})
 }
 
 func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
@@ -4226,6 +4303,14 @@ func (a *App) hConfiguracoesGet(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	jsonOK(w, map[string]any{"configuracoes": configs})
+}
+
+// hConfiguracoesGet / hConfiguracoesSet (v1.0): White-Label. MODO_RESERVA NUNCA
+// entra pela API de escrita (chave interna de ativação dos módulos em reserva).
+func (a *App) reservaAtivo() bool {
+	var v string
+	_ = a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'MODO_RESERVA'`).Scan(&v)
+	return v == "1"
 }
 
 func (a *App) hConfiguracoesSet(w http.ResponseWriter, r *http.Request) {

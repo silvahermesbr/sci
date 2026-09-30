@@ -92,6 +92,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV16(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV17(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -786,6 +789,65 @@ func (s *Store) migrarV16() error {
 		}
 	}
 	return s.marcarVersao(16)
+}
+
+// migrarV17 (ordem Tenente 30/09): situação NAO_VERIFICADO — o CHECK legado de
+// `presencas` ('presente','atraso','falta','justificada') REJEITARIA o novo valor.
+// Rebuild da tabela SEM CHECK de situação (governança pelo app), cópia de TODAS as
+// linhas por interseção de colunas (bancos pré-v11 não têm `verificado`). Ídem v4:
+// inspeção de DDL antes, FK off no rebuild, FK on + prova depois. Idempotente.
+func (s *Store) migrarV17() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 17`).Scan(&v)
+	if v == 17 {
+		return nil
+	}
+	var ddl string
+	if err := s.db.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='table' AND name='presencas'`).Scan(&ddl); err != nil {
+		return err
+	}
+	if strings.Contains(strings.ToUpper(ddl), "CHECK") {
+		if _, err := s.db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
+		cols := []string{"id", "conferencia_id", "pessoa_id", "situacao", "destino_id",
+			"tag_id", "observacao", "marcado_por", "marcado_em", "alterado_por", "alterado_em"}
+		if s.colunaExiste("presencas", "verificado") {
+			cols = append(cols, "verificado")
+		}
+		lista := strings.Join(cols, ", ")
+		steps := []string{
+			`CREATE TABLE presencas_v17 (
+				id INTEGER PRIMARY KEY,
+				conferencia_id INTEGER NOT NULL REFERENCES conferencias(id) ON DELETE CASCADE,
+				pessoa_id INTEGER NOT NULL REFERENCES pessoas(id),
+				situacao TEXT NOT NULL,
+				destino_id INTEGER REFERENCES destinos(id),
+				tag_id INTEGER REFERENCES tags(id),
+				observacao TEXT,
+				marcado_por INTEGER NOT NULL REFERENCES usuarios(id),
+				marcado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+				alterado_por INTEGER REFERENCES usuarios(id),
+				alterado_em TEXT,
+				verificado INTEGER NOT NULL DEFAULT 0,
+				UNIQUE (conferencia_id, pessoa_id)
+			)`,
+			`INSERT INTO presencas_v17 (` + lista + `) SELECT ` + lista + ` FROM presencas`,
+			`DROP TABLE presencas`,
+			`ALTER TABLE presencas_v17 RENAME TO presencas`,
+			`CREATE INDEX IF NOT EXISTS idx_presencas_pessoa ON presencas(pessoa_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_presencas_conf ON presencas(conferencia_id)`,
+		}
+		for _, q := range steps {
+			if _, err := s.db.Exec(q); err != nil {
+				return fmt.Errorf("migração v17: %w", err)
+			}
+		}
+		if _, err := s.db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+			return err
+		}
+	}
+	return s.marcarVersao(17)
 }
 
 // gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos

@@ -613,6 +613,10 @@
             <div class="campo"><label>Senha de admin</label><input type="password" id="fSenha"></div>
             <div class="modal-acoes"><button class="perigo" id="mForce">Excluir forçadamente</button></div>
           </div>
+          <div style="border-top:1px solid var(--verm);margin-top:12px;padding-top:10px">
+            <p style="color:var(--verm);font-size:13px;margin:4px 0"><b>☢️ MODO NUKE</b> — exclusão TOTAL e IRREVERSÍVEL: apaga o grupo, contas, pessoal, catálogos e <b>TODO o histórico de conferências</b> (presenças e comentários). Sem backup de seleção — restaure pelo backup do sistema se algo der errado.</p>
+            <div class="modal-acoes"><button class="perigo" id="mNuke">☢️ NUKE — apagar TUDO</button></div>
+          </div>
         </div>
       `);
       if (!div) return;
@@ -635,6 +639,41 @@
           window.ViewAdmin();
         } catch (e) {}
       };
+      // ordem Tenente 30/09: NUKE = DUPLO modal de verificação antes do pedido
+      div.querySelector('#mNuke').onclick = async () => {
+        if (!(await confirmar(`☢️ Quer fazer isso mesmo? Isto APAGA "${gnome}" — contas, pessoal, catálogos e TODO o histórico de conferências. Não tem volta.`))) return;
+        modalNukeFinal(gid, gnome, div);
+      };
+    }
+
+    /* 2º modal do NUKE (ordem Tenente 30/09): "TEM CERTEZA?" + senha de admin */
+    function modalNukeFinal(gid, gnome, divAnterior) {
+      const div = modal(`
+        <div class="modal-inner">
+          <h3 style="color:var(--verm)">TEM CERTEZA?</h3>
+          <p style="color:var(--tx2);font-size:13px;margin:6px 0">Última confirmação: <b>${esc(gnome)}</b> será APAGADO com todo o histórico, para sempre. Digite sua senha de admin para autorizar.</p>
+          <div class="campo"><label>Senha de admin</label><input type="password" id="fSenhaNuke" autocomplete="off"></div>
+          <div class="modal-acoes">
+            <button class="fantasma" id="mNX">Cancelar</button>
+            <button class="perigo" id="mNGo">☢️ APAGAR TUDO AGORA</button>
+          </div>
+        </div>
+      `);
+      if (!div) return;
+      div.querySelector('#mNX').onclick = () => div.fechar && div.fechar();
+      div.querySelector('#mNGo').onclick = async () => {
+        const senha = div.querySelector('#fSenhaNuke').value;
+        if (!senha) { toast('Digite a senha de admin', 'erro'); return; }
+        try {
+          const r = await api(`/api/grupos/${gid}?nuke=1`, { method: 'DELETE', body: JSON.stringify({ senha }) });
+          toast(`☢️ Grupo apagado (NUKE) — ${r.contas_removidas} conta(s), ${r.pessoas_removidas} pessoa(s), ${r.conferencias_removidas} conferência(s)`);
+          if (divAnterior && divAnterior.fechar) divAnterior.fechar();
+          div.fechar && div.fechar();
+          window.ViewAdmin();
+        } catch (e) {}
+      };
+      const inp = div.querySelector('#fSenhaNuke');
+      if (inp) inp.focus();
     }
 
     renderConteudo();

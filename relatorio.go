@@ -51,6 +51,7 @@ type PessoaStat struct {
 	Atrasos      int     `json:"atrasos"`
 	Faltas       int     `json:"faltas"`
 	Justificadas int     `json:"justificadas"`
+	NaoVerificados int   `json:"nao_verificados"` // ordem Tenente 30/09: sem ✅ no fechamento
 	Lancados     int     `json:"lancados"`
 	Pct          float64 `json:"pct"`
 }
@@ -88,6 +89,7 @@ type Bundle struct {
 	Atrasos            int             `json:"atrasos"`
 	Faltas             int             `json:"falta"`
 	Justificadas       int             `json:"justificadas"`
+	NaoVerificados     int             `json:"nao_verificados"` // ordem Tenente 30/09: sem ✅ no fechamento
 	PctGeral           float64         `json:"pct_geral"`
 	PctPronto          float64         `json:"pct_pronto"`           // % do efetivo pronto = presentes puros / convocações
 	PctPresencaEstrita float64         `json:"pct_presenca_estrita"` // decisão 28/09: justificada = falta
@@ -108,6 +110,7 @@ var (
 	corAtraso   = [3]int{251, 176, 52} // âmbar
 	corFalta    = [3]int{198, 40, 40}  // vermelho
 	corJust     = [3]int{69, 90, 100}  // azul-acinzentado
+	corNV       = [3]int{117, 117, 117} // ordem Tenente 30/09: NÃO VERIFICADO (cinza)
 	corBarra    = [3]int{27, 94, 32}   // barras de setor/destino (verde-militar)
 	corDestino  = [3]int{21, 101, 192} // barras de destino (azul)
 )
@@ -155,6 +158,7 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 		{"ATRASO", strconv.Itoa(b.Atrasos)},
 		{"FALTA", strconv.Itoa(b.Faltas)},
 		{"JUSTIFICADA", strconv.Itoa(b.Justificadas)},
+		{"N.VERIFIC.", strconv.Itoa(b.NaoVerificados)},
 		{"% EF.PRONTO", pctProntoStr},
 	}
 	pdf.SetFont("Helvetica", "", 7)
@@ -186,8 +190,8 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 	pdf.Ln(7)
 	if b.TotalLanc > 0 {
 		segmentos := [][2]any{{"Presente", corPresente}, {"Atraso", corAtraso},
-			{"Falta", corFalta}, {"Justificada", corJust}}
-		valores := []int{b.Presentes, b.Atrasos, b.Faltas, b.Justificadas}
+			{"Falta", corFalta}, {"Justificada", corJust}, {"NÃO VERIFICADO", corNV}}
+		valores := []int{b.Presentes, b.Atrasos, b.Faltas, b.Justificadas, b.NaoVerificados}
 		x := 15.0
 		for i, v := range valores {
 			larg := 180 * float64(v) / float64(b.TotalLanc)
@@ -204,11 +208,11 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 		pdf.SetTextColor(60, 60, 60)
 		for i, seg := range segmentos {
 			c := seg[1].([3]int)
-			xs := 15 + float64(i)*45
+			xs := 15 + float64(i)*36
 			pdf.SetFillColor(c[0], c[1], c[2])
 			pdf.Rect(xs, pdf.GetY(), 3, 3, "F")
 			pdf.SetXY(xs+4.5, pdf.GetY()-0.8)
-			pdf.Cell(40, 4, T(fmt.Sprintf("%s (%d)", seg[0], valores[i])))
+			pdf.Cell(33, 4, T(fmt.Sprintf("%s (%d)", seg[0], valores[i])))
 		}
 		pdf.Ln(8)
 	} else {
@@ -290,8 +294,8 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 	pdf.SetTextColor(verdeR, verdeG, verdeB)
 	pdf.Cell(0, 6, T("EFETIVO — POR ANTIGUIDADE DE FUNÇÃO (ID menor = mais antigo)"))
 	pdf.Ln(7)
-	cab := []string{"ORD", "Função", "Nome de guerra", "Setor", "Grupo", "Pres.", "Atraso", "Falta", "Just."}
-	larg := []float64{11, 34, 32, 24, 24, 14, 14, 14, 14}
+	cab := []string{"ORD", "Função", "Nome de guerra", "Setor", "Grupo", "Pres.", "Atraso", "Falta", "Just.", "N.V."}
+	larg := []float64{11, 30, 30, 22, 22, 14, 14, 14, 14, 12}
 	pdf.SetFont("Helvetica", "B", 8)
 	pdf.SetFillColor(verdeR, verdeG, verdeB)
 	pdf.SetTextColor(255, 255, 255)
@@ -338,7 +342,7 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 		vals := []string{
 			strconv.Itoa(p.Antiguidade), fnCell, T(p.NomeGuerra), T(p.Setor), T(p.Grupo),
 			strconv.Itoa(p.Presencas), strconv.Itoa(p.Atrasos),
-			strconv.Itoa(p.Faltas), strconv.Itoa(p.Justificadas),
+			strconv.Itoa(p.Faltas), strconv.Itoa(p.Justificadas), strconv.Itoa(p.NaoVerificados),
 		}
 		for i, v := range vals {
 			align := "L"
@@ -403,13 +407,15 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 	atrasos := c.Resumo["atrasos"]
 	faltas := c.Resumo["faltas"]
 	just := c.Resumo["justificadas"]
-	total := presentes + atrasos + faltas + just
+	nv := c.Resumo["nao_verificados"] // ordem Tenente 30/09
+	total := presentes + atrasos + faltas + just + nv
 	caixas := [][2]string{
 		{"LANÇADOS", strconv.Itoa(total)},
 		{"PRESENTES", strconv.Itoa(presentes)},
 		{"ATRASOS", strconv.Itoa(atrasos)},
 		{"FALTAS", strconv.Itoa(faltas)},
 		{"JUSTIFICADAS", strconv.Itoa(just)},
+		{"NÃO VERIF.", strconv.Itoa(nv)},
 	}
 	if total > 0 {
 		// FIX S4-P2 (verif5): uniformiza métrica — "presença" em TODO o documento
@@ -465,9 +471,14 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 			pdf.SetFillColor(255, 255, 255)
 		}
 		pdf.SetTextColor(30, 30, 30)
+		// ordem Tenente 30/09: situação gravada NUNCA sai crua — rótulo oficial
+		sitRot := map[string]string{
+			"presente": "Presente", "atraso": "Atraso", "falta": "Falta",
+			"justificada": "Justificada", "nao_verificado": "NÃO VERIFICADO",
+		}
 		vals := []string{
 			strconv.Itoa(l["ord"].(int)), T(str(l["funcao"])), T(str(l["nome_guerra"])),
-			T(str(l["setor"])), T(str(l["situacao"])), T(str(l["destino"])), T(str(l["observacao"])),
+			T(str(l["setor"])), T(sitRot[str(l["situacao"])]), T(str(l["destino"])), T(str(l["observacao"])),
 		}
 		for i, v := range vals {
 			pdf.CellFormat(larg[i], 5.2, v, "1", 0, "L", zebra, 0, "")

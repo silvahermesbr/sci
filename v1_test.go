@@ -77,8 +77,8 @@ func TestMigrationsAndSeeds(t *testing.T) {
 	// 1. Validar versão de schema
 	var versao int
 	err := st.db.QueryRow(`SELECT MAX(versao) FROM schema_migrations`).Scan(&versao)
-	if err != nil || versao != 16 {
-		t.Fatalf("esperado schema versão 16, obtido: %d (err: %v)", versao, err)
+	if err != nil || versao != 17 {
+		t.Fatalf("esperado schema versão 17, obtido: %d (err: %v)", versao, err)
 	}
 
 	// 2. Validar que as tabelas de Escalas, Material e Configurações existem
@@ -391,4 +391,149 @@ func TestWhiteLabelAndConfiguracoes(t *testing.T) {
 	if valNome != "SIG-HOSP" || valOrg != "Hospital Militar de Área" || valCor != "#4a8cdb" {
 		t.Fatalf("valores gravados incorretos: nome=%s, org=%s, cor=%s", valNome, valOrg, valCor)
 	}
+}
+
+// TestFechamentoNaoVerificado (ordem Tenente 30/09): conferência fechada com membro
+// SEM ✅ grava NAO_VERIFICADO (nunca "presente" implícito); com ✅ mantém presente.
+func TestFechamentoNaoVerificado(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	resGrupo, _ := st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('Cia NV', 'NV0001')`)
+	grupoID, _ := resGrupo.LastInsertId()
+	hashGer, _ := hashSenha("gernv12345")
+	_, _ = st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, ativo) VALUES ('gernv', ?, 'gerente', ?, 1)`, hashGer, grupoID)
+	gerente := loginAs(t, app, "gernv", "gernv12345")
+
+	resP1, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('SEMCHK', 'Sem Check', ?, 'ativo')`, grupoID)
+	p1, _ := resP1.LastInsertId()
+	resP2, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('COMCHK', 'Com Check', ?, 'ativo')`, grupoID)
+	p2, _ := resP2.LastInsertId()
+
+	_, respConf := doJSONReq(app, "POST", "/api/conferencia/iniciar", map[string]string{"local": "Quartel"}, gerente)
+	confID := int64(respConf["id"].(float64))
+
+	lanc := []map[string]any{
+		{"pessoa_id": p1, "situacao": "presente", "verificado": false}, // sem ✅
+		{"pessoa_id": p2, "situacao": "presente", "verificado": true},  // com ✅
+	}
+	rrF, respF := doJSONReq(app, "POST", "/api/conferencia/fechar", map[string]any{"id": confID, "lancamentos": lanc}, gerente)
+	if rrF.Code != http.StatusOK {
+		t.Fatalf("falha ao fechar conferência: %v", respF)
+	}
+
+	var sitP1, sitP2 string
+	if err := st.db.QueryRow(`SELECT situacao FROM presencas WHERE conferencia_id = ? AND pessoa_id = ?`, confID, p1).Scan(&sitP1); err != nil {
+		t.Fatalf("lançamento de SEMCHK não gravado: %v", err)
+	}
+	_ = st.db.QueryRow(`SELECT situacao FROM presencas WHERE conferencia_id = ? AND pessoa_id = ?`, confID, p2).Scan(&sitP2)
+	if sitP1 != "nao_verificado" {
+		t.Fatalf("SEMCHK deveria ter ficado 'nao_verificado', obtido: %s", sitP1)
+	}
+	if sitP2 != "presente" {
+		t.Fatalf("COMCHK deveria permanecer 'presente', obtido: %s", sitP2)
+	}
+
+	// agregado do relatório: nao_verificados = 1 (bundle vem no TOPO da resposta)
+	rrR, respR := doJSONReq(app, "GET", "/api/relatorio?de=2000-01-01&ate=2100-01-01", nil, gerente)
+	if rrR.Code != http.StatusOK {
+		t.Fatalf("falha no relatório: %v", respR)
+	}
+	if nv, ok := respR["nao_verificados"].(float64); !ok || nv != 1 {
+		t.Fatalf("relatório deveria mostrar 1 nao_verificado, resposta: %v", respR["nao_verificados"])
+	}
+
+	// situação nova é aceita também no autosave (/marcar) da conferência aberta
+	_, respConf2 := doJSONReq(app, "POST", "/api/conferencia/iniciar", map[string]string{"local": "Quartel 2"}, gerente)
+	conf2 := int64(respConf2["id"].(float64))
+	rrM, respM := doJSONReq(app, "POST", fmt.Sprintf("/api/conferencia/marcar?id=%d", conf2),
+		map[string]any{"pessoa_id": p1, "situacao": "nao_verificado", "verificado": false}, gerente)
+	if rrM.Code != http.StatusOK {
+		t.Fatalf("autosave rejeitou situacao 'nao_verificado': %v", respM)
+	}
+}
+// TestNukeGrupo (ordem Tenente 30/09): exclusão TOTAL só-admin com senha — apaga
+// grupo mesmo COM histórico de conferências (que bloqueia a forçada comum).
+func TestNukeGrupo(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	adminCookie := loginAs(t, app, "admin", "admin123")
+
+	resGrupo, _ := st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('Cia Morta', 'NK0001')`)
+	grupoID, _ := resGrupo.LastInsertId()
+	hashGer, _ := hashSenha("gernk12345")
+	_, _ = st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, ativo) VALUES ('gernk', ?, 'gerente', ?, 1)`, hashGer, grupoID)
+	gerente := loginAs(t, app, "gernk", "gernk12345")
+
+	resP, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('MORTO', 'Pessoa Morta', ?, 'ativo')`, grupoID)
+	p1, _ := resP.LastInsertId()
+	_, respConf := doJSONReq(app, "POST", "/api/conferencia/iniciar", map[string]string{"local": "X"}, gerente)
+	confID := int64(respConf["id"].(float64))
+	rrF, _ := doJSONReq(app, "POST", "/api/conferencia/fechar", map[string]any{
+		"id": confID, "lancamentos": []map[string]any{{"pessoa_id": p1, "situacao": "presente", "verificado": true}}}, gerente)
+	if rrF.Code != http.StatusOK {
+		t.Fatalf("setup: falha ao fechar conferência de preparação")
+	}
+
+	// 1) forçada COMUM continua BLOQUEADA por histórico (imutabilidade preservada)
+	rrForc, _ := doJSONReq(app, "DELETE", fmt.Sprintf("/api/grupos/%d?forcar=1", grupoID), map[string]string{"senha": "admin123"}, adminCookie)
+	if rrForc.Code != http.StatusConflict {
+		t.Fatalf("forçada comum deveria seguir bloqueada (409), obtido: %d", rrForc.Code)
+	}
+
+	// 2) NUKE sem senha = 400; gerente não-admin = 403 (auth de papel)
+	rrNoPass, _ := doJSONReq(app, "DELETE", fmt.Sprintf("/api/grupos/%d?nuke=1", grupoID), map[string]string{"senha": ""}, adminCookie)
+	if rrNoPass.Code != http.StatusBadRequest {
+		t.Fatalf("nuke sem senha deveria ser 400, obtido: %d", rrNoPass.Code)
+	}
+	rrGer, _ := doJSONReq(app, "DELETE", fmt.Sprintf("/api/grupos/%d?nuke=1", grupoID), map[string]string{"senha": "x"}, gerente)
+	if rrGer.Code != http.StatusForbidden {
+		t.Fatalf("nuke por não-admin deveria ser 403, obtido: %d", rrGer.Code)
+	}
+
+	// 3) NUKE com senha de admin apaga TUDO do grupo
+	rrN, respN := doJSONReq(app, "DELETE", fmt.Sprintf("/api/grupos/%d?nuke=1", grupoID), map[string]string{"senha": "admin123"}, adminCookie)
+	if rrN.Code != http.StatusOK || respN["ok"] != true {
+		t.Fatalf("nuke falhou: %v", respN)
+	}
+	var g, pe, us, cf, pr int
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE id = ?`, grupoID).Scan(&g)
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM pessoas WHERE grupo_id = ?`, grupoID).Scan(&pe)
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE grupo_id = ?`, grupoID).Scan(&us)
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM conferencias WHERE grupo_id = ?`, grupoID).Scan(&cf)
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM presencas WHERE pessoa_id = ?`, p1).Scan(&pr)
+	if g != 0 || pe != 0 || us != 0 || cf != 0 || pr != 0 {
+		t.Fatalf("NUKE deixou rastro: grupo=%d pessoas=%d usuarios=%d conferencias=%d presencas=%d", g, pe, us, cf, pr)
+	}
+}
+
+// TestModulosReserva (ordem Tenente 30/09): MODO_RESERVA=1 trava as APIs de
+// escala/material com 423 para GERENTE; =0 libera (retorno no horizonte).
+func TestModulosReserva(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	resGrupo, _ := st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('Cia R', 'RS0001')`)
+	grupoID, _ := resGrupo.LastInsertId()
+	hashGer, _ := hashSenha("gerrs12345")
+	_, _ = st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, ativo) VALUES ('gerrs', ?, 'gerente', ?, 1)`, hashGer, grupoID)
+	gerente := loginAs(t, app, "gerrs", "gerrs12345")
+
+	_, _ = st.db.Exec(`INSERT INTO configuracoes (chave, valor) VALUES ('MODO_RESERVA', '1')`)
+	rrLock, _ := doJSONReq(app, "GET", "/api/escalas/hoje", nil, gerente)
+	if rrLock.Code != http.StatusLocked {
+		t.Fatalf("escalas deveria estar EM RESERVA (423), obtido: %d", rrLock.Code)
+	}
+	rrLock2, _ := doJSONReq(app, "GET", "/api/material/categorias", nil, gerente)
+	if rrLock2.Code != http.StatusLocked {
+		t.Fatalf("material deveria estar EM RESERVA (423), obtido: %d", rrLock2.Code)
+	}
+
+	_, _ = st.db.Exec(`UPDATE configuracoes SET valor = '0' WHERE chave = 'MODO_RESERVA'`)
+	rrFree, _ := doJSONReq(app, "GET", "/api/escalas/hoje", nil, gerente)
+	if rrFree.Code != http.StatusOK {
+		t.Fatalf("MODO_RESERVA=0 deveria liberar escalas (200), obtido: %d", rrFree.Code)
+	}
+	_ = st
 }
