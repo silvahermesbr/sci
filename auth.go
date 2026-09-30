@@ -23,16 +23,37 @@ const (
 	ttlSessao    = 12 * time.Hour
 )
 
-type Usuario struct {
+type UsuarioPapel struct {
 	ID           int64  `json:"id"`
-	Login        string `json:"login"`
-	Papel        string `json:"papel"` // admin | gerente | operador
-	PessoaID     *int64 `json:"pessoa_id"`
+	UsuarioID    int64  `json:"usuario_id"`
 	GrupoID      *int64 `json:"grupo_id"`
-	NomeGuerra   string `json:"nome_guerra"`
-	NomeCompleto string `json:"nome_completo"`
-	SetorID      *int64 `json:"setor_id"`
+	GrupoNome    string `json:"grupo_nome,omitempty"`
+	Papel        string `json:"papel"` // admin | gerente | operador
 	FuncaoID     *int64 `json:"funcao_id"`
+	FuncaoNome   string `json:"funcao_nome,omitempty"`
+	NomeExibicao string `json:"nome_exibicao,omitempty"`
+}
+
+type Usuario struct {
+	ID             int64          `json:"id"`
+	Login          string         `json:"login"`
+	Papel          string         `json:"papel"` // admin | gerente | operador (papel ativo)
+	PessoaID       *int64         `json:"pessoa_id"`
+	GrupoID        *int64         `json:"grupo_id"` // grupo do papel ativo
+	GrupoNome      string         `json:"grupo_nome,omitempty"`
+	NomeGuerra     string         `json:"nome_guerra"` // NOME
+	NomeCompleto   string         `json:"nome_completo"` // NOME COMPLETO
+	DataNascimento string         `json:"data_nascimento,omitempty"` // DATA NASC
+	TipoSanguineo  string         `json:"tipo_sanguineo,omitempty"` // TIPO SANGUÍNEO
+	Telefone       string         `json:"telefone,omitempty"` // TELEFONE
+	Email          string         `json:"email,omitempty"` // EMAIL
+	Endereco       string         `json:"endereco,omitempty"` // ENDEREÇO
+	FotoBase64     string         `json:"foto_base64,omitempty"` // Foto 1x1
+	SetorID        *int64         `json:"setor_id"`
+	FuncaoID       *int64         `json:"funcao_id"` // função militar/organizacional ativa
+	FuncaoNome     string         `json:"funcao_nome,omitempty"`
+	PapelAtivoID   *int64         `json:"papel_ativo_id,omitempty"`
+	Papeis         []UsuarioPapel `json:"papeis,omitempty"`
 }
 
 type ctxKeyChave int
@@ -237,15 +258,19 @@ func (a *App) validarCredenciais(login, senha, ip string) (*Usuario, error) {
 		return nil, fmt.Errorf("credenciais inválidas")
 	}
 	a.st.Auditoria(&id, "login_ok", "usuarios", &id, "", ip)
-	// perfil completo do usuário (aba Meu usuário — ordem Tenente 28/09 noite)
+	// perfil completo do usuário
 	var grupoID *int64
-	var ng, nc string
+	var ng, nc, dataNasc, tipoSang, tel, email, endr, foto string
 	var setorID, funcaoID *int64
 	if err := a.st.db.QueryRow(`SELECT grupo_id, COALESCE(nome_guerra,''), COALESCE(nome_completo,''),
+		COALESCE(data_nascimento,''), COALESCE(tipo_sanguineo,''), COALESCE(telefone,''),
+		COALESCE(email,''), COALESCE(endereco,''), COALESCE(foto_base64,''),
 		setor_id, funcao_id FROM usuarios WHERE id = ?`, id).
-		Scan(&grupoID, &ng, &nc, &setorID, &funcaoID); err != nil {
+		Scan(&grupoID, &ng, &nc, &dataNasc, &tipoSang, &tel, &email, &endr, &foto, &setorID, &funcaoID); err != nil {
 		return nil, err
 	}
 	return &Usuario{ID: id, Login: login, Papel: papel, PessoaID: pessoaID, GrupoID: grupoID,
-		NomeGuerra: ng, NomeCompleto: nc, SetorID: setorID, FuncaoID: funcaoID}, nil
+		NomeGuerra: ng, NomeCompleto: nc, DataNascimento: dataNasc, TipoSanguineo: tipoSang,
+		Telefone: tel, Email: email, Endereco: endr, FotoBase64: foto,
+		SetorID: setorID, FuncaoID: funcaoID}, nil
 }

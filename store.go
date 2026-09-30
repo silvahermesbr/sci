@@ -101,6 +101,12 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV19(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV20(); err != nil {
+		return nil, err
+	}
+	if err := s.migrarV21(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -889,6 +895,11 @@ func (s *Store) SeedIfEmpty(senhaAdmin string) error {
 		`INSERT INTO usuarios (login, senha_hash, papel) VALUES ('admin', ?, 'admin')`, hash); err != nil {
 		return err
 	}
+	var adminID int64
+	_ = s.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'admin'`).Scan(&adminID)
+	if adminID > 0 {
+		_, _ = s.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, papel) VALUES (?, 'admin')`, adminID)
+	}
 	for _, q := range []string{
 		// v9.11 (ordem Tenente 29/09): TUDO de organização nasce ZERADO — setores,
 		// funções, tags E DESTINOS. Herança só desce (leitura); edição do dono.
@@ -927,13 +938,39 @@ func novoToken() (cru, hash string, err error) {
 }
 
 func (s *Store) CriarSessao(usuarioID int64, ttl time.Duration) (token string, expira time.Time, err error) {
+	return s.CriarSessaoComPapel(usuarioID, nil, ttl)
+}
+
+func (s *Store) CriarSessaoComPapel(usuarioID int64, papelID *int64, ttl time.Duration) (token string, expira time.Time, err error) {
 	cru, hash, err := novoToken()
 	if err != nil {
 		return
 	}
 	expira = time.Now().UTC().Add(ttl)
-	_, err = s.db.Exec(`INSERT INTO sessoes (token_hash, usuario_id, expira_em) VALUES (?,?,?)`,
-		hash, usuarioID, expira.UTC().Format(time.RFC3339))
+
+	if papelID == nil || *papelID <= 0 {
+		var pid int64
+		errPid := s.db.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? ORDER BY id ASC LIMIT 1`, usuarioID).Scan(&pid)
+		if errPid == nil {
+			papelID = &pid
+		} else {
+			var papel string
+			var grupoID, funcaoID *int64
+			if errU := s.db.QueryRow(`SELECT papel, grupo_id, funcao_id FROM usuarios WHERE id = ?`, usuarioID).Scan(&papel, &grupoID, &funcaoID); errU == nil {
+				resP, _ := s.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
+					usuarioID, grupoID, papel, funcaoID)
+				if resP != nil {
+					newPID, _ := resP.LastInsertId()
+					if newPID > 0 {
+						papelID = &newPID
+					}
+				}
+			}
+		}
+	}
+
+	_, err = s.db.Exec(`INSERT INTO sessoes (token_hash, usuario_id, papel_ativo_id, expira_em) VALUES (?,?,?,?)`,
+		hash, usuarioID, papelID, expira.UTC().Format(time.RFC3339))
 	if err != nil {
 		return
 	}
@@ -944,21 +981,99 @@ func (s *Store) UsuarioDaSessao(tokenCru string) (*Usuario, error) {
 	h := sha256.Sum256([]byte(tokenCru))
 	hash := hex.EncodeToString(h[:])
 	var u Usuario
+	var papelAtivoID *int64
+	var papelAtivo, grupoNome, funcaoNome sql.NullString
+	var grupoIDAtivo, funcaoIDAtivo sql.NullInt64
+
 	err := s.db.QueryRow(
 		`SELECT u.id, u.login, u.papel, u.pessoa_id, u.grupo_id,
-		        COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''), u.setor_id, u.funcao_id
-		 FROM sessoes se JOIN usuarios u ON u.id = se.usuario_id
+		        COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
+		        COALESCE(u.data_nascimento,''), COALESCE(u.tipo_sanguineo,''),
+		        COALESCE(u.telefone,''), COALESCE(u.email,''),
+		        COALESCE(u.endereco,''), COALESCE(u.foto_base64,''),
+		        u.setor_id, u.funcao_id,
+		        se.papel_ativo_id, up.papel, up.grupo_id, g.nome, up.funcao_id, f.nome
+		 FROM sessoes se
+		 JOIN usuarios u ON u.id = se.usuario_id
+		 LEFT JOIN usuario_papeis up ON up.id = se.papel_ativo_id
+		 LEFT JOIN grupos g ON g.id = up.grupo_id
+		 LEFT JOIN funcoes f ON f.id = up.funcao_id
 		 WHERE se.token_hash = ? AND se.expira_em > ? AND u.ativo = 1`,
 		hash, time.Now().UTC().Format(time.RFC3339)).
 		Scan(&u.ID, &u.Login, &u.Papel, &u.PessoaID, &u.GrupoID,
-			&u.NomeGuerra, &u.NomeCompleto, &u.SetorID, &u.FuncaoID)
+			&u.NomeGuerra, &u.NomeCompleto,
+			&u.DataNascimento, &u.TipoSanguineo,
+			&u.Telefone, &u.Email,
+			&u.Endereco, &u.FotoBase64,
+			&u.SetorID, &u.FuncaoID,
+			&papelAtivoID, &papelAtivo, &grupoIDAtivo, &grupoNome, &funcaoIDAtivo, &funcaoNome)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+
+	if papelAtivoID != nil && papelAtivo.Valid {
+		u.PapelAtivoID = papelAtivoID
+		u.Papel = papelAtivo.String
+		if grupoIDAtivo.Valid {
+			gid := grupoIDAtivo.Int64
+			u.GrupoID = &gid
+		} else {
+			u.GrupoID = nil
+		}
+		if grupoNome.Valid {
+			u.GrupoNome = grupoNome.String
+		}
+		if funcaoIDAtivo.Valid {
+			fid := funcaoIDAtivo.Int64
+			u.FuncaoID = &fid
+		}
+		if funcaoNome.Valid {
+			u.FuncaoNome = funcaoNome.String
+		}
+	} else if u.GrupoID != nil {
+		_ = s.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, *u.GrupoID).Scan(&u.GrupoNome)
+	}
+
+	papeis, err := s.PapeisDoUsuario(u.ID)
+	if err == nil {
+		u.Papeis = papeis
+	}
+
 	return &u, nil
+}
+
+func (s *Store) PapeisDoUsuario(usuarioID int64) ([]UsuarioPapel, error) {
+	rows, err := s.db.Query(
+		`SELECT up.id, up.usuario_id, up.grupo_id, COALESCE(g.nome, ''),
+		        up.papel, up.funcao_id, COALESCE(f.nome, ''), COALESCE(up.nome_exibicao, '')
+		 FROM usuario_papeis up
+		 LEFT JOIN grupos g ON g.id = up.grupo_id
+		 LEFT JOIN funcoes f ON f.id = up.funcao_id
+		 WHERE up.usuario_id = ?
+		 ORDER BY up.id ASC`, usuarioID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var lista []UsuarioPapel
+	for rows.Next() {
+		var p UsuarioPapel
+		var gNome, fNome, exibicao string
+		var gID, fID *int64
+		if err := rows.Scan(&p.ID, &p.UsuarioID, &gID, &gNome, &p.Papel, &fID, &fNome, &exibicao); err == nil {
+			p.GrupoID = gID
+			p.GrupoNome = gNome
+			p.FuncaoID = fID
+			p.FuncaoNome = fNome
+			p.NomeExibicao = exibicao
+			lista = append(lista, p)
+		}
+	}
+	return lista, nil
 }
 
 func (s *Store) EncerrarSessao(tokenCru string) {
@@ -1077,3 +1192,111 @@ func (s *Store) migrarV19() error {
 
 	return s.marcarVersao(19)
 }
+
+// migrarV20: Módulo de Múltiplos Papéis por Usuário (Multi-Funções) e Mensageria Interna por Função.
+func (s *Store) migrarV20() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 20`).Scan(&v)
+	if v == 20 {
+		return nil
+	}
+
+	ddl := []string{
+		`CREATE TABLE IF NOT EXISTS usuario_papeis (
+			id INTEGER PRIMARY KEY,
+			usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+			grupo_id INTEGER REFERENCES grupos(id),
+			papel TEXT NOT NULL CHECK (papel IN ('admin', 'gerente', 'operador')),
+			funcao_id INTEGER REFERENCES funcoes(id),
+			nome_exibicao TEXT,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			UNIQUE (usuario_id, grupo_id, papel)
+		)`,
+		`CREATE TABLE IF NOT EXISTS mensagens (
+			id INTEGER PRIMARY KEY,
+			assunto TEXT NOT NULL,
+			corpo TEXT NOT NULL,
+			remetente_papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id),
+			remetente_usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			criada_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE TABLE IF NOT EXISTS mensagem_destinatarios (
+			id INTEGER PRIMARY KEY,
+			mensagem_id INTEGER NOT NULL REFERENCES mensagens(id) ON DELETE CASCADE,
+			destinatario_papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id) ON DELETE CASCADE,
+			lida_em TEXT,
+			lida_por_usuario_id INTEGER REFERENCES usuarios(id),
+			arquivada INTEGER NOT NULL DEFAULT 0,
+			excluida INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_msg_dest_papel ON mensagem_destinatarios(destinatario_papel_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_msg_remetente ON mensagens(remetente_papel_id)`,
+	}
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v20 ddl: %w", err)
+		}
+	}
+
+	// Regra de integridade: Cada grupo só pode ter um gerente ativo (função única)
+	_, _ = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_usuario_papeis_unico_gerente ON usuario_papeis(grupo_id) WHERE papel = 'gerente'`)
+
+	if !s.colunaExiste("sessoes", "papel_ativo_id") {
+		if _, err := s.db.Exec(`ALTER TABLE sessoes ADD COLUMN papel_ativo_id INTEGER REFERENCES usuario_papeis(id) ON DELETE CASCADE`); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migração v20 sessoes.papel_ativo_id: %w", err)
+			}
+		}
+	}
+
+	// Migrar dados existentes de usuarios para usuario_papeis (idempotente)
+	_, err := s.db.Exec(`
+		INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id)
+		SELECT id, grupo_id, papel, funcao_id FROM usuarios
+	`)
+	if err != nil {
+		return fmt.Errorf("migração v20 popular usuario_papeis: %w", err)
+	}
+
+	// Vincular sessões ativas existentes ao papel correspondente
+	_, _ = s.db.Exec(`
+		UPDATE sessoes SET papel_ativo_id = (
+			SELECT up.id FROM usuario_papeis up WHERE up.usuario_id = sessoes.usuario_id LIMIT 1
+		) WHERE papel_ativo_id IS NULL
+	`)
+
+	return s.marcarVersao(20)
+}
+
+// migrarV21: Perfil de Usuário com Foto 1x1 e Informações Cadastrais Completas
+func (s *Store) migrarV21() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 21`).Scan(&v)
+	if v == 21 {
+		return nil
+	}
+
+	colunas := []struct {
+		nome string
+		tipo string
+	}{
+		{"data_nascimento", "TEXT"},
+		{"tipo_sanguineo", "TEXT"},
+		{"telefone", "TEXT"},
+		{"email", "TEXT"},
+		{"endereco", "TEXT"},
+		{"foto_base64", "TEXT"},
+	}
+
+	for _, c := range colunas {
+		if !s.colunaExiste("usuarios", c.nome) {
+			_, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE usuarios ADD COLUMN %s %s`, c.nome, c.tipo))
+			if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migração v21 usuarios.%s: %w", c.nome, err)
+			}
+		}
+	}
+
+	return s.marcarVersao(21)
+}
+

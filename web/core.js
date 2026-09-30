@@ -327,138 +327,295 @@ function modalSenha() {
 window.modalSenha = modalSenha;
 
 /* ---------- shell (topbar + nav + dropdown do usuário) ---------- */
+function textoContextoUsuario(u) {
+  if (!u) return 'Sem papel';
+  const papel = rotuloPapel(u.papel);
+  const funcao = u.funcao_nome ? u.funcao_nome : '';
+  const grupo = u.grupo_nome ? u.grupo_nome : (u.papel === 'admin' ? 'Global' : '');
+  
+  if (funcao && grupo) return `${funcao} · ${grupo}`;
+  if (funcao) return `${funcao} (${papel})`;
+  if (grupo) return `${papel} · ${grupo}`;
+  return papel;
+}
+
 function montarShell(usuario) {
   definirUsuario(usuario);
-  let topbar = $('#topbar');
-  if (!topbar) {
-    topbar = document.createElement('header');
-    topbar.id = 'topbar';
-    document.body.prepend(topbar);
-  }
-  topbar.classList.remove('oculto');
   
+  // Garantir container estrutural de layout
+  let layout = $('#layoutApp');
+  if (!layout) {
+    layout = document.createElement('div');
+    layout.id = 'layoutApp';
+    layout.className = 'layout-app';
+    document.body.prepend(layout);
+  }
+
+  let sidebar = $('#sidebar');
+  if (!sidebar) {
+    sidebar = document.createElement('aside');
+    sidebar.id = 'sidebar';
+    sidebar.className = 'sidebar';
+    layout.appendChild(sidebar);
+  }
+  sidebar.classList.remove('oculto');
+  if (localStorage.getItem('SCI_SIDEBAR_RECOLHIDO') === '1') {
+    sidebar.classList.add('recolhido');
+  }
+
+  let viewport = $('#viewport');
+  if (!viewport) {
+    viewport = document.createElement('div');
+    viewport.id = 'viewport';
+    viewport.className = 'viewport';
+    layout.appendChild(viewport);
+    const appEl = $('#app') || garantirApp();
+    viewport.appendChild(appEl);
+  }
+
+  // Topbar legado é escondido
+  const topbarAntiga = $('#topbar');
+  if (topbarAntiga) topbarAntiga.classList.add('oculto');
+
   const papel = usuario && usuario.papel;
   const nomeSys = window.cfg ? window.cfg('NOME_SISTEMA', 'SCI') : 'SCI';
   const subSys = window.cfg ? window.cfg('SUBTITULO_SISTEMA', 'Controle Interno') : 'Controle Interno';
-  topbar.innerHTML =
-    '<button type="button" id="btBurger" aria-label="menu" aria-expanded="false">' +
-      '<span class="burg-x"></span><span class="burg-x"></span><span class="burg-x"></span>' +
-    '</button>' +
-    '<div class="marca"><span class="logo">' +
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.5l8 3.2v5.6c0 5-3.4 8.6-8 10.2-4.6-1.6-8-5.2-8-10.2V5.7l8-3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.4 12.2l2.5 2.5 4.7-5.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' +
-      ' ' + esc(nomeSys) +
-    '</span><span class="sub">' + esc(subSys) + '</span></div>' +
-    '<div id="tituloMob"></div>' +
-    '<nav id="nav"></nav>' +
-    '<div id="burgMask" class="oculto"></div>' +
-    '<div class="sessao">' +
-      '<div id="hubNotificacoes">' +
-        '<button id="btSinoNotif" type="button" title="Consciência Situacional & Alertas" class="btn-topbar-sino">' +
-          '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>' +
-          '<span id="badgeNotif" class="badge-notif oculto">0</span>' +
-        '</button>' +
-      '</div>' +
-      '<div id="menuUsuario" class="menu-usuario-wrapper">' +
-        '<button type="button" id="quem" class="btn-usuario-gatilho" title="Minha Conta">' +
-          '<div class="user-avatar-ico">' +
-            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' +
-          '</div>' +
-          '<span class="user-login-txt">' + esc(usuario ? usuario.login : '') + '</span>' +
-          '<span class="user-papel-tag ' + esc(papel || '') + '">' + rotuloPapel(papel) + '</span>' +
-          '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="user-seta"><path d="M6 9l6 6 6-6"/></svg>' +
-        '</button>' +
-        '<div id="menuUsuarioItens" class="menu-dropdown-custom oculto">' +
-          '<div class="menu-dropdown-header">' +
-            '<div class="menu-dropdown-user">' + esc(usuario ? (usuario.nome_guerra || usuario.login) : '') + '</div>' +
-            '<div class="menu-dropdown-sub">' + esc(usuario ? usuario.login : '') + ' · ' + rotuloPapel(papel) + '</div>' +
-          '</div>' +
-          '<div class="menu-dropdown-div"></div>' +
-          '<button type="button" id="btPerfil" class="menu-dropdown-item' + (papel === 'admin' ? ' oculto' : '') + '">' +
-            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>' +
-            '<span>Meu Perfil</span>' +
-          '</button>' +
-          '<button type="button" id="btSenha" class="menu-dropdown-item">' +
-            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' +
-            '<span>Mudar Senha</span>' +
-          '</button>' +
-          '<div class="menu-dropdown-div"></div>' +
-          '<button type="button" id="btnSair" class="menu-dropdown-item item-sair">' +
-            '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>' +
-            '<span>Encerrar Sessão</span>' +
-          '</button>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
+  const tituloOrg = window.cfg ? window.cfg('TITULO_ORGANIZACAO', '') : '';
 
+  // Renderizar o conteúdo da Sidebar
+  sidebar.innerHTML = `
+    <!-- Topo da Sidebar: Cosméticos e Marca -->
+    <div class="sidebar-header">
+      <div class="sidebar-marca">
+        <span class="sidebar-logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.5l8 3.2v5.6c0 5-3.4 8.6-8 10.2-4.6-1.6-8-5.2-8-10.2V5.7l8-3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.4 12.2l2.5 2.5 4.7-5.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="sidebar-logo-txt">${esc(nomeSys)}</span>
+        </span>
+        <span class="sidebar-sub-txt">${esc(tituloOrg || subSys)}</span>
+      </div>
+      <button type="button" id="btToggleSidebar" class="btn-sidebar-toggle" title="Recolher / Expandir Menu">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+      </button>
+    </div>
+
+    <!-- Card de Usuário & Multi-Funções -->
+    <div class="sidebar-usuario-card">
+      <div class="sidebar-usuario-topo">
+        <div class="sidebar-avatar" id="sbAvatarWrapper">
+          ${usuario && usuario.foto_base64 ? `<img src="${usuario.foto_base64}" class="sidebar-avatar-img" alt="Foto">` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`}
+        </div>
+        <div class="sidebar-usuario-info">
+          <div class="sidebar-usuario-nome">${esc(usuario ? (usuario.nome_guerra || usuario.login) : '')}</div>
+          <div class="sidebar-usuario-cargo">${esc(usuario && usuario.funcao_nome ? usuario.funcao_nome : rotuloPapel(papel))}</div>
+        </div>
+        <div class="sidebar-sino-wrapper">
+          <button id="sbBtSinoNotif" type="button" title="Mensagens e Notificações" class="btn-sidebar-sino" aria-label="Mensagens e Notificações">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            <span id="sbBadgeNotif" class="badge-mini oculto">0</span>
+          </button>
+          <div class="sino-hover-card" id="sbSinoHoverCard">
+            <div class="sino-hover-header">Resumo de Notificações</div>
+            <div class="sino-hover-item" id="sinoHoverMsgItem">
+              <span class="sino-hover-icon">📬</span>
+              <span id="sinoHoverMsgTxt">0 mensagens não lidas</span>
+            </div>
+            <div class="sino-hover-item" id="sinoHoverCautItem">
+              <span class="sino-hover-icon">⏰</span>
+              <span id="sinoHoverCautTxt">0 alertas de material</span>
+            </div>
+            <div class="sino-hover-footer">Clique para abrir Mensagens</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dropdown Estilizado de Troca de Função / Contexto -->
+      <div class="sidebar-contexto-wrapper" id="sbContextoWrapper">
+        <button type="button" id="sbBtContexto" class="btn-contexto-gatilho" title="Clique para alternar sua função/grupo ativo">
+          <div class="contexto-badge-ativo">
+            <span class="contexto-dot"></span>
+            <span id="sbTxtFuncaoAtiva" class="contexto-txt">${esc(textoContextoUsuario(usuario))}</span>
+          </div>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="contexto-seta"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div id="sbMenuContexto" class="menu-contexto-dropdown oculto"></div>
+      </div>
+    </div>
+
+    <!-- Navegação Vertical Principal -->
+    <nav id="sidebarNav" class="sidebar-nav"></nav>
+
+    <!-- Rodapé da Sidebar (Ações e Logout) -->
+    <div class="sidebar-rodape">
+      <button type="button" id="sbBtPerfil" class="sidebar-btn-rodape" title="Meu Perfil">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        <span class="sb-lbl">Meu Perfil</span>
+      </button>
+      <button type="button" id="sbBtSenha" class="sidebar-btn-rodape" title="Alterar Senha">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span class="sb-lbl">Mudar Senha</span>
+      </button>
+      <button type="button" id="btnSair" class="sidebar-btn-rodape item-sair" title="Encerrar Sessão">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span class="sb-lbl">Sair</span>
+      </button>
+    </div>
+  `;
+
+  // Popular itens de navegação na Sidebar com ícones modernos
   let itens;
   if (papel === 'admin') {
     itens = [
-      ['#/admin', 'ADMIN'],
-      ['#/relatorios', 'RELATÓRIOS'],
-      ['#/configuracoes', 'CONFIGURAÇÕES']
+      ['#/admin', 'ADMIN & DASHBOARD', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>'],
+      ['#/mensagens', 'MENSAGENS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true],
+      ['#/relatorios', 'RELATÓRIOS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'],
+      ['#/configuracoes', 'CONFIGURAÇÕES', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>']
     ];
   } else {
     itens = [
-      ['#/hoje', 'CONFERÊNCIA'],
-      ['#/relatorios', 'RELATÓRIOS']
+      ['#/hoje', 'CONFERÊNCIA', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'],
+      ['#/mensagens', 'MENSAGENS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true],
+      ['#/relatorios', 'RELATÓRIOS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>']
     ];
     if (papel === 'gerente') {
-      itens.push(['#/grupos', 'GERENCIAR']);
+      itens.splice(2, 0, ['#/grupos', 'GERENCIAR GRUPO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>']);
     }
   }
-  $('#nav', topbar).innerHTML = itens.map(it => '<a href="' + it[0] + '">' + it[1] + '</a>').join('');
 
-  const menu = $('#menuUsuarioItens', topbar);
-  $('#quem', topbar).addEventListener('click', ev => { ev.stopPropagation(); menu.classList.toggle('oculto'); });
-  $('#btPerfil', topbar).addEventListener('click', () => { menu.classList.add('oculto'); irPara('#/perfil'); });
-  $('#btSenha', topbar).addEventListener('click', () => { menu.classList.add('oculto'); modalSenha(); });
-  $('#btnSair', topbar).addEventListener('click', async () => {
-    menu.classList.add('oculto');
-    try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (e) { /* sai mesmo assim */ }
+  $('#sidebarNav', sidebar).innerHTML = itens.map(it => `
+    <a href="${it[0]}">
+      ${it[2]}
+      <span class="nav-item-lbl">${it[1]}</span>
+      ${it[3] ? '<span id="sbNavBadgeMsg" class="badge-mini oculto" style="margin-left:auto">0</span>' : ''}
+    </a>
+  `).join('');
+
+  // Dropdown de Contexto (Multi-Funções)
+  const menuCtx = $('#sbMenuContexto', sidebar);
+  const btCtx = $('#sbBtContexto', sidebar);
+
+  const renderDropdownPapeis = () => {
+    const papeis = (usuario && usuario.papeis) || [];
+    if (papeis.length === 0) {
+      menuCtx.innerHTML = '<div style="padding:10px;font-size:12px;color:var(--tx3);text-align:center">Nenhuma outra função disponível</div>';
+      return;
+    }
+    const html = papeis.map(p => {
+      const ehAtivo = usuario.papel_ativo_id === p.id;
+      const rot = rotuloPapel(p.papel);
+      const grp = p.grupo_nome ? p.grupo_nome : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
+      const func = p.funcao_nome ? ` · ${p.funcao_nome}` : '';
+      return `
+        <div class="menu-contexto-item ${ehAtivo ? 'ativo' : ''}" data-papelid="${p.id}">
+          <div style="min-width:0">
+            <div style="font-weight:700">${esc(rot)}${esc(func)}</div>
+            <div style="font-size:11px;color:var(--tx3)">${esc(grp)}</div>
+          </div>
+          ${ehAtivo ? '<span style="font-size:12px">✓</span>' : ''}
+        </div>
+      `;
+    }).join('');
+    menuCtx.innerHTML = html;
+
+    menuCtx.querySelectorAll('.menu-contexto-item').forEach(item => {
+      item.onclick = async (ev) => {
+        ev.stopPropagation();
+        const pId = +item.dataset.papelid;
+        if (pId === usuario.papel_ativo_id) {
+          menuCtx.classList.add('oculto');
+          return;
+        }
+        menuCtx.classList.add('oculto');
+        try {
+          const res = await api('/api/sessao/contexto', {
+            method: 'POST',
+            body: JSON.stringify({ papel_id: pId })
+          });
+          if (res && res.usuario) {
+            toast('Contexto alterado com sucesso!');
+            definirUsuario(res.usuario);
+            montarShell(res.usuario);
+            irPara(rotaInicial());
+          }
+        } catch (e) {}
+      };
+    });
+  };
+
+  btCtx.onclick = (ev) => {
+    ev.stopPropagation();
+    renderDropdownPapeis();
+    menuCtx.classList.toggle('oculto');
+  };
+
+  // Botão Recolher / Expandir Sidebar
+  const btToggle = $('#btToggleSidebar', sidebar);
+  const atualizarToggleEstado = () => {
+    const estaRecolhido = sidebar.classList.contains('recolhido');
+    if (btToggle) {
+      btToggle.title = estaRecolhido ? 'Mostrar barra lateral (Expandir)' : 'Esconder barra lateral (Recolher)';
+      btToggle.setAttribute('aria-label', btToggle.title);
+    }
+  };
+  if (btToggle) {
+    btToggle.onclick = () => {
+      sidebar.classList.toggle('recolhido');
+      const estaRecolhido = sidebar.classList.contains('recolhido');
+      localStorage.setItem('SCI_SIDEBAR_RECOLHIDO', estaRecolhido ? '1' : '0');
+      atualizarToggleEstado();
+    };
+    atualizarToggleEstado();
+  }
+
+  // Ações do rodapé
+  $('#sbBtPerfil', sidebar).onclick = () => irPara('#/perfil');
+  $('#sbBtSenha', sidebar).onclick = () => modalSenha();
+  $('#btnSair', sidebar).onclick = async () => {
+    try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (e) {}
     definirUsuario(null);
     irPara('#/login');
-  });
-
-  /* --- burger menu mobile (ordem Tenente 29/09): drawer lateral esquerdo --- */
-  const burger = $('#btBurger', topbar), mask = $('#burgMask', topbar), navEl = $('#nav', topbar);
-  const fecharDrawer = () => {
-    navEl.classList.remove('aberta');
-    burger.classList.remove('x');
-    burger.setAttribute('aria-expanded', 'false');
-    mask.classList.add('oculto');
   };
-  burger.onclick = ev => {
-    ev.stopPropagation();
-    const abre = !navEl.classList.contains('aberta');
-    if (abre) { // fora do #topbar: stacking context do topbar não limita mais o drawer
-      document.body.appendChild(mask);
-      document.body.appendChild(navEl);
-    }
-    navEl.classList.toggle('aberta', abre);
-    burger.classList.toggle('x', abre);
-    burger.setAttribute('aria-expanded', String(abre));
-    mask.classList.toggle('oculto', !abre);
-  };
-  mask.onclick = fecharDrawer;
-  navEl.querySelectorAll('a').forEach(a => a.addEventListener('click', fecharDrawer));
-  montarShell.fecharDrawer = fecharDrawer;
 
-  if (!montarShell._foraLigado) { // fecha o dropdown ao clicar fora (uma única vez)
+  // Sino de notificações
+  const btSino = $('#sbBtSinoNotif', sidebar);
+  if (btSino) {
+    btSino.onclick = (ev) => {
+      ev.stopPropagation();
+      irPara('#/mensagens');
+    };
+  }
+
+  // Mobile menu toggle
+  const btMob = $('#btMobileMenu');
+  if (btMob) {
+    btMob.onclick = (ev) => {
+      ev.stopPropagation();
+      sidebar.classList.toggle('aberto-mobile');
+    };
+  }
+  const mobSino = $('#mobSinoNotif');
+  if (mobSino) {
+    mobSino.onclick = () => irPara('#/mensagens');
+  }
+
+  // Fechar menus ao clicar fora
+  if (!montarShell._foraLigado) {
     montarShell._foraLigado = true;
-    document.addEventListener('click', ev => {
-      const m = $('#menuUsuarioItens'), mu = $('#menuUsuario');
-      if (m && mu && !m.classList.contains('oculto') && !mu.contains(ev.target)) m.classList.add('oculto');
+    document.addEventListener('click', (ev) => {
+      const m = $('#sbMenuContexto');
+      const b = $('#sbBtContexto');
+      if (m && !m.classList.contains('oculto') && b && !b.contains(ev.target) && !m.contains(ev.target)) {
+        m.classList.add('oculto');
+      }
+      const sb = $('#sidebar');
+      if (sb && sb.classList.contains('aberto-mobile') && !sb.contains(ev.target) && (!btMob || !btMob.contains(ev.target))) {
+        sb.classList.remove('aberto-mobile');
+      }
     });
   }
 
-  /* --- Hub de Notificações & Consciência Situacional --- */
-  const btSino = $('#btSinoNotif', topbar);
-  if (btSino) {
-    btSino.onclick = ev => {
-      ev.stopPropagation();
-      modalNotificacoes();
-    };
-    checarNotificacoesHub();
+  // Atualizar badges
+  if (window.atualizarBadgesMensagens) {
+    window.atualizarBadgesMensagens();
   }
 
   navAtiva(location.hash);
@@ -469,17 +626,16 @@ function montarShell(usuario) {
 window.montarShell = montarShell;
 
 function navAtiva(hash) {
-  $$('#nav a').forEach(a => a.classList.toggle('ativo', a.getAttribute('href') === hash));
-  const t = document.querySelector('#nav a.ativo');
-  const tm = document.querySelector('#tituloMob');
-  if (tm) tm.textContent = t ? t.textContent : '';
+  $$('#sidebarNav a, #nav a').forEach(a => a.classList.toggle('ativo', a.getAttribute('href') === hash));
 }
 window.navAtiva = navAtiva;
 
 /* ---------- login ---------- */
 function viewLogin() {
-  const tb = $('#topbar');
-  if (tb) tb.classList.add('oculto');
+  const sb = $('#sidebar');
+  if (sb) sb.classList.add('oculto');
+  const mobBar = $('#mobileBar');
+  if (mobBar) mobBar.style.display = 'none';
   const app = garantirApp();
   const nomeSys = window.cfg ? window.cfg('NOME_SISTEMA', 'SCI') : 'SCI';
   const subSys = window.cfg ? window.cfg('SUBTITULO_SISTEMA', 'Controle Interno') : 'Controle Interno';
@@ -641,6 +797,7 @@ function rotear() {
   if (h === '#/escalas' || h === '#/material') { irPara(rotaInicial()); return; }
 
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
+  if (h === '#/mensagens') { chamarView('ViewMensagens'); return; }
   if (h === '#/conferencia') { chamarView('ViewConferencia'); return; } // edição da conf aberta (v9.14)
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
   if (h === '#/admin') {
@@ -659,8 +816,7 @@ function rotear() {
     return;
   }
   if (h === '#/perfil') {
-    if (papel !== 'admin') chamarView('ViewPerfil');
-    else irPara(rotaInicial());
+    chamarView('ViewPerfil');
     return;
   }
   irPara(rotaInicial());
@@ -752,6 +908,7 @@ window.cfg = function (k, def) { return (window.CONFIGS && window.CONFIGS[k]) ||
 function aplicarConfiguracoes(c) {
   if (!c) return;
   window.CONFIGS = c;
+  try { localStorage.setItem('SCI_CONFIGS', JSON.stringify(c)); } catch (e) {}
   const root = document.documentElement;
   if (c.COR_PRIMARIA) root.style.setProperty('--verde', c.COR_PRIMARIA);
   if (c.COR_PRIMARIA_CLARO) root.style.setProperty('--verde-claro', c.COR_PRIMARIA_CLARO);
@@ -763,10 +920,19 @@ function aplicarConfiguracoes(c) {
       const svg = logoEl.querySelector('svg');
       logoEl.innerHTML = (svg ? svg.outerHTML : '') + ' ' + esc(c.NOME_SISTEMA);
     }
+    const sbLogoTxt = document.querySelector('.sidebar-logo-txt');
+    if (sbLogoTxt) sbLogoTxt.textContent = c.NOME_SISTEMA;
+    const lgnLogoTxt = document.querySelector('.login-nome');
+    if (lgnLogoTxt) lgnLogoTxt.textContent = c.NOME_SISTEMA;
   }
-  if (c.SUBTITULO_SISTEMA) {
+  const orgSub = c.TITULO_ORGANIZACAO || c.SUBTITULO_SISTEMA;
+  if (orgSub) {
     const subEl = document.querySelector('.sub');
-    if (subEl) subEl.textContent = c.SUBTITULO_SISTEMA;
+    if (subEl) subEl.textContent = orgSub;
+    const sbSubTxt = document.querySelector('.sidebar-sub-txt');
+    if (sbSubTxt) sbSubTxt.textContent = orgSub;
+    const lgnSubTxt = document.querySelector('.login-sub');
+    if (lgnSubTxt) lgnSubTxt.textContent = orgSub;
   }
 }
 window.aplicarConfiguracoes = aplicarConfiguracoes;
@@ -774,6 +940,13 @@ window.aplicarConfiguracoes = aplicarConfiguracoes;
 /* ---------- boot ---------- */
 window.SCI_BOOT = function () {
   window.onhashchange = rotear;
+
+  // Carregar imediatamente configs locais para evitar flash de cor padrão
+  try {
+    const cachedCfg = localStorage.getItem('SCI_CONFIGS');
+    if (cachedCfg) aplicarConfiguracoes(JSON.parse(cachedCfg));
+  } catch (e) {}
+
   (async () => {
     try {
       const cfgRes = await fetch('/api/configuracoes').then(r => r.json()).catch(() => null);
@@ -799,15 +972,12 @@ async function checarNotificacoesHub() {
   if (!ME) return;
   try {
     const res = await api('/api/notificacoes');
-    const badge = $('#badgeNotif');
-    if (!badge) return;
     const n = (res && res.total_atrasadas) || 0;
-    if (n > 0) {
-      badge.textContent = n > 99 ? '99+' : n;
-      badge.classList.remove('oculto');
-    } else {
-      badge.classList.add('oculto');
-    }
+    const txt = n === 1 ? '1 alerta de material' : `${n} alertas de material`;
+    const el1 = $('#sinoHoverCautTxt');
+    if (el1) el1.textContent = txt;
+    const el2 = $('#mobSinoHoverCautTxt');
+    if (el2) el2.textContent = txt;
   } catch (e) { /* silencioso */ }
 }
 window.checarNotificacoesHub = checarNotificacoesHub;

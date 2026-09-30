@@ -30,6 +30,33 @@
     return m;
   }
 
+  function processarFoto1x1(arquivo, callback) {
+    if (!arquivo) return;
+    if (!arquivo.type.startsWith('image/')) {
+      toast('Selecione um arquivo de imagem válido', 'erro');
+      return;
+    }
+    const leitor = new FileReader();
+    leitor.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const tam = 320;
+        canvas.width = tam;
+        canvas.height = tam;
+        const ctx = canvas.getContext('2d');
+        const minDim = Math.min(img.width, img.height);
+        const sx = (img.width - minDim) / 2;
+        const sy = (img.height - minDim) / 2;
+        ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, tam, tam);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        callback(dataUrl);
+      };
+      img.src = e.target.result;
+    };
+    leitor.readAsDataURL(arquivo);
+  }
+
   const codigoChip = c => `<code style="background:rgba(16,185,129,0.12);color:var(--verde-claro);padding:2px 6px;border-radius:4px;font-weight:700;font-size:11px;border:1px solid rgba(16,185,129,0.25)">${esc(c)}</code>`;
 
   let FOCO_GRUPO_ID = null;
@@ -92,7 +119,7 @@
           </div>
 
           <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--tx2); flex-wrap:wrap">
-            ${comGerente ? `<span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda); display:flex; align-items:center; gap:4px">👤 <b>${esc(n.gerente || 'Sem gerente')}</b></span>` : ''}
+            ${comGerente ? (n.gerente ? `<span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda); display:flex; align-items:center; gap:4px">👤 <b>${esc(n.gerente)}</b></span>` : `<span class="badge-sem-gerente">⚠️ Sem Gerente</span>`) : ''}
             <span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda)">👥 Efetivo: ${efetTxt}</span>
             <span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda)">🔑 ${n.contas || 0} conta(s)</span>
             ${temFilhos ? `<span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:4px 9px; border-radius:6px; border:1px solid rgba(59,130,246,0.3); font-weight:600">🌲 ${n.filhos.length} subgrupo(s)</span>` : ''}
@@ -102,7 +129,8 @@
         <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:10px; border-top:1px solid rgba(255,255,255,0.06); padding-top:10px; flex-wrap:wrap">
           <button class="acao-linha" style="font-size:12px; padding:4px 10px; font-weight:600" data-focargrupo="${n.id}">🔍 Focar / Drilldown</button>
           <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-novosub="${n.id}" data-nome="${esc(n.nome)}">+ Subgrupo</button>
-          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-trocarger="${n.id}" data-nome="${esc(n.nome)}">👤 Trocar Gerente</button>
+          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-alocaruser="${n.id}" data-nome="${esc(n.nome)}">👥 Alocar Usuário</button>
+          <button class="acao-linha" style="font-size:12px; padding:4px 10px; font-weight:${n.gerente ? 'normal' : '700'}" data-trocarger="${n.id}" data-nome="${esc(n.nome)}">👤 ${n.gerente ? 'Trocar Gerente' : 'Definir Gerente'}</button>
           <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-subordinar="${n.id}" data-nome="${esc(n.nome)}">⛓️ Subordinação</button>
           <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-contas="${n.id}" data-nome="${esc(n.nome)}">📊 Auditar</button>
           <button class="acao-linha perigo" style="font-size:12px; padding:4px 10px" data-excluir="${n.id}" data-nome="${esc(n.nome)}">🗑️ Excluir</button>
@@ -214,12 +242,18 @@
     const eu = quem();
     if (!eu || eu.papel !== 'admin') { location.hash = '#/hoje'; return; }
     navAtiva('#/admin');
-    const abas = [['dashboard', 'Dashboard Global'], ['grupos', 'Estrutura & Grupos'], ['backup', 'Sistema & Backup']];
+    const abas = [
+      ['dashboard', 'Dashboard Global'],
+      ['usuarios', 'Usuários & Funções'],
+      ['grupos', 'Estrutura & Grupos'],
+      ['backup', 'Sistema & Backup']
+    ];
     $('#app').innerHTML = `<h2>Administração do Sistema</h2>
       <div class="abas">${abas.map(([k, t]) => `<button data-a="${k}" class="${abaAdmin === k ? 'ativo' : ''}">${t}</button>`).join('')}</div>
       <div id="adm"><div class="carregando">…</div></div>`;
     document.querySelectorAll('.abas button').forEach(b => b.onclick = () => { abaAdmin = b.dataset.a; window.ViewAdmin(); });
     if (abaAdmin === 'dashboard') await admDashboard();
+    else if (abaAdmin === 'usuarios') await admUsuarios();
     else if (abaAdmin === 'grupos') await admGrupos();
     else admBackup();
   };
@@ -250,55 +284,621 @@
     }
   }
 
-  /* --- ADMIN › usuários: SOMENTE tabela (ID·Login·Papel·Grupo·Status·Criada·Ações) + filtros --- */
+  /* --- ADMIN › usuários: Gestão Completa de Contas, Nomes e Multi-Funções --- */
   async function admUsuarios() {
-    const [lista, grupos] = await Promise.all([api('/api/usuarios'), api('/api/grupos')]);
-    const gerenciaveis = lista.filter(u => u.papel !== 'admin'); // sem criação de conta; admin não se lista
+    const [lista, grupos, funcoesRes] = await Promise.all([
+      api('/api/usuarios'),
+      api('/api/grupos'),
+      api('/api/catalogo/funcoes').catch(() => [])
+    ]);
+    const funcoesLista = Array.isArray(funcoesRes) ? funcoesRes : (funcoesRes.funcoes || []);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
-    const optsGrupos = `<option value="">— destino —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
-    $('#adm').innerHTML = `<div class="cartao">
-      <div class="form-linha" style="margin-bottom:8px">
-        <div class="campo" style="flex:1"><label>Filtrar por login</label><input id="fULogin" placeholder="buscar login…"></div>
-        <div class="campo"><label>Grupo</label><select id="fUGrupo"><option value="">todos</option>${grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('')}</select></div>
-        <div class="campo"><label>Status</label><select id="fUAtivo"><option value="">todas</option><option value="1">ativa</option><option value="0">desativada</option></select></div>
+    const optsGrupos = `<option value="">— selecione o grupo —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
+
+    function formatarNomeUsuario(completo, guerra) {
+      const c = (completo || '').trim();
+      const g = (guerra || '').trim();
+      if (!c && !g) return '<span style="color:var(--tx3)">—</span>';
+      if (!c) return `<b>${esc(g)}</b>`;
+      if (!g) return esc(c);
+      const idx = c.toLowerCase().indexOf(g.toLowerCase());
+      if (idx !== -1) {
+        return `${esc(c.substring(0, idx))}<b>${esc(c.substring(idx, idx + g.length))}</b>${esc(c.substring(idx + g.length))}`;
+      }
+      return `${esc(c)} (<b>${esc(g)}</b>)`;
+    }
+
+    $('#adm').innerHTML = `
+      <div class="cartao">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
+          <div>
+            <h3 style="margin:0 0 4px">Gestão de Usuários & Multi-Funções</h3>
+            <p style="color:var(--tx2); font-size:13px; margin:0">Gerencie logins, nomes militares e atribua múltiplos papéis/funções por unidade (cadeiras de comando e operação).</p>
+          </div>
+          <button class="primario" id="btNovoUsuario">+ Novo Usuário</button>
+        </div>
+
+        <div class="form-linha" style="margin-bottom:12px; gap:8px; flex-wrap:wrap">
+          <div class="campo" style="flex:1; min-width:180px">
+            <label>Buscar usuário</label>
+            <input id="fULogin" placeholder="Filtrar por login, nome de guerra ou completo…">
+          </div>
+          <div class="campo" style="min-width:160px">
+            <label>Grupo</label>
+            <select id="fUGrupo">
+              <option value="">todos os grupos</option>
+              ${grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="campo" style="min-width:140px">
+            <label>Papel</label>
+            <select id="fUPapel">
+              <option value="">todos os papéis</option>
+              <option value="admin">Administrador</option>
+              <option value="gerente">Gerente</option>
+              <option value="operador">Operador</option>
+            </select>
+          </div>
+          <div class="campo" style="min-width:120px">
+            <label>Status</label>
+            <select id="fUAtivo">
+              <option value="">todas</option>
+              <option value="1">ativa</option>
+              <option value="0">desativada</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="rolagem">
+          <table id="tabU">
+            <thead>
+              <tr>
+                <th style="width:38px; text-align:center">Foto</th>
+                <th>ID</th>
+                <th>Login</th>
+                <th>Identificação Militar</th>
+                <th>Funções / Cadeiras Atribuídas</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${lista.map(u => {
+                const papeis = u.papeis || [];
+                const chips = papeis.map(p => {
+                  const rot = rotuloPapel(p.papel);
+                  const grp = p.grupo_nome ? p.grupo_nome : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
+                  const func = p.funcao_nome ? ` · ${p.funcao_nome}` : '';
+                  const ehUnico = p.papel === 'gerente' ? ' (Titular Único)' : '';
+                  return `
+                    <span class="papel-chip ${p.papel}">
+                      <b>${esc(rot)}</b>: ${esc(grp)}${esc(func)}${ehUnico}
+                      ${papeis.length > 1 ? `<button type="button" class="btn-del-papel" data-delpapel="${p.id}" data-uid="${u.id}" title="Remover este papel do usuário">✕</button>` : ''}
+                    </span>
+                  `;
+                }).join('') || `<span class="papel-chip ${u.papel}"><b>${rotuloPapel(u.papel)}</b>: ${esc(nomeGrupo(u.grupo_id))}</span>`;
+
+                const papeisStr = papeis.map(p => p.papel).join(' ') + ' ' + u.papel;
+
+                return `
+                  <tr data-login="${esc(u.login)}" data-nomes="${esc((u.nome_guerra || '') + ' ' + (u.nome_completo || ''))}" data-gid="${u.grupo_id || 0}" data-papeis="${esc(papeisStr)}" data-ativo="${u.ativo ? 1 : 0}">
+                    <td style="text-align:center; vertical-align:middle">
+                      <div style="width:32px; height:32px; border-radius:50%; overflow:hidden; background:var(--painel3); border:1px solid var(--borda); display:inline-flex; align-items:center; justify-content:center">
+                        ${u.foto_base64 ? `<img src="${u.foto_base64}" style="width:100%; height:100%; object-fit:cover">` : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
+                      </div>
+                    </td>
+                    <td class="num">#${u.id}</td>
+                    <td><b>${esc(u.login)}</b></td>
+                    <td>
+                      <div>${formatarNomeUsuario(u.nome_completo, u.nome_guerra)}</div>
+                    </td>
+                    <td>
+                      <div style="display:flex; flex-wrap:wrap; align-items:center; gap:4px">
+                        ${chips}
+                        <button type="button" class="acao-linha" data-addpapel="${u.id}" data-login="${esc(u.login)}" style="font-size:11px; padding:2px 8px; font-weight:700; color:var(--verde-claro)">+ Função</button>
+                      </div>
+                    </td>
+                    <td><span style="color:${u.ativo ? 'var(--verde-claro)' : 'var(--tx3)'}; font-weight:700">${u.ativo ? 'Ativa' : 'Desativada'}</span></td>
+                    <td>
+                      <button class="acao-linha" data-edperfil="${u.id}" style="font-weight:600">👤 Perfil</button>
+                      <button class="acao-linha" data-ednomes="${u.id}" data-login="${esc(u.login)}" data-guerra="${esc(u.nome_guerra || '')}" data-completo="${esc(u.nome_completo || '')}">✏️ Nomes</button>
+                      <button class="acao-linha" data-id="${u.id}" data-login="${esc(u.login)}">🔑 Senha</button>
+                      ${u.papel !== 'admin' ? `
+                        <button class="acao-linha" data-mv="${u.id}" data-login="${esc(u.login)}" data-papel="${u.papel}">Mover</button>
+                        <button class="acao-linha perigo" data-exc="${u.id}" data-login="${esc(u.login)}">Excluir</button>
+                      ` : ''}
+                    </td>
+                  </tr>
+                `;
+              }).join('') || '<tr><td colspan="6"><span class="vazio">Nenhuma conta encontrada.</span></td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <p style="color:var(--tx2);font-size:12.5px;margin-top:10px">
+          💡 <b>Doutrina de Multi-Funções:</b> Usuários podem acumular múltiplas funções em diferentes grupos. Cada grupo possui apenas <b>1 Gerente titular</b> (função única), enquanto pode possuir <b>múltiplos Operadores</b> (função múltipla com caixa de email compartilhada).
+        </p>
       </div>
-      <div class="rolagem"><table id="tabU"><thead><tr><th>ID</th><th>Login</th><th>Papel</th><th>Grupo</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
-      <tbody>${gerenciaveis.map(u => `<tr data-login="${esc(u.login)}" data-gid="${u.grupo_id || 0}" data-ativo="${u.ativo ? 1 : 0}">
-        <td class="num">#${u.id}</td><td><b>${esc(u.login)}</b></td><td>${rotuloPapel(u.papel)}</td><td>${esc(nomeGrupo(u.grupo_id))}</td>
-        <td>${u.ativo ? 'ativa' : 'desativada'}</td><td>${fmtData(u.criado_em)}</td>
-        <td><button class="acao-linha" data-id="${u.id}" data-login="${esc(u.login)}">senha</button>
-        <button class="acao-linha" data-mv="${u.id}" data-login="${esc(u.login)}" data-papel="${u.papel}">mover</button>
-        <button class="acao-linha" data-exc="${u.id}" data-login="${esc(u.login)}">excluir</button></td></tr>`).join('')
-        || '<tr><td colspan="7"><span class="vazio">nenhuma conta</span></td></tr>'}</tbody></table></div>
-      <p style="color:var(--tx2);font-size:12px;margin-top:8px">Mover transfere a conta entre grupos quaisquer; se for o único gerente da origem, vira operador no destino e o operador mais antigo assume o grupo. Contas com histórico são desativadas ao excluir; o resto é removido.</p></div>`;
+    `;
+
     const aplicarFiltro = () => {
       const q = $('#fULogin').value.trim().toLowerCase();
       const gid = $('#fUGrupo').value;
+      const papel = $('#fUPapel').value;
       const at = $('#fUAtivo').value;
       document.querySelectorAll('#tabU tbody tr[data-login]').forEach(tr => {
-        const ok = (!q || tr.dataset.login.toLowerCase().includes(q)) &&
-                   (!gid || tr.dataset.gid === gid) &&
-                   (at === '' || tr.dataset.ativo === at);
-        tr.style.display = ok ? '' : 'none';
+        const loginMatches = tr.dataset.login.toLowerCase().includes(q) || tr.dataset.nomes.toLowerCase().includes(q);
+        const grupoMatches = !gid || tr.dataset.gid === gid;
+        const papelMatches = !papel || tr.dataset.papeis.includes(papel);
+        const ativoMatches = at === '' || tr.dataset.ativo === at;
+        tr.style.display = (loginMatches && grupoMatches && papelMatches && ativoMatches) ? '' : 'none';
       });
     };
+
     $('#fULogin').oninput = aplicarFiltro;
     $('#fUGrupo').onchange = aplicarFiltro;
+    $('#fUPapel').onchange = aplicarFiltro;
     $('#fUAtivo').onchange = aplicarFiltro;
-    document.querySelectorAll('#adm button[data-id]').forEach(b => b.onclick = () =>
-      modalSenha(b.dataset.id, b.dataset.login, true, () => {}));
-    document.querySelectorAll('#adm button[data-mv]').forEach(b => b.onclick = () =>
-      modalMover(b.dataset.mv, b.dataset.login, optsGrupos,
-        'Se for o único gerente do grupo de origem, virará operador no destino e o operador mais antigo assumirá o grupo.',
-        () => admUsuarios()));
-    document.querySelectorAll('#adm button[data-exc]').forEach(b => b.onclick = async () => {
-      if (!(await confirmar(`Excluir a conta "${b.dataset.login}"?`))) return;
-      try {
-        const r = await api(`/api/usuarios/${b.dataset.exc}`, { method: 'DELETE' });
-        toast(r.desativado ? 'Conta desativada (histórico preservado)' : 'Conta excluída');
-        admUsuarios();
-      } catch (e) {}
+
+    // Ação: Novo Usuário
+    $('#btNovoUsuario').onclick = () => modalNovoUsuario();
+
+    // Ação: Atribuir Papel
+    document.querySelectorAll('#tabU button[data-addpapel]').forEach(b => {
+      b.onclick = () => modalAtribuirPapel(b.dataset.addpapel, b.dataset.login);
     });
+
+    // Ação: Remover Papel
+    document.querySelectorAll('#tabU button[data-delpapel]').forEach(b => {
+      b.onclick = async (ev) => {
+        ev.stopPropagation();
+        const pId = b.dataset.delpapel;
+        const uId = b.dataset.uid;
+        if (!(await confirmar('Deseja remover esta função/cadeira atribuída a este usuário?'))) return;
+        try {
+          await api(`/api/usuarios/${uId}/papeis/${pId}`, { method: 'DELETE' });
+          toast('Função removida com sucesso!');
+          admUsuarios();
+        } catch (e) {}
+      };
+    });
+
+    // Ação: Editar Perfil Completo
+    document.querySelectorAll('#tabU button[data-edperfil]').forEach(b => {
+      b.onclick = () => {
+        const uid = +b.dataset.edperfil;
+        const uAlvo = lista.find(x => x.id === uid);
+        if (uAlvo) modalEditarPerfilUsuario(uAlvo);
+      };
+    });
+
+    // Ação: Editar Nomes
+    document.querySelectorAll('#tabU button[data-ednomes]').forEach(b => {
+      b.onclick = () => modalEditarNomes(b.dataset.ednomes, b.dataset.login, b.dataset.guerra, b.dataset.completo);
+    });
+
+    // Ação: Senha
+    document.querySelectorAll('#tabU button[data-id]').forEach(b => {
+      b.onclick = () => modalSenha(b.dataset.id, b.dataset.login, true, () => admUsuarios());
+    });
+
+    // Ação: Mover
+    document.querySelectorAll('#tabU button[data-mv]').forEach(b => {
+      b.onclick = () => modalMover(b.dataset.mv, b.dataset.login, optsGrupos,
+        'Se for o único gerente do grupo de origem, virará operador no destino e o operador mais antigo assumirá o grupo.',
+        () => admUsuarios());
+    });
+
+    // Ação: Excluir
+    document.querySelectorAll('#tabU button[data-exc]').forEach(b => {
+      b.onclick = async () => {
+        if (!(await confirmar(`Excluir a conta "${b.dataset.login}"?`))) return;
+        try {
+          const r = await api(`/api/usuarios/${b.dataset.exc}`, { method: 'DELETE' });
+          toast(r.desativado ? 'Conta desativada (histórico preservado)' : 'Conta excluída');
+          admUsuarios();
+        } catch (e) {}
+      };
+    });
+
+    function modalEditarPerfilUsuario(u) {
+      let fotoAtual = u.foto_base64 || '';
+      const sangueOpts = ["", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+      const html = `
+        <div class="modal" style="max-width:620px">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px">
+            <div>
+              <h3 style="margin:0 0 2px">👤 Perfil do Usuário — ${esc(u.login)}</h3>
+              <p style="color:var(--tx2);font-size:12px;margin:0">ID #${u.id} · Papel: <b>${rotuloPapel(u.papel)}</b></p>
+            </div>
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
+          </div>
+
+          <!-- Foto 1x1 e Ações de Imagem -->
+          <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid var(--borda)">
+            <div id="mPfFotoBox" style="width:76px; height:76px; border-radius:12px; border:2px solid var(--borda2); overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--painel2); flex-shrink:0">
+              ${fotoAtual ? `<img src="${fotoAtual}" style="width:100%; height:100%; object-fit:cover">` : `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px">
+              <input type="file" id="mPfInpFile" accept="image/*" style="display:none">
+              <button type="button" class="acao-linha" id="mPfBtTrocarFoto" style="font-size:12px; padding:4px 10px">📷 Alterar Foto 1x1</button>
+              ${fotoAtual ? `<button type="button" class="acao-linha perigo" id="mPfBtRemoverFoto" style="font-size:11.5px; padding:3px 8px">Remover Foto</button>` : ''}
+              <small style="color:var(--tx3); font-size:11px">Recorte 1x1 automático via navegador.</small>
+            </div>
+          </div>
+
+          <!-- Campos Cadastrais -->
+          <div class="form-linha" style="margin-bottom:8px">
+            <div class="campo" style="flex:1">
+              <label>Nome de Guerra (NOME) *</label>
+              <input id="mPfNg" value="${esc(u.nome_guerra || '')}">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Nome Completo *</label>
+              <input id="mPfNc" value="${esc(u.nome_completo || '')}">
+            </div>
+          </div>
+
+          <div class="form-linha" style="margin-bottom:8px">
+            <div class="campo" style="flex:1">
+              <label>Data de Nascimento</label>
+              <input id="mPfDataNasc" type="date" value="${esc(u.data_nascimento || '')}">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Tipo Sanguíneo</label>
+              <select id="mPfTipoSang">
+                <option value="">Não informado</option>
+                ${sangueOpts.filter(Boolean).map(s => `<option value="${s}" ${u.tipo_sanguineo === s ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div class="form-linha" style="margin-bottom:8px">
+            <div class="campo" style="flex:1">
+              <label>Telefone / WhatsApp</label>
+              <input id="mPfTel" type="tel" value="${esc(u.telefone || '')}" placeholder="(XX) XXXXX-XXXX">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>E-mail</label>
+              <input id="mPfEmail" type="email" value="${esc(u.email || '')}" placeholder="militar@eb.mil.br">
+            </div>
+          </div>
+
+          <div class="campo" style="margin-bottom:8px">
+            <label>Endereço Completo</label>
+            <input id="mPfEndereco" value="${esc(u.endereco || '')}" placeholder="Rua, número, bairro, cidade - UF">
+          </div>
+
+          <div class="campo" style="margin-bottom:16px">
+            <label>Unidade / Grupo de Alocação</label>
+            <select id="mPfGrupo">
+              <option value="">— Sem grupo (Global) —</option>
+              ${grupos.map(g => `<option value="${g.id}" ${u.grupo_id === g.id ? 'selected' : ''}>${esc(g.nome)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:8px">
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+            <button class="primario" id="mPfSalvar">Salvar Dados</button>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+      const fotoBox = m.querySelector('#mPfFotoBox');
+      const inpFile = m.querySelector('#mPfInpFile');
+
+      m.querySelector('#mPfBtTrocarFoto').onclick = () => inpFile.click();
+      inpFile.onchange = (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) {
+          processarFoto1x1(file, (dataUrl) => {
+            fotoAtual = dataUrl;
+            fotoBox.innerHTML = `<img src="${fotoAtual}" style="width:100%; height:100%; object-fit:cover">`;
+          });
+        }
+      };
+
+      const btRem = m.querySelector('#mPfBtRemoverFoto');
+      if (btRem) {
+        btRem.onclick = () => {
+          fotoAtual = '';
+          fotoBox.innerHTML = `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`;
+          btRem.remove();
+        };
+      }
+
+      m.querySelector('#mPfSalvar').onclick = async () => {
+        const ng = m.querySelector('#mPfNg').value.trim();
+        const nc = m.querySelector('#mPfNc').value.trim();
+        const dataNasc = m.querySelector('#mPfDataNasc').value;
+        const tipoSang = m.querySelector('#mPfTipoSang').value;
+        const tel = m.querySelector('#mPfTel').value.trim();
+        const email = m.querySelector('#mPfEmail').value.trim();
+        const endr = m.querySelector('#mPfEndereco').value.trim();
+        const gidVal = m.querySelector('#mPfGrupo').value;
+        const gid = gidVal ? +gidVal : 0;
+
+        if (!ng || !nc) {
+          toast('Nome de guerra e nome completo são obrigatórios', 'erro');
+          return;
+        }
+
+        try {
+          await api(`/api/usuarios/${u.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              nome_guerra: ng,
+              nome_completo: nc,
+              data_nascimento: dataNasc,
+              tipo_sanguineo: tipoSang,
+              telefone: tel,
+              email: email,
+              endereco: endr,
+              foto_base64: fotoAtual,
+              grupo_id: gid
+            })
+          });
+          toast('Perfil do usuário atualizado com sucesso!');
+          m.remove();
+          admUsuarios();
+        } catch (e) {}
+      };
+    }
+
+    function modalNovoUsuario() {
+      const html = `
+        <div class="modal" style="max-width:500px">
+          <h3 style="margin-top:0">Criar Novo Usuário</h3>
+          <p style="color:var(--tx2);font-size:13px;margin-bottom:14px">Cadastre a conta de acesso e atribua o papel inicial.</p>
+
+          <div class="form-linha" style="margin-bottom:8px">
+            <div class="campo" style="flex:1">
+              <label>Login de Acesso *</label>
+              <input id="nuLogin" placeholder="ex.: silva.gerente">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Senha Inicial (mín. 8) *</label>
+              <input type="password" id="nuSenha" placeholder="••••••••">
+            </div>
+          </div>
+
+          <div class="form-linha" style="margin-bottom:8px">
+            <div class="campo" style="flex:1">
+              <label>Nome Completo *</label>
+              <input id="nuCompleto" placeholder="ex.: Hermes da Silva">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Nome de Guerra *</label>
+              <input id="nuGuerra" placeholder="ex.: Silva">
+            </div>
+          </div>
+
+          <div class="form-linha" style="margin-bottom:8px">
+            <div class="campo" style="flex:1">
+              <label>Papel Inicial *</label>
+              <select id="nuPapel">
+                <option value="operador">Operador (Função Múltipla)</option>
+                <option value="gerente">Gerente (Função Única por Grupo)</option>
+                <option value="admin">Administrador (Global)</option>
+              </select>
+            </div>
+            <div class="campo" id="nuCampoGrupo" style="flex:1">
+              <label>Grupo / Unidade *</label>
+              <select id="nuGrupo">${optsGrupos}</select>
+            </div>
+          </div>
+
+          <div id="nuAjudaPapel" style="font-size:12px; color:var(--tx2); background:var(--painel2); border:1px solid var(--borda); border-radius:6px; padding:10px; margin-bottom:14px">
+            ℹ️ <b>Operador:</b> Acesso operacional às conferências do grupo. Múltiplos operadores podem atuar simultaneamente no mesmo grupo.
+          </div>
+
+          <div class="modal-acoes">
+            <button class="fantasma" id="nuX">Cancelar</button>
+            <button class="primario" id="nuGo">Criar Conta</button>
+          </div>
+        </div>
+      `;
+      const div = modal(html);
+      if (!div) return;
+
+      const selP = div.querySelector('#nuPapel');
+      const grpField = div.querySelector('#nuCampoGrupo');
+      const ajuda = div.querySelector('#nuAjudaPapel');
+
+      selP.onchange = () => {
+        const p = selP.value;
+        if (p === 'admin') {
+          grpField.style.display = 'none';
+          ajuda.innerHTML = 'ℹ️ <b>Administrador:</b> Acesso irrestrito a configurações globais, backup e governança da estrutura.';
+        } else if (p === 'gerente') {
+          grpField.style.display = 'block';
+          ajuda.innerHTML = '🔒 <b>Gerente (Função Única):</b> Comandante da unidade. Cada grupo só pode ter 1 gerente titular ativo.';
+        } else {
+          grpField.style.display = 'block';
+          ajuda.innerHTML = 'ℹ️ <b>Operador (Função Múltipla):</b> Acesso operacional diário às conferências e caixa de email compartilhada do grupo.';
+        }
+      };
+
+      div.querySelector('#nuX').onclick = () => div.fechar && div.fechar();
+      div.querySelector('#nuGo').onclick = async () => {
+        const login = div.querySelector('#nuLogin').value.trim();
+        const senha = div.querySelector('#nuSenha').value;
+        const completo = div.querySelector('#nuCompleto').value.trim();
+        const guerra = div.querySelector('#nuGuerra').value.trim();
+        const papel = selP.value;
+        const grupoId = +div.querySelector('#nuGrupo').value || null;
+
+        if (!login || !senha || !completo || !guerra) {
+          toast('Preencha todos os campos obrigatórios', 'erro');
+          return;
+        }
+        if (senha.length < 8) {
+          toast('A senha deve ter no mínimo 8 caracteres', 'erro');
+          return;
+        }
+        if (papel !== 'admin' && !grupoId) {
+          toast('Selecione o grupo para esta conta', 'erro');
+          return;
+        }
+
+        try {
+          const res = await api('/api/usuarios', {
+            method: 'POST',
+            body: JSON.stringify({
+              login,
+              senha,
+              papel,
+              grupo_id: grupoId
+            })
+          });
+          if (res && res.id) {
+            await api(`/api/usuarios/${res.id}`, {
+              method: 'PATCH',
+              body: JSON.stringify({
+                nome_completo: completo,
+                nome_guerra: guerra
+              })
+            });
+            toast('Usuário criado com sucesso!');
+            div.fechar && div.fechar();
+            admUsuarios();
+          }
+        } catch (e) {}
+      };
+    }
+
+    function modalAtribuirPapel(uid, login) {
+      const html = `
+        <div class="modal" style="max-width:480px">
+          <h3 style="margin-top:0">Atribuir Função / Cadeira — ${esc(login)}</h3>
+          <p style="color:var(--tx2);font-size:13px;margin-bottom:14px">Permita que este usuário acumule funções adicionais em grupos específicos.</p>
+
+          <div class="form-linha" style="margin-bottom:10px">
+            <div class="campo" style="flex:1">
+              <label>Papel / Responsabilidade *</label>
+              <select id="apPapel">
+                <option value="operador">Operador (Função Múltipla)</option>
+                <option value="gerente">Gerente (Função Única por Grupo)</option>
+                <option value="admin">Administrador (Global)</option>
+              </select>
+            </div>
+            <div class="campo" id="apCampoGrupo" style="flex:1">
+              <label>Grupo / Pelotão *</label>
+              <select id="apGrupo">${optsGrupos}</select>
+            </div>
+          </div>
+
+          <div class="campo" style="margin-bottom:12px">
+            <label>Função Militar / Cargo (Opcional)</label>
+            <select id="apFuncao">
+              <option value="">— Nenhuma / Padrão —</option>
+              ${funcoesLista.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div id="apAjuda" style="font-size:12px; color:var(--tx2); background:var(--painel2); border:1px solid var(--borda); border-radius:6px; padding:10px; margin-bottom:14px">
+            ℹ️ <b>Operador:</b> O grupo pode comportar múltiplos operadores com acesso operacional e email compartilhado.
+          </div>
+
+          <div class="modal-acoes">
+            <button class="fantasma" id="apX">Cancelar</button>
+            <button class="primario" id="apGo">Atribuir Função</button>
+          </div>
+        </div>
+      `;
+      const div = modal(html);
+      if (!div) return;
+
+      const selP = div.querySelector('#apPapel');
+      const grpField = div.querySelector('#apCampoGrupo');
+      const ajuda = div.querySelector('#apAjuda');
+
+      selP.onchange = () => {
+        const p = selP.value;
+        if (p === 'admin') {
+          grpField.style.display = 'none';
+          ajuda.innerHTML = '🌐 <b>Administrador:</b> Acesso global ao sistema.';
+        } else if (p === 'gerente') {
+          grpField.style.display = 'block';
+          ajuda.innerHTML = '🔒 <b>Gerente (Função Única):</b> Cada grupo só pode ter 1 gerente titular ativo. Se o grupo já tiver gerente, a operação será recusada.';
+        } else {
+          grpField.style.display = 'block';
+          ajuda.innerHTML = '👥 <b>Operador (Função Múltipla):</b> O grupo pode comportar múltiplos operadores com acesso operacional compartilhado.';
+        }
+      };
+
+      div.querySelector('#apX').onclick = () => div.fechar && div.fechar();
+      div.querySelector('#apGo').onclick = async () => {
+        const papel = selP.value;
+        const grupoId = +div.querySelector('#apGrupo').value || null;
+        const funcaoId = +div.querySelector('#apFuncao').value || null;
+
+        if (papel !== 'admin' && !grupoId) {
+          toast('Selecione o grupo para esta função', 'erro');
+          return;
+        }
+
+        try {
+          await api(`/api/usuarios/${uid}/papeis`, {
+            method: 'POST',
+            body: JSON.stringify({
+              papel,
+              grupo_id: grupoId,
+              funcao_id: funcaoId
+            })
+          });
+          toast('Nova função atribuída com sucesso!');
+          div.fechar && div.fechar();
+          admUsuarios();
+        } catch (e) {}
+      };
+    }
+
+    function modalEditarNomes(uid, login, nomeGuerraAtual, nomeCompletoAtual) {
+      const html = `
+        <div class="modal" style="max-width:440px">
+          <h3 style="margin-top:0">Editar Identificação — ${esc(login)}</h3>
+          <p style="color:var(--tx2);font-size:13px;margin-bottom:14px">O nome curto/de guerra aparecerá destacado nas assinaturas e caixas postais.</p>
+
+          <div class="campo" style="margin-bottom:10px">
+            <label>Nome Completo *</label>
+            <input id="edCompleto" value="${esc(nomeCompletoAtual)}">
+          </div>
+          <div class="campo" style="margin-bottom:14px">
+            <label>Nome de Guerra / Nome Curto *</label>
+            <input id="edGuerra" value="${esc(nomeGuerraAtual)}">
+          </div>
+
+          <div class="modal-acoes">
+            <button class="fantasma" id="edX">Cancelar</button>
+            <button class="primario" id="edGo">Salvar Nomes</button>
+          </div>
+        </div>
+      `;
+      const div = modal(html);
+      if (!div) return;
+
+      div.querySelector('#edX').onclick = () => div.fechar && div.fechar();
+      div.querySelector('#edGo').onclick = async () => {
+        const comp = div.querySelector('#edCompleto').value.trim();
+        const guer = div.querySelector('#edGuerra').value.trim();
+        if (!comp || !guer) {
+          toast('Nomes obrigatórios', 'erro');
+          return;
+        }
+        try {
+          await api(`/api/usuarios/${uid}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              nome_completo: comp,
+              nome_guerra: guer
+            })
+          });
+          toast('Nomes atualizados com sucesso!');
+          div.fechar && div.fechar();
+          admUsuarios();
+        } catch (e) {}
+      };
+    }
   }
 
   /* --- ADMIN › grupos: árvore nested colapsável + foco recursivo + ações completas --- */
@@ -376,6 +976,15 @@
         };
       });
 
+      // Botões de Alocar Usuário
+      $('#arvoreAdm').querySelectorAll('[data-alocaruser]').forEach(b => {
+        b.onclick = () => {
+          const gid = +b.dataset.alocaruser;
+          const gnome = b.dataset.nome;
+          modalAlocarUsuariosGrupo(gid, gnome);
+        };
+      });
+
       // Botões de Subordinação
       $('#arvoreAdm').querySelectorAll('[data-subordinar]').forEach(b => {
         b.onclick = () => {
@@ -427,27 +1036,13 @@
 
     function modalCriarGrupo(superiorId, superiorNome) {
       const html = `
-        <div class="modal" style="max-width:520px">
-          <h3 style="margin-top:0">${superiorId ? `Criar Subgrupo subordinado a "${esc(superiorNome)}"` : 'Criar Novo Grupo Raiz'}</h3>
-          <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">Cada grupo exige um gerente no ato da criação para assegurar a cadeia de comando.</p>
+        <div class="modal" style="max-width:480px">
+          <h3 style="margin-top:0">${superiorId ? `Criar Subgrupo subordinado a "${esc(superiorNome)}"` : 'Criar Nova Unidade / Grupo'}</h3>
+          <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">A criação de unidade requer apenas o nome. Em seguida, o administrador pode alocar usuários e definir o gerente da unidade.</p>
           
-          <div class="campo" style="margin-bottom:8px">
+          <div class="campo" style="margin-bottom:16px">
             <label>Nome da Unidade / Subgrupo *</label>
-            <input id="gNome" placeholder="ex.: 1ª Companhia / 1º Pelotão">
-          </div>
-          <div class="form-linha" style="margin-bottom:8px">
-            <div class="campo" style="flex:1">
-              <label>Login do Gerente *</label>
-              <input id="gLogin" placeholder="ex.: silva.gerente">
-            </div>
-            <div class="campo" style="flex:1">
-              <label>Nome de Guerra *</label>
-              <input id="gGuerra" placeholder="ex.: SILVA">
-            </div>
-          </div>
-          <div class="campo" style="margin-bottom:14px">
-            <label>Senha do Gerente (mín. 8 caracteres) *</label>
-            <input id="gSenha" type="password" placeholder="••••••••">
+            <input id="gNome" placeholder="ex.: 1ª Companhia de Fuzileiros" autofocus>
           </div>
 
           <div style="display:flex; gap:8px; justify-content:flex-end">
@@ -459,18 +1054,14 @@
       const m = modal(html);
       m.querySelector('#gGo').onclick = async () => {
         const nome = m.querySelector('#gNome').value.trim();
-        const login = m.querySelector('#gLogin').value.trim();
-        const senha = m.querySelector('#gSenha').value;
-        const guerra = m.querySelector('#gGuerra').value.trim();
-
-        if (!nome || !login || senha.length < 8 || !guerra) {
-          toast('Preencha todos os campos obrigatórios (senha mín. 8 caracteres)', 'erro');
+        if (!nome) {
+          toast('Informe o nome da unidade', 'erro');
           return;
         }
         try {
           const r = await api('/api/grupos', {
             method: 'POST',
-            body: JSON.stringify({ nome, login, senha, nome_guerra: guerra })
+            body: JSON.stringify({ nome })
           });
           const novoId = r.id;
           if (superiorId && novoId) {
@@ -479,7 +1070,44 @@
               body: JSON.stringify({ superior_id: superiorId, subordinado_id: novoId })
             });
           }
-          toast(`Unidade criada com sucesso (código ${r.codigo})`);
+          toast(`Unidade "${nome}" criada com sucesso! (Código ${r.codigo})`);
+          m.remove();
+          window.ViewAdmin();
+        } catch (e) {}
+      };
+    }
+
+    function modalAlocarUsuariosGrupo(gid, gnome) {
+      const outrasContas = contas.filter(c => c.papel !== 'admin' && c.ativo && c.grupo_id !== gid);
+      const html = `
+        <div class="modal" style="max-width:500px">
+          <h3 style="margin-top:0">👥 Alocar Usuário — ${esc(gnome)}</h3>
+          <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">Mover um usuário existente para integrar este grupo.</p>
+          
+          <div class="campo" style="margin-bottom:16px">
+            <label>Selecione o usuário</label>
+            <select id="mSelAlocarConta">
+              <option value="">— Selecione um usuário cadastrado —</option>
+              ${outrasContas.map(c => `<option value="${c.id}">${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)} [${c.grupo_id ? 'Grupo #' + c.grupo_id : 'Sem grupo'}]</option>`).join('')}
+            </select>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:8px">
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+            <button class="primario" id="mBtnAlocarGo">Alocar no Grupo</button>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+      m.querySelector('#mBtnAlocarGo').onclick = async () => {
+        const uid = m.querySelector('#mSelAlocarConta').value;
+        if (!uid) { toast('Selecione um usuário', 'erro'); return; }
+        try {
+          await api(`/api/usuarios/${uid}/mover`, {
+            method: 'PATCH',
+            body: JSON.stringify({ grupo_id: gid })
+          });
+          toast('Usuário alocado na unidade com sucesso!');
           m.remove();
           window.ViewAdmin();
         } catch (e) {}
@@ -488,36 +1116,51 @@
 
     function modalTrocarGerente(gid, gnome) {
       const contasGrupo = contas.filter(c => c.grupo_id === gid && c.papel !== 'admin' && c.ativo);
+      const temGerente = contasGrupo.some(c => c.papel === 'gerente');
       const html = `
-        <div class="modal" style="max-width:480px">
-          <h3 style="margin-top:0">👤 Trocar Gerente — ${esc(gnome)}</h3>
-          <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">Selecione uma conta existente deste grupo para ser promovida a Gerente.</p>
+        <div class="modal" style="max-width:500px">
+          <h3 style="margin-top:0">👤 ${temGerente ? 'Trocar Gerente' : 'Definir Gerente'} — ${esc(gnome)}</h3>
+          <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">
+            ${temGerente 
+              ? 'Selecione um usuário deste grupo para assumir a titularidade. O gerente atual passará a operador.' 
+              : 'Selecione um dos usuários alocados a este grupo para herdar a função de Gerente titular.'}
+          </p>
           
-          <div class="campo" style="margin-bottom:14px">
-            <label>Conta a ser promovida</label>
-            <select id="mSelNovaConta">
-              <option value="">— Selecione uma conta do grupo —</option>
-              ${contasGrupo.map(c => `<option value="${esc(c.login)}">${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)}</option>`).join('')}
-            </select>
-          </div>
+          ${contasGrupo.length === 0 ? `
+            <div class="vazio" style="padding:20px; text-align:center; margin-bottom:14px">
+              Nenhum usuário alocado nesta unidade.<br>
+              <small style="color:var(--tx3)">Use o botão <b>Alocar Usuário</b> para vincular militares ao grupo antes de definir o gerente.</small>
+            </div>
+          ` : `
+            <div class="campo" style="margin-bottom:14px">
+              <label>Conta a assumir a gerência</label>
+              <select id="mSelNovaConta">
+                <option value="">— Selecione uma conta do grupo —</option>
+                ${contasGrupo.map(c => `<option value="${esc(c.login)}" ${c.papel === 'gerente' ? 'disabled' : ''}>${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)} ${c.papel === 'gerente' ? '★ Atual Gerente' : ''}</option>`).join('')}
+              </select>
+            </div>
+          `}
 
           <div style="display:flex; justify-content:flex-end; gap:8px">
             <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-            <button class="primario" id="mBtnTrocarGer">Promover a Gerente</button>
+            ${contasGrupo.length > 0 ? `<button class="primario" id="mBtnTrocarGer">Promover a Gerente</button>` : ''}
           </div>
         </div>
       `;
       const m = modal(html);
-      m.querySelector('#mBtnTrocarGer').onclick = async () => {
-        const login = m.querySelector('#mSelNovaConta').value;
-        if (!login) { toast('Selecione a conta para promover', 'erro'); return; }
-        try {
-          await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login }) });
-          toast('Gerente atualizado com sucesso!');
-          m.remove();
-          window.ViewAdmin();
-        } catch (e) {}
-      };
+      const btn = m.querySelector('#mBtnTrocarGer');
+      if (btn) {
+        btn.onclick = async () => {
+          const login = m.querySelector('#mSelNovaConta').value;
+          if (!login) { toast('Selecione a conta para promover', 'erro'); return; }
+          try {
+            await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login }) });
+            toast('Gerente atribuído com sucesso! Função herdada.');
+            m.remove();
+            window.ViewAdmin();
+          } catch (e) {}
+        };
+      }
     }
 
     function modalGerenciarSubordinacao(gid, gnome) {
@@ -1345,38 +1988,220 @@
   };
 
   /* =====================================================================
-     #/perfil — MEU USUÁRIO (não-admin): leitura + nome guerra/completo editáveis
+     #/perfil — PERFIL DO USUÁRIO & FOTO 1X1 (disponível para todos os perfis)
      ===================================================================== */
   window.ViewPerfil = async function () {
     const eu = quem();
     if (!eu) { location.hash = '#/login'; return; }
-    if (eu.papel === 'admin') { location.hash = '#/admin'; return; }
     navAtiva('#/perfil');
-    $('#app').innerHTML = '<div class="carregando">…</div>';
-    const d = await api('/api/perfil');
+    $('#app').innerHTML = '<div class="carregando">Carregando perfil…</div>';
+    
+    let d;
+    try {
+      d = await api('/api/perfil');
+    } catch (e) {
+      $('#app').innerHTML = '<div class="vazio">Falha ao carregar perfil.</div>';
+      return;
+    }
+
     const u = d.usuario;
-    $('#app').innerHTML = `<h2>Meu usuário</h2>
-      <div class="cartao" style="max-width:640px">
-        <div class="form-linha">
-          <div class="campo"><label>Login</label><input value="${esc(u.login)}" disabled></div>
-          <div class="campo"><label>Função na conta</label><input value="${esc(rotuloPapel(u.papel))}" disabled></div></div>
-        <div class="form-linha">
-          <div class="campo"><label>Grupo</label><input value="${esc(d.grupo || '— (sem grupo)')}" disabled></div>
-          <div class="campo"><label>Setor</label><input value="${esc(d.setor || '—')}" disabled></div>
-          <div class="campo"><label>Função</label><input value="${esc(d.funcao || '—')}" disabled></div></div>
-        <div class="form-linha">
-          <div class="campo"><label>Nome de guerra</label><input id="pfNg" value="${esc(u.nome_guerra || '')}"></div>
-          <div class="campo"><label>Nome completo</label><input id="pfNc" value="${esc(u.nome_completo || '')}"></div></div>
-        <button class="primario" id="pfGo">Salvar perfil</button>
-        <p style="color:var(--tx2);font-size:12px">Setor e função vêm do grupo. Senha: menu do seu nome no topo direito.</p></div>`;
+    let fotoAtual = u.foto_base64 || '';
+    const sangueOpts = ["", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
+    $('#app').innerHTML = `
+      <div style="margin-bottom:18px">
+        <h2 style="margin:0 0 4px">Meu Perfil de Usuário</h2>
+        <p style="color:var(--tx2);font-size:13px;margin:0">Informações cadastrais, identificação institucional e foto de perfil 1x1.</p>
+      </div>
+
+      <div class="perfil-card">
+        <!-- Topo: Foto 1x1 e Resumo de Identificação -->
+        <div class="perfil-topo">
+          <div class="perfil-foto-wrapper">
+            <div class="perfil-foto-preview" id="pfFotoBox">
+              ${fotoAtual ? `<img src="${fotoAtual}" alt="Foto 1x1">` : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
+            </div>
+          </div>
+          <div class="perfil-foto-acoes">
+            <div style="font-size:17px; font-weight:800; color:var(--tx)">
+              ${esc(u.nome_guerra || u.login)}
+              ${u.tipo_sanguineo ? `<span style="font-size:11.5px; margin-left:6px; background:rgba(239,68,68,0.18); color:var(--verm-txt); border:1px solid rgba(239,68,68,0.35); padding:2px 7px; border-radius:10px; font-weight:700">🩸 ${esc(u.tipo_sanguineo)}</span>` : ''}
+            </div>
+            <div style="font-size:12.5px; color:var(--tx3)">
+              ${esc(u.nome_completo || 'Nome completo não informado')}
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; margin-top:4px">
+              <input type="file" id="pfInpFile" accept="image/*" style="display:none">
+              <button type="button" class="primario" id="pfBtAlterarFoto" style="font-size:12px; padding:6px 14px">📷 Alterar Foto 1x1</button>
+              ${fotoAtual ? `<button type="button" class="acao-linha perigo" id="pfBtRemoverFoto" style="font-size:12px; padding:6px 12px">Remover Foto</button>` : ''}
+            </div>
+            <small style="color:var(--tx3); font-size:11px">Foto 1x1: o sistema recorta e compacta centralizadamente no seu navegador.</small>
+          </div>
+        </div>
+
+        <!-- Seção 1: Identificação no Sistema (Leitura) -->
+        <div class="perfil-secao-tit">1. Identificação no Sistema</div>
+        <div class="perfil-grid-campos">
+          <div class="campo">
+            <label>ID do Usuário</label>
+            <input value="#${u.id}" disabled style="background:var(--painel3); font-weight:700">
+          </div>
+          <div class="campo">
+            <label>Login de Acesso</label>
+            <input value="${esc(u.login)}" disabled style="background:var(--painel3); font-weight:700">
+          </div>
+          <div class="campo">
+            <label>Função / Papel na Conta</label>
+            <input value="${esc(rotuloPapel(u.papel))}" disabled style="background:var(--painel3)">
+          </div>
+          <div class="campo">
+            <label>Unidade / Grupo</label>
+            <input value="${esc(d.grupo || 'Global / Sem grupo')}" disabled style="background:var(--painel3)">
+          </div>
+        </div>
+
+        <!-- Seção 2: Dados Pessoais & Militares -->
+        <div class="perfil-secao-tit">2. Dados Pessoais & Militares</div>
+        <div class="perfil-grid-campos">
+          <div class="campo">
+            <label>NOME (Nome de Guerra) *</label>
+            <input id="pfNg" value="${esc(u.nome_guerra || '')}" placeholder="ex.: SILVA">
+          </div>
+          <div class="campo">
+            <label>NOME COMPLETO *</label>
+            <input id="pfNc" value="${esc(u.nome_completo || '')}" placeholder="Nome civil completo">
+          </div>
+          <div class="campo">
+            <label>DATA NASC (Data de Nascimento)</label>
+            <input id="pfDataNasc" type="date" value="${esc(u.data_nascimento || '')}">
+          </div>
+          <div class="campo">
+            <label>TIPO SANGUÍNEO</label>
+            <select id="pfTipoSang">
+              <option value="">Não informado</option>
+              ${sangueOpts.filter(Boolean).map(s => `<option value="${s}" ${u.tipo_sanguineo === s ? 'selected' : ''}>${s}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <!-- Seção 3: Comunicação & Endereço -->
+        <div class="perfil-secao-tit">3. Comunicação & Endereço</div>
+        <div class="perfil-grid-campos">
+          <div class="campo">
+            <label>TELEFONE (Celular / WhatsApp)</label>
+            <input id="pfTel" type="tel" value="${esc(u.telefone || '')}" placeholder="(XX) XXXXX-XXXX">
+          </div>
+          <div class="campo">
+            <label>EMAIL (Institucional ou Pessoal)</label>
+            <input id="pfEmail" type="email" value="${esc(u.email || '')}" placeholder="usuario@dominio.eb.mil.br">
+          </div>
+        </div>
+        <div class="campo" style="margin-top:10px">
+          <label>ENDEREÇO (Residencial / Contato)</label>
+          <input id="pfEndereco" value="${esc(u.endereco || '')}" placeholder="Logradouro, número, complemento, bairro, cidade - UF">
+        </div>
+
+        <!-- Botões de Ação -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:24px; padding-top:16px; border-top:1px solid var(--borda); flex-wrap:wrap; gap:10px">
+          <button type="button" class="acao-linha" id="pfBtMudarSenha">🔑 Alterar Minha Senha</button>
+          <div style="display:flex; gap:10px">
+            <button type="button" class="primario" id="pfGo" style="padding:10px 22px; font-weight:700">💾 Salvar Perfil</button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    // Eventos de Foto 1x1
+    const fotoBox = $('#pfFotoBox');
+    const inpFile = $('#pfInpFile');
+    $('#pfBtAlterarFoto').onclick = () => inpFile.click();
+
+    inpFile.onchange = (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (file) {
+        processarFoto1x1(file, (dataUrl) => {
+          fotoAtual = dataUrl;
+          fotoBox.innerHTML = `<img src="${fotoAtual}" alt="Foto 1x1">`;
+          toast('Foto 1x1 processada. Clique em "Salvar Perfil" para confirmar.', 'ok');
+        });
+      }
+    };
+
+    const btRemFoto = $('#pfBtRemoverFoto');
+    if (btRemFoto) {
+      btRemFoto.onclick = () => {
+        fotoAtual = '';
+        fotoBox.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`;
+        btRemFoto.remove();
+        toast('Foto removida. Clique em "Salvar Perfil" para confirmar.');
+      };
+    }
+
+    // Modal de Senha
+    $('#pfBtMudarSenha').onclick = () => modalSenha();
+
+    // Salvar Perfil
     $('#pfGo').onclick = async () => {
-      const ng = $('#pfNg').value.trim(), nc = $('#pfNc').value.trim();
-      if (!ng || !nc) { toast('Preencha os dois nomes', 'erro'); return; }
-      await api('/api/perfil', { method: 'PATCH', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc }) });
-      const atual = quem();
-      if (atual) { atual.nome_guerra = ng; atual.nome_completo = nc; }
-      if (typeof montarNav === 'function') montarNav();
-      toast('Perfil salvo');
+      const ng = $('#pfNg').value.trim();
+      const nc = $('#pfNc').value.trim();
+      const dataNasc = $('#pfDataNasc').value;
+      const tipoSang = $('#pfTipoSang').value;
+      const tel = $('#pfTel').value.trim();
+      const email = $('#pfEmail').value.trim();
+      const endr = $('#pfEndereco').value.trim();
+
+      if (!ng || !nc) {
+        toast('Nome de guerra e nome completo são obrigatórios', 'erro');
+        return;
+      }
+
+      $('#pfGo').disabled = true;
+      try {
+        await api('/api/perfil', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            nome_guerra: ng,
+            nome_completo: nc,
+            data_nascimento: dataNasc,
+            tipo_sanguineo: tipoSang,
+            telefone: tel,
+            email: email,
+            endereco: endr,
+            foto_base64: fotoAtual
+          })
+        });
+
+        // Atualiza o estado em memória local ME
+        const atual = quem();
+        if (atual) {
+          atual.nome_guerra = ng;
+          atual.nome_completo = nc;
+          atual.data_nascimento = dataNasc;
+          atual.tipo_sanguineo = tipoSang;
+          atual.telefone = tel;
+          atual.email = email;
+          atual.endereco = endr;
+          atual.foto_base64 = fotoAtual;
+        }
+
+        // Atualiza avatar e nome na Sidebar em tempo real
+        const sbAvatar = document.getElementById('sbAvatarWrapper');
+        if (sbAvatar) {
+          if (fotoAtual) {
+            sbAvatar.innerHTML = `<img src="${fotoAtual}" class="sidebar-avatar-img" alt="Foto">`;
+          } else {
+            sbAvatar.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+          }
+        }
+        const sbNome = document.querySelector('.sidebar-usuario-nome');
+        if (sbNome) sbNome.textContent = ng || atual.login;
+
+        toast('Perfil salvo com sucesso!');
+        $('#pfGo').disabled = false;
+        window.ViewPerfil();
+      } catch (e) {
+        $('#pfGo').disabled = false;
+      }
     };
   };
 })();

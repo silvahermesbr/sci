@@ -78,12 +78,12 @@ func TestMigrationsAndSeeds(t *testing.T) {
 	// 1. Validar versão de schema
 	var versao int
 	err := st.db.QueryRow(`SELECT MAX(versao) FROM schema_migrations`).Scan(&versao)
-	if err != nil || versao != 19 {
-		t.Fatalf("esperado schema versão 19, obtido: %d (err: %v)", versao, err)
+	if err != nil || versao != 21 {
+		t.Fatalf("esperado schema versão 21, obtido: %d (err: %v)", versao, err)
 	}
 
-	// 2. Validar que as tabelas de Escalas, Material e Configurações existem
-	tabelas := []string{"escala_tipos", "escala_turnos", "escala_pessoas", "material_categorias", "material_itens", "material_cautelas", "material_cautela_anexos", "configuracoes"}
+	// 2. Validar que as tabelas de Escalas, Material, Configurações, Papeis e Mensagens existem
+	tabelas := []string{"escala_tipos", "escala_turnos", "escala_pessoas", "material_categorias", "material_itens", "material_cautelas", "material_cautela_anexos", "configuracoes", "usuario_papeis", "mensagens", "mensagem_destinatarios"}
 	for _, tab := range tabelas {
 		var n int
 		err = st.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tab).Scan(&n)

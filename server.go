@@ -181,6 +181,22 @@ func (a *App) rotas() {
 	m.Handle("POST /api/logout", a.auth(false, a.hLogout))
 	m.Handle("POST /api/senha", a.auth(false, a.hTrocarSenha))
 
+	// Contexto de Sessão (Multi-Funções)
+	m.Handle("POST /api/sessao/contexto", a.auth(false, a.hMudarContexto))
+
+	// Gestão de Papéis Múltiplos
+	m.Handle("POST /api/usuarios/{id}/papeis", a.auth(false, a.hUsuarioPapelAdd))
+	m.Handle("DELETE /api/usuarios/{id}/papeis/{papel_id}", a.auth(false, a.hUsuarioPapelDel))
+
+	// Módulo de Mensageria Interna por Função
+	m.Handle("GET /api/mensagens/inbox", a.auth(false, a.hMensagensInbox))
+	m.Handle("GET /api/mensagens/enviadas", a.auth(false, a.hMensagensEnviadas))
+	m.Handle("POST /api/mensagens", a.auth(false, a.hMensagensEnviar))
+	m.Handle("POST /api/mensagens/{id}/ler", a.auth(false, a.hMensagensMarcarLida))
+	m.Handle("POST /api/mensagens/{id}/excluir", a.auth(false, a.hMensagensExcluir))
+	m.Handle("GET /api/mensagens/contador", a.auth(false, a.hMensagensContador))
+	m.Handle("GET /api/mensagens/destinatarios", a.auth(false, a.hMensagensDestinatarios))
+
 	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria)
 	confAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
 
@@ -194,7 +210,7 @@ func (a *App) rotas() {
 	m.Handle("GET /api/relatorio/registros", a.auth(false, a.hRegistrosBusca))
 	m.Handle("GET /api/relatorio/tags", a.auth(false, a.hTagsDisponiveis))
 	m.Handle("GET /api/pessoas/{id}/ficha", a.auth(false, a.hPessoaFicha))
-	m.Handle("GET /api/conferencia/hoje", confAuth(a.hConferenciaHoje))
+	m.Handle("GET /api/conferencia/hoje", a.auth(false, a.hConferenciaHoje))
 	m.Handle("POST /api/conferencia/iniciar", confAuth(a.hConferenciaIniciar))
 	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
 	m.Handle("POST /api/conferencia/marcar", confAuth(a.hConferenciaMarcar))
@@ -223,8 +239,10 @@ func (a *App) rotas() {
 	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4)
 	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
 	m.Handle("POST /api/usuarios", a.auth(false, a.hUsuariosAdd))
+	m.Handle("PATCH /api/usuarios/{id}", a.auth(false, a.hUsuarioEdit))
 	m.Handle("DELETE /api/usuarios/{id}", a.auth(false, a.hUsuarioExcluir))   // R6; gerente só operador do próprio grupo (v9.4)
 	m.Handle("POST /api/usuarios/{id}/senha", a.auth(false, a.hUsuarioSenha)) // admin: qualquer; gerente: operador do próprio grupo (v9.4)
+	m.Handle("GET /api/usuarios/{id}/foto", a.auth(false, a.hUsuarioFotoGet))
 	m.Handle("GET /api/grupos", a.auth(false, a.hGruposList))
 	m.Handle("GET /api/grupos/arvore", a.auth(false, a.hArvoreGrupos)) // v9.4: árvore nested (admin: floresta; gerente: do próprio)
 	m.Handle("POST /api/grupos", a.auth(true, a.hGruposAdd))           // R7: exige gerente no ato
@@ -457,6 +475,101 @@ func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.st.Auditoria(&solicitante.ID, "redefinir_senha", "usuarios", &id, "", ipDe(r))
+	jsonOK(w, map[string]bool{"ok": true})
+}
+
+func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var req struct {
+		NomeGuerra     *string `json:"nome_guerra"`
+		NomeCompleto   *string `json:"nome_completo"`
+		DataNascimento *string `json:"data_nascimento"`
+		TipoSanguineo  *string `json:"tipo_sanguineo"`
+		Telefone       *string `json:"telefone"`
+		Email          *string `json:"email"`
+		Endereco       *string `json:"endereco"`
+		FotoBase64     *string `json:"foto_base64"`
+		GrupoID        *int64  `json:"grupo_id"`
+		Ativo          *bool   `json:"ativo"`
+	}
+	if err = decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
+	solicitante := usuarioDoCtx(r)
+	if solicitante.Papel == "operador" {
+		jsonErro(w, http.StatusForbidden, "operador não edita usuários")
+		return
+	}
+	if solicitante.Papel == "gerente" {
+		var alvoPapel string
+		var alvoGrupo int64
+		if err := a.st.db.QueryRow(`SELECT papel, COALESCE(grupo_id,0) FROM usuarios WHERE id = ?`, id).Scan(&alvoPapel, &alvoGrupo); err != nil {
+			jsonErro(w, http.StatusNotFound, "usuário inexistente")
+			return
+		}
+		if alvoPapel != "operador" || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
+			jsonErro(w, http.StatusForbidden, "gerente só edita operador do próprio grupo")
+			return
+		}
+	}
+
+	if req.NomeGuerra != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET nome_guerra = ? WHERE id = ?`, strings.TrimSpace(*req.NomeGuerra), id)
+		var pID *int64
+		_ = a.st.db.QueryRow(`SELECT pessoa_id FROM usuarios WHERE id = ?`, id).Scan(&pID)
+		if pID != nil {
+			_, _ = a.st.db.Exec(`UPDATE pessoas SET nome_guerra = ? WHERE id = ?`, strings.TrimSpace(*req.NomeGuerra), *pID)
+		}
+	}
+	if req.NomeCompleto != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET nome_completo = ? WHERE id = ?`, strings.TrimSpace(*req.NomeCompleto), id)
+		var pID *int64
+		_ = a.st.db.QueryRow(`SELECT pessoa_id FROM usuarios WHERE id = ?`, id).Scan(&pID)
+		if pID != nil {
+			_, _ = a.st.db.Exec(`UPDATE pessoas SET nome_completo = ? WHERE id = ?`, strings.TrimSpace(*req.NomeCompleto), *pID)
+		}
+	}
+	if req.DataNascimento != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET data_nascimento = ? WHERE id = ?`, strings.TrimSpace(*req.DataNascimento), id)
+	}
+	if req.TipoSanguineo != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET tipo_sanguineo = ? WHERE id = ?`, strings.TrimSpace(*req.TipoSanguineo), id)
+	}
+	if req.Telefone != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET telefone = ? WHERE id = ?`, strings.TrimSpace(*req.Telefone), id)
+	}
+	if req.Email != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET email = ? WHERE id = ?`, strings.TrimSpace(*req.Email), id)
+	}
+	if req.Endereco != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET endereco = ? WHERE id = ?`, strings.TrimSpace(*req.Endereco), id)
+	}
+	if req.FotoBase64 != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET foto_base64 = ? WHERE id = ?`, strings.TrimSpace(*req.FotoBase64), id)
+	}
+	if req.GrupoID != nil {
+		gid := *req.GrupoID
+		if gid <= 0 {
+			_, _ = a.st.db.Exec(`UPDATE usuarios SET grupo_id = NULL WHERE id = ?`, id)
+		} else {
+			_, _ = a.st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, gid, id)
+			// Adiciona ou preserva papel no grupo
+			_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'operador')`, id, gid)
+		}
+	}
+	if req.Ativo != nil {
+		at := 0
+		if *req.Ativo {
+			at = 1
+		}
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET ativo = ? WHERE id = ?`, at, id)
+	}
+	a.st.Auditoria(&solicitante.ID, "editar_usuario", "usuarios", &id, "", ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
@@ -2710,7 +2823,11 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
 	rows, err := a.st.db.Query(
-		`SELECT id, login, papel, pessoa_id, COALESCE(grupo_id,0), ativo, criado_em, senhas
+		`SELECT id, login, papel, pessoa_id, COALESCE(grupo_id,0), ativo, criado_em, senhas,
+		        COALESCE(nome_guerra,''), COALESCE(nome_completo,''),
+		        COALESCE(data_nascimento,''), COALESCE(tipo_sanguineo,''),
+		        COALESCE(telefone,''), COALESCE(email,''),
+		        COALESCE(endereco,''), COALESCE(foto_base64,'')
 		 FROM usuarios ORDER BY id`)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -2720,10 +2837,12 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, grupoID int64
-		var login, papel, criado, senhas string
+		var login, papel, criado, senhas, nomeGuerra, nomeCompleto string
+		var dataNasc, tipoSang, tel, email, endereco, foto string
 		var pessoaID *int64
 		var ativo int
-		if rows.Scan(&id, &login, &papel, &pessoaID, &grupoID, &ativo, &criado, &senhas) == nil {
+		if rows.Scan(&id, &login, &papel, &pessoaID, &grupoID, &ativo, &criado, &senhas, &nomeGuerra, &nomeCompleto,
+			&dataNasc, &tipoSang, &tel, &email, &endereco, &foto) == nil {
 			// escopo: admin vê tudo; gerente vê o PRÓPRIO grupo (gerencia os do seu);
 			// operador só vê contas do próprio grupo, SEM dados de sessão/senha (v9.4).
 			mostrar := escopo <= 0 || int64(escopo) == grupoID
@@ -2733,12 +2852,22 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 			item := map[string]any{
 				"id": id, "login": login, "papel": papel, "pessoa_id": pessoaID,
 				"grupo_id": grupoID, "ativo": ativo == 1, "criado_em": criado,
+				"nome_guerra": nomeGuerra, "nome_completo": nomeCompleto,
+				"data_nascimento": dataNasc, "tipo_sanguineo": tipoSang,
+				"telefone": tel, "email": email, "endereco": endereco, "foto_base64": foto,
 			}
 			if u.Papel != "operador" {
 				item["senhas"] = json.RawMessage(senhas)
 			}
 			out = append(out, item)
 		}
+	}
+	rows.Close()
+
+	for i := range out {
+		id := out[i]["id"].(int64)
+		papeis, _ := a.st.PapeisDoUsuario(id)
+		out[i]["papeis"] = papeis
 	}
 	jsonOK(w, out)
 }
@@ -2908,6 +3037,14 @@ func (a *App) hVinculoList(w http.ResponseWriter, r *http.Request) {
 // hPerfilGet: dados da própria conta (aba Meu usuário).
 func (a *App) hPerfilGet(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	_ = a.st.db.QueryRow(`SELECT COALESCE(nome_guerra,''), COALESCE(nome_completo,''),
+		COALESCE(data_nascimento,''), COALESCE(tipo_sanguineo,''), COALESCE(telefone,''),
+		COALESCE(email,''), COALESCE(endereco,''), COALESCE(foto_base64,'')
+		FROM usuarios WHERE id = ?`, u.ID).Scan(
+			&u.NomeGuerra, &u.NomeCompleto,
+			&u.DataNascimento, &u.TipoSanguineo, &u.Telefone,
+			&u.Email, &u.Endereco, &u.FotoBase64)
+
 	var grupo string
 	if u.GrupoID != nil {
 		_ = a.st.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, *u.GrupoID).Scan(&grupo)
@@ -2922,25 +3059,77 @@ func (a *App) hPerfilGet(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"usuario": u, "grupo": grupo, "setor": setor, "funcao": funcao})
 }
 
-// hPerfilSet: o próprio usuário atualiza seu perfil (função/setor herdam do grupo;
-// aqui o usuário apenas mantém nome_guerra e nome_completo).
+// hPerfilSet: o próprio usuário atualiza seu perfil completo (dados cadastrais e foto 1x1).
 func (a *App) hPerfilSet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		NomeGuerra   string `json:"nome_guerra"`
-		NomeCompleto string `json:"nome_completo"`
+		NomeGuerra     string `json:"nome_guerra"`
+		NomeCompleto   string `json:"nome_completo"`
+		DataNascimento string `json:"data_nascimento"`
+		TipoSanguineo  string `json:"tipo_sanguineo"`
+		Telefone       string `json:"telefone"`
+		Email          string `json:"email"`
+		Endereco       string `json:"endereco"`
+		FotoBase64     string `json:"foto_base64"`
 	}
-	if err := decodificar(r, &req); err != nil || req.NomeGuerra == "" || req.NomeCompleto == "" {
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.NomeGuerra) == "" || strings.TrimSpace(req.NomeCompleto) == "" {
 		jsonErro(w, http.StatusBadRequest, "nome de guerra e nome completo obrigatórios")
 		return
 	}
 	u := usuarioDoCtx(r)
-	if _, err := a.st.db.Exec(`UPDATE usuarios SET nome_guerra = ?, nome_completo = ? WHERE id = ?`,
-		req.NomeGuerra, req.NomeCompleto, u.ID); err != nil {
+	if _, err := a.st.db.Exec(`UPDATE usuarios SET
+		nome_guerra = ?, nome_completo = ?,
+		data_nascimento = ?, tipo_sanguineo = ?,
+		telefone = ?, email = ?, endereco = ?,
+		foto_base64 = ?
+		WHERE id = ?`,
+		strings.TrimSpace(req.NomeGuerra), strings.TrimSpace(req.NomeCompleto),
+		strings.TrimSpace(req.DataNascimento), strings.TrimSpace(req.TipoSanguineo),
+		strings.TrimSpace(req.Telefone), strings.TrimSpace(req.Email), strings.TrimSpace(req.Endereco),
+		strings.TrimSpace(req.FotoBase64), u.ID); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if u.PessoaID != nil {
+		_, _ = a.st.db.Exec(`UPDATE pessoas SET nome_guerra = ?, nome_completo = ? WHERE id = ?`,
+			strings.TrimSpace(req.NomeGuerra), strings.TrimSpace(req.NomeCompleto), *u.PessoaID)
+	}
 	a.st.Auditoria(&u.ID, "editar", "usuarios", &u.ID, "perfil próprio", ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// hUsuarioFotoGet: entrega o stream de imagem da foto de perfil 1x1 do usuário.
+func (a *App) hUsuarioFotoGet(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var foto string
+	err = a.st.db.QueryRow(`SELECT COALESCE(foto_base64,'') FROM usuarios WHERE id = ?`, id).Scan(&foto)
+	if err != nil || foto == "" {
+		http.NotFound(w, r)
+		return
+	}
+	partes := strings.Split(foto, ",")
+	b64 := foto
+	mime := "image/jpeg"
+	if len(partes) == 2 {
+		b64 = partes[1]
+		if strings.Contains(partes[0], "image/png") {
+			mime = "image/png"
+		} else if strings.Contains(partes[0], "image/webp") {
+			mime = "image/webp"
+		}
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
 }
 
 // hMoverConta (v9.5): MOVE conta entre grupos. Admin: qualquer origem → qualquer
@@ -3351,6 +3540,13 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+	var funcaoID *int64
+	if req.PessoaID != nil {
+		_ = a.st.db.QueryRow(`SELECT funcao_id FROM pessoas WHERE id = ?`, *req.PessoaID).Scan(&funcaoID)
+	}
+	_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
+		id, req.GrupoID, papel, funcaoID)
+
 	a.st.Auditoria(&u.ID, "criar", "usuarios", &id, req.Login+" ("+papel+")", ipDe(r))
 	jsonOK(w, map[string]any{"id": id})
 }
@@ -3473,8 +3669,8 @@ func (a *App) hUsuarioExcluir(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
-// hGruposAdd (R7): criar grupo EXIGE gerente no ato (login+senha+nome de guerra).
-// Transacional: grupo + conta gerente nascem juntos — nunca grupo vago.
+// hGruposAdd: cria grupo. Criação envolve apenas a escolha de um novo nome.
+// Parâmetros de login/senha/nome_guerra são opcionais (para compatibilidade legada).
 func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Nome       string `json:"nome"`
@@ -3486,22 +3682,7 @@ func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "nome do grupo obrigatório")
 		return
 	}
-	if strings.TrimSpace(req.Login) == "" || len(req.Senha) < 8 || strings.TrimSpace(req.NomeGuerra) == "" {
-		jsonErro(w, http.StatusBadRequest, "grupo nasce com gerente: login, senha (mín. 8) e nome de guerra obrigatórios")
-		return
-	}
-	req.Login = strings.ToLower(strings.TrimSpace(req.Login))
-	var existeLogin int
-	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE login = ?`, req.Login).Scan(&existeLogin)
-	if existeLogin > 0 {
-		jsonErro(w, http.StatusBadRequest, "login já existe")
-		return
-	}
-	hash, err := hashSenha(req.Senha)
-	if err != nil {
-		jsonErro(w, http.StatusInternalServerError, err.Error())
-		return
-	}
+
 	cod := gerarCodigoGrupo()
 	for tenta := 0; tenta < 8; tenta++ {
 		var existe int
@@ -3511,33 +3692,68 @@ func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		cod = gerarCodigoGrupo()
 	}
+
+	req.Login = strings.ToLower(strings.TrimSpace(req.Login))
+	criarGerente := req.Login != "" && len(req.Senha) >= 8
+
 	tx, err := a.st.db.Begin()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer tx.Rollback()
+
 	res, err := tx.Exec(`INSERT INTO grupos (nome, codigo) VALUES (?,?)`, strings.TrimSpace(req.Nome), cod)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "grupo não criado (duplicado?): "+err.Error())
 		return
 	}
 	gid, _ := res.LastInsertId()
-	res2, err := tx.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, nome_guerra, nome_completo)
-		VALUES (?,?,?,?,?,?)`,
-		req.Login, hash, "gerente", gid, strings.TrimSpace(req.NomeGuerra), strings.TrimSpace(req.NomeGuerra))
-	if err != nil {
-		jsonErro(w, http.StatusBadRequest, "gerente não criado (login duplicado?): "+err.Error())
-		return
+
+	var uid int64
+	if criarGerente {
+		var existeLogin int
+		_ = tx.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE login = ?`, req.Login).Scan(&existeLogin)
+		if existeLogin > 0 {
+			jsonErro(w, http.StatusBadRequest, "login já existe")
+			return
+		}
+		hash, err := hashSenha(req.Senha)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		ng := strings.TrimSpace(req.NomeGuerra)
+		if ng == "" {
+			ng = req.Login
+		}
+		res2, err := tx.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, nome_guerra, nome_completo)
+			VALUES (?,?,?,?,?,?)`,
+			req.Login, hash, "gerente", gid, ng, ng)
+		if err != nil {
+			jsonErro(w, http.StatusBadRequest, "gerente não criado: "+err.Error())
+			return
+		}
+		uid, _ = res2.LastInsertId()
+		_, _ = tx.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?,?,?)`,
+			uid, gid, "gerente")
 	}
-	uid, _ := res2.LastInsertId()
+
 	if err = tx.Commit(); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	u := usuarioDoCtx(r)
-	a.st.Auditoria(&u.ID, "criar", "grupos", &gid, req.Nome+" ["+cod+"] gerente="+req.Login, ipDe(r))
-	jsonOK(w, map[string]any{"id": gid, "codigo": cod, "gerente_id": uid})
+	det := req.Nome + " [" + cod + "]"
+	if criarGerente {
+		det += " gerente=" + req.Login
+	}
+	a.st.Auditoria(&u.ID, "criar", "grupos", &gid, det, ipDe(r))
+	resp := map[string]any{"id": gid, "codigo": cod}
+	if uid > 0 {
+		resp["gerente_id"] = uid
+	}
+	jsonOK(w, resp)
 }
 
 // hGrupoGerenteGet: nome do gerente do grupo (painel admin).
@@ -3557,8 +3773,8 @@ func (a *App) hGrupoGerenteGet(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"gerente": login})
 }
 
-// hGrupoTrocarGerente (R7): promove uma conta do grupo a gerente; o gerente
-// anterior vira operador. Garante exatamente 1 gerente ativo por grupo.
+// hGrupoTrocarGerente (R7): define/promove uma conta a gerente do grupo; qualquer gerente
+// anterior vira operador. O usuário selecionado herda a função/papel de Gerente.
 func (a *App) hGrupoTrocarGerente(w http.ResponseWriter, r *http.Request) {
 	gid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -3575,43 +3791,49 @@ func (a *App) hGrupoTrocarGerente(w http.ResponseWriter, r *http.Request) {
 	req.Login = strings.ToLower(strings.TrimSpace(req.Login))
 	var uid int64
 	var papel string
-	if err := a.st.db.QueryRow(`SELECT id, papel FROM usuarios WHERE login = ? AND grupo_id = ? AND ativo = 1`,
-		req.Login, gid).Scan(&uid, &papel); err != nil {
-		jsonErro(w, http.StatusNotFound, "conta não encontrada neste grupo")
+	var uGrupoID *int64
+	if err := a.st.db.QueryRow(`SELECT id, papel, grupo_id FROM usuarios WHERE login = ? AND ativo = 1`,
+		req.Login).Scan(&uid, &papel, &uGrupoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "conta não encontrada")
 		return
 	}
-	if papel == "gerente" {
-		jsonErro(w, http.StatusBadRequest, "esta conta já é o gerente")
+	if papel == "gerente" && uGrupoID != nil && *uGrupoID == gid {
+		jsonErro(w, http.StatusBadRequest, "esta conta já é o gerente deste grupo")
 		return
 	}
-	var existeGer int
-	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE grupo_id = ? AND papel = 'gerente' AND ativo = 1`, gid).Scan(&existeGer)
-	if existeGer > 1 {
-		jsonErro(w, http.StatusConflict, "grupo com mais de um gerente — corrija antes de trocar")
-		return
-	}
+
 	tx, err := a.st.db.Begin()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer tx.Rollback()
-	if existeGer == 1 {
-		if _, err = tx.Exec(`UPDATE usuarios SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND ativo = 1`, gid); err != nil {
-			jsonErro(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	if _, err = tx.Exec(`UPDATE usuarios SET papel = 'gerente' WHERE id = ?`, uid); err != nil {
+
+	// Rebaixa qualquer gerente anterior do grupo para operador
+	_, _ = tx.Exec(`UPDATE usuarios SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND id <> ? AND ativo = 1`, gid, uid)
+	_, _ = tx.Exec(`UPDATE usuario_papeis SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND usuario_id <> ?`, gid, uid)
+
+	// Promove o usuário selecionado a Gerente e vincula ao grupo
+	if _, err = tx.Exec(`UPDATE usuarios SET papel = 'gerente', grupo_id = ? WHERE id = ?`, gid, uid); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Atualiza ou insere o papel em usuario_papeis (herança de função)
+	var papelID int64
+	errP := tx.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, uid, gid).Scan(&papelID)
+	if errP == nil {
+		_, _ = tx.Exec(`UPDATE usuario_papeis SET papel = 'gerente' WHERE id = ?`, papelID)
+	} else {
+		_, _ = tx.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'gerente')`, uid, gid)
+	}
+
 	if err = tx.Commit(); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	u := usuarioDoCtx(r)
-	a.st.Auditoria(&u.ID, "trocar_gerente", "grupos", &gid, "novo="+req.Login, ipDe(r))
+	a.st.Auditoria(&u.ID, "definir_gerente", "grupos", &gid, "novo="+req.Login, ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "gerente": req.Login})
 }
 

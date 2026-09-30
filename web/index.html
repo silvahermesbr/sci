@@ -5,44 +5,48 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0c100e">
 <title>SCI — Sistema de Controle Interno</title>
-<link rel="stylesheet" href="/style.css?v=310">
+<link rel="stylesheet" href="/style.css?v=322">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23275e42'/%3E%3Cpath d='M6 12.5l4 4 8-9' stroke='%238fd2a9' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 </head>
 <body>
-<header id="topbar" class="oculto">
-  <div class="marca">
-    <span class="logo">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 2.5l8 3.2v5.6c0 5-3.4 8.6-8 10.2-4.6-1.6-8-5.2-8-10.2V5.7l8-3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.4 12.2l2.5 2.5 4.7-5.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      SCI
-    </span>
-    <span class="sub">Controle Interno</span>
-  </div>
-  <nav id="nav"></nav>
-  <div class="sessao">
-    <div id="hubNotificacoes" style="position:relative;margin-right:8px;display:flex;align-items:center">
-      <button id="btSinoNotif" type="button" title="Notificações & Alertas" style="background:transparent;border:1px solid var(--borda);border-radius:var(--raio);color:var(--tx2);cursor:pointer;width:34px;height:34px;display:flex;align-items:center;justify-content:center;position:relative">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-        <span id="badgeNotif" class="oculto" style="position:absolute;top:-4px;right:-4px;background:#ef4444;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:10px;min-width:14px;text-align:center;box-shadow:0 0 8px rgba(239,68,68,0.6)">0</span>
+<div id="layoutApp" class="layout-app">
+  <aside id="sidebar" class="sidebar oculto"></aside>
+  <div id="viewport" class="viewport">
+    <div class="viewport-mobile-bar" id="mobileBar">
+      <button type="button" id="btMobileMenu" class="btn-sidebar-toggle" aria-label="Abrir Menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
-    </div>
-    <div id="menuUsuario">
-      <button id="quem" type="button" title="conta"></button>
-      <div id="menuUsuarioItens" class="oculto">
-        <button id="btPerfil" type="button">Meu usuário</button>
-        <button id="btSenha" type="button">Mudar senha</button>
-        <button id="btnSair" type="button">Logout</button>
+      <span class="sidebar-logo" style="font-size:15px">SCI</span>
+      <div class="sidebar-sino-wrapper">
+        <button id="mobSinoNotif" type="button" class="btn-sidebar-sino" aria-label="Mensagens e Notificações" title="Mensagens e Notificações">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+          <span id="mobBadgeNotif" class="badge-mini oculto">0</span>
+        </button>
+        <div class="sino-hover-card" id="mobSinoHoverCard">
+          <div class="sino-hover-header">Resumo de Notificações</div>
+          <div class="sino-hover-item" id="mobSinoHoverMsgItem">
+            <span class="sino-hover-icon">📬</span>
+            <span id="mobSinoHoverMsgTxt">0 mensagens não lidas</span>
+          </div>
+          <div class="sino-hover-item" id="mobSinoHoverCautItem">
+            <span class="sino-hover-icon">⏰</span>
+            <span id="mobSinoHoverCautTxt">0 alertas de material</span>
+          </div>
+          <div class="sino-hover-footer">Toque para abrir Mensagens</div>
+        </div>
       </div>
     </div>
+    <main id="app"><div class="carregando">Conectando…</div></main>
   </div>
-</header>
-<main id="app"><div class="carregando">Conectando…</div></main>
+</div>
 <div id="toasts"></div>
-<script src="/core.js?v=310"></script>
-<script src="/views_conf.js?v=310"></script>
-<script src="/views_gestao.js?v=310"></script>
-<script src="/views_config.js?v=310"></script>
-<script src="/views_escalas.js?v=310"></script>
-<script src="/views_material.js?v=310"></script>
+<script src="/core.js?v=322"></script>
+<script src="/views_conf.js?v=322"></script>
+<script src="/views_gestao.js?v=322"></script>
+<script src="/views_config.js?v=322"></script>
+<script src="/views_escalas.js?v=322"></script>
+<script src="/views_material.js?v=322"></script>
+<script src="/views_mensagens.js?v=322"></script>
 <script>window.SCI_BOOT&&SCI_BOOT();</script>
 </body>
 </html>
