@@ -130,7 +130,10 @@ func TestEscalasAndConferenciaIntegration(t *testing.T) {
 	p2ID, _ := resP2.LastInsertId()
 
 	// 3. Criar turno de serviço para SILVA na data de hoje
-	hoje := time.Now().Format("2006-01-02")
+	// "hoje" pelo relógio do SERVIDOR (America/Sao_Paulo) — nunca o fuso da
+	// máquina de teste: quando a data UTC já virou e a de Brasília não, o
+	// turno nascia "no futuro" e /api/escalas/hoje devolvia 0 escalados.
+	hoje := time.Now().In(app.horaLocal).Format("2006-01-02")
 	turnoPayload := map[string]any{
 		"tipo_id":     1, // Oficial de Dia
 		"data_inicio": hoje,
