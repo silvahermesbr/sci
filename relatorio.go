@@ -119,6 +119,8 @@ var (
 	corNV       = [3]int{117, 117, 117} // ordem Tenente 30/09: NÃO VERIFICADO (cinza)
 	corBarra    = [3]int{27, 94, 32}   // barras de setor/destino (verde-militar)
 	corDestino  = [3]int{21, 101, 192} // barras de destino (azul)
+)
+
 // ---------- ESTRUTURAS DE RELATÓRIO EXPANDIDO (v2.0 Paper-Trail) ----------
 
 type FichaPessoalPDF struct {
