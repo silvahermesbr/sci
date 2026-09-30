@@ -5306,6 +5306,8 @@ func (a *App) verificarAtrasosSLA() {
 			})
 		}
 	}
+	rows.Close() // FIXED: Explicitly close rows to free the single DB connection before HTTP call
+
 	if len(itens) == 0 {
 		return
 	}

@@ -284,52 +284,56 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, "falha ao buscar enviadas: "+err.Error())
 		return
 	}
-	defer rows.Close()
 
-	out := []map[string]any{}
+	var msgs []map[string]any
 	for rows.Next() {
 		var id int64
 		var assunto, corpo, criadaEm string
 		if err := rows.Scan(&id, &assunto, &corpo, &criadaEm); err == nil {
-			// Buscar destinatários desta mensagem
-			destRows, _ := a.st.db.Query(`
-				SELECT md.destinatario_papel_id, up.papel, COALESCE(g.nome, ''),
-				       COALESCE(f.nome, ''), md.lida_em, COALESCE(u_lida.nome_guerra, '')
-				FROM mensagem_destinatarios md
-				JOIN usuario_papeis up ON up.id = md.destinatario_papel_id
-				LEFT JOIN grupos g ON g.id = up.grupo_id
-				LEFT JOIN funcoes f ON f.id = up.funcao_id
-				LEFT JOIN usuarios u_lida ON u_lida.id = md.lida_por_usuario_id
-				WHERE md.mensagem_id = ?`, id)
-
-			dests := []map[string]any{}
-			if destRows != nil {
-				for destRows.Next() {
-					var papelID int64
-					var papel, gNome, fNome, lidaPorGuerra string
-					var lidaEm *string
-					if err := destRows.Scan(&papelID, &papel, &gNome, &fNome, &lidaEm, &lidaPorGuerra); err == nil {
-						dests = append(dests, map[string]any{
-							"papel_id":      papelID,
-							"papel":         papel,
-							"grupo_nome":    gNome,
-							"funcao_nome":   fNome,
-							"lida_em":       lidaEm,
-							"lida_por_nome": lidaPorGuerra,
-						})
-					}
-				}
-				destRows.Close()
-			}
-
-			out = append(out, map[string]any{
-				"id":            id,
-				"assunto":       assunto,
-				"corpo":         corpo,
-				"criada_em":     criadaEm,
-				"destinatarios": dests,
+			msgs = append(msgs, map[string]any{
+				"id":        id,
+				"assunto":   assunto,
+				"corpo":     corpo,
+				"criada_em": criadaEm,
 			})
 		}
+	}
+	rows.Close() // FIXED: explicitly close the outer query before executing inner queries
+
+	out := []map[string]any{}
+	for _, msg := range msgs {
+		id := msg["id"].(int64)
+		destRows, _ := a.st.db.Query(`
+			SELECT md.destinatario_papel_id, up.papel, COALESCE(g.nome, ''),
+			       COALESCE(f.nome, ''), md.lida_em, COALESCE(u_lida.nome_guerra, '')
+			FROM mensagem_destinatarios md
+			JOIN usuario_papeis up ON up.id = md.destinatario_papel_id
+			LEFT JOIN grupos g ON g.id = up.grupo_id
+			LEFT JOIN funcoes f ON f.id = up.funcao_id
+			LEFT JOIN usuarios u_lida ON u_lida.id = md.lida_por_usuario_id
+			WHERE md.mensagem_id = ?`, id)
+
+		dests := []map[string]any{}
+		if destRows != nil {
+			for destRows.Next() {
+				var papelID int64
+				var papel, gNome, fNome, lidaPorGuerra string
+				var lidaEm *string
+				if err := destRows.Scan(&papelID, &papel, &gNome, &fNome, &lidaEm, &lidaPorGuerra); err == nil {
+					dests = append(dests, map[string]any{
+						"papel_id":      papelID,
+						"papel":         papel,
+						"grupo_nome":    gNome,
+						"funcao_nome":   fNome,
+						"lida_em":       lidaEm,
+						"lida_por_nome": lidaPorGuerra,
+					})
+				}
+			}
+			destRows.Close()
+		}
+		msg["destinatarios"] = dests
+		out = append(out, msg)
 	}
 	jsonOK(w, out)
 }
