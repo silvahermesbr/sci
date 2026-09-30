@@ -142,13 +142,70 @@ function fimDoMes(ym) {
 window.fimDoMes = fimDoMes;
 
 /* ---------- pill de situação ---------- */
-const ROTULO_SIT = { presente: 'Presente', atraso: 'Atraso', falta: 'Falta', justificada: 'Justificada' };
+const ROTULO_SIT = { presente: 'Presente', atraso: 'Atraso', falta: 'Falta', justificada: 'Justificada', nao_verificado: 'NÃO VERIFICADO' };
 function pill(situacao) {
   const s = String(situacao === null || situacao === undefined ? '' : situacao);
   const classe = s.toLowerCase().replace(/[^a-z0-9_-]/g, '');
   return '<span class="pill pill-' + classe + '">' + esc(ROTULO_SIT[classe] || s) + '</span>';
 }
 window.pill = pill;
+
+/* ---------- Paginação Global (Máx 10 itens por página) ---------- */
+function paginarArray(itens, pagina, porPagina) {
+  const tamPag = porPagina || 10;
+  const total = (itens || []).length;
+  const totalPaginas = Math.max(1, Math.ceil(total / tamPag));
+  const p = Math.max(1, Math.min(+pagina || 1, totalPaginas));
+  const inicio = (p - 1) * tamPag;
+  const fim = Math.min(inicio + tamPag, total);
+  const dados = (itens || []).slice(inicio, fim);
+  return {
+    pagina: p,
+    totalPaginas: totalPaginas,
+    totalItens: total,
+    inicio: total === 0 ? 0 : inicio + 1,
+    fim: fim,
+    dados: dados
+  };
+}
+window.paginarArray = paginarArray;
+
+function renderPaginadorHTML(info, idContainer) {
+  if (!info || info.totalItens === 0) return '';
+  const { pagina, totalPaginas, inicio, fim, totalItens } = info;
+  if (totalPaginas <= 1) {
+    return `<div class="paginacao-wrapper"><span class="paginacao-info">Total: <b>${totalItens}</b> registro(s)</span></div>`;
+  }
+  
+  // Algoritmo com ellipsis inteligente (< ..., 2, 3, 4, ... >)
+  const range = [];
+  const delta = 1;
+  for (let i = Math.max(2, pagina - delta); i <= Math.min(totalPaginas - 1, pagina + delta); i++) {
+    range.push(i);
+  }
+  if (pagina - delta > 2) range.unshift('...');
+  if (pagina + delta < totalPaginas - 1) range.push('...');
+  range.unshift(1);
+  if (totalPaginas > 1) range.push(totalPaginas);
+
+  const btnsHtml = range.map(item => {
+    if (item === '...') return `<span class="paginacao-ellipsis">…</span>`;
+    const ativo = item === pagina ? 'ativo' : '';
+    return `<button type="button" class="paginacao-btn ${ativo}" data-pg="${item}">${item}</button>`;
+  }).join('');
+
+  return `
+    <div class="paginacao-wrapper" ${idContainer ? `data-pagcont="${idContainer}"` : ''}>
+      <span class="paginacao-info">Exibindo <b>${inicio}–${fim}</b> de <b>${totalItens}</b> registros</span>
+      <div class="paginacao-controles">
+        <button type="button" class="paginacao-btn" data-pg="${pagina - 1}" ${pagina <= 1 ? 'disabled' : ''} title="Página anterior">‹</button>
+        ${btnsHtml}
+        <button type="button" class="paginacao-btn" data-pg="${pagina + 1}" ${pagina >= totalPaginas ? 'disabled' : ''} title="Próxima página">›</button>
+      </div>
+    </div>
+  `;
+}
+window.renderPaginadorHTML = renderPaginadorHTML;
 
 /* ---------- modal ---------- */
 /* abrirModal(html) → {fechar(), mask, modal}. Fecha em Esc, clique na máscara

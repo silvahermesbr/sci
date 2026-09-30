@@ -456,164 +456,537 @@
       <div class="caixa"><b>${b.nao_verificados || 0}</b><span>não verif.</span></div>
       <div class="caixa"><b>${totalFaltas}</b><span>faltas tot. (J+NJ)</span></div>
       <div class="caixa" style="border-color:var(--verde)"><b>${b.pct_pronto}%</b><span>ef. pronto</span></div></div>`;
-    /* ordem do Tenente: efetivo em ORDEM ALFABÉTICA (backend pode vir agrupado
-       por função — o前端 garante a ordem e a antiguidade é o posto alfabético) */
-    const pessoas = (b.pessoas || []).slice()
+
+    const todasPessoas = (b.pessoas || []).slice()
       .sort((a, x) => String(a.nome_guerra || '').localeCompare(String(x.nome_guerra || ''), 'pt', { sensitivity: 'base' }));
-    const linhas = pessoas.map(p =>
-      `<tr><td class="num">${esc(p.antiguidade ?? '')}</td><td>${esc(p.funcao || '—')}</td><td><b>${esc(p.nome_guerra)}</b></td>
-       <td>${esc(p.setor)}</td><td>${esc(p.grupo || '—')}</td><td class="num">${esc(p.presencas)}</td>
-       <td class="num">${esc(p.atrasos)}</td><td class="num">${esc(p.faltas)}</td><td class="num">${esc(p.justificadas)}</td><td class="num">${esc(p.nao_verificados || 0)}</td></tr>`).join('');
+
     const forms = (b.formaturas || []).map(f =>
       `<tr><td>${fmtData(f.data)}</td><td>${esc(f.tipo)}</td><td>${esc(f.hora || '—')}</td>
        <td>${f.status === 'fechada' ? 'Fechada' : 'Aberta'}</td>
        <td class="num">${esc(f.presentes)}</td><td class="num">${esc(f.faltas)}</td></tr>`).join('');
-    return `${res}<div class="cartao"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <h3 style="margin:0">${esc(titulo)} — ${esc(b.convocacoes)} conferências no período</h3>
-      <a href="/api/relatorio.pdf?de=${encodeURIComponent(b.De)}&ate=${encodeURIComponent(b.Ate)}${grupoQ}&t=${Date.now()}" target="_blank"><button class="primario">ABRIR PDF</button></a></div>
-      ${forms ? `<div class="rolagem" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Tipo</th><th>Hora</th><th>Status</th><th class="num">Presentes</th><th class="num">Faltas</th></tr></thead><tbody>${forms}</tbody></table></div>` : ''}
-      <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Função</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
-      <th class="num">Falta</th><th class="num">Just.</th><th class="num">N.V.</th></tr></thead><tbody>${linhas || '<tr><td colspan="10"><span class="vazio">sem efetivo ativo no escopo</span></td></tr>'}</tbody></table></div></div>`;
+
+    let pgAtual = 1;
+    let filtroTexto = '';
+
+    const renderTabelaPessoas = (container) => {
+      const filtradas = todasPessoas.filter(p => {
+        if (!filtroTexto) return true;
+        const q = filtroTexto.toLowerCase();
+        return (p.nome_guerra || '').toLowerCase().includes(q) ||
+               (p.setor || '').toLowerCase().includes(q) ||
+               (p.funcao || '').toLowerCase().includes(q);
+      });
+
+      const pag = paginarArray(filtradas, pgAtual, 10);
+      const linhas = pag.dados.map(p =>
+        `<tr><td class="num">${esc(p.antiguidade ?? '')}</td><td>${esc(p.funcao || '—')}</td><td><b>${esc(p.nome_guerra)}</b></td>
+         <td>${esc(p.setor)}</td><td>${esc(p.grupo || '—')}</td><td class="num">${esc(p.presencas)}</td>
+         <td class="num">${esc(p.atrasos)}</td><td class="num">${esc(p.faltas)}</td><td class="num">${esc(p.justificadas)}</td><td class="num">${esc(p.nao_verificados || 0)}</td></tr>`).join('');
+
+      container.innerHTML = `
+        <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Função</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
+        <th class="num">Falta</th><th class="num">Just.</th><th class="num">N.V.</th></tr></thead>
+        <tbody>${linhas || '<tr><td colspan="10"><span class="vazio">nenhum militar encontrado</span></td></tr>'}</tbody></table></div>
+        ${renderPaginadorHTML(pag, 'pagConsolidado')}
+      `;
+
+      container.querySelectorAll('.paginacao-btn[data-pg]').forEach(btn => {
+        btn.onclick = () => {
+          pgAtual = +btn.dataset.pg;
+          renderTabelaPessoas(container);
+        };
+      });
+    };
+
+    const containerId = 'contEf_' + Math.random().toString(36).slice(2, 7);
+
+    setTimeout(() => {
+      const c = document.getElementById(containerId);
+      const inpBusca = document.getElementById('buscaEf_' + containerId);
+      if (c) {
+        renderTabelaPessoas(c);
+        if (inpBusca) {
+          inpBusca.oninput = () => {
+            filtroTexto = inpBusca.value.trim();
+            pgAtual = 1;
+            renderTabelaPessoas(c);
+          };
+        }
+      }
+    }, 10);
+
+    return `
+      ${res}
+      <div class="cartao">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <h3 style="margin:0">${esc(titulo)} — ${esc(b.convocacoes)} conferências</h3>
+          <a href="/api/relatorio.pdf?de=${encodeURIComponent(b.De)}&ate=${encodeURIComponent(b.Ate)}${grupoQ}&t=${Date.now()}" target="_blank">
+            <button type="button" class="primario" style="display:inline-flex;align-items:center;gap:6px">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              <span>Gerar Relatório Consolidado (PDF)</span>
+            </button>
+          </a>
+        </div>
+        ${forms ? `<div class="rolagem" style="margin-bottom:14px"><table><thead><tr><th>Data</th><th>Tipo / Turno</th><th>Hora</th><th>Status</th><th class="num">Presentes</th><th class="num">Faltas</th></tr></thead><tbody>${forms}</tbody></table></div>` : ''}
+        
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+          <h4 style="margin:0; font-size:13px; color:var(--tx2)">Detalhamento do Efetivo no Período (Máx. 10 por página)</h4>
+          <input id="buscaEf_${containerId}" placeholder="Filtrar militar/setor…" style="max-width:200px; height:32px; font-size:12px">
+        </div>
+        <div id="${containerId}"></div>
+      </div>
+    `;
   }
 
   window.ViewRelatorios = async function () {
     navAtiva('#/relatorios');
-    $('#app').innerHTML = '<div class="carregando">…</div>';
+    $('#app').innerHTML = '<div class="carregando">Carregando módulo de relatórios…</div>';
     let me = window.ME;
     if (!me || !me.papel) {
       try { me = (await api('/api/me')).usuario; } catch (e) { me = {}; }
     }
     const hoje = new Date();
-    let gSel = '';
-    try {
-      const gs = await api('/api/grupos');
-      if (me.papel === 'admin') {
-        gSel = `<div class="campo"><label>Grupo</label><select id="fGrupo"><option value="">Todos</option>` +
-          gs.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('') + `</select></div>`;
-      } else {
-        /* escopo: Meu grupo + subordinados / Meu grupo (somente) / cada subordinado */
-        const meuG = gs.find(g => g.id === me.grupo_id);
-        const subs = (meuG && meuG.subordinados_ids) || [];
-        const nomes = (meuG && meuG.subordinados) || [];
-        if (subs.length) {
-          gSel = `<div class="campo"><label>Escopo</label><select id="fGrupo">
-            <option value="">Meu grupo + subordinados</option>
-            <option value="${me.grupo_id}">Meu grupo (somente)</option>` +
-            subs.map((id, i) => `<option value="${id}">Somente: ${esc(nomes[i] || ('#' + id))}</option>`).join('') +
-            `</select></div>`;
-        }
-      }
-    } catch (e) {}
-    $('#app').innerHTML = `<h2>Relatórios</h2>
-      <div class="cartao">
-        ${gSel ? `<div class="form-linha" style="margin-bottom:8px">${gSel}</div>` : ''}
-        <div class="abas" id="modos">
-          <button data-m="dia" class="ativo">Dia</button>
-          <button data-m="semana">Semana</button>
-          <button data-m="ano">Ano</button>
-          <button data-m="livre">Período livre</button></div>
-        <div class="form-linha" style="grid-template-columns:1fr auto;align-items:end">
-          <div id="entrada"></div>
-          <button class="primario" id="btGerar" style="min-height:44px">Gerar</button></div></div>
-      <div id="estadoAtual"><div class="carregando">Carregando estado atual do efetivo…</div></div>
-      <div id="saida"><div class="carregando">Gerando dia atual…</div></div>`;
-    let modo = 'dia';
-    const entrada = () => {
-      const el = $('#entrada');
-      if (modo === 'dia') el.innerHTML = `<div class="campo"><label>Dia específico</label><input type="date" id="fDia" value="${dataLocal(hoje)}"></div>`;
-      else if (modo === 'semana') el.innerHTML = `<div class="campo"><label>Semana (escolha qualquer dia dela)</label><input type="date" id="fDia" value="${dataLocal(hoje)}"></div>`;
-      else if (modo === 'ano') el.innerHTML = `<div class="campo"><label>Ano</label><input type="number" id="fAno" min="2000" max="2100" value="${hoje.getFullYear()}"></div>`;
-      else el.innerHTML = `<div class="campo"><label>De — até</label><div style="display:flex;gap:6px"><input type="date" id="fDe" value="${dataLocal(new Date(Date.now() - 29 * 864e5))}"><input type="date" id="fAte" value="${dataLocal(hoje)}"></div></div>`;
-    };
-    const periodos = () => {
-      if (modo === 'dia') { const d = $('#fDia').value; return [d, d]; }
-      if (modo === 'semana') return semanaDe($('#fDia').value);
-      if (modo === 'ano') { const y = $('#fAno').value; return [y + '-01-01', y + '-12-31']; }
-      return [$('#fDe').value, $('#fAte').value];
-    };
-    const rotulos = { dia: 'Dia', semana: 'Semana', ano: 'Ano', livre: 'Período' };
-    const gerar = async () => {
-      const [de, ate] = periodos();
-      if (!de || !ate) { toast('Escolha a data', 'erro'); return; }
-      $('#saida').innerHTML = '<div class="carregando">Gerando…</div>';
-      try {
-        const gq = $('#fGrupo') && $('#fGrupo').value ? '&grupo=' + encodeURIComponent($('#fGrupo').value) : '';
-        const b = await api(`/api/relatorio?de=${encodeURIComponent(de)}&ate=${encodeURIComponent(ate)}${gq}`);
-        b.De = de; b.Ate = ate;
-        $('#saida').innerHTML = relRender(b, `${rotulos[modo]} ${fmtData(de)} a ${fmtData(ate)}`, gq);
-      } catch (e) { $('#saida').innerHTML = ''; }
-    };
-    entrada();
-    /* v9.15: estado ATUAL do efetivo no topo do dashboard de relatórios */
-    (async () => {
-      try {
-        const html = await window.EfetivoAtualHTML();
-        const alvo = document.querySelector('#estadoAtual');
-        if (alvo) alvo.innerHTML = html;
-      } catch (e) {}
-    })();
-    gerar();
-    document.querySelectorAll('#modos button').forEach(b => b.onclick = () => {
-      modo = b.dataset.m;
-      document.querySelectorAll('#modos button').forEach(x => x.classList.toggle('ativo', x === b));
-      entrada();
-    });
-    $('#btGerar').onclick = gerar;
+    let gs = [];
+    try { gs = await api('/api/grupos'); } catch (e) {}
 
-    /* ============ BUSCA INDIVIDUAL (ordem Tenente 30/09) ============
-       Pesquisa por militar → registros → clique abre modal com ficha + comentários
-       (com TAGs do catálogo). Filtros complexos multi-seleção: TAG × período em OU. */
-    (async () => {
+    let gSel = '';
+    if (me.papel === 'admin') {
+      gSel = `<div class="campo"><label>Grupo / Unidade</label><select id="fGrupo"><option value="">Todos os Grupos</option>` +
+        gs.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('') + `</select></div>`;
+    } else {
+      const meuG = gs.find(g => g.id === me.grupo_id);
+      const subs = (meuG && meuG.subordinados_ids) || [];
+      const nomes = (meuG && meuG.subordinados) || [];
+      if (subs.length) {
+        gSel = `<div class="campo"><label>Escopo</label><select id="fGrupo">
+          <option value="">Meu grupo + subordinados</option>
+          <option value="${me.grupo_id}">Meu grupo (somente)</option>` +
+          subs.map((id, i) => `<option value="${id}">Somente: ${esc(nomes[i] || ('#' + id))}</option>`).join('') +
+          `</select></div>`;
+      }
+    }
+
+    let abaPrincipal = 'consolidado';
+
+    const renderTela = () => {
+      $('#app').innerHTML = `
+        <h2>Relatórios & Auditoria</h2>
+        <div class="abas" id="abasRelatorios" style="margin-bottom:16px">
+          <button data-aba="consolidado" class="${abaPrincipal === 'consolidado' ? 'ativo' : ''}">📊 Resumo Consolidado & PDF</button>
+          <button data-aba="conferencias" class="${abaPrincipal === 'conferencias' ? 'ativo' : ''}">📋 Conferências Individuais</button>
+          <button data-aba="individual" class="${abaPrincipal === 'individual' ? 'ativo' : ''}">🔍 Busca Individual por Militar</button>
+        </div>
+        <div id="corpoRelatorios"></div>
+      `;
+
+      document.querySelectorAll('#abasRelatorios button').forEach(btn => {
+        btn.onclick = () => {
+          abaPrincipal = btn.dataset.aba;
+          renderTela();
+        };
+      });
+
+      if (abaPrincipal === 'consolidado') viewRelConsolidado();
+      else if (abaPrincipal === 'conferencias') viewRelConferenciasIndividuais();
+      else viewRelBuscaIndividual();
+    };
+
+    /* =========================================================================
+       1. ABA: RESUMO CONSOLIDADO & PDF DO PERÍODO
+       ========================================================================= */
+    const viewRelConsolidado = () => {
+      const alvo = $('#corpoRelatorios');
+      alvo.innerHTML = `
+        <div class="cartao">
+          ${gSel ? `<div class="form-linha" style="margin-bottom:8px">${gSel}</div>` : ''}
+          <div class="abas" id="modos" style="margin-bottom:12px">
+            <button data-m="dia" class="ativo">Dia</button>
+            <button data-m="semana">Semana</button>
+            <button data-m="ano">Ano</button>
+            <button data-m="livre">Período livre</button>
+          </div>
+          <div class="form-linha" style="grid-template-columns:1fr auto;align-items:end">
+            <div id="entrada"></div>
+            <button class="primario" id="btGerar" style="min-height:44px; padding:0 20px">Gerar Relatório</button>
+          </div>
+        </div>
+        <div id="estadoAtual"><div class="carregando">Carregando estado atual do efetivo…</div></div>
+        <div id="saida"><div class="carregando">Gerando consolidado…</div></div>
+      `;
+
+      let modo = 'dia';
+      const entrada = () => {
+        const el = $('#entrada');
+        if (modo === 'dia') el.innerHTML = `<div class="campo"><label>Dia específico</label><input type="date" id="fDia" value="${dataLocal(hoje)}"></div>`;
+        else if (modo === 'semana') el.innerHTML = `<div class="campo"><label>Semana (escolha qualquer dia dela)</label><input type="date" id="fDia" value="${dataLocal(hoje)}"></div>`;
+        else if (modo === 'ano') el.innerHTML = `<div class="campo"><label>Ano</label><input type="number" id="fAno" min="2000" max="2100" value="${hoje.getFullYear()}"></div>`;
+        else el.innerHTML = `<div class="campo"><label>De — até</label><div style="display:flex;gap:6px"><input type="date" id="fDe" value="${dataLocal(new Date(Date.now() - 29 * 864e5))}"><input type="date" id="fAte" value="${dataLocal(hoje)}"></div></div>`;
+      };
+      const periodos = () => {
+        if (modo === 'dia') { const d = $('#fDia').value; return [d, d]; }
+        if (modo === 'semana') return semanaDe($('#fDia').value);
+        if (modo === 'ano') { const y = $('#fAno').value; return [y + '-01-01', y + '-12-31']; }
+        return [$('#fDe').value, $('#fAte').value];
+      };
+      const rotulos = { dia: 'Dia', semana: 'Semana', ano: 'Ano', livre: 'Período' };
+      const gerar = async () => {
+        const [de, ate] = periodos();
+        if (!de || !ate) { toast('Escolha a data', 'erro'); return; }
+        $('#saida').innerHTML = '<div class="carregando">Gerando…</div>';
+        try {
+          const gq = $('#fGrupo') && $('#fGrupo').value ? '&grupo=' + encodeURIComponent($('#fGrupo').value) : '';
+          const b = await api(`/api/relatorio?de=${encodeURIComponent(de)}&ate=${encodeURIComponent(ate)}${gq}`);
+          b.De = de; b.Ate = ate;
+          $('#saida').innerHTML = relRender(b, `${rotulos[modo]} ${fmtData(de)} a ${fmtData(ate)}`, gq);
+        } catch (e) { $('#saida').innerHTML = ''; }
+      };
+
+      entrada();
+      (async () => {
+        try {
+          const html = await window.EfetivoAtualHTML();
+          const alvoEf = document.querySelector('#estadoAtual');
+          if (alvoEf) alvoEf.innerHTML = html;
+        } catch (e) {}
+      })();
+      gerar();
+
+      document.querySelectorAll('#modos button').forEach(b => b.onclick = () => {
+        modo = b.dataset.m;
+        document.querySelectorAll('#modos button').forEach(x => x.classList.toggle('ativo', x === b));
+        entrada();
+      });
+      $('#btGerar').onclick = gerar;
+    };
+
+    /* =========================================================================
+       2. ABA: CONFERÊNCIAS INDIVIDUAIS & RELATÓRIOS INDIVIDUAIS EM PDF
+       ========================================================================= */
+    const viewRelConferenciasIndividuais = async () => {
+      const alvo = $('#corpoRelatorios');
+      alvo.innerHTML = `
+        <div class="cartao">
+          <h3 style="margin-top:0">📋 Conferências Registradas & Relatórios Individuais</h3>
+          <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">
+            Consulte todas as conferências individualmente com filtros finos. Você pode baixar o relatório PDF específico de cada chamada ou visualizar a ficha de presença completa.
+          </p>
+
+          <div class="form-linha" style="margin-bottom:10px">
+            <div class="campo" style="max-width:180px">
+              <label>De (Data Inicial)</label>
+              <input type="date" id="cfDe" value="${dataLocal(new Date(Date.now() - 30 * 864e5))}">
+            </div>
+            <div class="campo" style="max-width:180px">
+              <label>Até (Data Final)</label>
+              <input type="date" id="cfAte" value="${dataLocal(hoje)}">
+            </div>
+            ${gSel ? gSel : ''}
+            <div class="campo" style="max-width:170px">
+              <label>Situação</label>
+              <select id="cfStatus">
+                <option value="">Todas</option>
+                <option value="fechada">Fechadas</option>
+                <option value="aberta">Abertas</option>
+                <option value="arquivada">Arquivadas</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-linha" style="align-items:flex-end">
+            <div class="campo" style="flex:1">
+              <label>Buscar por Local / Responsável</label>
+              <input id="cfBuscaTxt" placeholder="Digite para filtrar instantaneamente…">
+            </div>
+            <button type="button" class="primario" id="btFiltrarConfs" style="min-height:42px; padding:0 20px">
+              Filtrar Conferências
+            </button>
+          </div>
+        </div>
+
+        <div id="resultadoConfs"><div class="carregando">Buscando conferências…</div></div>
+      `;
+
+      let listaConfs = [];
+      let pgConfs = 1;
+
+      const renderizarTabelaConfs = () => {
+        const txt = ($('#cfBuscaTxt').value || '').trim().toLowerCase();
+        const filtradas = listaConfs.filter(c => {
+          if (!txt) return true;
+          return (c.local || '').toLowerCase().includes(txt) ||
+                 (c.criado_por || '').toLowerCase().includes(txt) ||
+                 (c.grupo_nome || '').toLowerCase().includes(txt) ||
+                 String(c.id).includes(txt);
+        });
+
+        const pag = paginarArray(filtradas, pgConfs, 10);
+        const resEl = $('#resultadoConfs');
+
+        if (pag.totalItens === 0) {
+          resEl.innerHTML = `<div class="cartao"><span class="vazio">Nenhuma conferência encontrada para o período/filtro selecionado.</span></div>`;
+          return;
+        }
+
+        const linhas = pag.dados.map(c => {
+          const isFechada = c.status === 'fechada';
+          const isArq = !!c.arquivada_em;
+          const statusBadge = isArq
+            ? '<span class="pill" style="background:#475569; color:#cbd5e1">Arquivada</span>'
+            : (isFechada
+                ? '<span class="pill pill-presente">Fechada</span>'
+                : '<span class="pill pill-atraso">Aberta</span>');
+
+          return `
+            <tr>
+              <td class="num"><b>#${c.id}</b></td>
+              <td><b>${fmtData(c.data)}</b></td>
+              <td>${esc(c.hora || '—')}</td>
+              <td>${esc(c.local || 'Geral')}</td>
+              <td>${esc(c.grupo_nome || '—')}</td>
+              <td>${statusBadge}</td>
+              <td class="num"><b>${c.lancados || 0}</b></td>
+              <td>${esc(c.criado_por || '—')}</td>
+              <td style="white-space:nowrap">
+                <div style="display:flex; gap:6px">
+                  <a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank" title="Gerar e Baixar PDF">
+                    <button type="button" class="acao-linha" style="font-size:12px; padding:4px 8px">
+                      📄 PDF
+                    </button>
+                  </a>
+                  <button type="button" class="acao-linha bt-detalhe-conf" data-cid="${c.id}" style="font-size:12px; padding:4px 8px" title="Ver lista de lançamentos">
+                    🔍 Detalhes
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        resEl.innerHTML = `
+          <div class="cartao">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+              <h4 style="margin:0; font-size:13px; color:var(--tx2)">Lista de Conferências (Paginada de 10 em 10)</h4>
+            </div>
+            <div class="rolagem">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="num">ID</th>
+                    <th>Data</th>
+                    <th>Hora/Turno</th>
+                    <th>Local</th>
+                    <th>Grupo</th>
+                    <th>Status</th>
+                    <th class="num">Lançados</th>
+                    <th>Criado Por</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>${linhas}</tbody>
+              </table>
+            </div>
+            ${renderPaginadorHTML(pag, 'pagConfs')}
+          </div>
+        `;
+
+        resEl.querySelectorAll('.paginacao-btn[data-pg]').forEach(b => {
+          b.onclick = () => {
+            pgConfs = +b.dataset.pg;
+            renderizarTabelaConfs();
+          };
+        });
+
+        resEl.querySelectorAll('.bt-detalhe-conf').forEach(b => {
+          b.onclick = () => abrirModalDetalhesConferencia(+b.dataset.cid);
+        });
+      };
+
+      const carregarConfs = async () => {
+        const de = $('#cfDe').value;
+        const ate = $('#cfAte').value;
+        const status = $('#cfStatus').value;
+        const grupo = $('#fGrupo') ? $('#fGrupo').value : '';
+
+        $('#resultadoConfs').innerHTML = '<div class="carregando">Carregando conferências…</div>';
+        try {
+          let url = `/api/conferencias?de=${encodeURIComponent(de)}&ate=${encodeURIComponent(ate)}`;
+          if (status === 'arquivada') url += '&arq=1';
+          if (grupo) url += '&grupo=' + encodeURIComponent(grupo);
+
+          const r = await api(url);
+          listaConfs = (r && r.conferencias) || [];
+          if (status === 'fechada') listaConfs = listaConfs.filter(x => x.status === 'fechada');
+          else if (status === 'aberta') listaConfs = listaConfs.filter(x => x.status === 'aberta');
+          
+          pgConfs = 1;
+          renderizarTabelaConfs();
+        } catch (e) {
+          $('#resultadoConfs').innerHTML = '<div class="cartao"><span class="vazio">Falha ao carregar conferências.</span></div>';
+        }
+      };
+
+      $('#btFiltrarConfs').onclick = carregarConfs;
+      $('#cfBuscaTxt').oninput = () => {
+        pgConfs = 1;
+        renderizarTabelaConfs();
+      };
+
+      carregarConfs();
+    };
+
+    /* Modal de Detalhes da Conferência Individual */
+    const abrirModalDetalhesConferencia = async (confId) => {
+      const m = modal(`
+        <div class="modal-inner" style="max-width:720px">
+          <div class="carregando">Carregando detalhes da conferência #${confId}…</div>
+        </div>
+      `);
+
+      try {
+        const r = await api('/api/conferencia/' + confId);
+        const c = r.conferencia || {};
+        const pres = r.presencas || [];
+
+        let pgPres = 1;
+        const inner = m.querySelector('.modal-inner');
+
+        const renderModalPres = () => {
+          const pag = paginarArray(pres, pgPres, 10);
+          const linhas = pag.dados.map(p => `
+            <tr>
+              <td><b>${esc(p.nome_guerra)}</b></td>
+              <td>${esc(p.funcao || '—')}</td>
+              <td>${esc(p.setor || '—')}</td>
+              <td>${pill(p.situacao)}</td>
+              <td>${esc(p.destino || '—')}</td>
+              <td>${esc(p.observacao || '—')}</td>
+              <td class="num">${p.verificado ? '✅' : '❌'}</td>
+            </tr>
+          `).join('');
+
+          inner.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; border-bottom:1px solid var(--borda); padding-bottom:10px">
+              <div>
+                <h3 style="margin:0">Conferência #${c.id} — ${fmtData(c.data)}</h3>
+                <p style="margin:4px 0 0; font-size:12.5px; color:var(--tx2)">
+                  Local: <b>${esc(c.local || 'Geral')}</b> · Grupo: <b>${esc(c.grupo_nome || '—')}</b> · Status: <b>${esc(c.status)}</b>
+                </p>
+              </div>
+              <a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank">
+                <button type="button" class="primario" style="font-size:12.5px; padding:6px 14px">📄 Baixar PDF</button>
+              </a>
+            </div>
+
+            <div class="rolagem" style="max-height:300px">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Militar</th>
+                    <th>Função</th>
+                    <th>Setor</th>
+                    <th>Situação</th>
+                    <th>Destino</th>
+                    <th>Observação</th>
+                    <th class="num">Verif.</th>
+                  </tr>
+                </thead>
+                <tbody>${linhas || '<tr><td colspan="7"><span class="vazio">sem lançamentos</span></td></tr>'}</tbody>
+              </table>
+            </div>
+
+            ${renderPaginadorHTML(pag, 'pagModalPres')}
+
+            <div class="modal-acoes" style="margin-top:14px">
+              <button class="fantasma" id="btFecharDetConf">Fechar</button>
+            </div>
+          `;
+
+          inner.querySelector('#btFecharDetConf').onclick = () => m.remove();
+          inner.querySelectorAll('.paginacao-btn[data-pg]').forEach(b => {
+            b.onclick = () => {
+              pgPres = +b.dataset.pg;
+              renderModalPres();
+            };
+          });
+        };
+
+        renderModalPres();
+      } catch (e) {
+        m.querySelector('.modal-inner').innerHTML = `
+          <span class="vazio">Falha ao obter detalhes da conferência.</span>
+          <div class="modal-acoes"><button class="fantasma" onclick="this.closest('.modal-mask').remove()">Fechar</button></div>
+        `;
+      }
+    };
+
+    /* =========================================================================
+       3. ABA: BUSCA INDIVIDUAL POR MILITAR & TAGS
+       ========================================================================= */
+    const viewRelBuscaIndividual = async () => {
       let tags = [];
       try { tags = await api('/api/relatorio/tags'); } catch (e) { tags = []; }
-      let filtroId = 0;
       const regras = [];
-      const cartao = document.createElement('div');
-      cartao.className = 'cartao';
-      cartao.style.margin = '10px 0';
-      cartao.innerHTML = `
-        <h3 style="margin-top:0">Busca individual</h3>
-        <div class="form-linha" style="align-items:end">
-          <div class="campo" style="margin:0"><label>Militar (nome de guerra)</label>
-            <input id="biNome" placeholder="digite o nome…"></div>
-          <div class="campo" style="margin:0"><label>De</label><input type="date" id="biDe" value="${dataLocal(new Date(Date.now() - 29 * 864e5))}"></div>
-          <div class="campo" style="margin:0"><label>Até</label><input type="date" id="biAte" value="${dataLocal(hoje)}"></div>
-          <button class="primario" id="biIr" style="min-height:44px">Buscar</button></div>
-        <div id="biRes" style="margin-top:10px"></div>
-        <details style="margin-top:10px"><summary style="cursor:pointer;color:var(--tx2);font-size:13px">Filtros por TAG (multi-seleção, cruza com OU)</summary>
-          <div id="biFiltros" style="margin-top:8px"></div>
-          <div style="display:flex;gap:8px;margin-top:8px">
-            <button id="biAddF" style="min-height:36px">+ Adicionar filtro</button>
-            <button class="primario" id="biAplicarF" style="min-height:36px">Aplicar filtros</button></div>
-          <div id="biFRes" style="margin-top:10px"></div></details>`;
-      const saida = $('#saida');
-      saida.parentNode.insertBefore(cartao, saida);
 
-      const linhaModal = (rg, tab) => `<tr><td>${fmtData(rg.data)}</td><td>#${rg.conferencia_id}</td>
-        ${tab === 'filtros' ? `<td><b>${esc(rg.tag)}</b></td><td>${esc(rg.comentario)}</td>` :
-        `<td><b>${esc(rg.situacao_rotulo || rg.situacao || '')}</b></td><td>${esc(rg.destino || '')}</td><td>${esc(rg.tags || '')}</td>`}
-        </tr>`;
+      const alvo = $('#corpoRelatorios');
+      alvo.innerHTML = `
+        <div class="cartao">
+          <h3 style="margin-top:0">🔍 Busca Individual por Militar</h3>
+          <div class="form-linha" style="align-items:end">
+            <div class="campo" style="margin:0">
+              <label>Militar (Nome de Guerra)</label>
+              <input id="biNome" placeholder="Digite o nome de guerra…">
+            </div>
+            <div class="campo" style="margin:0">
+              <label>De</label>
+              <input type="date" id="biDe" value="${dataLocal(new Date(Date.now() - 29 * 864e5))}">
+            </div>
+            <div class="campo" style="margin:0">
+              <label>Até</label>
+              <input type="date" id="biAte" value="${dataLocal(hoje)}">
+            </div>
+            <button class="primario" id="biIr" style="min-height:44px; padding:0 20px">Buscar</button>
+          </div>
+          <div id="biRes" style="margin-top:12px"></div>
+
+          <details style="margin-top:14px">
+            <summary style="cursor:pointer;color:var(--tx2);font-size:13px; font-weight:600">
+              🏷️ Filtros Cruzados por TAG (Multi-seleção em OU)
+            </summary>
+            <div id="biFiltros" style="margin-top:8px"></div>
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button type="button" id="biAddF" style="min-height:36px">+ Adicionar Filtro</button>
+              <button type="button" class="primario" id="biAplicarF" style="min-height:36px">Aplicar Filtros</button>
+            </div>
+            <div id="biFRes" style="margin-top:10px"></div>
+          </details>
+        </div>
+      `;
+
       const rotuloSit = s => ({ presente: 'Presente', atraso: 'Atraso', falta: 'Falta', justificada: 'Justificada', nao_verificado: 'NÃO VERIFICADO' })[s] || s;
 
-      const abrirFicha = async (pessoaId, listaRegs, tab) => {
+      const abrirFicha = async (pessoaId, listaRegs) => {
         let ficha = {};
         try { ficha = await api('/api/pessoas/' + pessoaId + '/ficha'); } catch (e) {}
         const div = modal(`
           <div class="modal-inner" style="max-width:640px">
             <h3>${esc(ficha.nome_guerra || '')} <small style="color:var(--tx2);font-weight:400">${esc(ficha.nome_completo || '')}</small></h3>
             <p style="color:var(--tx2);font-size:13px;margin:4px 0">Setor: <b>${esc(ficha.setor || 'INDEFINIDO')}</b> · Função: <b>${esc(ficha.funcao || 'INDEFINIDO')}</b> · Grupo: <b>${esc(ficha.grupo || '—')}</b> · Status: <b>${esc(ficha.status || '')}</b></p>
-            <div class="rolagem" style="max-height:220px;margin:8px 0"><table><thead><tr><th>Data</th><th>Conf.</th>${tab === 'filtros' ? '<th>Tag</th><th>Comentário</th>' : '<th>Situação</th><th>Destino</th><th>Tag</th>'}</tr></thead>
-            <tbody>${(listaRegs || []).map(r => linhaModal(r, tab)).join('') || '<tr><td colspan="6"><span class="vazio">sem registros</span></td></tr>'}</tbody></table></div>
+            <div class="rolagem" style="max-height:220px;margin:8px 0">
+              <table>
+                <thead><tr><th>Data</th><th>Conf.</th><th>Situação</th><th>Destino</th><th>Tag</th></tr></thead>
+                <tbody>${(listaRegs || []).map(r => `<tr><td>${fmtData(r.data)}</td><td>#${r.conferencia_id}</td><td><b>${esc(r.situacao_rotulo || r.situacao || '')}</b></td><td>${esc(r.destino || '')}</td><td>${esc(r.tags || '')}</td></tr>`).join('') || '<tr><td colspan="5"><span class="vazio">sem registros</span></td></tr>'}</tbody>
+              </table>
+            </div>
             <div class="cartao" style="margin:0">
-              <h4 style="margin:0 0 6px">Comentário com TAG</h4>
+              <h4 style="margin:0 0 6px">Adicionar Comentário com TAG</h4>
               <div class="campo"><label>Tag</label><select id="mcTag"><option value="">— sem tag —</option>${tags.map(t => `<option value="${t.id}">${esc(t.nome)}</option>`).join('')}</select></div>
               <div class="campo"><label>Comentário</label><textarea id="mcTxt" rows="2"></textarea></div>
-              <button class="primario" id="mcGo" style="min-height:38px">Gravar comentário</button>
+              <button class="primario" id="mcGo" style="min-height:38px">Gravar Comentário</button>
             </div>
             <div class="modal-acoes"><button class="fantasma" id="mcX">Fechar</button></div>
           </div>`);
         if (!div) return;
-        div.querySelector('#mcX').onclick = () => div.fechar && div.fechar();
+        div.querySelector('#mcX').onclick = () => div.remove();
         div.querySelector('#mcGo').onclick = async () => {
           const txt = div.querySelector('#mcTxt').value.trim();
           if (!txt) { toast('Escreva o comentário', 'erro'); return; }
@@ -624,43 +997,94 @@
               pessoa_id: pessoaId, comentario: txt,
               tag_id: tagVal ? parseInt(tagVal) : null }) });
             toast('Comentário gravado');
-            div.fechar && div.fechar();
+            div.remove();
           } catch (e) {}
         };
+      };
+
+      const carregarPessoaRegs = async (pid) => {
+        const de = $('#biDe').value, ate = $('#biAte').value;
+        try {
+          const r = await api(`/api/relatorio/registros?pessoa=${pid}&de=${encodeURIComponent(de)}&ate=${encodeURIComponent(ate)}`);
+          const regs = (r.registros || []).map(x => ({ ...x, situacao_rotulo: rotuloSit(x.situacao) }));
+          
+          let pgBi = 1;
+          const renderBiRegs = () => {
+            const pag = paginarArray(regs, pgBi, 10);
+            const linhas = pag.dados.map((rg, i) => `
+              <tr data-bi="${(pgBi-1)*10 + i}" style="cursor:pointer">
+                <td>${fmtData(rg.data)}</td>
+                <td>#${rg.conferencia_id}</td>
+                <td><b>${esc(rg.situacao_rotulo)}</b></td>
+                <td>${esc(rg.destino || '—')}</td>
+                <td>${esc(rg.tags || '—')}</td>
+              </tr>
+            `).join('');
+
+            $('#biRes').innerHTML = `
+              <div class="cartao" style="margin:0">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                  <h4 style="margin:0">${esc(r.pessoa && r.pessoa.nome_guerra || '')} — ${regs.length} registro(s)</h4>
+                  <button type="button" class="primario" id="btAbrirFichaBi" style="font-size:12px; padding:4px 10px">📝 Abrir Ficha / Comentar</button>
+                </div>
+                <div class="rolagem">
+                  <table>
+                    <thead><tr><th>Data</th><th>Conf.</th><th>Situação</th><th>Destino</th><th>Tag</th></tr></thead>
+                    <tbody>${linhas || '<tr><td colspan="5"><span class="vazio">sem registros no período</span></td></tr>'}</tbody>
+                  </table>
+                </div>
+                ${renderPaginadorHTML(pag, 'pagBiRegs')}
+              </div>
+            `;
+
+            $('#btAbrirFichaBi').onclick = () => abrirFicha(pid, regs);
+            document.querySelectorAll('#biRes tr[data-bi]').forEach(tr => {
+              tr.onclick = () => abrirFicha(pid, regs);
+            });
+            document.querySelectorAll('#biRes .paginacao-btn[data-pg]').forEach(b => {
+              b.onclick = () => {
+                pgBi = +b.dataset.pg;
+                renderBiRegs();
+              };
+            });
+          };
+
+          renderBiRegs();
+        } catch (e) {
+          $('#biRes').innerHTML = '<span class="vazio">falha na busca</span>';
+        }
       };
 
       const buscarPessoa = async () => {
         const q = $('#biNome').value.trim().toLowerCase();
         if (!q) { toast('Digite o nome do militar', 'erro'); return; }
-        const de = $('#biDe').value, ate = $('#biAte').value;
         $('#biRes').innerHTML = '<div class="carregando">Buscando…</div>';
         try {
-          const ps = await api('/api/pessoas'); // lista do escopo (ativas; nome de guerra)
+          const ps = await api('/api/pessoas');
           const todas = (ps.pessoas || []);
           const cand = todas.filter(x => (x.nome_guerra || '').toLowerCase().includes(q) && (x.status || 'ativo') === 'ativo');
-          if (!cand.length) { $('#biRes').innerHTML = '<span class="vazio">nenhum militar com esse nome no seu escopo</span>'; return; }
-          if (cand.length > 1) {
-            $('#biRes').innerHTML = `<div class="cartao" style="margin:0"><h4 style="margin:0 0 6px">${cand.length} militares com esse nome — escolha:</h4>` +
-              cand.map((x, i) => `<button data-pcand="${i}" style="min-height:36px;margin:2px">${esc(x.nome_guerra)}</button>`).join(' ') + '</div>';
-            document.querySelectorAll('#biRes [data-pcand]').forEach(b => b.onclick = () => carregar(cand[+b.dataset.pcand].id));
+          if (!cand.length) {
+            $('#biRes').innerHTML = '<span class="vazio">Nenhum militar com esse nome no seu escopo.</span>';
             return;
           }
-          carregar(cand[0].id);
-        } catch (e) { $('#biRes').innerHTML = '<span class="vazio">falha na busca</span>'; }
+          if (cand.length > 1) {
+            $('#biRes').innerHTML = `
+              <div class="cartao" style="margin:0">
+                <h4 style="margin:0 0 6px">${cand.length} militares com esse nome — escolha:</h4>
+                <div style="display:flex; gap:6px; flex-wrap:wrap">
+                  ${cand.map((x, i) => `<button type="button" class="acao-linha" data-pcand="${i}">${esc(x.nome_guerra)} (${esc(x.posto || x.setor || '')})</button>`).join('')}
+                </div>
+              </div>
+            `;
+            document.querySelectorAll('#biRes [data-pcand]').forEach(b => b.onclick = () => carregarPessoaRegs(cand[+b.dataset.pcand].id));
+            return;
+          }
+          carregarPessoaRegs(cand[0].id);
+        } catch (e) {
+          $('#biRes').innerHTML = '<span class="vazio">Falha na busca.</span>';
+        }
       };
-      const carregar = async (pid) => {
-        const de = $('#biDe').value, ate = $('#biAte').value;
-        try {
-          const r = await api(`/api/relatorio/registros?pessoa=${pid}&de=${encodeURIComponent(de)}&ate=${encodeURIComponent(ate)}`);
-          const regs = (r.registros || []).map(x => ({ ...x, situacao_rotulo: rotuloSit(x.situacao) }));
-          $('#biRes').innerHTML = `
-            <div class="cartao" style="margin:0">
-              <h4 style="margin:0 0 6px">${esc(r.pessoa && r.pessoa.nome_guerra || '')} — ${regs.length} registro(s)</h4>
-              <div class="rolagem"><table><thead><tr><th>Data</th><th>Conf.</th><th>Situação</th><th>Destino</th><th>Tag</th></tr></thead>
-              <tbody>${regs.map((rg, i) => `<tr data-bi="${i}" style="cursor:pointer"><td>${fmtData(rg.data)}</td><td>#${rg.conferencia_id}</td><td><b>${esc(rg.situacao_rotulo)}</b></td><td>${esc(rg.destino || '')}</td><td>${esc(rg.tags || '')}</td></tr>`).join('') || '<tr><td colspan="5"><span class="vazio">sem registros no período</span></td></tr>'}</tbody></table></div></div>`;
-          document.querySelectorAll('#biRes tr[data-bi]').forEach(tr => tr.onclick = () => abrirFicha(pid, regs, 'pessoa'));
-        } catch (e) { $('#biRes').innerHTML = '<span class="vazio">falha na busca</span>'; }
-      };
+
       $('#biIr').onclick = buscarPessoa;
       $('#biNome').addEventListener('keydown', ev => { if (ev.key === 'Enter') buscarPessoa(); });
 
@@ -670,7 +1094,7 @@
             <div class="campo"><label>Tag</label><select data-c="tag">${tags.map(t => `<option value="${t.id}" ${rg.tag == t.id ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}</select></div>
             <div class="campo"><label>De</label><input type="date" data-c="de" value="${rg.de || ''}"></div>
             <div class="campo"><label>Até</label><input type="date" data-c="ate" value="${rg.ate || ''}"></div>
-            <button data-rm="${i}" style="min-height:36px">✕</button></div>`).join('') ||
+            <button type="button" data-rm="${i}" style="min-height:36px">✕</button></div>`).join('') ||
           '<span class="vazio">nenhum filtro — adicione regras TAG × período (o resultado é a UNIÃO de todas)</span>';
         document.querySelectorAll('#biFiltros [data-rm]').forEach(b => b.onclick = () => { regras.splice(+b.dataset.rm, 1); pintaFiltros(); });
         document.querySelectorAll('#biFiltros .form-linha').forEach(linha => {
@@ -690,13 +1114,44 @@
         try {
           const r = await api('/api/relatorio/registros?filtros=' + encodeURIComponent(JSON.stringify(regras)));
           const regs = r.registros || [];
-          $('#biFRes').innerHTML = `
-            <div class="cartao" style="margin:0">
-              <h4 style="margin:0 0 6px">Resultado dos filtros — ${regs.length} comentário(s) taggeado(s)</h4>
-              <div class="rolagem"><table><thead><tr><th>Data</th><th>Conf.</th><th>Tag</th><th>Militar</th><th>Comentário</th></tr></thead>
-              <tbody>${regs.map((rg, i) => `<tr data-bf="${i}" style="cursor:pointer"><td>${fmtData(rg.data)}</td><td>#${rg.conferencia_id}</td><td><b>${esc(rg.tag)}</b></td><td>${esc(rg.pessoa)}</td><td>${esc(rg.comentario)}</td></tr>`).join('') || '<tr><td colspan="5"><span class="vazio">nada encontrado</span></td></tr>'}</tbody></table></div></div>`;
-        } catch (e) { $('#biFRes').innerHTML = '<span class="vazio">falha nos filtros</span>'; }
+          
+          let pgFiltros = 1;
+          const renderFiltrosRegs = () => {
+            const pag = paginarArray(regs, pgFiltros, 10);
+            const linhas = pag.dados.map((rg, i) => `
+              <tr data-bf="${(pgFiltros-1)*10 + i}" style="cursor:pointer">
+                <td>${fmtData(rg.data)}</td>
+                <td>#${rg.conferencia_id}</td>
+                <td><b>${esc(rg.tag)}</b></td>
+                <td>${esc(rg.pessoa)}</td>
+                <td>${esc(rg.comentario)}</td>
+              </tr>
+            `).join('');
+
+            $('#biFRes').innerHTML = `
+              <div class="cartao" style="margin:0">
+                <h4 style="margin:0 0 6px">Resultado dos filtros — ${regs.length} comentário(s) taggeado(s)</h4>
+                <div class="rolagem"><table><thead><tr><th>Data</th><th>Conf.</th><th>Tag</th><th>Militar</th><th>Comentário</th></tr></thead>
+                <tbody>${linhas || '<tr><td colspan="5"><span class="vazio">nada encontrado</span></td></tr>'}</tbody></table></div>
+                ${renderPaginadorHTML(pag, 'pagFiltrosRegs')}
+              </div>
+            `;
+
+            document.querySelectorAll('#biFRes .paginacao-btn[data-pg]').forEach(b => {
+              b.onclick = () => {
+                pgFiltros = +b.dataset.pg;
+                renderFiltrosRegs();
+              };
+            });
+          };
+
+          renderFiltrosRegs();
+        } catch (e) {
+          $('#biFRes').innerHTML = '<span class="vazio">falha nos filtros</span>';
+        }
       };
-    })();
+    };
+
+    renderTela();
   };
 })();
