@@ -1,80 +1,101 @@
-# HANDOFF — FIM DE RODADA 29/09/2026 (SCI v9.16.11)
+# SCI — Documento de Handoff & Transição Técnica (v1.0)
 
-> **Sessão encerrada pelo Tenente.** Este documento registra o estado completo do projeto,
-> o que foi entregue na rodada e as pendências/orientações para as próximas rodadas.
-> **Documento complementar:** `HANDOFF_FRONTEND.md` (contratos de API, telas e doutrina — continua válido).
+## 📌 Visão Geral do Projeto
+O **SCI (Sistema de Controle Interno)** é uma plataforma enterprise monolítica, autocontida e de alto desempenho projetada para o controle digital de presença, conferências de efetivo, escalas de serviço, armaria/reserva de material e cautelas com anexos digitalizados.
+
+O sistema opera sob o paradigma de **Zero Dependências Externas**:
+- **Backend:** Go (compilado nativamente em binário único executável).
+- **Banco de Dados:** SQLite embutido com WAL mode, transações ACID e integridade referencial.
+- **Frontend:** Single-Page Application (SPA) em Vanilla JavaScript (ES6+), HTML5 e CSS3 moderno (Obsidian Slate Theme com Glassmorphism), embutido diretamente no binário Go via `//go:embed web`.
 
 ---
 
-## 1. ESTADO EM PRODUÇÃO (10003)
+## 🏗️ Estrutura de Arquivos
 
-- **Versão:** v9.16.11 (commit `b1e9ec7`), binário sha `e4e37a57…`, `?v=225`
-- **Health:** 200 · CI VERDE · GitHub sincronizado (main)
-- **Front:** modular (core.js + views_conf.js + views_gestao.js + style.css), cache-bust `?v=225`,
-  estáticos com `Cache-Control: no-store` (navegador nunca mais segura JS velho)
-- **Schema do banco:** v12 (última migração: `antiguidade` nos catálogos de organização)
-- **Dados:** estrutura real do Tenente — **3º B Com GE (id 3) > Cia Com (id 4) > 3º Pel Com (id 1)**,
-  56 militares no 3º Pel, contas admin/tenhermes/3bcomge/ciacom
-- **Resíduo conhecido:** grupo **"Cia Parcial" (id 2)** — resíduo de teste da Aimi com 1 pessoa
-  inativa (57) e várias conferências FECHADAS (imutáveis por doutrina). Não excluído de propósito.
-  Se o Tenente quiser removê-lo: exigiria exceção doutrinária ou novo reset total (com backup pré).
+```
+sci/
+├── main.go               # Ponto de entrada, flags, watchdog, boot e versão de schema (v16)
+├── server.go             # Router HTTP, middlewares, rotas de API e handlers REST
+├── store.go              # Camada de banco de dados SQLite, migrações atômicas (v1..v16) e auditoria
+├── auth.go               # Autenticação Argon2id, sessões em banco e rate-limiting (Limiter)
+├── v1_test.go            # Suite de testes de integração e ciclo de vida completo (Escalas, Material, White-Label)
+├── web/
+│   ├── index.html        # Shell HTML e ponto de ancoragem do SPA
+│   ├── style.css         # Design System v300 (Obsidian Dark Glassmorphism, responsivo mobile)
+│   ├── core.js           # Router client-side, shell de navegação, API helper, modals e toasts
+│   ├── views_conf.js     # Views de Conferência de Pessoal diária e Relatórios
+│   ├── views_gestao.js   # Views de Gestão: #/admin (Explorador Hierárquico de Grupos), #/grupos e #/perfil
+│   ├── views_escalas.js  # View de Escalas de Serviço (#/escalas) e cadastro de turnos
+│   ├── views_material.js # View de Reserva de Material & Cautelas (#/material) com upload de anexos
+│   └── views_config.js   # View de Configurações Globais White-Label (#/configuracoes)
+├── TECHNICAL_PLAN.md     # Plano arquitetural e roadmap técnico
+├── CHANGELOG.md          # Histórico de alterações e releases
+└── README.md             # Instruções de operação no host e deployment
+```
 
-## 2. ENTREGUE NESTA RODADA (resumo por tema)
+---
 
-- **Herança de catálogos RECURSIVA em toda a cadeia** (3º Pel herda de Cia e do Bde);
-  aba Tags separa **HERDADO (read only)** × **DO MEU GRUPO** (gerenciável)
-- **Catálogos em LISTA** com **EDITAR** (PATCH `/api/catalogo/{t}/{id}`) e **EXCLUIR**;
-  herdados são somente leitura (403)
-- **Antiguidade de catálogos** definida por **DRAG & DROP** (modal "⚖ Definir antiguidade"),
-  coluna `antiguidade` (schema v12), ordenação hierárquica (caminho pai>filho) — **sem alfabética achatada**
-- **Relatórios:** ordenação **FUNÇÃO > SETOR > alfabética** (função maior que setor); colunas
-  **ORD + Função** antes do nome; **sem "Por"** e **sem colunas de convocações/% válidas** (tela e PDF)
-- **Estado Atual do efetivo** no topo de Relatórios/Dashboard: estado = última conferência do militar;
-  alertas ● verde (hoje) / ● amarelo (1+ dia) / ● vermelho (1+ semana ou nunca); detalhe só no PDF
-- **Conferência:** #/hoje = só LISTAS (abertas c/ botão ABRIR; fechadas = só PDF); edição em
-  `#/conferencia?id=N`; **múltiplas conferências simultâneas**; **salvamento parcial** (✅ e situação
-  gravam na hora); **carry over** (nova conf herda situação/destino se última conf ≤ 1 dia; 2+ dias
-  reseta p/ presente); **checkbox ✅ sempre zerado** em conferência nova (verificado=0 no carry);
-  **descartar conferência** (modal duplo, apaga parciais; fechada nunca); busca com **debounce**
-  preservando foco; FECHAR religa handlers a cada re-render
-- **Gestão:** edição em lote c/ **overlay "Processando…"** (disco girando → ✅ Pronto! verde /
-  ❌ vermelho com o erro real) em toda ação de escrita; coluna **ATIVO** (ativos 1º + alfabética);
-  **INDEFINIDO** p/ militar sem setor/função; toggle de grupos em **todos os níveis** c/ efetivo
-  recursivo por nó
-- **Infra de front:** estáticos **NO-STORE** (fim do cache de JS velho), burger menu mobile
-  (drawer esquerdo → X, título central, dropdown usuário à direita, acima de tudo ao abrir)
+## 🔑 Hierarquia de Papéis & Regras de Acesso
 
-## 3. BUGS RAIZ CORRIGIDOS (aprender com eles)
+1. **Admin (`admin`)**:
+   - Papel de infraestrutura e gestão global da organização.
+   - Não possui `grupo_id` (não pertence a nenhuma unidade operacional específica).
+   - Acesso exclusivo a: `#/admin` (Estrutura Organizacional, Auditoria de Contas, Backup), `#/relatorios` e `#/configuracoes`.
+   - **Bloqueio Estrutural:** Endpoints operacionais de conferência, escalas e materiais retornam `403 Forbidden` para o Admin, pois estas operações são estritamente atreladas aos grupos.
 
-1. **Scan de colunas**: SELECT sem a coluna nova → `rows.Scan` falha em silêncio → API devolve
-   `[]` (parecia "não carrega"). SEMPRE alinhar SELECT/cols/Scan.
-2. **MAX de string para "última"**: `'…#9' > '…#13'` lexicográfico → escolhia conferência errada.
-   Usar ROW_NUMBER PARTITION BY. (fix no carry over)
-3. **Herança só 1 nível**: gruposSuperioresAtivos agora sobe a cadeia inteira (loop de ancestrais).
-4. **Stacking context**: drawer dentro de header sticky ficava atrás de tudo → reanexar ao body ao abrir.
-5. **Modal**: `abrirModal()` devolve OBJETO `{fechar, mask, modal}` — ligar handlers no `.mask`/`.modal`.
-6. **Cache do navegador**: NO-STORE nos estáticos + `?v=N` (cache causou checks fantasmas e JS velho).
+2. **Gerente (`gerente`)**:
+   - Comandante / Chefe da Unidade ou Subgrupo (`grupo_id`).
+   - Acesso completo ao escopo do seu grupo e subgrupos: Conferência, Escalas, Material/Cautelas, Banco de Pessoal, Operadores e Relatórios da Unidade.
 
-## 4. PENDÊNCIAS / PRÓXIMAS RODADAS (sugestões do estado atual)
+3. **Operador (`operador`)**:
+   - Militar escalado para o lançamento de presença, cautela de materiais e controle diário no escopo do seu grupo.
 
-- [ ] **Resíduo "Cia Parcial"**: decidir exclusão excepcional ou ignore permanente
-- [ ] **Redesign visual**: protótipo aprovado em estrutura; polimento fino (ícones SVG padronizados,
-      animações, tipografia) pode seguir em nova rodada — estrutura modular já pronta
-- [ ] **Hierarquia de setores**: preencher `pai_id` dos setores reais do Tenente (hoje sem setor
-      definido → "INDEFINIDO") para o agrupamento hierárquico dos relatórios ficar completo
-- [ ] **Mobile**: conferência em tela pequena (lista de militares) — testar em aparelho real
-- [ ] **Antiguidade de catálogos**: hoje por categoria; avaliar arrastar direto na lista (sem modal)
-- [ ] **Pendências externas ao SCI** (não esquecer): `agenda_visita --go` (NC), cápsula EMS f2
+---
 
-## 5. ORIENTAÇÕES PERMANENTES (next session)
+## 🗄️ Esquema do Banco de Dados (Schema v16)
 
-- **Deploy SEM WIPE**: backup pré → kill por PID exato de `ss -tlnp` → sftp sci.new → mv → setsid
-  → validar. **PROIBIDO** `deploy_v9_sci.py`/`pos_deploy_sci.py` (apagam o banco!)
-- **WATCHDOG no host** (`ops/watchdog_sci.sh`) ressuscita binário velho se o sci morrer — durante
-  deploy, pausar o watchdog, subir, e reativar
-- **GitHub push 500 intermitente** (remote rejected Internal Server Error): apenas repetir o push
-- **Pool pós-IMPORT de backup**: conexões antigas podem dar 500 FK falso → restart resolve
-- **Testes**: instância efêmera local (SCI_DATA_DIR=/tmp/x SCI_PORT=14xxx), um cookie jar por
-  persona, header `X-SCI: 1` em toda escrita, `node --check` nos JS, `ci.sh` VERDE antes de commit
-- **Rótulos oficiais**: "Conferência de pessoal" (nunca "formatura"), status Aberta/Fechada,
-  situações Presente/Atraso/Falta/Justificada, horários SEMPRE Brasília
+- **`schema_migrations`**: Registro de versões aplicadas (atualmente versão `16`).
+- **`grupos`**: Unidades organizacionais com código único de vinculação.
+- **`grupo_vinculos`**: Subordinação hierárquica entre grupos (grafo / árvore recursiva).
+- **`usuarios`**: Contas de acesso com hash Argon2id e vinculação a grupo/pessoa.
+- **`pessoas`**: Banco de dados de militares/servidores ativos e inativos.
+- **`conferencias` & `presencas`**: Registro de presenças, faltas, atrasos e justificativas.
+- **`escala_tipos`**: Tipos de postos e serviços configuráveis.
+- **`escala_turnos` & `escala_pessoas`**: Turnos de escala e militares alocados.
+- **`material_categorias`**: Categorias de bens e materiais (Armamento, Viaturas, TI, etc.).
+- **`material_itens`**: Itens cadastrados com código de patrimônio e status.
+- **`material_cautelas`**: Histórico de retiradas, responsáveis e devoluções.
+- **`material_cautela_anexos`**: Armazenamento de digitalizações/PDFs/fotos escaneadas em base64.
+- **`configuracoes`**: Chaves e valores de customização White-Label.
+- **`auditoria`**: Log imutável de todas as ações no sistema com IP e timestamp.
+
+---
+
+## 🛠️ Procedimento de Compilação & Execução
+
+### 1. Compilar Binário
+```powershell
+go build -o sci.exe .
+```
+*(No Linux: `go build -o sci .`)*
+
+### 2. Executar
+```powershell
+.\sci.exe
+```
+*Variáveis de ambiente suportadas:*
+- `SCI_PORT`: Porta TCP (padrão: `10003`).
+- `SCI_DATA_DIR`: Diretório de banco de dados e backups (padrão: `./dados`).
+- `SCI_OM_TITULO`: Nome padrão da organização.
+
+### 3. Rodar Testes Automatizados
+```powershell
+go test -v -count=1 .
+```
+
+---
+
+## 🚀 Próximos Passos Sugeridos para a v1.1
+1. **Geração de QR Code:** Criação de etiquetas para escaneamento rápido de cautelas via câmera de celular/tablet.
+2. **Relatório Gráfico de Escalas:** Visualização em calendário / timeline estilo Gantt.
+3. **Notificações Push / Webhooks:** Alertas de cautelas em atraso de devolução.

@@ -28,12 +28,13 @@
   let marcaTimer = {}, marcaPend = {};
   const marcarParcial = (pid, situacao, destinoId, observacao, verificado) => {
     if (!C.c) return;
+    const currentConfId = CONF_ID;
     marcaPend[pid] = { situacao: situacao || null, destino_id: destinoId ?? null, observacao: observacao ?? null, verificado: !!verificado };
     clearTimeout(marcaTimer[pid]);
     marcaTimer[pid] = setTimeout(async () => {
       const corpo = marcaPend[pid];
       delete marcaPend[pid];
-      try { await api('/api/conferencia/marcar' + (CONF_ID ? '?id=' + CONF_ID : ''), { method: 'POST', body: JSON.stringify({ pessoa_id: pid, ...corpo }) }); }
+      try { await api('/api/conferencia/marcar' + (currentConfId ? '?id=' + currentConfId : ''), { method: 'POST', body: JSON.stringify({ pessoa_id: pid, ...corpo }) }); }
       catch (e) { toast('Falha ao salvar estado parcial', 'erro'); }
     }, 350);
   };
@@ -112,7 +113,8 @@
         if (v.verificado) verif.add(+pid);
       }
     }
-    C = { c: d.conferencia, pessoas: d.pessoas || [], destinos, est, dest, obs, verif, temComentario };
+    const escalados = d.escalados || [];
+    C = { c: d.conferencia, pessoas: d.pessoas || [], destinos, est, dest, obs, verif, temComentario, escalados };
     confRender();
     $('#btVoltar').onclick = () => { location.hash = '#/hoje'; };
     $('#btDescartar').onclick = async () => {
@@ -142,6 +144,10 @@
       listas += `<div class="grupo-setor"><h4>${esc(setor)} · ${porSetor[setor].length}</h4><div class="lista-pessoa">` +
         porSetor[setor].map(p => {
           const sit = C.est[p.id] || 'presente';
+          const escInfo = (C.escalados || []).find(x => x.pessoa_id === p.id);
+          const badgeEscala = escInfo
+            ? `<span style="background:rgba(87,161,115,.2); color:var(--verde-claro); font-size:11px; padding:1px 6px; border-radius:4px; font-weight:700" title="Escalado em ${esc(escInfo.tipo_nome)}">🛡️ ${esc(escInfo.tipo_nome)}</span>`
+            : '';
           const selDest = sit === 'justificada'
             ? `<select class="sel-destino" data-id="${p.id}"><option value="">destino…</option>` +
               C.destinos.map(dx => `<option value="${dx.id}" ${C.dest[p.id] == dx.id ? 'selected' : ''}>${esc(dx.nome)}</option>`).join('') + '</select>'
@@ -149,7 +155,7 @@
           const optSit = s => `<option value="${s}" ${sit === s ? 'selected' : ''}>${ROTULO[s]}</option>`;
           return `<div class="pessoa ${C.verif.has(p.id) ? 'verificado' : ''}" data-id="${p.id}">
             <input type="checkbox" class="chk" data-id="${p.id}" ${C.verif.has(p.id) ? 'checked' : ''} title="verifiquei esta pessoa">
-            <span class="nome"><b>${esc(p.nome_guerra)}</b><small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
+            <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
             <select class="sel-situacao" data-id="${p.id}" title="situação">${SITUACOES.map(optSit).join('')}</select>
             ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
         }).join('') + '</div></div>';
@@ -342,15 +348,15 @@
     const pessoas = (b.pessoas || []).slice()
       .sort((a, x) => String(a.nome_guerra || '').localeCompare(String(x.nome_guerra || ''), 'pt', { sensitivity: 'base' }));
     const linhas = pessoas.map(p =>
-      `<tr><td class="num">${p.antiguidade ?? ''}</td><td>${esc(p.funcao || '—')}</td><td><b>${esc(p.nome_guerra)}</b></td>
-       <td>${esc(p.setor)}</td><td>${esc(p.grupo || '—')}</td><td class="num">${p.presencas}</td>
-       <td class="num">${p.atrasos}</td><td class="num">${p.faltas}</td><td class="num">${p.justificadas}</td></tr>`).join('');
+      `<tr><td class="num">${esc(p.antiguidade ?? '')}</td><td>${esc(p.funcao || '—')}</td><td><b>${esc(p.nome_guerra)}</b></td>
+       <td>${esc(p.setor)}</td><td>${esc(p.grupo || '—')}</td><td class="num">${esc(p.presencas)}</td>
+       <td class="num">${esc(p.atrasos)}</td><td class="num">${esc(p.faltas)}</td><td class="num">${esc(p.justificadas)}</td></tr>`).join('');
     const forms = (b.formaturas || []).map(f =>
       `<tr><td>${fmtData(f.data)}</td><td>${esc(f.tipo)}</td><td>${esc(f.hora || '—')}</td>
        <td>${f.status === 'fechada' ? 'Fechada' : 'Aberta'}</td>
-       <td class="num">${f.presentes}</td><td class="num">${f.faltas}</td></tr>`).join('');
+       <td class="num">${esc(f.presentes)}</td><td class="num">${esc(f.faltas)}</td></tr>`).join('');
     return `${res}<div class="cartao"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <h3 style="margin:0">${titulo} — ${b.convocacoes} conferências no período</h3>
+      <h3 style="margin:0">${esc(titulo)} — ${esc(b.convocacoes)} conferências no período</h3>
       <a href="/api/relatorio.pdf?de=${encodeURIComponent(b.De)}&ate=${encodeURIComponent(b.Ate)}${grupoQ}&t=${Date.now()}" target="_blank"><button class="primario">ABRIR PDF</button></a></div>
       ${forms ? `<div class="rolagem" style="margin-bottom:12px"><table><thead><tr><th>Data</th><th>Tipo</th><th>Hora</th><th>Status</th><th class="num">Presentes</th><th class="num">Faltas</th></tr></thead><tbody>${forms}</tbody></table></div>` : ''}
       <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Função</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>

@@ -11,7 +11,7 @@
   const quem = () => (typeof ME !== 'undefined' && ME) || window.ME || null;
   const ativosDe = l => (l || []).filter(x => x.ativo === 1 || x.ativo === true);
 
-  let abaAdmin = 'usuarios'; // sub-aba corrente do painel admin (persiste na sessão)
+  let abaAdmin = 'dashboard'; // sub-aba corrente do painel admin (persiste na sessão)
   let abaGer = 'pessoal';    // sub-aba corrente do Gerenciar
 
   /* ---------- blocos compartilhados ---------- */
@@ -30,32 +30,127 @@
     return m;
   }
 
-  const codigoChip = c => `<code style="background:#e8f0e8;color:#12291b;padding:1px 6px;border-radius:4px;font-weight:700;font-size:11px">${esc(c)}</code>`;
+  const codigoChip = c => `<code style="background:rgba(16,185,129,0.12);color:var(--verde-claro);padding:2px 6px;border-radius:4px;font-weight:700;font-size:11px;border:1px solid rgba(16,185,129,0.25)">${esc(c)}</code>`;
 
-  // nó da árvore nested — raiz-only toggle (▸/▾), efetivo total recursivo 'total (próprio X)'
-  const noHTML = (n, nivel, comGerente) => {
+  let FOCO_GRUPO_ID = null;
+
+  function buscarNoPorId(nos, id) {
+    if (!nos || !nos.length) return null;
+    for (const n of nos) {
+      if (n.id === id) return n;
+      const achou = buscarNoPorId(n.filhos, id);
+      if (achou) return achou;
+    }
+    return null;
+  }
+
+  function obterCaminhoAncestrais(nos, id, caminho = []) {
+    if (!nos || !nos.length) return null;
+    for (const n of nos) {
+      const novoCaminho = [...caminho, n];
+      if (n.id === id) return novoCaminho;
+      const achou = obterCaminhoAncestrais(n.filhos, id, novoCaminho);
+      if (achou) return achou;
+    }
+    return null;
+  }
+
+  // Card interativo de nó da árvore com expansão e foco recursivo
+  const noCardHTML = (n, nivel, comGerente, arvoreTotal) => {
     const temFilhos = !!(n.filhos && n.filhos.length);
-    const id = 'noArv' + n.id + '_' + nivel + '_' + Math.random().toString(36).slice(2, 6);
+    const idCollapse = 'noArv_' + n.id + '_' + nivel + '_' + Math.random().toString(36).slice(2, 6);
     const rec = n.efetivo_total !== undefined && n.efetivo_total !== n.efetivo;
     const efetTxt = rec
-      ? ` · efetivo total: <b style="color:#000">${n.efetivo_total}</b> <small style="color:#000">(próprio ${n.efetivo})</small>`
-      : ` · <span style="color:#000">${n.efetivo} no efetivo</span>`;
-    return `<div style="margin-left:${nivel * 22}px;padding:5px 8px;border-left:3px solid var(--verde);margin-bottom:4px;background:#f4f8f4;border-radius:0 6px 6px 0">` +
-      (temFilhos ? `<span data-tgl="${id}" style="cursor:pointer;font-weight:700;color:#000">▸ </span>` : '') +
-      `<b style="color:#000">${esc(n.nome)}</b> <small style="color:#000">#${n.id}</small> ` + codigoChip(n.codigo) +
-      `<small style="color:#000">${comGerente ? ` · gerente: <b style="color:#000">${esc(n.gerente || '—')}</b>` : ''}${efetTxt} · ${n.contas} conta(s)</small>` +
-      (temFilhos ? `<div id="${id}" class="oculto" style="margin-top:4px">${n.filhos.map(f => noHTML(f, nivel + 1, comGerente)).join('')}</div>` : '') +
-      `</div>`;
+      ? `<span style="color:var(--verde-claro);font-weight:700">${n.efetivo_total}</span> <small style="color:var(--tx3)">(próprio: ${n.efetivo})</small>`
+      : `<span style="font-weight:600">${n.efetivo}</span>`;
+
+    const isFocado = FOCO_GRUPO_ID === n.id;
+    const margemEsq = Math.min(nivel * 16, 120);
+
+    return `
+      <div class="grupo-node-card" data-gid="${n.id}"
+           style="margin-left:${margemEsq}px; margin-bottom:10px; background:var(--painel2); border:1px solid ${isFocado ? 'var(--verde-claro)' : 'var(--borda)'}; border-left:4px solid ${isFocado ? 'var(--verde-claro)' : temFilhos ? '#3b82f6' : 'var(--tx3)'}; border-radius:8px; padding:12px 14px; box-shadow:0 2px 8px rgba(0,0,0,0.2)">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+          <div style="display:flex; align-items:center; gap:8px; flex:1; min-width:240px">
+            ${temFilhos
+              ? `<button type="button" data-tgl="${idCollapse}" style="background:var(--painel3); border:1px solid var(--borda); color:var(--tx); border-radius:4px; width:26px; height:26px; cursor:pointer; font-weight:bold; display:flex; align-items:center; justify-content:center; padding:0; flex-shrink:0" title="Expandir/Recolher subgrupos">▾</button>`
+              : `<span style="width:26px; display:inline-block; text-align:center; color:var(--tx3); font-size:11px; flex-shrink:0">•</span>`}
+            
+            <div style="cursor:pointer" data-focargrupo="${n.id}" title="Clique no nome para focar neste grupo e em seus subordinados">
+              <span style="font-size:14.5px; font-weight:700; color:${isFocado ? 'var(--verde-claro)' : 'var(--tx)'}; text-decoration:underline dotted">
+                ${esc(n.nome)}
+              </span>
+              <span style="font-size:11.5px; color:var(--tx3); margin-left:4px">#${n.id}</span>
+              <span style="margin-left:6px">${codigoChip(n.codigo)}</span>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--tx2); flex-wrap:wrap">
+            ${comGerente ? `<span style="background:var(--painel3); padding:3px 8px; border-radius:6px; border:1px solid var(--borda)">👤 <b>${esc(n.gerente || 'Sem gerente')}</b></span>` : ''}
+            <span style="background:var(--painel3); padding:3px 8px; border-radius:6px; border:1px solid var(--borda)">👥 Efetivo: ${efetTxt}</span>
+            <span style="background:var(--painel3); padding:3px 8px; border-radius:6px; border:1px solid var(--borda)">🔑 ${n.contas || 0} conta(s)</span>
+            ${temFilhos ? `<span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:3px 8px; border-radius:6px; border:1px solid rgba(59,130,246,0.3)">🌲 ${n.filhos.length} subgrupo(s)</span>` : ''}
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; flex-wrap:wrap">
+          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-focargrupo="${n.id}">🔍 Focar</button>
+          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-novosub="${n.id}" data-nome="${esc(n.nome)}">+ Subgrupo</button>
+          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-trocarger="${n.id}" data-nome="${esc(n.nome)}">👤 Trocar Gerente</button>
+          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-subordinar="${n.id}" data-nome="${esc(n.nome)}">⛓️ Subordinação</button>
+          <button class="acao-linha" style="font-size:11.5px; padding:3px 8px" data-contas="${n.id}" data-nome="${esc(n.nome)}">📊 Auditar</button>
+          <button class="acao-linha perigo" style="font-size:11.5px; padding:3px 8px" data-excluir="${n.id}" data-nome="${esc(n.nome)}">🗑️ Excluir</button>
+        </div>
+
+        ${temFilhos ? `
+          <div id="${idCollapse}" class="subgrupos-container" style="margin-top:8px; border-left:2px dashed rgba(16,185,129,0.3); padding-left:6px">
+            ${n.filhos.map(f => noCardHTML(f, nivel + 1, comGerente, arvoreTotal)).join('')}
+          </div>
+        ` : ''}
+      </div>
+    `;
   };
-  const arvoreHTML = (nos, comGerente) => (nos && nos.length ? nos.map(n => noHTML(n, 0, comGerente)).join('') : '<span class="vazio">nenhum grupo</span>');
+
+  const arvoreHTML = (nos, comGerente) => {
+    if (!nos || !nos.length) return '<div class="vazio" style="padding:16px">Nenhum grupo cadastrado na estrutura.</div>';
+    
+    let htmlBreadcrumb = '';
+    let nosParaExibir = nos;
+
+    if (FOCO_GRUPO_ID) {
+      const noFocado = buscarNoPorId(nos, FOCO_GRUPO_ID);
+      const caminho = obterCaminhoAncestrais(nos, FOCO_GRUPO_ID) || [];
+      if (noFocado) {
+        nosParaExibir = [noFocado];
+        htmlBreadcrumb = `
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.3); border-radius:8px; padding:10px 14px; margin-bottom:14px">
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:13px">
+              <span style="color:var(--tx3)">Hierarquia Focada:</span>
+              <button class="acao-linha" style="font-size:12px; padding:2px 8px" data-focargrupo="0">🏛️ Raiz Geral</button>
+              ${caminho.map((p, idx) => `
+                <span style="color:var(--tx3)">›</span>
+                <button class="acao-linha ${idx === caminho.length - 1 ? 'primario' : ''}" style="font-size:12px; padding:2px 8px" data-focargrupo="${p.id}">
+                  ${esc(p.nome)}
+                </button>
+              `).join('')}
+            </div>
+            <button class="acao-linha" data-focargrupo="0" style="font-size:12px">🌐 Ver Estrutura Completa</button>
+          </div>
+        `;
+      }
+    }
+
+    return htmlBreadcrumb + nosParaExibir.map(n => noCardHTML(n, 0, comGerente, nos)).join('');
+  };
 
   function ligarToggles(raiz) {
-    (raiz || document).querySelectorAll('[data-tgl]').forEach(s => s.onclick = () => {
+    (raiz || document).querySelectorAll('[data-tgl]').forEach(s => s.onclick = (e) => {
+      e.stopPropagation();
       const alvo = document.getElementById(s.dataset.tgl);
       if (!alvo) return;
-      const aberto = !alvo.classList.contains('oculto');
-      alvo.classList.toggle('oculto', aberto);
-      s.textContent = aberto ? '▸ ' : '▾ ';
+      const aberto = alvo.style.display !== 'none';
+      alvo.style.display = aberto ? 'none' : 'block';
+      s.textContent = aberto ? '▸' : '▾';
     });
   }
 
@@ -108,19 +203,46 @@
   /* =====================================================================
      #/admin — ADMINISTRAÇÃO (só admin): Usuários · Grupos · Backup
      ===================================================================== */
+
   window.ViewAdmin = async function () {
     const eu = quem();
     if (!eu || eu.papel !== 'admin') { location.hash = '#/hoje'; return; }
     navAtiva('#/admin');
-    const abas = [['usuarios', 'Usuários'], ['grupos', 'Grupos'], ['backup', 'Backup']];
-    $('#app').innerHTML = `<h2>Administração</h2>
+    const abas = [['dashboard', 'Dashboard Global'], ['grupos', 'Estrutura & Grupos'], ['backup', 'Sistema & Backup']];
+    $('#app').innerHTML = `<h2>Administração do Sistema</h2>
       <div class="abas">${abas.map(([k, t]) => `<button data-a="${k}" class="${abaAdmin === k ? 'ativo' : ''}">${t}</button>`).join('')}</div>
       <div id="adm"><div class="carregando">…</div></div>`;
     document.querySelectorAll('.abas button').forEach(b => b.onclick = () => { abaAdmin = b.dataset.a; window.ViewAdmin(); });
-    if (abaAdmin === 'usuarios') await admUsuarios();
+    if (abaAdmin === 'dashboard') await admDashboard();
     else if (abaAdmin === 'grupos') await admGrupos();
     else admBackup();
   };
+
+  async function admDashboard() {
+    try {
+      const [grupos, contas, confs] = await Promise.all([api('/api/grupos'), api('/api/usuarios'), api('/api/conferencia/lista').catch(()=>[])]);
+      const efetivoTotal = grupos.reduce((acc, g) => acc + (g.efetivo || 0), 0);
+      const ativos = contas.filter(c => c.ativo).length;
+      const gerentesFaltando = grupos.filter(g => !contas.some(c => c.grupo_id === g.id && c.papel === 'gerente')).length;
+      $('#adm').innerHTML = `
+        <div class="resumo" style="margin-bottom:14px">
+          <div class="caixa"><b>${grupos.length}</b><span>Grupos</span></div>
+          <div class="caixa"><b>${efetivoTotal}</b><span>Total de Pessoal (Banco)</span></div>
+          <div class="caixa"><b>${contas.length}</b><span>Usuários Registrados</span></div>
+          <div class="caixa"><b>${confs.length}</b><span>Conferências</span></div>
+        </div>
+        <div class="cartao">
+          <h3 style="margin-top:0">Saúde da Estrutura</h3>
+          <ul style="color:var(--tx2);padding-left:20px;line-height:1.8">
+            <li>Proteção de Dados: <span style="color:var(--verde-claro)">Backups Automáticos em Background (Ativo)</span></li>
+            <li>Alertas de Gestão: <b style="color:${gerentesFaltando > 0 ? 'var(--verm-txt)' : 'var(--verde-claro)'}">${gerentesFaltando} grupos sem gerente</b></li>
+            <li>Controle de Acesso: Bloqueio contra Força Bruta ativo (Limiter em memória isolada).</li>
+          </ul>
+        </div>`;
+    } catch (e) {
+      $('#adm').innerHTML = '<span class="vazio">Falha ao carregar dashboard.</span>';
+    }
+  }
 
   /* --- ADMIN › usuários: SOMENTE tabela (ID·Login·Papel·Grupo·Status·Criada·Ações) + filtros --- */
   async function admUsuarios() {
@@ -173,121 +295,334 @@
     });
   }
 
-  /* --- ADMIN › grupos: árvore nested colapsável + criar (EXIGE gerente) + trocar gerente + subordinação + excluir --- */
+  /* --- ADMIN › grupos: árvore nested colapsável + foco recursivo + ações completas --- */
   async function admGrupos() {
     const [grupos, contas, arvore] = await Promise.all([api('/api/grupos'), api('/api/usuarios'), api('/api/grupos/arvore')]);
     const gerenteDe = {};
     contas.filter(c => c.papel === 'gerente' && c.ativo && c.grupo_id).forEach(c => { gerenteDe[c.grupo_id] = c.login; });
     marcarGerente(arvore, gerenteDe);
-    const optsContas = gid => contas.filter(c => c.grupo_id === gid && c.papel !== 'admin' && c.ativo)
-      .map(c => `<option value="${esc(c.login)}">${esc(c.login)} (${rotuloPapel(c.papel)})</option>`).join('');
-    const linhas = grupos.map(g => {
-      const sups = g.superiores_ids || [];
-      return `<div class="cartao" data-g="${g.id}" style="margin-bottom:10px">
-        <h3 style="margin:0 0 6px">${esc(g.nome)} ${codigoChip(g.codigo)}</h3>
-        <p style="margin:0 0 6px;color:var(--tx2);font-size:13px">gerente: <b>${esc(gerenteDe[g.id] || '— sem gerente —')}</b> · ${g.efetivo} no efetivo · ${g.contas} conta(s)</p>
-        <div class="form-linha">
-          <div class="campo"><label>Trocar gerente — promover conta</label><select id="tg-${g.id}">${optsContas(g.id)}</select></div>
-          <div class="campo"><label>Subordinado a</label><select id="sub-${g.id}">
-            <option value="">— sem superior —</option>
-            ${grupos.filter(x => x.id !== g.id).map(x => `<option value="${x.id}" ${sups.includes(x.id) ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}
-          </select></div>
+
+    const renderConteudo = () => {
+      $('#adm').innerHTML = `
+        <div class="cartao">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
+            <div>
+              <h3 style="margin:0 0 4px">Estrutura & Hierarquia Organizacional</h3>
+              <p style="color:var(--tx2); font-size:13px; margin:0">Navegue, expanda e foque em unidades e subgrupos recursivamente.</p>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap">
+              ${FOCO_GRUPO_ID ? `<button class="acao-linha" id="btVoltarTodos">🌐 Ver Toda a Estrutura</button>` : ''}
+              <button class="primario" id="btNovoGrupoRaiz">+ Novo Grupo Raiz</button>
+            </div>
+          </div>
+
+          <div class="campo" style="margin-bottom:14px">
+            <input id="fGNome" placeholder="Filtrar por nome do grupo ou código (#ABC123)…">
+          </div>
+
+          <div id="arvoreAdm" style="display:flex; flex-direction:column; gap:2px">
+            ${arvoreHTML(arvore, true)}
+          </div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="primario" data-trocar="${g.id}">Trocar gerente</button>
-          <button class="acao-linha" data-remover="${g.id}">Remover subordinação</button>
-          <button class="perigo" data-excluir="${g.id}" data-nome="${esc(g.nome)}">Excluir grupo</button>
-        </div></div>`;
-    }).join('');
-    $('#adm').innerHTML = `<div class="cartao"><h3 style="margin-top:0">Hierarquia dos grupos (subordinados indentados)</h3>
-        <div class="campo" style="margin-bottom:8px"><label>Filtrar grupos</label><input id="fGNome" placeholder="buscar grupo…"></div>
-        <div id="arvoreAdm">${arvoreHTML(arvore, true)}</div></div>
-      <div class="cartao"><h3 style="margin-top:0">Criar grupo — nasce com gerente</h3>
-        <div class="form-linha">
-          <div class="campo"><label>Nome do grupo</label><input id="gNome" placeholder="ex.: 1ª Cia"></div>
-          <div class="campo"><label>Login do gerente</label><input id="gLogin"></div>
-          <div class="campo"><label>Senha do gerente (mín. 8)</label><input id="gSenha" type="password"></div>
-          <div class="campo"><label>Nome de guerra do gerente</label><input id="gGuerra"></div></div>
-        <button class="primario" id="gGo">Criar grupo</button>
-        <p style="color:var(--tx2);font-size:12px">O grupo exige gerente no ato da criação — sem gerente, sem grupo.</p></div>
-      <div class="cartao"><div class="campo" style="margin-bottom:8px"><label>Filtrar grupos (painel)</label><input id="fGPainel" placeholder="buscar grupo…"></div>
-        ${linhas || '<span class="vazio">nenhum grupo</span>'}</div>`;
-    $('#gGo').onclick = async () => {
-      const nome = $('#gNome').value.trim(), login = $('#gLogin').value.trim(),
-            senha = $('#gSenha').value, guerra = $('#gGuerra').value.trim();
-      if (!nome || !login || senha.length < 8 || !guerra) { toast('Nome do grupo + login + senha (mín. 8) + nome de guerra do gerente', 'erro'); return; }
-      const r = await api('/api/grupos', { method: 'POST', body: JSON.stringify({ nome, login, senha, nome_guerra: guerra }) });
-      toast(`Grupo criado — código ${r.codigo}, gerente ${login}`); window.ViewAdmin();
+      `;
+
+      ligarEventosArvore();
     };
-    // filtro da árvore: mantém ancestral de resultado visível e EXPANDE os ramos achados
-    const renderArv = nos => {
-      $('#arvoreAdm').innerHTML = arvoreHTML(nos, true);
+
+    const ligarEventosArvore = () => {
       ligarToggles($('#arvoreAdm'));
-    };
-    $('#fGNome').oninput = () => {
-      const q = $('#fGNome').value.trim().toLowerCase();
-      if (!q) { renderArv(arvore || []); return; }
-      const mostrar = n => {
-        const eu = n.nome.toLowerCase().includes(q) || (n.codigo || '').toLowerCase().includes(q);
-        const filhos = (n.filhos || []).map(f => mostrar(f)).filter(Boolean);
-        if (!eu && !filhos.length) return null;
-        return { ...n, filhos: filhos.length ? filhos : (n.filhos || []) };
-      };
-      renderArv((arvore || []).map(mostrar).filter(Boolean));
-      $('#arvoreAdm').querySelectorAll('.oculto').forEach(d => d.classList.remove('oculto'));
-      $('#arvoreAdm').querySelectorAll('[data-tgl]').forEach(s => { s.textContent = '▾ '; });
-    };
-    $('#fGPainel').oninput = () => {
-      const q = $('#fGPainel').value.trim().toLowerCase();
-      document.querySelectorAll('#adm div.cartao[data-g]').forEach(c => {
-        c.style.display = !q || c.querySelector('h3').textContent.toLowerCase().includes(q) ? '' : 'none';
+
+      // Botões de focar em um nó
+      $('#arvoreAdm').querySelectorAll('[data-focargrupo]').forEach(b => {
+        b.onclick = (e) => {
+          e.stopPropagation();
+          const gid = +b.dataset.focargrupo;
+          FOCO_GRUPO_ID = gid > 0 ? gid : null;
+          renderConteudo();
+        };
       });
+
+      if ($('#btVoltarTodos')) {
+        $('#btVoltarTodos').onclick = () => {
+          FOCO_GRUPO_ID = null;
+          renderConteudo();
+        };
+      }
+
+      // Botão de Novo Grupo Raiz
+      $('#btNovoGrupoRaiz').onclick = () => modalCriarGrupo(null);
+
+      // Botões de Novo Subgrupo
+      $('#arvoreAdm').querySelectorAll('[data-novosub]').forEach(b => {
+        b.onclick = () => {
+          const supId = +b.dataset.novosub;
+          const supNome = b.dataset.nome;
+          modalCriarGrupo(supId, supNome);
+        };
+      });
+
+      // Botões de Trocar Gerente
+      $('#arvoreAdm').querySelectorAll('[data-trocarger]').forEach(b => {
+        b.onclick = () => {
+          const gid = +b.dataset.trocarger;
+          const gnome = b.dataset.nome;
+          modalTrocarGerente(gid, gnome);
+        };
+      });
+
+      // Botões de Subordinação
+      $('#arvoreAdm').querySelectorAll('[data-subordinar]').forEach(b => {
+        b.onclick = () => {
+          const gid = +b.dataset.subordinar;
+          const gnome = b.dataset.nome;
+          modalGerenciarSubordinacao(gid, gnome);
+        };
+      });
+
+      // Botões de Auditar Contas
+      $('#arvoreAdm').querySelectorAll('[data-contas]').forEach(b => {
+        b.onclick = () => {
+          const gid = +b.dataset.contas;
+          const nome = b.dataset.nome;
+          modalAuditarContas(gid, nome);
+        };
+      });
+
+      // Botões de Excluir
+      $('#arvoreAdm').querySelectorAll('[data-excluir]').forEach(b => {
+        b.onclick = () => {
+          const gid = +b.dataset.excluir;
+          const gnome = b.dataset.nome;
+          modalExcluirGrupo(gid, gnome);
+        };
+      });
+
+      // Busca na árvore
+      $('#fGNome').oninput = () => {
+        const q = $('#fGNome').value.trim().toLowerCase();
+        if (!q) {
+          $('#arvoreAdm').innerHTML = arvoreHTML(arvore, true);
+          ligarEventosArvore();
+          return;
+        }
+        const mostrar = n => {
+          const eu = n.nome.toLowerCase().includes(q) || (n.codigo || '').toLowerCase().includes(q);
+          const filhos = (n.filhos || []).map(f => mostrar(f)).filter(Boolean);
+          if (!eu && !filhos.length) return null;
+          return { ...n, filhos: filhos.length ? filhos : (n.filhos || []) };
+        };
+        const filtrada = (arvore || []).map(mostrar).filter(Boolean);
+        $('#arvoreAdm').innerHTML = arvoreHTML(filtrada, true);
+        $('#arvoreAdm').querySelectorAll('.subgrupos-container').forEach(d => { d.style.display = 'block'; });
+        $('#arvoreAdm').querySelectorAll('[data-tgl]').forEach(s => { s.textContent = '▾'; });
+        ligarEventosArvore();
+      };
     };
-    ligarToggles($('#adm'));
-    document.querySelectorAll('#adm button[data-trocar]').forEach(b => b.onclick = async () => {
-      const gid = b.dataset.trocar;
-      const sel = $('#tg-' + gid);
-      const login = sel ? sel.value : '';
-      if (!login) { toast('Escolha a conta a promover', 'erro'); return; }
-      try {
-        await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login }) });
-        toast('Gerente trocado — o anterior virou operador'); window.ViewAdmin();
-      } catch (e) {}
-    });
-    document.querySelectorAll('#adm button[data-remover]').forEach(b => b.onclick = async () => {
-      const gid = +b.dataset.remover;
-      const sel = $('#sub-' + gid);
-      if (!sel || !sel.value) { toast('Este grupo não tem superior', 'erro'); return; }
-      try {
-        await api('/api/admin/grupos/vinculo?superior_id=' + sel.value + '&subordinado_id=' + gid, { method: 'DELETE', body: '{}' });
-        toast('Subordinação removida'); window.ViewAdmin();
-      } catch (e) {}
-    });
-    document.querySelectorAll('#adm select[id^="sub-"]').forEach(sel => sel.onchange = async () => {
-      const gid = sel.id.split('-')[1];
-      if (!sel.value) return; // remover é pelo botão
-      try {
-        await api('/api/admin/grupos/vinculo', { method: 'POST', body: JSON.stringify({ superior_id: +sel.value, subordinado_id: +gid }) });
-        toast('Subordinação gravada'); window.ViewAdmin();
-      } catch (e) {}
-    });
-    document.querySelectorAll('#adm button[data-excluir]').forEach(b => b.onclick = () => {
-      const gid = b.dataset.excluir, gnome = b.dataset.nome;
-      const div = modal(`<div class="modal-inner"><h3>Excluir grupo — ${esc(gnome)}</h3>
-        <p style="color:var(--tx2);font-size:13px;margin:6px 0">Exclusão normal: só se o grupo estiver vazio.</p>
-        <div class="modal-acoes"><button class="fantasma" id="mX">Cancelar</button>
-        <button class="perigo" id="mGo">Tentar exclusão normal</button></div>
-        <div style="border-top:1px solid var(--borda);margin-top:12px;padding-top:10px">
-          <p style="color:var(--verm);font-size:13px;margin:4px 0"><b>Exclusão FORÇADA</b> — remove o grupo INTEIRO mesmo com contas e pessoal (tudo é apagado). Grupos com histórico de conferências NUNCA são excluídos, nem forçadamente. Requer sua senha de admin.</p>
-          <div class="campo"><label>Senha de admin</label><input type="password" id="fSenha"></div>
-          <div class="modal-acoes"><button class="perigo" id="mForce">Excluir forçadamente</button></div>
-        </div></div>`);
+
+    function modalCriarGrupo(superiorId, superiorNome) {
+      const html = `
+        <div class="modal" style="max-width:520px">
+          <h3 style="margin-top:0">${superiorId ? `Criar Subgrupo subordinado a "${esc(superiorNome)}"` : 'Criar Novo Grupo Raiz'}</h3>
+          <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">Cada grupo exige um gerente no ato da criação para assegurar a cadeia de comando.</p>
+          
+          <div class="campo" style="margin-bottom:8px">
+            <label>Nome da Unidade / Subgrupo *</label>
+            <input id="gNome" placeholder="ex.: 1ª Companhia / 1º Pelotão">
+          </div>
+          <div class="form-linha" style="margin-bottom:8px">
+            <div class="campo" style="flex:1">
+              <label>Login do Gerente *</label>
+              <input id="gLogin" placeholder="ex.: silva.gerente">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Nome de Guerra *</label>
+              <input id="gGuerra" placeholder="ex.: SILVA">
+            </div>
+          </div>
+          <div class="campo" style="margin-bottom:14px">
+            <label>Senha do Gerente (mín. 8 caracteres) *</label>
+            <input id="gSenha" type="password" placeholder="••••••••">
+          </div>
+
+          <div style="display:flex; gap:8px; justify-content:flex-end">
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+            <button class="primario" id="gGo">Criar Unidade</button>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+      m.querySelector('#gGo').onclick = async () => {
+        const nome = m.querySelector('#gNome').value.trim();
+        const login = m.querySelector('#gLogin').value.trim();
+        const senha = m.querySelector('#gSenha').value;
+        const guerra = m.querySelector('#gGuerra').value.trim();
+
+        if (!nome || !login || senha.length < 8 || !guerra) {
+          toast('Preencha todos os campos obrigatórios (senha mín. 8 caracteres)', 'erro');
+          return;
+        }
+        try {
+          const r = await api('/api/grupos', {
+            method: 'POST',
+            body: JSON.stringify({ nome, login, senha, nome_guerra: guerra })
+          });
+          const novoId = r.id;
+          if (superiorId && novoId) {
+            await api('/api/admin/grupos/vinculo', {
+              method: 'POST',
+              body: JSON.stringify({ superior_id: superiorId, subordinado_id: novoId })
+            });
+          }
+          toast(`Unidade criada com sucesso (código ${r.codigo})`);
+          m.remove();
+          window.ViewAdmin();
+        } catch (e) {}
+      };
+    }
+
+    function modalTrocarGerente(gid, gnome) {
+      const contasGrupo = contas.filter(c => c.grupo_id === gid && c.papel !== 'admin' && c.ativo);
+      const html = `
+        <div class="modal" style="max-width:480px">
+          <h3 style="margin-top:0">👤 Trocar Gerente — ${esc(gnome)}</h3>
+          <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">Selecione uma conta existente deste grupo para ser promovida a Gerente.</p>
+          
+          <div class="campo" style="margin-bottom:14px">
+            <label>Conta a ser promovida</label>
+            <select id="mSelNovaConta">
+              <option value="">— Selecione uma conta do grupo —</option>
+              ${contasGrupo.map(c => `<option value="${esc(c.login)}">${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)}</option>`).join('')}
+            </select>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:8px">
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+            <button class="primario" id="mBtnTrocarGer">Promover a Gerente</button>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+      m.querySelector('#mBtnTrocarGer').onclick = async () => {
+        const login = m.querySelector('#mSelNovaConta').value;
+        if (!login) { toast('Selecione a conta para promover', 'erro'); return; }
+        try {
+          await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login }) });
+          toast('Gerente atualizado com sucesso!');
+          m.remove();
+          window.ViewAdmin();
+        } catch (e) {}
+      };
+    }
+
+    function modalGerenciarSubordinacao(gid, gnome) {
+      const gAtual = grupos.find(x => x.id === gid);
+      const sups = (gAtual && gAtual.superiores_ids) || [];
+      const supAtualId = sups[0] || null;
+
+      const html = `
+        <div class="modal" style="max-width:500px">
+          <h3 style="margin-top:0">⛓️ Subordinação — ${esc(gnome)}</h3>
+          <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">Defina a qual unidade superior este grupo reporta na cadeia de comando.</p>
+
+          <div class="campo" style="margin-bottom:14px">
+            <label>Unidade Superior (Comando Direto)</label>
+            <select id="mSelSuperior">
+              <option value="">— Sem Superior (Nível Raiz) —</option>
+              ${grupos.filter(x => x.id !== gid).map(x => `<option value="${x.id}" ${x.id === supAtualId ? 'selected' : ''}>${esc(x.nome)} (#${x.codigo})</option>`).join('')}
+            </select>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px">
+            ${supAtualId ? `<button type="button" class="perigo" id="mBtnRemoverSub">Desvincular Superior</button>` : '<div></div>'}
+            <div style="display:flex; gap:8px">
+              <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+              <button class="primario" id="mBtnSalvarSub">Salvar Subordinação</button>
+            </div>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+
+      m.querySelector('#mBtnSalvarSub').onclick = async () => {
+        const novoSupId = +m.querySelector('#mSelSuperior').value;
+        try {
+          if (supAtualId && supAtualId !== novoSupId) {
+            await api(`/api/admin/grupos/vinculo?superior_id=${supAtualId}&subordinado_id=${gid}`, { method: 'DELETE', body: '{}' });
+          }
+          if (novoSupId > 0) {
+            await api('/api/admin/grupos/vinculo', { method: 'POST', body: JSON.stringify({ superior_id: novoSupId, subordinado_id: gid }) });
+          }
+          toast('Subordinação atualizada');
+          m.remove();
+          window.ViewAdmin();
+        } catch (e) {}
+      };
+
+      if (m.querySelector('#mBtnRemoverSub')) {
+        m.querySelector('#mBtnRemoverSub').onclick = async () => {
+          try {
+            await api(`/api/admin/grupos/vinculo?superior_id=${supAtualId}&subordinado_id=${gid}`, { method: 'DELETE', body: '{}' });
+            toast('Subordinação removida');
+            m.remove();
+            window.ViewAdmin();
+          } catch (e) {}
+        };
+      }
+    }
+
+    function modalAuditarContas(gid, nome) {
+      const cGrupo = contas.filter(c => c.grupo_id === gid);
+      const html = `
+        <div class="modal" style="max-width:800px; max-height:85vh; display:flex; flex-direction:column">
+          <h3 style="margin-top:0">📊 Contas & Usuários: ${esc(nome)}</h3>
+          <div style="overflow-y:auto; flex:1">
+            <table style="width:100%; margin-top:8px">
+              <thead><tr><th>ID</th><th>Login</th><th>Nome de Guerra</th><th>Papel</th><th>Status</th></tr></thead>
+              <tbody>
+                ${cGrupo.length ? cGrupo.map(c => `
+                  <tr>
+                    <td>#${c.id}</td>
+                    <td><b>${esc(c.login)}</b></td>
+                    <td>${esc(c.nome_guerra || '—')}</td>
+                    <td>${rotuloPapel(c.papel)}</td>
+                    <td><span style="color:${c.ativo ? 'var(--verde-claro)' : 'var(--tx3)'}; font-weight:700">${c.ativo ? 'Ativa' : 'Desativada'}</span></td>
+                  </tr>
+                `).join('') : '<tr><td colspan="5"><span class="vazio">Nenhuma conta cadastrada neste grupo.</span></td></tr>'}
+              </tbody>
+            </table>
+          </div>
+          <div style="margin-top:16px; text-align:right; border-top:1px solid var(--borda); padding-top:10px">
+            <button class="primario" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+          </div>
+        </div>
+      `;
+      modal(html);
+    }
+
+    function modalExcluirGrupo(gid, gnome) {
+      const div = modal(`
+        <div class="modal-inner">
+          <h3>Excluir grupo — ${esc(gnome)}</h3>
+          <p style="color:var(--tx2);font-size:13px;margin:6px 0">Exclusão normal: só é permitida se o grupo estiver vazio.</p>
+          <div class="modal-acoes">
+            <button class="fantasma" id="mX">Cancelar</button>
+            <button class="perigo" id="mGo">Tentar exclusão normal</button>
+          </div>
+          <div style="border-top:1px solid var(--borda);margin-top:12px;padding-top:10px">
+            <p style="color:var(--verm);font-size:13px;margin:4px 0"><b>Exclusão FORÇADA</b> — remove o grupo INTEIRO mesmo com contas e pessoal (tudo é apagado). Grupos com histórico de conferências NUNCA são excluídos. Requer sua senha de admin.</p>
+            <div class="campo"><label>Senha de admin</label><input type="password" id="fSenha"></div>
+            <div class="modal-acoes"><button class="perigo" id="mForce">Excluir forçadamente</button></div>
+          </div>
+        </div>
+      `);
       if (!div) return;
       div.querySelector('#mX').onclick = () => div.fechar && div.fechar();
       div.querySelector('#mGo').onclick = async () => {
         try {
           await api(`/api/grupos/${gid}`, { method: 'DELETE' });
-          toast('Grupo excluído'); div.fechar && div.fechar(); window.ViewAdmin();
+          toast('Grupo excluído');
+          div.fechar && div.fechar();
+          window.ViewAdmin();
         } catch (e) {}
       };
       div.querySelector('#mForce').onclick = async () => {
@@ -296,10 +631,13 @@
         try {
           const r = await api(`/api/grupos/${gid}?forcar=1`, { method: 'DELETE', body: JSON.stringify({ senha }) });
           toast(`Grupo excluído forçadamente — ${r.contas_removidas} conta(s), ${r.pessoas_removidas} pessoa(s) removidas`);
-          div.fechar && div.fechar(); window.ViewAdmin();
+          div.fechar && div.fechar();
+          window.ViewAdmin();
         } catch (e) {}
       };
-    });
+    }
+
+    renderConteudo();
   }
 
   /* --- ADMIN › backup: gerar download .db + IMPORTAR upload com confirmação --- */
@@ -450,11 +788,11 @@
         setor_id: +$('#pSetor').value || null, funcao_id: +$('#pFuncao').value || null, status: $('#pStatus').value };
       if (!corpo.nome_guerra || !corpo.nome_completo) { toast('Nomes obrigatórios', 'erro'); return; }
       const id = $('#pId').value;
-      await processar(() => id
+      const r = await processar(() => id
         ? api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) })
         : api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) }),
         id ? 'Salvando alterações…' : 'Cadastrando militar…');
-      window.ViewGrupos();
+      if (r.ok) window.ViewGrupos();
     };
 
     /* --- adição em lote --- */

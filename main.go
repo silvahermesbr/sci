@@ -4,9 +4,11 @@ package main
 // Binário único: Go + SQLite (arquivo) + frontend embutido.
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/debug"
 	"time"
@@ -14,7 +16,7 @@ import (
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
 // (v9.3 = 6). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 12
+const versaoSchemaBinario = 16
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio
@@ -75,9 +77,38 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              ":" + porta,
-		Handler:           app.mux,
+		Handler:           recoveryMiddleware(app.mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Printf("SCI no ar — porta %s — dados em %s", porta, dataDir)
-	log.Fatal(srv.ListenAndServe())
+	
+	go func() {
+		log.Printf("SCI no ar — porta %s — dados em %s", porta, dataDir)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("erro no servidor: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, os.Kill)
+	<-quit
+	log.Println("Encerrando o servidor (graceful shutdown)...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Erro ao encerrar o servidor: %v", err)
+	}
+	log.Println("Servidor encerrado com sucesso.")
+}
+
+func recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("PANIC RECOVERED: %v\n%s", err, debug.Stack())
+				http.Error(w, "Erro Interno do Servidor", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }

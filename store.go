@@ -80,6 +80,18 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV12(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV13(); err != nil {
+		return nil, err
+	}
+	if err := s.migrarV14(); err != nil {
+		return nil, err
+	}
+	if err := s.migrarV15(); err != nil {
+		return nil, err
+	}
+	if err := s.migrarV16(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -587,6 +599,193 @@ func (s *Store) migrarV12() error {
 		}
 	}
 	return s.marcarVersao(12)
+}
+
+// migrarV13 (v1.0): Módulo de Escalas e Serviços Integrados.
+func (s *Store) migrarV13() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 13`).Scan(&v)
+	if v == 13 {
+		return nil
+	}
+	ddl := []string{
+		`CREATE TABLE IF NOT EXISTS escala_tipos (
+			id INTEGER PRIMARY KEY,
+			grupo_id INTEGER REFERENCES grupos(id),
+			nome TEXT NOT NULL,
+			descricao TEXT,
+			ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0,1)),
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE TABLE IF NOT EXISTS escala_turnos (
+			id INTEGER PRIMARY KEY,
+			grupo_id INTEGER NOT NULL REFERENCES grupos(id),
+			tipo_id INTEGER NOT NULL REFERENCES escala_tipos(id),
+			data_inicio TEXT NOT NULL,
+			data_fim TEXT NOT NULL,
+			observacao TEXT,
+			criado_por INTEGER REFERENCES usuarios(id),
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_escala_turnos_grupo ON escala_turnos(grupo_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_escala_turnos_datas ON escala_turnos(data_inicio, data_fim)`,
+		`CREATE TABLE IF NOT EXISTS escala_pessoas (
+			id INTEGER PRIMARY KEY,
+			turno_id INTEGER NOT NULL REFERENCES escala_turnos(id) ON DELETE CASCADE,
+			pessoa_id INTEGER NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
+			funcao_escala TEXT,
+			UNIQUE(turno_id, pessoa_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_escala_pessoas_pessoa ON escala_pessoas(pessoa_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_escala_pessoas_turno ON escala_pessoas(turno_id)`,
+	}
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v13 ddl: %w", err)
+		}
+	}
+	// Seeds de tipos padrão de serviço
+	seeds := []string{
+		"Oficial de Dia", "Adjunto ao Oficial de Dia", "Sargento de Dia",
+		"Cabo da Guarda", "Sentinela / Guarda do Quartel", "Plantonista",
+		"Permanência", "Motorista de Dia",
+	}
+	for _, sNome := range seeds {
+		_, _ = s.db.Exec(`INSERT INTO escala_tipos (nome, ativo)
+			SELECT ?, 1 WHERE NOT EXISTS (SELECT 1 FROM escala_tipos WHERE nome = ? AND grupo_id IS NULL)`,
+			sNome, sNome)
+	}
+	return s.marcarVersao(13)
+}
+
+// migrarV14 (v1.0): Módulo de Material, Reserva de Armamento e Cautelas.
+func (s *Store) migrarV14() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 14`).Scan(&v)
+	if v == 14 {
+		return nil
+	}
+	ddl := []string{
+		`CREATE TABLE IF NOT EXISTS material_categorias (
+			id INTEGER PRIMARY KEY,
+			grupo_id INTEGER REFERENCES grupos(id),
+			nome TEXT NOT NULL,
+			ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0,1))
+		)`,
+		`CREATE TABLE IF NOT EXISTS material_itens (
+			id INTEGER PRIMARY KEY,
+			grupo_id INTEGER NOT NULL REFERENCES grupos(id),
+			categoria_id INTEGER REFERENCES material_categorias(id),
+			nome TEXT NOT NULL,
+			codigo_patrimonio TEXT NOT NULL,
+			numero_serie TEXT,
+			status TEXT NOT NULL DEFAULT 'disponivel' CHECK (status IN ('disponivel', 'acautelado', 'manutencao', 'baixado')),
+			observacao TEXT,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			UNIQUE(grupo_id, codigo_patrimonio)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_material_itens_grupo ON material_itens(grupo_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_material_itens_status ON material_itens(status)`,
+		`CREATE TABLE IF NOT EXISTS material_cautelas (
+			id INTEGER PRIMARY KEY,
+			item_id INTEGER NOT NULL REFERENCES material_itens(id) ON DELETE CASCADE,
+			pessoa_id INTEGER NOT NULL REFERENCES pessoas(id),
+			responsavel_entrega_id INTEGER NOT NULL REFERENCES usuarios(id),
+			responsavel_recebimento_id INTEGER REFERENCES usuarios(id),
+			data_saida TEXT NOT NULL,
+			data_devolucao TEXT,
+			obs_saida TEXT,
+			obs_devolucao TEXT,
+			status TEXT NOT NULL DEFAULT 'ativa' CHECK (status IN ('ativa', 'devolvida'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cautelas_item ON material_cautelas(item_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cautelas_pessoa ON material_cautelas(pessoa_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cautelas_status ON material_cautelas(status)`,
+	}
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v14 ddl: %w", err)
+		}
+	}
+	// Seeds de categorias padrão de materiais
+	cats := []string{
+		"Armamento", "Munição & Carregadores", "Comunicação / Rádios",
+		"Viaturas & Chaves", "Equipamentos de Proteção / EPI", "Informática & TI",
+		"Ferramental / Diversos",
+	}
+	for _, cNome := range cats {
+		_, _ = s.db.Exec(`INSERT INTO material_categorias (nome, ativo)
+			SELECT ?, 1 WHERE NOT EXISTS (SELECT 1 FROM material_categorias WHERE nome = ? AND grupo_id IS NULL)`,
+			cNome, cNome)
+	}
+	return s.marcarVersao(14)
+}
+
+// migrarV15 (v1.0): Configurações do Sistema e Suporte White-Label (Multi-Instituição).
+func (s *Store) migrarV15() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 15`).Scan(&v)
+	if v == 15 {
+		return nil
+	}
+	ddl := []string{
+		`CREATE TABLE IF NOT EXISTS configuracoes (
+			chave TEXT PRIMARY KEY,
+			valor TEXT NOT NULL,
+			atualizado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+	}
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v15 ddl: %w", err)
+		}
+	}
+	defaults := map[string]string{
+		"NOME_SISTEMA":          "SCI",
+		"SUBTITULO_SISTEMA":     "Controle Interno",
+		"TITULO_ORGANIZACAO":    "3º B Com GE",
+		"ROTULO_GRUPO":          "Companhia / Subunidade",
+		"ROTULO_SETOR":          "Pelotão / Seção",
+		"ROTULO_FUNCAO":         "Função",
+		"ROTULO_PESSOA":         "Militar",
+		"ROTULO_IDENTIFICADOR":  "Nome de Guerra",
+		"COR_PRIMARIA":          "#57a173",
+		"COR_PRIMARIA_CLARO":    "#8fd2a9",
+		"COR_PRIMARIA_ESCURO":   "#275e42",
+	}
+	for k, v := range defaults {
+		_, _ = s.db.Exec(`INSERT INTO configuracoes (chave, valor)
+			SELECT ?, ? WHERE NOT EXISTS (SELECT 1 FROM configuracoes WHERE chave = ?)`,
+			k, v, k)
+	}
+	return s.marcarVersao(15)
+}
+
+// migrarV16 (v1.0): Anexos e Escaneamentos em Cautelas de Material.
+func (s *Store) migrarV16() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 16`).Scan(&v)
+	if v == 16 {
+		return nil
+	}
+	ddl := []string{
+		`CREATE TABLE IF NOT EXISTS material_cautela_anexos (
+			id INTEGER PRIMARY KEY,
+			cautela_id INTEGER NOT NULL REFERENCES material_cautelas(id) ON DELETE CASCADE,
+			nome_arquivo TEXT NOT NULL,
+			tipo_mime TEXT NOT NULL,
+			tamanho INTEGER NOT NULL,
+			dados_base64 TEXT NOT NULL,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cautela_anexos_cautela ON material_cautela_anexos(cautela_id)`,
+	}
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v16 ddl: %w", err)
+		}
+	}
+	return s.marcarVersao(16)
 }
 
 // gerarCodigoGrupo: 6 caracteres sem ambiguidade (sem 0/O, 1/I/L, 2/S óbvios? mantemos

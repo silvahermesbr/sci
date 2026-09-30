@@ -20,3 +20,4 @@ FLAG_BACKUP.txt
 
 # artefatos locais
 /tmp/
+*.zip

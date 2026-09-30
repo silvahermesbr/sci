@@ -179,6 +179,50 @@ function abrirModal(html, aoFechar) {
 }
 window.abrirModal = abrirModal;
 
+function modal(html) {
+  const mask = document.createElement('div');
+  mask.className = 'modal-mask';
+  if (typeof html === 'string' && html.trim().startsWith('<div class="modal')) {
+    mask.innerHTML = html;
+  } else {
+    const m = document.createElement('div');
+    m.className = 'modal';
+    m.innerHTML = html;
+    mask.appendChild(m);
+  }
+  document.body.appendChild(mask);
+
+  function fechar(ev) {
+    if (ev && ev.key === 'Escape') {
+      document.removeEventListener('keydown', fechar, true);
+      mask.remove();
+    }
+  }
+  document.addEventListener('keydown', fechar, true);
+  mask.addEventListener('click', ev => {
+    if (ev.target === mask) {
+      document.removeEventListener('keydown', fechar, true);
+      mask.remove();
+    }
+  });
+
+  mask.fechar = () => {
+    document.removeEventListener('keydown', fechar, true);
+    mask.remove();
+  };
+
+  const inp = mask.querySelector('input, select, textarea');
+  if (inp) inp.focus();
+
+  return mask;
+}
+window.modal = modal;
+
+function alerta(msg) {
+  toast(msg, 'erro');
+}
+window.alerta = alerta;
+
 /* confirmar(msg) → Promise<bool> (Esc/máscara/Cancelar = false) */
 function confirmar(msg) {
   return new Promise(resolve => {
@@ -255,10 +299,21 @@ function montarShell(usuario) {
   const papel = usuario && usuario.papel;
   let itens;
   if (papel === 'admin') {
-    itens = [['#/dashboard', 'DASHBOARD'], ['#/admin', 'ADMIN'], ['#/relatorios', 'RELATÓRIOS']];
+    itens = [
+      ['#/admin', 'ADMIN'],
+      ['#/relatorios', 'RELATÓRIOS'],
+      ['#/configuracoes', 'CONFIGURAÇÕES']
+    ];
   } else {
-    itens = [['#/hoje', 'CONFERÊNCIA'], ['#/relatorios', 'RELATÓRIOS']];
-    if (papel === 'gerente') itens.push(['#/grupos', 'GERENCIAR']);
+    itens = [
+      ['#/hoje', 'CONFERÊNCIA'],
+      ['#/escalas', 'ESCALAS'],
+      ['#/material', 'MATERIAL'],
+      ['#/relatorios', 'RELATÓRIOS']
+    ];
+    if (papel === 'gerente') {
+      itens.splice(3, 0, ['#/grupos', 'GERENCIAR']);
+    }
   }
   $('#nav', topbar).innerHTML = itens.map(it => '<a href="' + it[0] + '">' + it[1] + '</a>').join('');
   // botão de usuário GENÉRICO (ícone) — ordem Tenente 29/09: login/função truncavam
@@ -429,15 +484,20 @@ function rotear() {
 
   if (h === '' || h === '#' || h === '#/' || h === '#/login') { irPara(rotaInicial()); return; }
   if (h === '#/conferencias') { irPara('#/hoje'); return; }             // listas moram na Conferência
-  if (papel === 'admin' && (h === '#/hoje' || h === '#/conferencia')) { irPara('#/dashboard'); return; } // admin não vê conferência
-  if (papel !== 'admin' && h === '#/dashboard') { irPara(rotaInicial()); return; }
+  if (papel === 'admin' && (h === '#/hoje' || h === '#/conferencia' || h === '#/escalas' || h === '#/material')) { irPara('#/admin'); return; } // admin não tem grupo: restrito a gerentes/operadores
 
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
   if (h === '#/conferencia') { chamarView('ViewConferencia'); return; } // edição da conf aberta (v9.14)
+  if (h === '#/escalas') { chamarView('ViewEscalas'); return; }
+  if (h === '#/material') { chamarView('ViewMaterial'); return; }
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
-  if (h === '#/dashboard') { chamarView('ViewDashboard'); return; }
   if (h === '#/admin') {
     if (papel === 'admin') chamarView('ViewAdmin');
+    else irPara(rotaInicial());
+    return;
+  }
+  if (h === '#/configuracoes') {
+    if (papel === 'admin') chamarView('ViewConfiguracoes');
     else irPara(rotaInicial());
     return;
   }
@@ -501,22 +561,6 @@ function renderRelatorio(b, titulo) {
 }
 window.renderRelatorio = renderRelatorio;
 
-async function viewDashboard() {
-  navAtiva('#/dashboard');
-  const app = garantirApp();
-  app.innerHTML = '<div class="carregando">Carregando painel…</div>';
-  const hoje = new Date();
-  const periodo = semanaDe(dataLocal(hoje));
-  const b = await api('/api/relatorio?de=' + periodo[0] + '&ate=' + dataLocal(hoje));
-  b.De = periodo[0];
-  b.Ate = dataLocal(hoje);
-  const estadoAtual = await window.EfetivoAtualHTML(); // v9.15: estado atual do efetivo
-  app.innerHTML = '<h2>Dashboard</h2>' +
-    '<p style="color:var(--tx2);font-size:13px;margin-bottom:10px">Panorama da semana em curso — leitura.</p>' +
-    estadoAtual +
-    renderRelatorio(b, 'Semana em curso');
-}
-window.ViewDashboard = viewDashboard;
 
 
 /* ---------- v9.16.1: "Processando…" — aguarde global p/ toda ação de escrita ----------
@@ -550,10 +594,42 @@ function processar(tarefa, rotulo) {
 }
 window.processar = processar;
 
+window.CONFIGS = {};
+window.cfg = function (k, def) { return (window.CONFIGS && window.CONFIGS[k]) || def; };
+
+function aplicarConfiguracoes(c) {
+  if (!c) return;
+  window.CONFIGS = c;
+  const root = document.documentElement;
+  if (c.COR_PRIMARIA) root.style.setProperty('--verde', c.COR_PRIMARIA);
+  if (c.COR_PRIMARIA_CLARO) root.style.setProperty('--verde-claro', c.COR_PRIMARIA_CLARO);
+  if (c.COR_PRIMARIA_ESCURO) root.style.setProperty('--verdeesc', c.COR_PRIMARIA_ESCURO);
+  if (c.NOME_SISTEMA) {
+    document.title = c.NOME_SISTEMA + (c.TITULO_ORGANIZACAO ? ' — ' + c.TITULO_ORGANIZACAO : '');
+    const logoEl = document.querySelector('.logo');
+    if (logoEl) {
+      const svg = logoEl.querySelector('svg');
+      logoEl.innerHTML = (svg ? svg.outerHTML : '') + ' ' + esc(c.NOME_SISTEMA);
+    }
+  }
+  if (c.SUBTITULO_SISTEMA) {
+    const subEl = document.querySelector('.sub');
+    if (subEl) subEl.textContent = c.SUBTITULO_SISTEMA;
+  }
+}
+window.aplicarConfiguracoes = aplicarConfiguracoes;
+
 /* ---------- boot ---------- */
 window.SCI_BOOT = function () {
   window.onhashchange = rotear;
   (async () => {
+    try {
+      const cfgRes = await fetch('/api/configuracoes').then(r => r.json()).catch(() => null);
+      if (cfgRes && cfgRes.configuracoes) {
+        aplicarConfiguracoes(cfgRes.configuracoes);
+      }
+    } catch (e) {}
+
     try {
       const r = await api('/api/me');
       definirUsuario(r && r.usuario);

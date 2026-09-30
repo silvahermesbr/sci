@@ -82,7 +82,28 @@ type Limiter struct {
 }
 
 func NovoLimiter() *Limiter {
-	return &Limiter{falhas: map[string][]time.Time{}}
+	l := &Limiter{falhas: map[string][]time.Time{}}
+	go func() {
+		for range time.Tick(time.Hour) {
+			l.mu.Lock()
+			agora := time.Now()
+			for k, v := range l.falhas {
+				vivos := v[:0]
+				for _, t := range v {
+					if agora.Sub(t) < janelaFalhas {
+						vivos = append(vivos, t)
+					}
+				}
+				if len(vivos) == 0 {
+					delete(l.falhas, k)
+				} else {
+					l.falhas[k] = vivos
+				}
+			}
+			l.mu.Unlock()
+		}
+	}()
+	return l
 }
 
 const (

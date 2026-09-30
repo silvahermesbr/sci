@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -70,11 +71,7 @@ func jsonErro(w http.ResponseWriter, status int, msg string) {
 
 func decodificar(r *http.Request, v any) error {
 	defer r.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(body, v)
+	return json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v)
 }
 
 // ---------- backup definitivo ----------
@@ -102,19 +99,26 @@ func (a *App) backupAgora() (arquivo, shaHex string, err error) {
 	}
 	// checkpoint: mantém o -wal enxuto (revisão TAKEDA §2/SHORYU §1.2)
 	_, _ = a.st.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
-	raw, err := os.ReadFile(alvo)
+	fDB, err := os.Open(alvo)
 	if err != nil {
 		return
 	}
-	h := sha256.Sum256(raw)
-	shaHex = hex.EncodeToString(h[:])
+	defer fDB.Close()
+	
+	h := sha256.New()
+	tamanho, err := io.Copy(h, fDB)
+	if err != nil {
+		return
+	}
+	shaHex = hex.EncodeToString(h.Sum(nil))
+	
 	if err = os.WriteFile(alvo+".sha256", []byte(shaHex+"  "+nome+"\n"), 0o640); err != nil {
 		return
 	}
-	f, err2 := os.OpenFile(filepath.Join(dir, "MANIFEST.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
+	fManifest, err2 := os.OpenFile(filepath.Join(dir, "MANIFEST.txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o640)
 	if err2 == nil {
-		fmt.Fprintf(f, "%s\t%s\t%s\t%d bytes\n", time.Now().UTC().Format(time.RFC3339), nome, shaHex, len(raw))
-		f.Close()
+		fmt.Fprintf(fManifest, "%s\t%s\t%s\t%d bytes\n", time.Now().UTC().Format(time.RFC3339), nome, shaHex, tamanho)
+		fManifest.Close()
 	}
 	return nome, shaHex, nil
 }
@@ -230,6 +234,36 @@ func (a *App) rotas() {
 	m.Handle("POST /api/backup/importar", a.auth(true, a.hBackupImportar)) // R9
 	m.Handle("GET /api/backup/download", a.auth(true, a.hBackupDownload))
 
+	// Módulo de Escalas e Serviços Integrados (v1.0) - Restrito aos papéis do Grupo (Gerente / Operador)
+	escalaAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
+	m.Handle("GET /api/escalas/tipos", escalaAuth(a.hEscalasTiposList))
+	m.Handle("POST /api/escalas/tipos", escalaAuth(a.hEscalasTiposAdd))
+	m.Handle("DELETE /api/escalas/tipos/{id}", escalaAuth(a.hEscalasTiposDel))
+	m.Handle("GET /api/escalas/turnos", escalaAuth(a.hEscalasTurnosList))
+	m.Handle("POST /api/escalas/turnos", escalaAuth(a.hEscalasTurnosSave))
+	m.Handle("DELETE /api/escalas/turnos/{id}", escalaAuth(a.hEscalasTurnosDel))
+	m.Handle("GET /api/escalas/hoje", escalaAuth(a.hEscalasHoje))
+
+	// Módulo de Material e Cautelas (v1.0) - Restrito aos papéis do Grupo (Gerente / Operador)
+	materialAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
+	m.Handle("GET /api/material/categorias", materialAuth(a.hMaterialCategoriasList))
+	m.Handle("POST /api/material/categorias", materialAuth(a.hMaterialCategoriasAdd))
+	m.Handle("DELETE /api/material/categorias/{id}", materialAuth(a.hMaterialCategoriasDel))
+	m.Handle("GET /api/material/itens", materialAuth(a.hMaterialItensList))
+	m.Handle("POST /api/material/itens", materialAuth(a.hMaterialItensSave))
+	m.Handle("DELETE /api/material/itens/{id}", materialAuth(a.hMaterialItensDel))
+	m.Handle("POST /api/material/cautelar", materialAuth(a.hMaterialCautelar))
+	m.Handle("POST /api/material/devolver", materialAuth(a.hMaterialDevolver))
+	m.Handle("GET /api/material/cautelas", materialAuth(a.hMaterialCautelasList))
+	m.Handle("POST /api/material/cautelas/{id}/anexos", materialAuth(a.hMaterialAnexoAdd))
+	m.Handle("GET /api/material/cautelas/{id}/anexos", materialAuth(a.hMaterialAnexoList))
+	m.Handle("GET /api/material/anexos/{id}", materialAuth(a.hMaterialAnexoGet))
+	m.Handle("DELETE /api/material/anexos/{id}", materialAuth(a.hMaterialAnexoDel))
+
+	// Módulo de Configurações e White-Label (v1.0)
+	m.HandleFunc("GET /api/configuracoes", a.hConfiguracoesGet)
+	m.Handle("POST /api/configuracoes", a.auth(true, a.hConfiguracoesSet))
+
 	m.Handle("GET /", http.HandlerFunc(a.hSPA))
 }
 
@@ -260,7 +294,7 @@ func (a *App) hLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name: cookieSessao, Value: tok, Path: "/", HttpOnly: true,
-		SameSite: http.SameSiteLaxMode, MaxAge: int(ttlSessao.Seconds()),
+		SameSite: http.SameSiteStrictMode, MaxAge: int(ttlSessao.Seconds()),
 	})
 	jsonOK(w, map[string]any{"usuario": u, "expira": expira})
 }
@@ -273,7 +307,7 @@ func (a *App) hLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieSessao); err == nil {
 		a.st.EncerrarSessao(c.Value)
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieSessao, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: cookieSessao, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
@@ -465,7 +499,12 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		form = &map[string]any{"id": f.ID, "status": f.Status, "data": f.Data,
 			"criada_em": f.CriadaEm, "estados": estados}
 	}
-	jsonOK(w, map[string]any{"conferencia": form, "pessoas": a.pessoasAtivas(escopo)})
+	dataHoje := time.Now().In(a.horaLocal).Format("2006-01-02")
+	if f.Data != "" {
+		dataHoje = f.Data
+	}
+	escalados := a.escaladosNaData(escopo, dataHoje)
+	jsonOK(w, map[string]any{"conferencia": form, "pessoas": a.pessoasAtivas(escopo), "escalados": escalados})
 }
 
 type lancamentoReq struct {
@@ -549,8 +588,8 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		  situacao = excluded.situacao,
 		  destino_id = excluded.destino_id,
 		  observacao = excluded.observacao,
-		  marcado_por = excluded.marcado_por,
-		  marcado_em = excluded.marcado_em,
+		  alterado_por = excluded.marcado_por,
+		  alterado_em = excluded.marcado_em,
 		  verificado = excluded.verificado`,
 		confID, req.PessoaID, req.Situacao, req.DestinoID, req.Observacao, u.ID, marcadoEm, verificadoFlag)
 	if err != nil {
@@ -586,6 +625,10 @@ func (a *App) hEfetivoAtual(w http.ResponseWriter, r *http.Request) {
 	if escopo > 0 {
 		q += ` AND p.grupo_id = ?`
 		args = append(args, escopo)
+	} else if escopo == -1 {
+		// Conta corrompida sem grupo: não vê ninguém
+		jsonOK(w, map[string]any{"pessoas": []map[string]any{}, "hoje": time.Now().In(a.horaLocal).Format("2006-01-02")})
+		return
 	}
 	q += ` ORDER BY COALESCE(s.nome,''), p.nome_guerra`
 	rows, err := a.st.db.Query(q, args...)
@@ -629,9 +672,11 @@ func (a *App) pessoasAtivas(escopo int64) []map[string]any {
 	if escopo > 0 {
 		rows, err = a.st.db.Query(q+` AND p.grupo_id = ?
 			ORDER BY COALESCE(s.nome,''), p.nome_guerra`, escopo)
-	} else {
+	} else if escopo == 0 {
 		rows, err = a.st.db.Query(q + `
 			ORDER BY COALESCE(s.nome,''), p.nome_guerra`)
+	} else {
+		return []map[string]any{}
 	}
 	if err != nil {
 		return []map[string]any{}
@@ -704,11 +749,40 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		      SELECT p2.pessoa_id, p2.conferencia_id,
 		             ROW_NUMBER() OVER (PARTITION BY p2.pessoa_id ORDER BY c2.data DESC, c2.id DESC) rn
 		      FROM presencas p2 JOIN conferencias c2 ON c2.id = p2.conferencia_id AND c2.status='fechada'
-		      ) WHERE rn = 1) u2 ON u2.pessoa_id = pr.pessoa_id AND u2.conferencia_id = c.id
 		WHERE julianday(?) - julianday(c.data) <= 1
 		  AND pr.pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ? AND status = 'ativo')`,
 		id, u.ID, data, grupoID) // herança best-effort: falha não impede a conferência
-	a.st.Auditoria(&u.ID, "iniciar", "conferencias", &id, "data="+data+" (carry over aplicado)", ipDe(r))
+
+	// v1.0: MOTOR INTELIGENTE — Se houver militares escalados na data (módulo Escalas),
+	// garante o destino 'Serviço de Escala' e pré-associa na conferência como Justificada/Serviço.
+	var destServicoID int64
+	_ = a.st.db.QueryRow(`SELECT id FROM destinos WHERE (grupo_id = ? OR grupo_id IS NULL) AND LOWER(nome) LIKE '%serviço%' AND ativo = 1 ORDER BY grupo_id DESC LIMIT 1`, grupoID).Scan(&destServicoID)
+	if destServicoID == 0 {
+		// cria destino de serviço automaticamente se não existir
+		resD, errD := a.st.db.Exec(`INSERT INTO destinos (grupo_id, nome, ativo) VALUES (?, 'Serviço de Escala', 1)`, grupoID)
+		if errD == nil {
+			destServicoID, _ = resD.LastInsertId()
+		}
+	}
+	if destServicoID > 0 {
+		_, _ = a.st.db.Exec(`
+			INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em, verificado)
+			SELECT ?, ep.pessoa_id, 'justificada', ?, 'Escala: ' || etp.nome, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 0
+			FROM escala_pessoas ep
+			JOIN escala_turnos et ON et.id = ep.turno_id
+			JOIN escala_tipos etp ON etp.id = et.tipo_id
+			JOIN pessoas pes ON pes.id = ep.pessoa_id AND pes.status = 'ativo' AND pes.grupo_id = ?
+			WHERE et.data_inicio <= ? AND et.data_fim >= ?
+			ON CONFLICT(conferencia_id, pessoa_id) DO UPDATE SET
+			  situacao = 'justificada',
+			  destino_id = excluded.destino_id,
+			  observacao = excluded.observacao,
+			  alterado_por = excluded.marcado_por,
+			  alterado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		`, id, destServicoID, u.ID, grupoID, data, data)
+	}
+
+	a.st.Auditoria(&u.ID, "iniciar", "conferencias", &id, "data="+data+" (carry over e escalas aplicados)", ipDe(r))
 	jsonOK(w, map[string]any{"id": id, "data": data})
 }
 
@@ -3240,3 +3314,1088 @@ func (a *App) hBackupImportar(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("schema=%d seguranca=%s", versaoArq, nomeSeg), ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "schema": versaoArq, "seguranca": "backups/" + nomeSeg})
 }
+
+// =====================================================================
+// MÓDULO DE ESCALAS E SERVIÇOS (v1.0)
+// =====================================================================
+
+func (a *App) escaladosNaData(grupoID int64, data string) []map[string]any {
+	q := `SELECT ep.pessoa_id, et.id, et.tipo_id, COALESCE(etp.nome, ''), COALESCE(ep.funcao_escala, ''), et.data_inicio, et.data_fim,
+	             p.nome_guerra, p.nome_completo, COALESCE(s.nome, ''), COALESCE(f.nome, '')
+	      FROM escala_pessoas ep
+	      JOIN escala_turnos et ON et.id = ep.turno_id
+	      JOIN escala_tipos etp ON etp.id = et.tipo_id
+	      JOIN pessoas p ON p.id = ep.pessoa_id
+	      LEFT JOIN setores s ON s.id = p.setor_id
+	      LEFT JOIN funcoes f ON f.id = p.funcao_id
+	      WHERE (? <= 0 OR et.grupo_id = ?)
+	        AND et.data_inicio <= ? AND et.data_fim >= ?
+	      ORDER BY et.id, p.nome_guerra`
+	rows, err := a.st.db.Query(q, grupoID, grupoID, data, data)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	var res []map[string]any
+	for rows.Next() {
+		var pid, tid, tipoID int64
+		var tipoNome, funcaoEscala, dtIni, dtFim, ng, nc, setor, funcao string
+		if err := rows.Scan(&pid, &tid, &tipoID, &tipoNome, &funcaoEscala, &dtIni, &dtFim, &ng, &nc, &setor, &funcao); err == nil {
+			res = append(res, map[string]any{
+				"pessoa_id":     pid,
+				"turno_id":      tid,
+				"tipo_id":       tipoID,
+				"tipo_nome":     tipoNome,
+				"funcao_escala": funcaoEscala,
+				"data_inicio":   dtIni,
+				"data_fim":      dtFim,
+				"nome_guerra":   ng,
+				"nome_completo": nc,
+				"setor":         setor,
+				"funcao":        funcao,
+			})
+		}
+	}
+	return res
+}
+
+func (a *App) hEscalasTiposList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	rows, err := a.st.db.Query(
+		`SELECT id, COALESCE(grupo_id, 0), nome, COALESCE(descricao, ''), ativo, criado_em
+		 FROM escala_tipos
+		 WHERE (grupo_id IS NULL OR grupo_id = ? OR ? = 0)
+		 ORDER BY nome`, escopo, escopo)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	var lista []map[string]any
+	for rows.Next() {
+		var id, gid int64
+		var nome, desc, criada string
+		var ativo int
+		if rows.Scan(&id, &gid, &nome, &desc, &ativo, &criada) == nil {
+			lista = append(lista, map[string]any{
+				"id": id, "grupo_id": gid, "nome": nome, "descricao": desc,
+				"ativo": ativo == 1, "criado_em": criada,
+			})
+		}
+	}
+	jsonOK(w, map[string]any{"tipos": lista})
+}
+
+func (a *App) hEscalasTiposAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	var req struct {
+		ID        int64  `json:"id"`
+		Nome      string `json:"nome"`
+		Descricao string `json:"descricao"`
+		Ativo     *bool  `json:"ativo"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
+		jsonErro(w, http.StatusBadRequest, "Nome do tipo de escala é obrigatório")
+		return
+	}
+	req.Nome = strings.TrimSpace(req.Nome)
+	ativo := 1
+	if req.Ativo != nil && !*req.Ativo {
+		ativo = 0
+	}
+	if req.ID > 0 {
+		_, err := a.st.db.Exec(`UPDATE escala_tipos SET nome = ?, descricao = ?, ativo = ? WHERE id = ?`,
+			req.Nome, req.Descricao, ativo, req.ID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		a.st.Auditoria(&u.ID, "editar", "escala_tipos", &req.ID, req.Nome, ipDe(r))
+		jsonOK(w, map[string]any{"ok": true, "id": req.ID})
+		return
+	}
+	res, err := a.st.db.Exec(`INSERT INTO escala_tipos (grupo_id, nome, descricao, ativo) VALUES (?, ?, ?, ?)`,
+		u.GrupoID, req.Nome, req.Descricao, ativo)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	newID, _ := res.LastInsertId()
+	a.st.Auditoria(&u.ID, "criar", "escala_tipos", &newID, req.Nome, ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": newID})
+}
+
+func (a *App) hEscalasTiposDel(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	idStr := r.PathValue("id")
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	var turnosCount int
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM escala_turnos WHERE tipo_id = ?`, id).Scan(&turnosCount)
+	if turnosCount > 0 {
+		_, _ = a.st.db.Exec(`UPDATE escala_tipos SET ativo = 0 WHERE id = ?`, id)
+		jsonOK(w, map[string]any{"ok": true, "desativado": true})
+		return
+	}
+	_, err := a.st.db.Exec(`DELETE FROM escala_tipos WHERE id = ?`, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "excluir", "escala_tipos", &id, "", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	de := r.URL.Query().Get("de")
+	ate := r.URL.Query().Get("ate")
+	mes := r.URL.Query().Get("mes")
+	dataQ := r.URL.Query().Get("data")
+
+	q := `SELECT et.id, et.grupo_id, et.tipo_id, etp.nome, et.data_inicio, et.data_fim, COALESCE(et.observacao,''),
+	             COALESCE(u.login,''), et.criado_em, COALESCE(g.nome, '')
+	      FROM escala_turnos et
+	      JOIN escala_tipos etp ON etp.id = et.tipo_id
+	      LEFT JOIN usuarios u ON u.id = et.criado_por
+	      LEFT JOIN grupos g ON g.id = et.grupo_id
+	      WHERE (? <= 0 OR et.grupo_id = ?)`
+	var args = []any{escopo, escopo}
+
+	if mes != "" {
+		q += ` AND (et.data_inicio LIKE ? OR et.data_fim LIKE ?)`
+		args = append(args, mes+"%", mes+"%")
+	} else if de != "" && ate != "" {
+		q += ` AND et.data_fim >= ? AND et.data_inicio <= ?`
+		args = append(args, de, ate)
+	} else if dataQ != "" {
+		q += ` AND et.data_inicio <= ? AND et.data_fim >= ?`
+		args = append(args, dataQ, dataQ)
+	}
+	q += ` ORDER BY et.data_inicio DESC, et.id DESC`
+
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type TurnoItem struct {
+		ID         int64            `json:"id"`
+		GrupoID    int64            `json:"grupo_id"`
+		GrupoNome  string           `json:"grupo_nome"`
+		TipoID     int64            `json:"tipo_id"`
+		TipoNome   string           `json:"tipo_nome"`
+		DataInicio string           `json:"data_inicio"`
+		DataFim    string           `json:"data_fim"`
+		Observacao string           `json:"observacao"`
+		CriadoPor  string           `json:"criado_por"`
+		CriadoEm   string           `json:"criado_em"`
+		Pessoas    []map[string]any `json:"pessoas"`
+	}
+	var turnos []TurnoItem
+	var turnoIDs []any
+	for rows.Next() {
+		var t TurnoItem
+		if rows.Scan(&t.ID, &t.GrupoID, &t.TipoID, &t.TipoNome, &t.DataInicio, &t.DataFim, &t.Observacao, &t.CriadoPor, &t.CriadoEm, &t.GrupoNome) == nil {
+			t.Pessoas = []map[string]any{}
+			turnos = append(turnos, t)
+			turnoIDs = append(turnoIDs, t.ID)
+		}
+	}
+	rows.Close()
+
+	if len(turnoIDs) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(turnoIDs)), ",")
+		qP := fmt.Sprintf(`
+			SELECT ep.turno_id, ep.pessoa_id, COALESCE(ep.funcao_escala, ''),
+			       p.nome_guerra, p.nome_completo, COALESCE(s.nome, ''), COALESCE(fu.nome, '')
+			FROM escala_pessoas ep
+			JOIN pessoas p ON p.id = ep.pessoa_id
+			LEFT JOIN setores s ON s.id = p.setor_id
+			LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+			WHERE ep.turno_id IN (%s)
+			ORDER BY p.nome_guerra`, ph)
+		pRows, pErr := a.st.db.Query(qP, turnoIDs...)
+		if pErr == nil {
+			pessoasPorTurno := map[int64][]map[string]any{}
+			for pRows.Next() {
+				var tid, pid int64
+				var fEscala, ng, nc, setor, funcao string
+				if pRows.Scan(&tid, &pid, &fEscala, &ng, &nc, &setor, &funcao) == nil {
+					pessoasPorTurno[tid] = append(pessoasPorTurno[tid], map[string]any{
+						"pessoa_id":     pid,
+						"funcao_escala": fEscala,
+						"nome_guerra":   ng,
+						"nome_completo": nc,
+						"setor":         setor,
+						"funcao":        funcao,
+					})
+				}
+			}
+			pRows.Close()
+			for i := range turnos {
+				if pes, ok := pessoasPorTurno[turnos[i].ID]; ok {
+					turnos[i].Pessoas = pes
+				}
+			}
+		}
+	}
+	jsonOK(w, map[string]any{"turnos": turnos})
+}
+
+func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.Papel != "admin" && u.GrupoID == nil {
+		jsonErro(w, http.StatusForbidden, "Usuário sem grupo definido")
+		return
+	}
+	var req struct {
+		ID         int64  `json:"id"`
+		GrupoID    *int64 `json:"grupo_id"`
+		TipoID     int64  `json:"tipo_id"`
+		DataInicio string `json:"data_inicio"`
+		DataFim    string `json:"data_fim"`
+		Observacao string `json:"observacao"`
+		Pessoas    []struct {
+			PessoaID     int64  `json:"pessoa_id"`
+			FuncaoEscala string `json:"funcao_escala"`
+		} `json:"pessoas"`
+	}
+	if err := decodificar(r, &req); err != nil || req.TipoID <= 0 || req.DataInicio == "" || req.DataFim == "" {
+		jsonErro(w, http.StatusBadRequest, "Tipo de escala e datas de início/fim são obrigatórios")
+		return
+	}
+	grupoID := int64(0)
+	if u.GrupoID != nil {
+		grupoID = *u.GrupoID
+	}
+	if req.GrupoID != nil && *req.GrupoID > 0 {
+		grupoID = *req.GrupoID
+	}
+	if grupoID <= 0 {
+		_ = a.st.db.QueryRow(`SELECT id FROM grupos ORDER BY id LIMIT 1`).Scan(&grupoID)
+	}
+	if grupoID <= 0 {
+		resG, errG := a.st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('1ª Cia (Geral)', ?)`, gerarCodigoGrupo())
+		if errG == nil {
+			grupoID, _ = resG.LastInsertId()
+		}
+	}
+	if grupoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "Grupo é obrigatório para o turno de serviço")
+		return
+	}
+
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	var turnoID = req.ID
+	if turnoID > 0 {
+		_, err = tx.Exec(`
+			UPDATE escala_turnos
+			SET tipo_id = ?, data_inicio = ?, data_fim = ?, observacao = ?
+			WHERE id = ? AND (? = 0 OR grupo_id = ?)`,
+			req.TipoID, req.DataInicio, req.DataFim, req.Observacao, turnoID, escopoDoUsuario(u), grupoID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, _ = tx.Exec(`DELETE FROM escala_pessoas WHERE turno_id = ?`, turnoID)
+	} else {
+		res, err := tx.Exec(`
+			INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim, observacao, criado_por)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			grupoID, req.TipoID, req.DataInicio, req.DataFim, req.Observacao, u.ID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		turnoID, _ = res.LastInsertId()
+	}
+
+	for _, p := range req.Pessoas {
+		if p.PessoaID > 0 {
+			_, _ = tx.Exec(`
+				INSERT INTO escala_pessoas (turno_id, pessoa_id, funcao_escala)
+				VALUES (?, ?, ?)`, turnoID, p.PessoaID, p.FuncaoEscala)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "salvar_turno", "escala_turnos", &turnoID,
+		fmt.Sprintf("tipo=%d de=%s ate=%s pessoas=%d", req.TipoID, req.DataInicio, req.DataFim, len(req.Pessoas)), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": turnoID})
+}
+
+func (a *App) hEscalasTurnosDel(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	idStr := r.PathValue("id")
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	escopo := escopoDoUsuario(u)
+	res, err := a.st.db.Exec(`DELETE FROM escala_turnos WHERE id = ? AND (? <= 0 OR grupo_id = ?)`, id, escopo, escopo)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ra, _ := res.RowsAffected()
+	if ra == 0 {
+		jsonErro(w, http.StatusNotFound, "Turno não encontrado ou sem permissão")
+		return
+	}
+	a.st.Auditoria(&u.ID, "excluir", "escala_turnos", &id, "", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hEscalasHoje(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	dataHoje := time.Now().In(a.horaLocal).Format("2006-01-02")
+	escalados := a.escaladosNaData(escopo, dataHoje)
+	jsonOK(w, map[string]any{"data": dataHoje, "escalados": escalados})
+}
+
+// =====================================================================
+// MÓDULO DE MATERIAL, RESERVA E CAUTELAS (v1.0)
+// =====================================================================
+
+func (a *App) hMaterialCategoriasList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	rows, err := a.st.db.Query(
+		`SELECT id, COALESCE(grupo_id, 0), nome, ativo
+		 FROM material_categorias
+		 WHERE (grupo_id IS NULL OR grupo_id = ? OR ? = 0)
+		 ORDER BY nome`, escopo, escopo)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	var lista []map[string]any
+	for rows.Next() {
+		var id, gid int64
+		var nome string
+		var ativo int
+		if rows.Scan(&id, &gid, &nome, &ativo) == nil {
+			lista = append(lista, map[string]any{
+				"id": id, "grupo_id": gid, "nome": nome, "ativo": ativo == 1,
+			})
+		}
+	}
+	jsonOK(w, map[string]any{"categorias": lista})
+}
+
+func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	var req struct {
+		ID    int64  `json:"id"`
+		Nome  string `json:"nome"`
+		Ativo *bool  `json:"ativo"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
+		jsonErro(w, http.StatusBadRequest, "Nome da categoria é obrigatório")
+		return
+	}
+	req.Nome = strings.TrimSpace(req.Nome)
+	ativo := 1
+	if req.Ativo != nil && !*req.Ativo {
+		ativo = 0
+	}
+	if req.ID > 0 {
+		_, err := a.st.db.Exec(`UPDATE material_categorias SET nome = ?, ativo = ? WHERE id = ?`, req.Nome, ativo, req.ID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		jsonOK(w, map[string]any{"ok": true, "id": req.ID})
+		return
+	}
+	res, err := a.st.db.Exec(`INSERT INTO material_categorias (grupo_id, nome, ativo) VALUES (?, ?, ?)`, u.GrupoID, req.Nome, ativo)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	nid, _ := res.LastInsertId()
+	jsonOK(w, map[string]any{"ok": true, "id": nid})
+}
+
+func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	var count int
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM material_itens WHERE categoria_id = ?`, id).Scan(&count)
+	if count > 0 {
+		_, _ = a.st.db.Exec(`UPDATE material_categorias SET ativo = 0 WHERE id = ?`, id)
+		jsonOK(w, map[string]any{"ok": true, "desativado": true})
+		return
+	}
+	_, err := a.st.db.Exec(`DELETE FROM material_categorias WHERE id = ?`, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	statusQ := r.URL.Query().Get("status")
+	catQ := r.URL.Query().Get("categoria_id")
+
+	q := `
+		SELECT mi.id, mi.grupo_id, COALESCE(g.nome, ''), mi.categoria_id, COALESCE(mc.nome, 'Sem Categoria'),
+		       mi.nome, mi.codigo_patrimonio, COALESCE(mi.numero_serie, ''), mi.status, COALESCE(mi.observacao, ''),
+		       mi.criado_em,
+		       caut.id, caut.pessoa_id, p.nome_guerra, p.nome_completo, caut.data_saida, COALESCE(caut.obs_saida, ''),
+		       ue.login
+		FROM material_itens mi
+		LEFT JOIN material_categorias mc ON mc.id = mi.categoria_id
+		LEFT JOIN grupos g ON g.id = mi.grupo_id
+		LEFT JOIN material_cautelas caut ON caut.item_id = mi.id AND caut.status = 'ativa'
+		LEFT JOIN pessoas p ON p.id = caut.pessoa_id
+		LEFT JOIN usuarios ue ON ue.id = caut.responsavel_entrega_id
+		WHERE (? <= 0 OR mi.grupo_id = ?)`
+	args := []any{escopo, escopo}
+
+	if statusQ != "" {
+		q += ` AND mi.status = ?`
+		args = append(args, statusQ)
+	}
+	if catQ != "" {
+		if cid, err := strconv.ParseInt(catQ, 10, 64); err == nil && cid > 0 {
+			q += ` AND mi.categoria_id = ?`
+			args = append(args, cid)
+		}
+	}
+	q += ` ORDER BY mi.status, mc.nome, mi.nome`
+
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var lista []map[string]any
+	for rows.Next() {
+		var id, gid int64
+		var catID *int64
+		var gNome, catNome, nome, cod, numSerie, status, obs, criadoEm string
+		var cautID, pesID *int64
+		var pNomeGuerra, pNomeCompleto, dtSaida, obsSaida, opEntrega *string
+		if err := rows.Scan(&id, &gid, &gNome, &catID, &catNome, &nome, &cod, &numSerie, &status, &obs, &criadoEm,
+			&cautID, &pesID, &pNomeGuerra, &pNomeCompleto, &dtSaida, &obsSaida, &opEntrega); err == nil {
+
+			item := map[string]any{
+				"id":                id,
+				"grupo_id":          gid,
+				"grupo_nome":        gNome,
+				"categoria_id":      catID,
+				"categoria_nome":    catNome,
+				"nome":              nome,
+				"codigo_patrimonio": cod,
+				"numero_serie":      numSerie,
+				"status":            status,
+				"observacao":        obs,
+				"criado_em":         criadoEm,
+			}
+			if cautID != nil {
+				item["cautela_ativa"] = map[string]any{
+					"id":                  *cautID,
+					"pessoa_id":           pesID,
+					"pessoa_nome_guerra":  pNomeGuerra,
+					"pessoa_nome_completo": pNomeCompleto,
+					"data_saida":          dtSaida,
+					"obs_saida":           obsSaida,
+					"responsavel_entrega": opEntrega,
+				}
+			}
+			lista = append(lista, item)
+		}
+	}
+	jsonOK(w, map[string]any{"itens": lista})
+}
+
+func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.Papel != "admin" && u.GrupoID == nil {
+		jsonErro(w, http.StatusForbidden, "Conta sem grupo")
+		return
+	}
+	var req struct {
+		ID               int64  `json:"id"`
+		GrupoID          *int64 `json:"grupo_id"`
+		CategoriaID      *int64 `json:"categoria_id"`
+		Nome             string `json:"nome"`
+		CodigoPatrimonio string `json:"codigo_patrimonio"`
+		NumeroSerie      string `json:"numero_serie"`
+		Status           string `json:"status"`
+		Observacao       string `json:"observacao"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" || strings.TrimSpace(req.CodigoPatrimonio) == "" {
+		jsonErro(w, http.StatusBadRequest, "Nome e Código de Patrimônio são obrigatórios")
+		return
+	}
+	grupoID := int64(0)
+	if u.GrupoID != nil {
+		grupoID = *u.GrupoID
+	}
+	if req.GrupoID != nil && *req.GrupoID > 0 {
+		grupoID = *req.GrupoID
+	}
+	if grupoID <= 0 {
+		_ = a.st.db.QueryRow(`SELECT id FROM grupos ORDER BY id LIMIT 1`).Scan(&grupoID)
+	}
+	if grupoID <= 0 {
+		resG, errG := a.st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('1ª Cia (Geral)', ?)`, gerarCodigoGrupo())
+		if errG == nil {
+			grupoID, _ = resG.LastInsertId()
+		}
+	}
+	if grupoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "Grupo é obrigatório")
+		return
+	}
+	if req.Status == "" {
+		req.Status = "disponivel"
+	}
+
+	if req.ID > 0 {
+		_, err := a.st.db.Exec(`
+			UPDATE material_itens
+			SET categoria_id = ?, nome = ?, codigo_patrimonio = ?, numero_serie = ?, status = ?, observacao = ?
+			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
+			req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.ID, escopoDoUsuario(u), grupoID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		a.st.Auditoria(&u.ID, "editar", "material_itens", &req.ID, req.Nome+" ("+req.CodigoPatrimonio+")", ipDe(r))
+		jsonOK(w, map[string]any{"ok": true, "id": req.ID})
+		return
+	}
+
+	res, err := a.st.db.Exec(`
+		INSERT INTO material_itens (grupo_id, categoria_id, nome, codigo_patrimonio, numero_serie, status, observacao)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		grupoID, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	newID, _ := res.LastInsertId()
+	a.st.Auditoria(&u.ID, "criar", "material_itens", &newID, req.Nome+" ("+req.CodigoPatrimonio+")", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": newID})
+}
+
+func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	idStr := r.PathValue("id")
+	id, _ := strconv.ParseInt(idStr, 10, 64)
+	if id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+
+	var itemGrupoID int64
+	var itemStatus, itemNome, codPatrimonio string
+	err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), status, nome, codigo_patrimonio FROM material_itens WHERE id = ?`, id).
+		Scan(&itemGrupoID, &itemStatus, &itemNome, &codPatrimonio)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Item não encontrado")
+		return
+	}
+
+	esc := escopoDoUsuario(u)
+	if esc > 0 && itemGrupoID > 0 && itemGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "Você não tem permissão para alterar itens de outro grupo")
+		return
+	}
+
+	modo := r.URL.Query().Get("modo")
+
+	// Modo "baixar" (desincorporar/aposentar patrimônio mantendo histórico)
+	if modo == "baixar" {
+		if itemStatus == "acautelado" {
+			jsonErro(w, http.StatusBadRequest, "Não é possível baixar um item acautelado. Realize a devolução primeiro.")
+			return
+		}
+		_, err = a.st.db.Exec(`UPDATE material_itens SET status = 'baixado' WHERE id = ?`, id)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		a.st.Auditoria(&u.ID, "baixar_patrimonio", "material_itens", &id, fmt.Sprintf("%s (%s)", itemNome, codPatrimonio), ipDe(r))
+		jsonOK(w, map[string]any{"ok": true, "acao": "baixado"})
+		return
+	}
+
+	// Exclusão definitiva (remove item, histórico de cautelas e anexos em transação atômica)
+	if itemStatus == "acautelado" {
+		jsonErro(w, http.StatusBadRequest, "Não é possível excluir um item que está acautelado no momento. Realize a devolução primeiro.")
+		return
+	}
+
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	// 1. Apagar anexos de cautelas deste item
+	_, err = tx.Exec(`DELETE FROM material_cautela_anexos WHERE cautela_id IN (SELECT id FROM material_cautelas WHERE item_id = ?)`, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "Falha ao limpar anexos: "+err.Error())
+		return
+	}
+
+	// 2. Apagar cautelas deste item
+	_, err = tx.Exec(`DELETE FROM material_cautelas WHERE item_id = ?`, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "Falha ao limpar cautelas: "+err.Error())
+		return
+	}
+
+	// 3. Apagar o item em si
+	_, err = tx.Exec(`DELETE FROM material_itens WHERE id = ?`, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "Falha ao excluir item: "+err.Error())
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	a.st.Auditoria(&u.ID, "excluir", "material_itens", &id, fmt.Sprintf("%s (%s)", itemNome, codPatrimonio), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "acao": "excluido"})
+}
+
+func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	var req struct {
+		ItemID   int64  `json:"item_id"`
+		PessoaID int64  `json:"pessoa_id"`
+		ObsSaida string `json:"obs_saida"`
+		Anexos   []struct {
+			NomeArquivo string `json:"nome_arquivo"`
+			TipoMIME    string `json:"tipo_mime"`
+			Tamanho     int64  `json:"tamanho"`
+			DadosBase64 string `json:"dados_base64"`
+		} `json:"anexos"`
+	}
+	if err := decodificar(r, &req); err != nil || req.ItemID <= 0 || req.PessoaID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "Item e Pessoa são obrigatórios para cautela")
+		return
+	}
+
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	var statusAtual string
+	var itemNome, codPatrimonio string
+	err = tx.QueryRow(`SELECT status, nome, codigo_patrimonio FROM material_itens WHERE id = ?`, req.ItemID).Scan(&statusAtual, &itemNome, &codPatrimonio)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Item não encontrado")
+		return
+	}
+	if statusAtual != "disponivel" {
+		jsonErro(w, http.StatusBadRequest, fmt.Sprintf("Item '%s' não está disponível (status atual: %s)", itemNome, statusAtual))
+		return
+	}
+
+	dataSaida := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	res, err := tx.Exec(`
+		INSERT INTO material_cautelas (item_id, pessoa_id, responsavel_entrega_id, data_saida, obs_saida, status)
+		VALUES (?, ?, ?, ?, ?, 'ativa')`,
+		req.ItemID, req.PessoaID, u.ID, dataSaida, req.ObsSaida)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	cautelaID, _ := res.LastInsertId()
+
+	_, err = tx.Exec(`UPDATE material_itens SET status = 'acautelado' WHERE id = ?`, req.ItemID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	for _, anexo := range req.Anexos {
+		if strings.TrimSpace(anexo.NomeArquivo) != "" && strings.TrimSpace(anexo.DadosBase64) != "" {
+			mime := anexo.TipoMIME
+			if mime == "" {
+				mime = "application/octet-stream"
+			}
+			_, _ = tx.Exec(`
+				INSERT INTO material_cautela_anexos (cautela_id, nome_arquivo, tipo_mime, tamanho, dados_base64)
+				VALUES (?, ?, ?, ?, ?)`,
+				cautelaID, anexo.NomeArquivo, mime, anexo.Tamanho, anexo.DadosBase64)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "cautelar", "material_cautelas", &cautelaID,
+		fmt.Sprintf("item=%s (%s) pessoa_id=%d anexos=%d", itemNome, codPatrimonio, req.PessoaID, len(req.Anexos)), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "cautela_id": cautelaID})
+}
+
+func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	var req struct {
+		CautelaID    *int64 `json:"cautela_id"`
+		ItemID       *int64 `json:"item_id"`
+		ObsDevolucao string `json:"obs_devolucao"`
+	}
+	if err := decodificar(r, &req); err != nil || (req.CautelaID == nil && req.ItemID == nil) {
+		jsonErro(w, http.StatusBadRequest, "Informe cautela_id ou item_id para devolução")
+		return
+	}
+
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	var cautelaID int64
+	var itemID int64
+	if req.CautelaID != nil && *req.CautelaID > 0 {
+		cautelaID = *req.CautelaID
+		err = tx.QueryRow(`SELECT item_id FROM material_cautelas WHERE id = ? AND status = 'ativa'`, cautelaID).Scan(&itemID)
+	} else if req.ItemID != nil && *req.ItemID > 0 {
+		itemID = *req.ItemID
+		err = tx.QueryRow(`SELECT id FROM material_cautelas WHERE item_id = ? AND status = 'ativa' ORDER BY id DESC LIMIT 1`, itemID).Scan(&cautelaID)
+	}
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Cautela ativa não encontrada para este item")
+		return
+	}
+
+	dataDevolucao := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+	_, err = tx.Exec(`
+		UPDATE material_cautelas
+		SET status = 'devolvida', data_devolucao = ?, responsavel_recebimento_id = ?, obs_devolucao = ?
+		WHERE id = ?`,
+		dataDevolucao, u.ID, req.ObsDevolucao, cautelaID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	_, err = tx.Exec(`UPDATE material_itens SET status = 'disponivel' WHERE id = ?`, itemID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "devolver", "material_cautelas", &cautelaID,
+		fmt.Sprintf("item_id=%d obs=%s", itemID, req.ObsDevolucao), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "cautela_id": cautelaID})
+}
+
+func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	statusQ := r.URL.Query().Get("status")
+	pessoaQ := r.URL.Query().Get("pessoa_id")
+	itemQ := r.URL.Query().Get("item_id")
+
+	q := `
+		SELECT mc.id, mc.item_id, mi.nome, mi.codigo_patrimonio,
+		       mc.pessoa_id, p.nome_guerra, p.nome_completo,
+		       mc.responsavel_entrega_id, ue.login,
+		       COALESCE(mc.responsavel_recebimento_id, 0), COALESCE(ur.login, ''),
+		       mc.data_saida, COALESCE(mc.data_devolucao, ''),
+		       COALESCE(mc.obs_saida, ''), COALESCE(mc.obs_devolucao, ''),
+		       mc.status
+		FROM material_cautelas mc
+		JOIN material_itens mi ON mi.id = mc.item_id
+		JOIN pessoas p ON p.id = mc.pessoa_id
+		JOIN usuarios ue ON ue.id = mc.responsavel_entrega_id
+		LEFT JOIN usuarios ur ON ur.id = mc.responsavel_recebimento_id
+		WHERE (? <= 0 OR mi.grupo_id = ?)`
+	args := []any{escopo, escopo}
+
+	if statusQ != "" {
+		q += ` AND mc.status = ?`
+		args = append(args, statusQ)
+	}
+	if pessoaQ != "" {
+		if pid, err := strconv.ParseInt(pessoaQ, 10, 64); err == nil && pid > 0 {
+			q += ` AND mc.pessoa_id = ?`
+			args = append(args, pid)
+		}
+	}
+	if itemQ != "" {
+		if itm, err := strconv.ParseInt(itemQ, 10, 64); err == nil && itm > 0 {
+			q += ` AND mc.item_id = ?`
+			args = append(args, itm)
+		}
+	}
+	q += ` ORDER BY mc.id DESC LIMIT 200`
+
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var lista []map[string]any
+	for rows.Next() {
+		var cid, iid, pid, respEnt, respRec int64
+		var iNome, iCod, pGuerra, pCompleto, loginEnt, loginRec, dtSaida, dtDev, obsS, obsD, st string
+		if err := rows.Scan(&cid, &iid, &iNome, &iCod, &pid, &pGuerra, &pCompleto,
+			&respEnt, &loginEnt, &respRec, &loginRec, &dtSaida, &dtDev, &obsS, &obsD, &st); err == nil {
+			lista = append(lista, map[string]any{
+				"id":                       cid,
+				"item_id":                  iid,
+				"item_nome":                iNome,
+				"codigo_patrimonio":        iCod,
+				"pessoa_id":                pid,
+				"pessoa_nome_guerra":       pGuerra,
+				"pessoa_nome_completo":     pCompleto,
+				"responsavel_entrega_id":   respEnt,
+				"responsavel_entrega":      loginEnt,
+				"responsavel_recebimento":  loginRec,
+				"data_saida":               dtSaida,
+				"data_devolucao":           dtDev,
+				"obs_saida":                obsS,
+				"obs_devolucao":            obsD,
+				"status":                   st,
+			})
+		}
+	}
+	jsonOK(w, map[string]any{"cautelas": lista})
+}
+
+// =====================================================================
+// MÓDULO DE CONFIGURAÇÕES E WHITE-LABEL (v1.0)
+// =====================================================================
+
+func (a *App) hConfiguracoesGet(w http.ResponseWriter, _ *http.Request) {
+	rows, err := a.st.db.Query(`SELECT chave, valor FROM configuracoes`)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	configs := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if rows.Scan(&k, &v) == nil {
+			configs[k] = v
+		}
+	}
+	jsonOK(w, map[string]any{"configuracoes": configs})
+}
+
+func (a *App) hConfiguracoesSet(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.Papel != "admin" {
+		jsonErro(w, http.StatusForbidden, "Apenas o Administrador pode alterar configurações globais")
+		return
+	}
+	var req map[string]string
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "Corpo inválido")
+		return
+	}
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	for k, v := range req {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		_, err = tx.Exec(`
+			INSERT INTO configuracoes (chave, valor, atualizado_em)
+			VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em`,
+			k, v)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "editar_configuracoes", "configuracoes", nil, fmt.Sprintf("chaves=%d", len(req)), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+// =====================================================================
+// ANEXOS E DOCUMENTOS ESCANEADOS DE CAUTELAS (v1.0)
+// =====================================================================
+
+func (a *App) hMaterialAnexoAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	cautelaIDStr := r.PathValue("id")
+	cautelaID, _ := strconv.ParseInt(cautelaIDStr, 10, 64)
+	if cautelaID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID da cautela inválido")
+		return
+	}
+
+	var req struct {
+		NomeArquivo string `json:"nome_arquivo"`
+		TipoMIME    string `json:"tipo_mime"`
+		Tamanho     int64  `json:"tamanho"`
+		DadosBase64 string `json:"dados_base64"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.NomeArquivo) == "" || strings.TrimSpace(req.DadosBase64) == "" {
+		jsonErro(w, http.StatusBadRequest, "Nome do arquivo e dados em base64 são obrigatórios")
+		return
+	}
+	mime := req.TipoMIME
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	res, err := a.st.db.Exec(`
+		INSERT INTO material_cautela_anexos (cautela_id, nome_arquivo, tipo_mime, tamanho, dados_base64)
+		VALUES (?, ?, ?, ?, ?)`,
+		cautelaID, req.NomeArquivo, mime, req.Tamanho, req.DadosBase64)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	newID, _ := res.LastInsertId()
+	a.st.Auditoria(&u.ID, "anexar_documento", "material_cautela_anexos", &newID,
+		fmt.Sprintf("cautela=%d arquivo=%s", cautelaID, req.NomeArquivo), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": newID, "nome_arquivo": req.NomeArquivo})
+}
+
+func (a *App) hMaterialAnexoList(w http.ResponseWriter, r *http.Request) {
+	cautelaIDStr := r.PathValue("id")
+	cautelaID, _ := strconv.ParseInt(cautelaIDStr, 10, 64)
+	if cautelaID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID da cautela inválido")
+		return
+	}
+	rows, err := a.st.db.Query(`
+		SELECT id, cautela_id, nome_arquivo, tipo_mime, tamanho, criado_em
+		FROM material_cautela_anexos
+		WHERE cautela_id = ?
+		ORDER BY id`, cautelaID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	var lista []map[string]any
+	for rows.Next() {
+		var id, cid, tam int64
+		var nome, mime, criada string
+		if rows.Scan(&id, &cid, &nome, &mime, &tam, &criada) == nil {
+			lista = append(lista, map[string]any{
+				"id":           id,
+				"cautela_id":   cid,
+				"nome_arquivo": nome,
+				"tipo_mime":    mime,
+				"tamanho":      tam,
+				"criado_em":    criada,
+			})
+		}
+	}
+	jsonOK(w, map[string]any{"anexos": lista})
+}
+
+func (a *App) hMaterialAnexoGet(w http.ResponseWriter, r *http.Request) {
+	anexoIDStr := r.PathValue("id")
+	anexoID, _ := strconv.ParseInt(anexoIDStr, 10, 64)
+	if anexoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	var nome, mime, b64 string
+	err := a.st.db.QueryRow(`
+		SELECT nome_arquivo, tipo_mime, dados_base64
+		FROM material_cautela_anexos WHERE id = ?`, anexoID).Scan(&nome, &mime, &b64)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Documento anexo não encontrado")
+		return
+	}
+
+	// Remove data URL prefix if present (e.g. data:image/png;base64,...)
+	if idx := strings.Index(b64, ","); idx != -1 {
+		b64 = b64[idx+1:]
+	}
+
+	dados, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "Falha ao decodificar arquivo")
+		return
+	}
+
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, nome))
+	w.Header().Set("Content-Length", strconv.Itoa(len(dados)))
+	_, _ = w.Write(dados)
+}
+
+func (a *App) hMaterialAnexoDel(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	anexoIDStr := r.PathValue("id")
+	anexoID, _ := strconv.ParseInt(anexoIDStr, 10, 64)
+	if anexoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	_, err := a.st.db.Exec(`DELETE FROM material_cautela_anexos WHERE id = ?`, anexoID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "excluir_anexo", "material_cautela_anexos", &anexoID, "", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+
