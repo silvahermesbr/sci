@@ -364,6 +364,8 @@ function montarShell(usuario) {
       const m = $('#menuUsuarioItens'), mu = $('#menuUsuario');
       if (m && mu && !m.classList.contains('oculto') && !mu.contains(ev.target)) m.classList.add('oculto');
     });
+  }
+
   /* --- Hub de Notificações & Consciência Situacional --- */
   const btSino = $('#btSinoNotif', topbar);
   if (btSino) {
