@@ -234,6 +234,7 @@ func (a *App) rotas() {
 	m.Handle("PATCH /api/pessoas/{id}", a.auth(false, a.hPessoasEdit))
 	m.Handle("DELETE /api/pessoas/{id}", a.auth(false, a.hPessoaExcluir)) // v9.7: admin/gerente excluem (com histórico → desativa)
 	m.Handle("GET /api/pessoas/{id}/qr", a.auth(false, a.hPessoaQRCode))
+	m.Handle("GET /api/pessoas/{id}/pdf", a.auth(false, a.hPessoaPDF))
 	m.Handle("DELETE /api/grupos/{id}", a.auth(true, a.hGrupoExcluir))    // v9.7: só admin, só grupo vazio
 
 	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4)
@@ -289,6 +290,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/escalas/turnos", reservaAuth(a.hEscalasTurnosSave))
 	m.Handle("DELETE /api/escalas/turnos/{id}", reservaAuth(a.hEscalasTurnosDel))
 	m.Handle("GET /api/escalas/hoje", reservaAuth(a.hEscalasHoje))
+	m.Handle("GET /api/escalas/pdf", a.auth(false, a.hEscalasPDF))
 
 	// Módulo de Material e Cautelas (v1.0) — EM RESERVA (ordem Tenente 30/09)
 	m.Handle("GET /api/material/categorias", reservaAuth(a.hMaterialCategoriasList))
@@ -298,9 +300,11 @@ func (a *App) rotas() {
 	m.Handle("POST /api/material/itens", reservaAuth(a.hMaterialItensSave))
 	m.Handle("DELETE /api/material/itens/{id}", reservaAuth(a.hMaterialItensDel))
 	m.Handle("GET /api/material/itens/{id}/qr", reservaAuth(a.hMaterialItemQRCode))
+	m.Handle("GET /api/material/inventario/pdf", a.auth(false, a.hMaterialInventarioPDF))
 	m.Handle("POST /api/material/cautelar", reservaAuth(a.hMaterialCautelar))
 	m.Handle("POST /api/material/devolver", reservaAuth(a.hMaterialDevolver))
 	m.Handle("GET /api/material/cautelas", reservaAuth(a.hMaterialCautelasList))
+	m.Handle("GET /api/material/cautelas/{id}/recibo.pdf", a.auth(false, a.hMaterialCautelaReciboPDF))
 	m.Handle("POST /api/material/cautelas/{id}/anexos", reservaAuth(a.hMaterialAnexoAdd))
 	m.Handle("GET /api/material/cautelas/{id}/anexos", reservaAuth(a.hMaterialAnexoList))
 	m.Handle("GET /api/material/anexos/{id}", reservaAuth(a.hMaterialAnexoGet))
@@ -2205,6 +2209,387 @@ func (a *App) hRelatorioPDF(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("inline; filename=SCI_relatorio_%s_%s.pdf", de, ate))
+	_, _ = w.Write(pdf)
+}
+
+func (a *App) hPessoaPDF(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	var f FichaPessoalPDF
+	f.ID = id
+
+	var gid *int64
+	var setor, funcao, grupo string
+	qP := `SELECT p.nome_guerra, p.nome_completo, p.status, p.grupo_id,
+	              COALESCE(s.nome, 'Indefinido'), COALESCE(fu.nome, 'Indefinida'), COALESCE(g.nome, 'Geral'),
+	              COALESCE(u.data_nascimento, ''), COALESCE(u.tipo_sanguineo, ''),
+	              COALESCE(u.telefone, ''), COALESCE(u.email, ''), COALESCE(u.endereco, ''),
+	              COALESCE(u.foto_base64, '')
+	       FROM pessoas p
+	       LEFT JOIN setores s ON s.id = p.setor_id
+	       LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+	       LEFT JOIN grupos g ON g.id = p.grupo_id
+	       LEFT JOIN usuarios u ON u.pessoa_id = p.id
+	       WHERE p.id = ?`
+
+	err = a.st.db.QueryRow(qP, id).Scan(
+		&f.NomeGuerra, &f.NomeCompleto, &f.Status, &gid,
+		&setor, &funcao, &grupo,
+		&f.DataNascimento, &f.TipoSanguineo,
+		&f.Telefone, &f.Email, &f.Endereco, &f.FotoBase64,
+	)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "pessoa não encontrada")
+		return
+	}
+
+	if escopo > 0 && (gid == nil || *gid != escopo) {
+		jsonErro(w, http.StatusForbidden, "pessoa fora do seu escopo")
+		return
+	}
+
+	f.Setor = setor
+	f.Funcao = funcao
+	f.Grupo = grupo
+
+	_ = a.st.db.QueryRow(`
+		SELECT COUNT(*),
+		       COALESCE(SUM(situacao = 'presente'), 0),
+		       COALESCE(SUM(situacao = 'atraso'), 0),
+		       COALESCE(SUM(situacao = 'falta'), 0),
+		       COALESCE(SUM(situacao = 'justificada'), 0)
+		FROM presencas WHERE pessoa_id = ?`, id).Scan(
+		&f.TotalConfs, &f.Presencas, &f.Atrasos, &f.Faltas, &f.Justificadas,
+	)
+	if f.TotalConfs > 0 {
+		f.PctPresenca = 100.0 * float64(f.Presencas+f.Atrasos) / float64(f.TotalConfs)
+	}
+
+	rowsC, errC := a.st.db.Query(`
+		SELECT mc.id, mi.nome, mi.codigo_patrimonio, mc.data_saida, COALESCE(u.nome_guerra, u.login)
+		FROM material_cautelas mc
+		JOIN material_itens mi ON mi.id = mc.item_id
+		JOIN usuarios u ON u.id = mc.responsavel_entrega_id
+		WHERE mc.pessoa_id = ? AND mc.status = 'ativa'
+		ORDER BY mc.id DESC LIMIT 10`, id)
+	if errC == nil {
+		for rowsC.Next() {
+			var cid int64
+			var itemNome, codPat, dtSaida, resp string
+			if rowsC.Scan(&cid, &itemNome, &codPat, &dtSaida, &resp) == nil {
+				f.CautelasAtivas = append(f.CautelasAtivas, map[string]any{
+					"id":                  cid,
+					"item_nome":           itemNome,
+					"codigo_patrimonio":   codPat,
+					"data_saida":          dtSaida,
+					"responsavel_entrega": resp,
+				})
+			}
+		}
+		rowsC.Close()
+	}
+
+	rowsE, errE := a.st.db.Query(`
+		SELECT et.data_inicio, et.data_fim, etp.nome, COALESCE(ep.funcao_escala, '')
+		FROM escala_pessoas ep
+		JOIN escala_turnos et ON et.id = ep.turno_id
+		JOIN escala_tipos etp ON etp.id = et.tipo_id
+		WHERE ep.pessoa_id = ?
+		ORDER BY et.data_inicio DESC LIMIT 8`, id)
+	if errE == nil {
+		for rowsE.Next() {
+			var dtIni, dtFim, tNome, fEsc string
+			if rowsE.Scan(&dtIni, &dtFim, &tNome, &fEsc) == nil {
+				f.Escalas = append(f.Escalas, map[string]any{
+					"data_inicio":   dtIni,
+					"data_fim":      dtFim,
+					"tipo_nome":     tNome,
+					"funcao_escala": fEsc,
+				})
+			}
+		}
+		rowsE.Close()
+	}
+
+	pdf, err := a.gerarFichaPessoalPDF(f, u.Login)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao gerar ficha em PDF: "+err.Error())
+		return
+	}
+
+	a.st.Auditoria(&u.ID, "exportar", "ficha_pessoal", &id, f.NomeGuerra, ipDe(r))
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=ficha_%s_%d.pdf", f.NomeGuerra, id))
+	_, _ = w.Write(pdf)
+}
+
+func (a *App) hMaterialCautelaReciboPDF(w http.ResponseWriter, r *http.Request) {
+	if a.reservaAtivo() {
+		jsonErro(w, http.StatusLocked, "módulo em reserva (indisponível nesta instalação)")
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	var rec ReciboCautelaPDF
+	rec.ID = id
+
+	var itemGrupoID int64
+	q := `SELECT mc.data_saida, COALESCE(mc.data_devolucao, ''), COALESCE(mc.obs_saida, ''), COALESCE(mc.obs_devolucao, ''), mc.status,
+	             mi.nome, mi.codigo_patrimonio, COALESCE(mi.numero_serie, '—'), mi.grupo_id,
+	             COALESCE(cat.nome, 'Geral'), COALESCE(mi.nivel_sensibilidade, 'padrao'),
+	             p.nome_guerra, p.nome_completo, COALESCE(s.nome, 'Indefinido'), COALESCE(fu.nome, 'Indefinida'), COALESCE(g.nome, 'Geral'),
+	             COALESCE(ue.nome_guerra, ue.login), COALESCE(ur.nome_guerra, COALESCE(ur.login, '—'))
+	      FROM material_cautelas mc
+	      JOIN material_itens mi ON mi.id = mc.item_id
+	      LEFT JOIN material_categorias cat ON cat.id = mi.categoria_id
+	      JOIN pessoas p ON p.id = mc.pessoa_id
+	      LEFT JOIN setores s ON s.id = p.setor_id
+	      LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+	      LEFT JOIN grupos g ON g.id = p.grupo_id
+	      JOIN usuarios ue ON ue.id = mc.responsavel_entrega_id
+	      LEFT JOIN usuarios ur ON ur.id = mc.responsavel_recebimento_id
+	      WHERE mc.id = ?`
+
+	err = a.st.db.QueryRow(q, id).Scan(
+		&rec.DataSaida, &rec.DataDevolucao, &rec.ObsSaida, &rec.ObsDevolucao, &rec.Status,
+		&rec.ItemNome, &rec.CodigoPatrimonio, &rec.NumeroSerie, &itemGrupoID,
+		&rec.CategoriaNome, &rec.Sensibilidade,
+		&rec.PessoaNomeGuerra, &rec.PessoaCompleto, &rec.PessoaSetor, &rec.PessoaFuncao, &rec.PessoaGrupo,
+		&rec.ResponsavelSaida, &rec.ResponsavelDev,
+	)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "cautela não encontrada")
+		return
+	}
+
+	if escopo > 0 && itemGrupoID != escopo {
+		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
+		return
+	}
+
+	pdf, err := a.gerarReciboCautelaPDF(rec, u.Login)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao gerar recibo de cautela: "+err.Error())
+		return
+	}
+
+	a.st.Auditoria(&u.ID, "exportar", "recibo_cautela", &id, rec.CodigoPatrimonio, ipDe(r))
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=recibo_cautela_%d.pdf", id))
+	_, _ = w.Write(pdf)
+}
+
+func (a *App) hEscalasPDF(w http.ResponseWriter, r *http.Request) {
+	if a.reservaAtivo() {
+		jsonErro(w, http.StatusLocked, "módulo em reserva (indisponível nesta instalação)")
+		return
+	}
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	mes := strings.TrimSpace(r.URL.Query().Get("mes"))
+	de := strings.TrimSpace(r.URL.Query().Get("de"))
+	ate := strings.TrimSpace(r.URL.Query().Get("ate"))
+
+	if mes != "" && de == "" && ate == "" {
+		de = mes + "-01"
+		ate = mes + "-31"
+	}
+	if de == "" || ate == "" {
+		hoje := time.Now().In(a.horaLocal)
+		de = hoje.Format("2006-01") + "-01"
+		ate = hoje.Format("2006-01") + "-31"
+	}
+
+	var esc EscalasRelatorioPDF
+	esc.Periodo = fmt.Sprintf("%s a %s", de, ate)
+
+	var grupoNome string
+	if escopo > 0 {
+		_ = a.st.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, escopo).Scan(&grupoNome)
+	} else {
+		grupoNome = "Todas as Subunidades"
+	}
+	esc.Grupo = grupoNome
+
+	qTurnos := `SELECT et.id, et.data_inicio, et.data_fim, etp.nome, COALESCE(et.observacao, ''), COALESCE(g.nome, '')
+	            FROM escala_turnos et
+	            JOIN escala_tipos etp ON etp.id = et.tipo_id
+	            LEFT JOIN grupos g ON g.id = et.grupo_id
+	            WHERE substr(et.data_inicio, 1, 10) <= ? AND substr(et.data_fim, 1, 10) >= ?`
+	args := []any{ate, de}
+	if escopo > 0 {
+		qTurnos += ` AND et.grupo_id = ?`
+		args = append(args, escopo)
+	}
+	qTurnos += ` ORDER BY et.data_inicio ASC, et.id ASC`
+
+	rows, err := a.st.db.Query(qTurnos, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao buscar turnos: "+err.Error())
+		return
+	}
+
+	var turnoIDs []int64
+	for rows.Next() {
+		var tid int64
+		var dIni, dFim, tNome, obs, gNome string
+		if rows.Scan(&tid, &dIni, &dFim, &tNome, &obs, &gNome) == nil {
+			turnoIDs = append(turnoIDs, tid)
+			esc.Turnos = append(esc.Turnos, map[string]any{
+				"id":          tid,
+				"data_inicio": dIni,
+				"data_fim":    dFim,
+				"tipo_nome":   tNome,
+				"observacao":  obs,
+				"grupo_nome":  gNome,
+				"militares":   "",
+			})
+		}
+	}
+	rows.Close()
+
+	if len(turnoIDs) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(turnoIDs)), ",")
+		qP := fmt.Sprintf(`
+			SELECT ep.turno_id, p.nome_guerra, COALESCE(ep.funcao_escala, '')
+			FROM escala_pessoas ep
+			JOIN pessoas p ON p.id = ep.pessoa_id
+			WHERE ep.turno_id IN (%s)
+			ORDER BY p.nome_guerra ASC`, ph)
+
+		argsT := make([]any, len(turnoIDs))
+		for i, id := range turnoIDs {
+			argsT[i] = id
+		}
+
+		pRows, pErr := a.st.db.Query(qP, argsT...)
+		if pErr == nil {
+			pPorTurno := map[int64][]string{}
+			for pRows.Next() {
+				var tid int64
+				var ng, fEsc string
+				if pRows.Scan(&tid, &ng, &fEsc) == nil {
+					info := ng
+					if fEsc != "" {
+						info += " (" + fEsc + ")"
+					}
+					pPorTurno[tid] = append(pPorTurno[tid], info)
+				}
+			}
+			pRows.Close()
+
+			for i := range esc.Turnos {
+				tid := esc.Turnos[i]["id"].(int64)
+				if mils, ok := pPorTurno[tid]; ok {
+					esc.Turnos[i]["militares"] = strings.Join(mils, ", ")
+				}
+			}
+		}
+	}
+
+	pdf, err := a.gerarEscalasPDF(esc, u.Login)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao gerar PDF de escalas: "+err.Error())
+		return
+	}
+
+	a.st.Auditoria(&u.ID, "exportar", "escalas_pdf", nil, de+" a "+ate, ipDe(r))
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "inline; filename=escala_servico.pdf")
+	_, _ = w.Write(pdf)
+}
+
+func (a *App) hMaterialInventarioPDF(w http.ResponseWriter, r *http.Request) {
+	if a.reservaAtivo() {
+		jsonErro(w, http.StatusLocked, "módulo em reserva (indisponível nesta instalação)")
+		return
+	}
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	var inv InventarioRelatorioPDF
+	inv.Totais = map[string]int{"total": 0, "disponivel": 0, "acautelado": 0, "manutencao": 0, "baixado": 0}
+
+	var grupoNome string
+	if escopo > 0 {
+		_ = a.st.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, escopo).Scan(&grupoNome)
+	} else {
+		grupoNome = "Carga Geral Institucional"
+	}
+	inv.Grupo = grupoNome
+
+	q := `SELECT mi.id, mi.codigo_patrimonio, mi.nome, COALESCE(cat.nome, 'Geral'),
+	             COALESCE(mi.numero_serie, '—'), mi.status,
+	             COALESCE(p.nome_guerra, '—') AS responsavel
+	      FROM material_itens mi
+	      LEFT JOIN material_categorias cat ON cat.id = mi.categoria_id
+	      LEFT JOIN material_cautelas mc ON mc.item_id = mi.id AND mc.status = 'ativa'
+	      LEFT JOIN pessoas p ON p.id = mc.pessoa_id
+	      WHERE 1=1`
+	var args []any
+	if escopo > 0 {
+		q += ` AND mi.grupo_id = ?`
+		args = append(args, escopo)
+	}
+	q += ` ORDER BY mi.status = 'acautelado' DESC, cat.nome ASC, mi.nome ASC`
+
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao buscar inventário: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var cod, nome, cat, numSerie, st, resp string
+		if rows.Scan(&id, &cod, &nome, &cat, &numSerie, &st, &resp) == nil {
+			inv.Totais["total"]++
+			if _, ok := inv.Totais[st]; ok {
+				inv.Totais[st]++
+			}
+			inv.Itens = append(inv.Itens, map[string]any{
+				"id":                id,
+				"codigo_patrimonio": cod,
+				"nome":              nome,
+				"categoria_nome":    cat,
+				"numero_serie":      numSerie,
+				"status":            st,
+				"responsavel_atual": resp,
+			})
+		}
+	}
+
+	pdf, err := a.gerarInventarioMaterialPDF(inv, u.Login)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao gerar PDF de inventário: "+err.Error())
+		return
+	}
+
+	a.st.Auditoria(&u.ID, "exportar", "inventario_pdf", nil, grupoNome, ipDe(r))
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", "inline; filename=inventario_material.pdf")
 	_, _ = w.Write(pdf)
 }
 

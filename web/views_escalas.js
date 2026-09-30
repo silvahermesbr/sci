@@ -59,6 +59,7 @@
           <div style="display:flex; gap:6px">
             <button class="acao-linha" id="btModoTabela" style="font-size:12px; font-weight:700">📋 Tabela</button>
             <button class="acao-linha" id="btModoGantt" style="font-size:12px; font-weight:700">📊 Cronograma (Gantt)</button>
+            <button class="acao-linha" id="btImprimirEscala" style="font-size:12px; font-weight:700; color:var(--verde-claro)">📄 Imprimir Escala</button>
           </div>
         </div>
         <div id="listaTurnos"><div class="carregando">Carregando grade de escalas…</div></div>
@@ -67,6 +68,10 @@
 
     $('#btModoTabela').onclick = () => { modoEscala = 'tabela'; alternarBotoesModo(); renderGradeTurnos(TURNOS_CACHE); };
     $('#btModoGantt').onclick = () => { modoEscala = 'gantt'; alternarBotoesModo(); renderGanttTurnos(TURNOS_CACHE); };
+    $('#btImprimirEscala').onclick = () => {
+      const mes = $('#fMesEscala') ? $('#fMesEscala').value : '';
+      window.open('/api/escalas/pdf?mes=' + encodeURIComponent(mes), '_blank');
+    };
 
     function alternarBotoesModo() {
       const bT = $('#btModoTabela'), bG = $('#btModoGantt');

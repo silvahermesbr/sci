@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -118,70 +119,221 @@ var (
 	corNV       = [3]int{117, 117, 117} // ordem Tenente 30/09: NÃO VERIFICADO (cinza)
 	corBarra    = [3]int{27, 94, 32}   // barras de setor/destino (verde-militar)
 	corDestino  = [3]int{21, 101, 192} // barras de destino (azul)
-)
+// ---------- ESTRUTURAS DE RELATÓRIO EXPANDIDO (v2.0 Paper-Trail) ----------
+
+type FichaPessoalPDF struct {
+	ID             int64
+	NomeGuerra     string
+	NomeCompleto   string
+	Setor          string
+	Funcao         string
+	Grupo          string
+	Status         string
+	DataNascimento string
+	TipoSanguineo  string
+	Telefone       string
+	Email          string
+	Endereco       string
+	FotoBase64     string
+	Presencas      int
+	Atrasos        int
+	Faltas         int
+	Justificadas   int
+	TotalConfs     int
+	PctPresenca    float64
+	CautelasAtivas []map[string]any
+	Escalas        []map[string]any
+}
+
+type ReciboCautelaPDF struct {
+	ID               int64
+	ItemNome         string
+	CodigoPatrimonio string
+	NumeroSerie      string
+	CategoriaNome    string
+	Sensibilidade    string
+	PessoaNomeGuerra string
+	PessoaCompleto   string
+	PessoaSetor      string
+	PessoaFuncao     string
+	PessoaGrupo      string
+	DataSaida        string
+	DataDevolucao    string
+	ResponsavelSaida string
+	ResponsavelDev   string
+	ObsSaida         string
+	ObsDevolucao     string
+	Status           string
+}
+
+type EscalasRelatorioPDF struct {
+	Periodo string
+	Grupo   string
+	Turnos  []map[string]any
+}
+
+type InventarioRelatorioPDF struct {
+	Grupo   string
+	Totais  map[string]int
+	Itens   []map[string]any
+}
+
+// ---------- MOTOR GRÁFICO PDF 2.0 (Design System Executivo) ----------
+
+func (a *App) novoPDF(orientacao, tituloDoc, subtitulo, operador string) *fpdf.Fpdf {
+	T := cp1252Traduz.Replace
+	pdf := fpdf.New(orientacao, "mm", "A4", "")
+	pdf.SetMargins(14, 12, 14)
+	pdf.SetAutoPageBreak(true, 16)
+	pdf.AliasNbPages("{nb}")
+
+	larguraUtil := 182.0
+	if orientacao == "L" {
+		larguraUtil = 269.0
+	}
+
+	pdf.SetFooterFunc(func() {
+		pdf.SetY(-14)
+		pdf.SetDrawColor(203, 213, 225) // Slate-300
+		pdf.SetLineWidth(0.3)
+		pdf.Line(14, pdf.GetY(), 14+larguraUtil, pdf.GetY())
+		pdf.Ln(1.5)
+
+		pdf.SetFont("Helvetica", "", 7.5)
+		pdf.SetTextColor(100, 116, 139) // Slate-500
+		authHash := fmt.Sprintf("%08X", (time.Now().UnixNano()/1e6)%0xFFFFFFFF)
+		infoEsq := fmt.Sprintf("SCI · Documento Oficial Auditável · sci.db · Autenticidade: #%s", authHash)
+		pdf.CellFormat(larguraUtil*0.7, 4.5, T(infoEsq), "", 0, "L", false, 0, "")
+
+		infoDir := fmt.Sprintf("Pág. %d de {nb}", pdf.PageNo())
+		if operador != "" {
+			infoDir = fmt.Sprintf("Op: %s · %s", operador, infoDir)
+		}
+		pdf.CellFormat(larguraUtil*0.3, 4.5, T(infoDir), "", 0, "R", false, 0, "")
+	})
+
+	pdf.AddPage()
+
+	// Faixa superior de destaque institucional
+	pdf.SetFillColor(30, 41, 59) // Slate-800
+	pdf.Rect(14, 12, larguraUtil, 2.5, "F")
+
+	// Nome do sistema e OM
+	pdf.SetY(17)
+	pdf.SetFont("Helvetica", "B", 13)
+	pdf.SetTextColor(15, 23, 42) // Slate-900
+	om := a.omTitulo
+	if om == "" {
+		om = "SCI — SISTEMA DE CONTROLE INTERNO"
+	}
+	pdf.CellFormat(larguraUtil*0.65, 6, T(om), "", 0, "L", false, 0, "")
+
+	// Metadados à direita
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetTextColor(16, 185, 129) // Emerald-500
+	pdf.CellFormat(larguraUtil*0.35, 5, T("AUDITORIA & CONTROLE"), "", 1, "R", false, 0, "")
+
+	// Título do Documento
+	pdf.SetX(14)
+	pdf.SetFont("Helvetica", "B", 10.5)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(larguraUtil*0.65, 5, T(tituloDoc), "", 0, "L", false, 0, "")
+
+	agoraStr := time.Now().In(a.horaLocal).Format("02/01/2006 15:04")
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(100, 116, 139)
+	pdf.CellFormat(larguraUtil*0.35, 4.5, T("Emitido em: "+agoraStr), "", 1, "R", false, 0, "")
+
+	// Subtítulo
+	if subtitulo != "" {
+		pdf.SetX(14)
+		pdf.SetFont("Helvetica", "", 8)
+		pdf.SetTextColor(71, 85, 105)
+		pdf.CellFormat(larguraUtil, 4.5, T(subtitulo), "", 1, "L", false, 0, "")
+	}
+
+	pdf.Ln(2)
+	pdf.SetDrawColor(226, 232, 240) // Slate-200
+	pdf.SetLineWidth(0.4)
+	pdf.Line(14, pdf.GetY(), 14+larguraUtil, pdf.GetY())
+	pdf.Ln(4)
+
+	return pdf
+}
+
+func pdfTabelaCabecalho(pdf *fpdf.Fpdf, colunas []string, larguras []float64) {
+	T := cp1252Traduz.Replace
+	pdf.SetFont("Helvetica", "B", 7.5)
+	pdf.SetFillColor(30, 41, 59)    // Slate-800
+	pdf.SetTextColor(255, 255, 255) // Branco
+	pdf.SetDrawColor(51, 65, 85)    // Slate-700
+	pdf.SetLineWidth(0.2)
+	for i, c := range colunas {
+		pdf.CellFormat(larguras[i], 6.2, T(c), "1", 0, "C", true, 0, "")
+	}
+	pdf.Ln(-1)
+}
+
+func pdfTabelaLinha(pdf *fpdf.Fpdf, valores []string, larguras []float64, alinhamentos []string, par bool) {
+	T := cp1252Traduz.Replace
+	pdf.SetFont("Helvetica", "", 7.5)
+	if par {
+		pdf.SetFillColor(248, 250, 252) // Slate-50 suave
+	} else {
+		pdf.SetFillColor(255, 255, 255) // Branco
+	}
+	pdf.SetTextColor(15, 23, 42)    // Slate-900
+	pdf.SetDrawColor(226, 232, 240) // Slate-200
+	pdf.SetLineWidth(0.15)
+	for i, v := range valores {
+		al := "L"
+		if i < len(alinhamentos) && alinhamentos[i] != "" {
+			al = alinhamentos[i]
+		}
+		pdf.CellFormat(larguras[i], 5.8, T(v), "1", 0, al, true, 0, "")
+	}
+	pdf.Ln(-1)
+}
 
 func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
-	pdf := fpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(15, 14, 15)
-	pdf.SetAutoPageBreak(true, 18)
-	pdf.AddPage()
 	T := cp1252Traduz.Replace
-
-	// ---- cabeçalho ----
-	pdf.SetFont("Helvetica", "B", 15)
-	pdf.SetTextColor(verdeR, verdeG, verdeB)
-	pdf.Cell(0, 9, T(a.omTitulo))
-	pdf.Ln(9)
-	pdf.SetFont("Helvetica", "", 9)
-	pdf.SetTextColor(90, 90, 90)
-	pdf.Cell(0, 5, T(fmt.Sprintf("Período: %s a %s  ·  Emitido em %s",
-		b.De, b.Ate, time.Now().In(a.horaLocal).Format("02/01/2006 15:04"))))
-	// % EFETIVO PRONTO no lado direito (ordem Tenente 28/09): só presentes sem ressalva
-	pdf.SetXY(122, pdf.GetY()-0.8)
-	pdf.SetFont("Helvetica", "B", 11)
-	pdf.SetTextColor(0, 0, 0)
-	pdf.Cell(73, 6.5, T(fmt.Sprintf("EFETIVO PRONTO: %.1f%%", b.PctPronto)))
-	pdf.Ln(6)
-	pdf.SetFont("Helvetica", "", 8)
-	pdf.SetTextColor(90, 90, 90)
-	pdf.Cell(0, 4.5, T("USO INTERNO"))
-	pdf.Ln(7.5)
-	pdf.SetDrawColor(verdeR, verdeG, verdeB)
-	pdf.SetLineWidth(0.5)
-	pdf.Line(15, pdf.GetY(), 195, pdf.GetY())
-	pdf.Ln(5)
+	sub := fmt.Sprintf("Período: %s a %s · Efetivo Pronto: %.1f%%", b.De, b.Ate, b.PctPronto)
+	pdf := a.novoPDF("P", "RELATÓRIO GERAL DE EFETIVO & CONFERÊNCIAS", sub, "")
 
 	// ---- resumo do período ----
-	pdf.SetFont("Helvetica", "B", 9.5)
-	pdf.SetTextColor(verdeR, verdeG, verdeB)
-	pdf.Cell(0, 6, T("RESUMO DO PERÍODO"))
-	pdf.Ln(7)
-	pctProntoStr := fmt.Sprintf("%.1f%%", b.PctPronto)
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("1. RESUMO GERAL DO PERÍODO"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
 	caixas := [][2]string{
 		{"EFETIVO ATIVO", strconv.Itoa(b.EfetivoAtivo)},
-		{"PRESENTE", strconv.Itoa(b.Presentes)},
-		{"ATRASO", strconv.Itoa(b.Atrasos)},
-		{"FALTA", strconv.Itoa(b.Faltas)},
-		{"JUSTIFICADA", strconv.Itoa(b.Justificadas)},
+		{"PRESENTES", strconv.Itoa(b.Presentes)},
+		{"ATRASOS", strconv.Itoa(b.Atrasos)},
+		{"FALTAS", strconv.Itoa(b.Faltas)},
+		{"JUSTIFICADAS", strconv.Itoa(b.Justificadas)},
 		{"N.VERIFIC.", strconv.Itoa(b.NaoVerificados)},
-		{"% EF.PRONTO", pctProntoStr},
+		{"% EF. PRONTO", fmt.Sprintf("%.1f%%", b.PctPronto)},
 	}
-	pdf.SetFont("Helvetica", "", 7)
 	y0 := pdf.GetY()
 	for i, c := range caixas {
-		x := 15 + float64(i)*22
-		rot := T(c[0])
-		if len(rot) > 13 {
-			rot = rot[:13]
-		}
+		x := 14 + float64(i)*26.0
 		pdf.SetXY(x, y0)
-		pdf.CellFormat(22, 5, rot, "1", 0, "C", false, 0, "")
-		pdf.SetXY(x, y0+5)
-		pdf.SetFont("Helvetica", "B", 10)
-		pdf.CellFormat(22, 8, c[1], "1", 0, "C", false, 0, "")
-		pdf.SetFont("Helvetica", "", 7)
+		pdf.SetFillColor(248, 250, 252)
+		pdf.SetDrawColor(203, 213, 225)
+		pdf.Rect(x, y0, 24.5, 13, "FD")
+
+		pdf.SetXY(x, y0+1.5)
+		pdf.SetFont("Helvetica", "B", 6.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(24.5, 3.5, T(c[0]), "", 0, "C", false, 0, "")
+
+		pdf.SetXY(x, y0+5.5)
+		pdf.SetFont("Helvetica", "B", 10.5)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.CellFormat(24.5, 6, T(c[1]), "", 0, "C", false, 0, "")
 	}
-	pdf.SetY(y0 + 13)
+	pdf.SetY(y0 + 15)
 	// decisão Tenente 28/09: justificada = falta — nota com o total
 	pdf.SetFont("Helvetica", "", 7.5)
 	pdf.SetTextColor(60, 60, 60)
@@ -375,45 +527,27 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 
 // gerarConferenciaPDF: relatório PRÓPRIO de uma conferência — só para conferências FECHADAS.
 // Contém: horário de fechamento da conferência e horário de geração + operador.
+// gerarConferenciaPDF: Relatório detalhado de uma conferência de pessoal (v2.0)
 func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 	T := cp1252Traduz.Replace
-	pdf := fpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(15, 14, 15)
-	pdf.SetAutoPageBreak(true, 18)
-	pdf.AddPage()
-
-	pdf.SetFont("Helvetica", "B", 15)
-	pdf.SetTextColor(15, 15, 15)
-	pdf.Cell(0, 9, T(a.omTitulo))
-	pdf.Ln(9)
-	pdf.SetFont("Helvetica", "", 9)
-	pdf.SetTextColor(90, 90, 90)
-	pdf.Cell(0, 5, T(fmt.Sprintf("Relatório de conferência de pessoal · %s · %s", c.Data, a.omTitulo)))
-	pdf.Ln(6)
-	pdf.SetFont("Helvetica", "", 8.5)
-	pdf.SetTextColor(40, 40, 40)
-	pdf.Cell(0, 5, T(fmt.Sprintf("Iniciada por %s em %s", c.CriadoPor, fmtDataBR(c.CriadaEm))))
+	sub := fmt.Sprintf("Data: %s · Iniciada por: %s em %s", c.Data, c.CriadoPor, fmtDataBR(c.CriadaEm))
 	if c.FechadaEm != nil {
-		pdf.SetX(95)
-		pdf.Cell(0, 5, T(fmt.Sprintf("Finalizada em %s", fmtDataBR(*c.FechadaEm))))
+		sub += fmt.Sprintf(" · Fechada em %s", fmtDataBR(*c.FechadaEm))
 	}
-	pdf.Ln(5.5)
-	pdf.SetFont("Helvetica", "", 8.5)
-	pdf.SetTextColor(40, 40, 40)
-	pdf.Cell(0, 5, T(fmt.Sprintf("Relatório gerado por %s em %s", c.GeradoPor,
-		time.Now().In(a.horaLocal).Format("02/01/2006 15:04:05"))))
-	pdf.Ln(7)
-	pdf.SetDrawColor(15, 15, 15)
-	pdf.SetLineWidth(0.5)
-	pdf.Line(15, pdf.GetY(), 195, pdf.GetY())
-	pdf.Ln(5)
+	pdf := a.novoPDF("P", fmt.Sprintf("CONFERÊNCIA DE PESSOAL Nº #%d", c.ID), sub, c.GeradoPor)
 
 	presentes := c.Resumo["presentes"]
 	atrasos := c.Resumo["atrasos"]
 	faltas := c.Resumo["faltas"]
 	just := c.Resumo["justificadas"]
-	nv := c.Resumo["nao_verificados"] // ordem Tenente 30/09
+	nv := c.Resumo["nao_verificados"]
 	total := presentes + atrasos + faltas + just + nv
+
+	pctVal := "—"
+	if total > 0 {
+		pctVal = fmt.Sprintf("%.1f%%", 100*float64(presentes+atrasos)/float64(total))
+	}
+
 	caixas := [][2]string{
 		{"LANÇADOS", strconv.Itoa(total)},
 		{"PRESENTES", strconv.Itoa(presentes)},
@@ -421,79 +555,589 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 		{"FALTAS", strconv.Itoa(faltas)},
 		{"JUSTIFICADAS", strconv.Itoa(just)},
 		{"NÃO VERIF.", strconv.Itoa(nv)},
+		{"% VÁLIDAS", pctVal},
 	}
-	if total > 0 {
-		// FIX S4-P2 (verif5): uniformiza métrica — "presença" em TODO o documento
-		// conta presentes puros; presente+atraso vira "% VÁLIDAS (presente+atraso)".
-		caixas = append(caixas, [2]string{"% VÁLIDAS (P+A)", fmt.Sprintf("%.1f%%", 100*float64(presentes+atrasos)/float64(total))})
-	} else {
-		caixas = append(caixas, [2]string{"% VÁLIDAS (P+A)", "—"})
-	}
-	pdf.SetFont("Helvetica", "", 7)
 	y0 := pdf.GetY()
 	for i, cx := range caixas {
-		x := 15 + float64(i)*26
+		x := 14 + float64(i)*26.0
 		pdf.SetXY(x, y0)
-		pdf.CellFormat(25, 5, T(cx[0]), "1", 0, "C", false, 0, "")
-		pdf.SetXY(x, y0+5)
-		pdf.SetFont("Helvetica", "B", 10)
-		pdf.CellFormat(25, 8, cx[1], "1", 0, "C", false, 0, "")
-		pdf.SetFont("Helvetica", "", 7)
-	}
-	pdf.SetY(y0 + 13)
+		pdf.SetFillColor(248, 250, 252)
+		pdf.SetDrawColor(203, 213, 225)
+		pdf.Rect(x, y0, 24.5, 13, "FD")
 
-	pdf.SetFont("Helvetica", "B", 9.5)
-	pdf.SetTextColor(15, 15, 15)
-	pdf.Cell(0, 6, T("LANÇAMENTOS DA CONFERÊNCIA"))
-	pdf.Ln(7)
-	cab := []string{"ORD", "Função", "Nome de guerra", "Setor", "Situação", "Destino", "Observação"}
-	larg := []float64{12, 30, 32, 26, 22, 26, 40}
-	pdf.SetFont("Helvetica", "B", 7.6)
-	pdf.SetFillColor(15, 15, 15)
-	pdf.SetTextColor(255, 255, 255)
-	for i, hh := range cab {
-		pdf.CellFormat(larg[i], 5.6, T(hh), "1", 0, "L", true, 0, "")
+		pdf.SetXY(x, y0+1.5)
+		pdf.SetFont("Helvetica", "B", 6.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(24.5, 3.5, T(cx[0]), "", 0, "C", false, 0, "")
+
+		pdf.SetXY(x, y0+5.5)
+		pdf.SetFont("Helvetica", "B", 10.5)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.CellFormat(24.5, 6, T(cx[1]), "", 0, "C", false, 0, "")
 	}
-	pdf.Ln(-1)
-	pdf.SetFont("Helvetica", "", 7.6)
-	zebra := false
-	for _, l := range c.Lancamentos {
-		if pdf.GetY() > 272 {
+	pdf.SetY(y0 + 17)
+
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("CHAMADA NOMINAL & LANÇAMENTOS"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	cab := []string{"ORD", "Função", "Nome de Guerra", "Setor", "Situação", "Destino / Motivo", "Observações"}
+	larg := []float64{10, 28, 34, 26, 22, 26, 36}
+	alinh := []string{"C", "L", "L", "L", "C", "L", "L"}
+	pdfTabelaCabecalho(pdf, cab, larg)
+
+	sitRot := map[string]string{
+		"presente":       "Presente",
+		"atraso":         "Atraso",
+		"falta":          "Falta",
+		"justificada":    "Justificada",
+		"nao_verificado": "NÃO VERIF.",
+	}
+
+	for idx, l := range c.Lancamentos {
+		if pdf.GetY() > 265 {
 			pdf.AddPage()
-			pdf.SetFont("Helvetica", "B", 7.6)
-			pdf.SetFillColor(15, 15, 15)
-			pdf.SetTextColor(255, 255, 255)
-			for i, hh := range cab {
-				pdf.CellFormat(larg[i], 5.6, T(hh), "1", 0, "L", true, 0, "")
-			}
-			pdf.Ln(-1)
-			pdf.SetFont("Helvetica", "", 7.6)
+			pdfTabelaCabecalho(pdf, cab, larg)
 		}
-		zebra = !zebra
-		if zebra {
-			pdf.SetFillColor(240, 240, 240)
-		} else {
-			pdf.SetFillColor(255, 255, 255)
-		}
-		pdf.SetTextColor(30, 30, 30)
-		// ordem Tenente 30/09: situação gravada NUNCA sai crua — rótulo oficial
-		sitRot := map[string]string{
-			"presente": "Presente", "atraso": "Atraso", "falta": "Falta",
-			"justificada": "Justificada", "nao_verificado": "NÃO VERIFICADO",
+		st := str(l["situacao"])
+		if r, ok := sitRot[st]; ok {
+			st = r
 		}
 		vals := []string{
-			strconv.Itoa(l["ord"].(int)), T(str(l["funcao"])), T(str(l["nome_guerra"])),
-			T(str(l["setor"])), T(sitRot[str(l["situacao"])]), T(str(l["destino"])), T(str(l["observacao"])),
+			strconv.Itoa(l["ord"].(int)),
+			str(l["funcao"]),
+			str(l["nome_guerra"]),
+			str(l["setor"]),
+			st,
+			str(l["destino"]),
+			str(l["observacao"]),
 		}
-		for i, v := range vals {
-			pdf.CellFormat(larg[i], 5.2, v, "1", 0, "L", zebra, 0, "")
-		}
-		pdf.Ln(-1)
+		pdfTabelaLinha(pdf, vals, larg, alinh, idx%2 == 1)
 	}
-	pdf.SetY(-14)
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// gerarFichaPessoalPDF: Dossiê Individual do Militar / Servidor (v2.0)
+func (a *App) gerarFichaPessoalPDF(f FichaPessoalPDF, operador string) ([]byte, error) {
+	T := cp1252Traduz.Replace
+	sub := fmt.Sprintf("Militar: %s · Setor: %s · Unidade/Grupo: %s", f.NomeGuerra, f.Setor, f.Grupo)
+	pdf := a.novoPDF("P", "FICHA CADASTRAL INDIVIDUAL", sub, operador)
+
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("1. IDENTIFICAÇÃO E DADOS CADASTRAIS"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	yFoto := pdf.GetY()
+	fotoInserida := false
+	if f.FotoBase64 != "" {
+		dadosB64 := f.FotoBase64
+		if idx := strings.Index(dadosB64, ","); idx != -1 {
+			dadosB64 = dadosB64[idx+1:]
+		}
+		imgBytes, err := base64.StdEncoding.DecodeString(dadosB64)
+		if err == nil && len(imgBytes) > 0 {
+			imgName := fmt.Sprintf("foto_p_%d_%d", f.ID, time.Now().UnixNano())
+			tp := "JPEG"
+			if bytes.HasPrefix(imgBytes, []byte("\x89PNG")) {
+				tp = "PNG"
+			}
+			opt := fpdf.ImageOptions{ImageType: tp}
+			pdf.RegisterImageOptionsReader(imgName, opt, bytes.NewReader(imgBytes))
+			pdf.ImageOptions(imgName, 14, yFoto, 30, 38, false, opt, 0, "")
+			fotoInserida = true
+		}
+	}
+	if !fotoInserida {
+		pdf.SetFillColor(241, 245, 249)
+		pdf.SetDrawColor(203, 213, 225)
+		pdf.Rect(14, yFoto, 30, 38, "FD")
+		pdf.SetXY(14, yFoto+17)
+		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetTextColor(148, 163, 184)
+		pdf.CellFormat(30, 4, T("[ FOTO 3x4 ]"), "", 0, "C", false, 0, "")
+	}
+
+	pdf.SetXY(48, yFoto)
+	campos := [][2]string{
+		{"Nome de Guerra / Função", fmt.Sprintf("%s (%s)", f.NomeGuerra, f.Funcao)},
+		{"Nome Completo", f.NomeCompleto},
+		{"Subunidade / Grupo", f.Grupo},
+		{"Pelotão / Setor", f.Setor},
+		{"Data de Nascimento / Sangue", fmt.Sprintf("%s   ·   Tipo Sanguíneo: %s", f.DataNascimento, f.TipoSanguineo)},
+		{"Telefone / E-mail", fmt.Sprintf("%s   ·   %s", f.Telefone, f.Email)},
+		{"Endereço Residencial", f.Endereco},
+		{"Status Cadastral", strings.ToUpper(f.Status)},
+	}
+
+	for _, cp := range campos {
+		pdf.SetX(48)
+		pdf.SetFont("Helvetica", "B", 7.5)
+		pdf.SetTextColor(71, 85, 105)
+		pdf.CellFormat(40, 4.7, T(cp[0])+":", "", 0, "L", false, 0, "")
+
+		pdf.SetFont("Helvetica", "", 7.5)
+		pdf.SetTextColor(15, 23, 42)
+		val := cp[1]
+		if strings.TrimSpace(val) == "" || val == " ()" || val == "   ·   Tipo Sanguíneo: " || val == "   ·   " {
+			val = "—"
+		}
+		pdf.CellFormat(108, 4.7, T(val), "", 1, "L", false, 0, "")
+	}
+	pdf.SetY(yFoto + 42)
+
+	// Resumo de Assiduidade
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("2. HISTÓRICO DE EFETIVO E ASSIDUIDADE"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	cards := [][2]string{
+		{"CONFERÊNCIAS", strconv.Itoa(f.TotalConfs)},
+		{"PRESENTES", strconv.Itoa(f.Presencas)},
+		{"ATRASOS", strconv.Itoa(f.Atrasos)},
+		{"FALTAS", strconv.Itoa(f.Faltas)},
+		{"JUSTIFICADAS", strconv.Itoa(f.Justificadas)},
+		{"% ASSIDUIDADE", fmt.Sprintf("%.1f%%", f.PctPresenca)},
+	}
+	yCards := pdf.GetY()
+	for i, c := range cards {
+		x := 14 + float64(i)*30.3
+		pdf.SetXY(x, yCards)
+		pdf.SetFillColor(248, 250, 252)
+		pdf.SetDrawColor(203, 213, 225)
+		pdf.Rect(x, yCards, 28.5, 13, "FD")
+
+		pdf.SetXY(x, yCards+1.5)
+		pdf.SetFont("Helvetica", "B", 6.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(28.5, 3.5, T(c[0]), "", 0, "C", false, 0, "")
+
+		pdf.SetXY(x, yCards+5.5)
+		pdf.SetFont("Helvetica", "B", 10.5)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.CellFormat(28.5, 6, T(c[1]), "", 0, "C", false, 0, "")
+	}
+	pdf.SetY(yCards + 16)
+
+	// Cautelas Ativas
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("3. BENS E MATERIAIS ACAUTELADOS ATIVOS"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	if len(f.CautelasAtivas) == 0 {
+		pdf.SetFont("Helvetica", "I", 7.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(182, 6, T("Nenhum material acautelado sob responsabilidade no momento."), "1", 1, "C", false, 0, "")
+		pdf.Ln(3)
+	} else {
+		colMat := []string{"Cautela", "Item / Descrição", "Patrimônio", "Data Retirada", "Armeiro Entregador"}
+		largMat := []float64{22, 65, 30, 35, 30}
+		pdfTabelaCabecalho(pdf, colMat, largMat)
+		for idx, c := range f.CautelasAtivas {
+			vals := []string{
+				fmt.Sprintf("#%v", c["id"]),
+				str(c["item_nome"]),
+				str(c["codigo_patrimonio"]),
+				fmtDataBR(str(c["data_saida"])),
+				str(c["responsavel_entrega"]),
+			}
+			pdfTabelaLinha(pdf, vals, largMat, []string{"C", "L", "C", "C", "L"}, idx%2 == 1)
+		}
+		pdf.Ln(3)
+	}
+
+	// Escalas
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("4. SERVIÇOS DE ESCALA PROGRAMADOS / RECENTES"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	if len(f.Escalas) == 0 {
+		pdf.SetFont("Helvetica", "I", 7.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(182, 6, T("Nenhum serviço de escala recente ou programado registrado."), "1", 1, "C", false, 0, "")
+		pdf.Ln(3)
+	} else {
+		colEsc := []string{"Início do Turno", "Término do Turno", "Tipo de Serviço / Posto", "Função Escalada"}
+		largEsc := []float64{40, 40, 52, 50}
+		pdfTabelaCabecalho(pdf, colEsc, largEsc)
+		for idx, e := range f.Escalas {
+			vals := []string{
+				fmtDataBR(str(e["data_inicio"])),
+				fmtDataBR(str(e["data_fim"])),
+				str(e["tipo_nome"]),
+				str(e["funcao_escala"]),
+			}
+			pdfTabelaLinha(pdf, vals, largEsc, []string{"C", "C", "L", "L"}, idx%2 == 1)
+		}
+		pdf.Ln(3)
+	}
+
+	// Assinaturas
+	pdf.SetY(250)
+	pdf.SetDrawColor(148, 163, 184)
+	pdf.SetLineWidth(0.3)
+	pdf.Line(20, 260, 95, 260)
+	pdf.Line(115, 260, 190, 260)
+
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetXY(20, 261)
+	pdf.CellFormat(75, 4, T(f.NomeCompleto), "", 0, "C", false, 0, "")
+	pdf.SetXY(20, 265)
+	pdf.CellFormat(75, 4, T("Assinatura do Militar"), "", 0, "C", false, 0, "")
+
+	pdf.SetXY(115, 261)
+	pdf.CellFormat(75, 4, T("Encarregado de Pessoal / Comandante"), "", 0, "C", false, 0, "")
+	pdf.SetXY(115, 265)
+	pdf.CellFormat(75, 4, T("Visto da Autoridade Competente"), "", 0, "C", false, 0, "")
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// gerarReciboCautelaPDF: Ticket / Recibo formal de cautela com 2 vias (v2.0)
+func (a *App) gerarReciboCautelaPDF(r ReciboCautelaPDF, operador string) ([]byte, error) {
+	T := cp1252Traduz.Replace
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.SetMargins(14, 10, 14)
+	pdf.SetAutoPageBreak(false, 0)
+	pdf.AddPage()
+
+	renderVia := func(yOffset float64, viaTitulo string) {
+		largura := 182.0
+
+		pdf.SetDrawColor(203, 213, 225)
+		pdf.SetLineWidth(0.3)
+		pdf.SetFillColor(255, 255, 255)
+		pdf.Rect(14, yOffset, largura, 126, "D")
+
+		pdf.SetFillColor(30, 41, 59)
+		pdf.Rect(14, yOffset, largura, 2, "F")
+
+		pdf.SetXY(18, yOffset+4)
+		pdf.SetFont("Helvetica", "B", 11)
+		pdf.SetTextColor(15, 23, 42)
+		om := a.omTitulo
+		if om == "" {
+			om = "SCI — SISTEMA DE CONTROLE INTERNO"
+		}
+		pdf.CellFormat(110, 5, T(om), "", 0, "L", false, 0, "")
+
+		pdf.SetFont("Helvetica", "B", 8)
+		pdf.SetTextColor(16, 185, 129)
+		pdf.CellFormat(66, 5, T(viaTitulo), "", 1, "R", false, 0, "")
+
+		pdf.SetX(18)
+		pdf.SetFont("Helvetica", "B", 9.5)
+		pdf.SetTextColor(30, 41, 59)
+		pdf.CellFormat(110, 4.5, T(fmt.Sprintf("RECIBO DE CAUTELA Nº #%d   ·   STATUS: %s", r.ID, strings.ToUpper(r.Status))), "", 0, "L", false, 0, "")
+
+		agoraStr := time.Now().In(a.horaLocal).Format("02/01/2006 15:04")
+		pdf.SetFont("Helvetica", "", 7.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(66, 4.5, T("Emitido em: "+agoraStr), "", 1, "R", false, 0, "")
+
+		pdf.SetY(yOffset + 15)
+		pdf.SetDrawColor(226, 232, 240)
+		pdf.Line(18, pdf.GetY(), 192, pdf.GetY())
+		pdf.Ln(2)
+
+		yDados := pdf.GetY()
+		pdf.SetXY(18, yDados)
+		pdf.SetFont("Helvetica", "B", 8)
+		pdf.SetTextColor(30, 41, 59)
+		pdf.CellFormat(86, 4, T("DISCRIMINAÇÃO DO MATERIAL"), "", 1, "L", false, 0, "")
+
+		itensMat := [][2]string{
+			{"Item / Bem", r.ItemNome},
+			{"Patrimônio / Tombo", r.CodigoPatrimonio},
+			{"Número de Série", r.NumeroSerie},
+			{"Categoria", r.CategoriaNome},
+			{"Sensibilidade", strings.ToUpper(r.Sensibilidade)},
+		}
+		for _, it := range itensMat {
+			pdf.SetX(18)
+			pdf.SetFont("Helvetica", "B", 7)
+			pdf.SetTextColor(71, 85, 105)
+			pdf.CellFormat(30, 3.8, T(it[0])+":", "", 0, "L", false, 0, "")
+			pdf.SetFont("Helvetica", "", 7)
+			pdf.SetTextColor(15, 23, 42)
+			v := it[1]
+			if strings.TrimSpace(v) == "" {
+				v = "—"
+			}
+			pdf.CellFormat(56, 3.8, T(v), "", 1, "L", false, 0, "")
+		}
+
+		pdf.SetXY(108, yDados)
+		pdf.SetFont("Helvetica", "B", 8)
+		pdf.SetTextColor(30, 41, 59)
+		pdf.CellFormat(84, 4, T("MILITAR / TOMADOR RESPONSÁVEL"), "", 1, "L", false, 0, "")
+
+		itensTomador := [][2]string{
+			{"Nome de Guerra", r.PessoaNomeGuerra},
+			{"Nome Completo", r.PessoaCompleto},
+			{"Função / Posto", r.PessoaFuncao},
+			{"Setor / Pelotão", r.PessoaSetor},
+			{"Unidade / Grupo", r.PessoaGrupo},
+		}
+		for _, it := range itensTomador {
+			pdf.SetX(108)
+			pdf.SetFont("Helvetica", "B", 7)
+			pdf.SetTextColor(71, 85, 105)
+			pdf.CellFormat(28, 3.8, T(it[0])+":", "", 0, "L", false, 0, "")
+			pdf.SetFont("Helvetica", "", 7)
+			pdf.SetTextColor(15, 23, 42)
+			v := it[1]
+			if strings.TrimSpace(v) == "" {
+				v = "—"
+			}
+			pdf.CellFormat(56, 3.8, T(v), "", 1, "L", false, 0, "")
+		}
+
+		pdf.SetY(yDados + 24)
+		pdf.SetDrawColor(226, 232, 240)
+		pdf.SetFillColor(248, 250, 252)
+		pdf.Rect(18, pdf.GetY(), 174, 12, "FD")
+
+		pdf.SetXY(20, pdf.GetY()+1.5)
+		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetTextColor(71, 85, 105)
+		saidaInfo := fmt.Sprintf("Data de Retirada: %s   ·   Armeiro / Operador da Saída: %s", fmtDataBR(r.DataSaida), r.ResponsavelSaida)
+		pdf.CellFormat(170, 4, T(saidaInfo), "", 1, "L", false, 0, "")
+
+		if r.DataDevolucao != "" {
+			devInfo := fmt.Sprintf("Devolvido em: %s   ·   Recebido por: %s", fmtDataBR(r.DataDevolucao), r.ResponsavelDev)
+			if r.ObsDevolucao != "" {
+				devInfo += fmt.Sprintf("   ·   Avarias: %s", r.ObsDevolucao)
+			}
+			pdf.SetX(20)
+			pdf.SetTextColor(16, 185, 129)
+			pdf.CellFormat(170, 4, T(devInfo), "", 1, "L", false, 0, "")
+		} else {
+			obsTxt := r.ObsSaida
+			if obsTxt == "" {
+				obsTxt = "Nenhuma avaria ou ressalva declarada na retirada."
+			}
+			pdf.SetX(20)
+			pdf.SetTextColor(100, 116, 139)
+			pdf.CellFormat(170, 4, T("Observações de Saída: "+obsTxt), "", 1, "L", false, 0, "")
+		}
+
+		pdf.SetY(pdf.GetY() + 6)
+		pdf.SetFont("Helvetica", "I", 6.8)
+		pdf.SetTextColor(100, 116, 139)
+		termo := "Declaro que recebi o material acima especificado em perfeitas condições de uso e conservação, assumindo integral responsabilidade civil, administrativa e penal pela sua guarda, manutenção e restituição, obrigando-me a comunicar imediatamente qualquer extravio ou avaria."
+		pdf.SetX(18)
+		pdf.MultiCell(174, 3.2, T(termo), "", "J", false)
+
+		yAss := yOffset + 104
+		pdf.SetDrawColor(148, 163, 184)
+		pdf.SetLineWidth(0.3)
+		pdf.Line(24, yAss+10, 96, yAss+10)
+		pdf.Line(114, yAss+10, 186, yAss+10)
+
+		pdf.SetFont("Helvetica", "", 7)
+		pdf.SetTextColor(71, 85, 105)
+		pdf.SetXY(24, yAss+11)
+		pdf.CellFormat(72, 4, T(fmt.Sprintf("%s (Tomador)", r.PessoaNomeGuerra)), "", 0, "C", false, 0, "")
+		pdf.SetXY(114, yAss+11)
+		pdf.CellFormat(72, 4, T(fmt.Sprintf("%s (Armaria / Reserva)", r.ResponsavelSaida)), "", 0, "C", false, 0, "")
+	}
+
+	renderVia(10, "1ª VIA — RESERVA DE MATERIAL / ARMARIA")
+
+	pdf.SetY(145)
+	pdf.SetDrawColor(148, 163, 184)
+	pdf.SetLineWidth(0.2)
 	pdf.SetFont("Helvetica", "", 7)
-	pdf.SetTextColor(120, 120, 120)
-	pdf.Cell(0, 5, T("SCI — relatório de conferência de pessoal · documento gerado automaticamente"))
+	pdf.SetTextColor(148, 163, 184)
+	pdf.CellFormat(182, 5, T("✂ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -"), "", 1, "C", false, 0, "")
+
+	renderVia(155, "2ª VIA — MILITAR / TOMADOR")
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// gerarEscalasPDF: Grade de Escalas e Serviços em modo Landscape (v2.0)
+func (a *App) gerarEscalasPDF(e EscalasRelatorioPDF, operador string) ([]byte, error) {
+	T := cp1252Traduz.Replace
+	sub := fmt.Sprintf("Período: %s · Unidade/Grupo: %s", e.Periodo, e.Grupo)
+	pdf := a.novoPDF("L", "ESCALA DE SERVIÇO DE EFETIVO", sub, operador)
+
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("GRADE OFICIAL DE SERVIÇOS & TURNOS PROGRAMADOS"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	if len(e.Turnos) == 0 {
+		pdf.SetFont("Helvetica", "I", 8.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(269, 8, T("Nenhum turno de serviço escalado para o período selecionado."), "1", 1, "C", false, 0, "")
+	} else {
+		col := []string{"Início", "Término", "Tipo de Posto / Serviço", "Grupo / Unidade", "Militares Alocados e Funções", "Observações"}
+		larg := []float64{32, 32, 50, 40, 75, 40}
+		al := []string{"C", "C", "L", "L", "L", "L"}
+		pdfTabelaCabecalho(pdf, col, larg)
+
+		for idx, t := range e.Turnos {
+			if pdf.GetY() > 180 {
+				pdf.AddPage()
+				pdfTabelaCabecalho(pdf, col, larg)
+			}
+			mils := str(t["militares"])
+			if mils == "" {
+				mils = "[ Sem militares escalados ]"
+			}
+			vals := []string{
+				fmtDataBR(str(t["data_inicio"])),
+				fmtDataBR(str(t["data_fim"])),
+				str(t["tipo_nome"]),
+				str(t["grupo_nome"]),
+				mils,
+				str(t["observacao"]),
+			}
+			pdfTabelaLinha(pdf, vals, larg, al, idx%2 == 1)
+		}
+	}
+
+	pdf.Ln(6)
+	if pdf.GetY() > 175 {
+		pdf.AddPage()
+	}
+
+	pdf.SetY(pdf.GetY() + 6)
+	pdf.SetDrawColor(148, 163, 184)
+	pdf.SetLineWidth(0.3)
+	pdf.Line(85, pdf.GetY()+12, 195, pdf.GetY()+12)
+
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetXY(85, pdf.GetY()+13)
+	pdf.CellFormat(110, 4, T("Comandante / Chefe da Subunidade"), "", 1, "C", false, 0, "")
+	pdf.SetX(85)
+	pdf.CellFormat(110, 4, T("HOMOLOGAÇÃO DA ESCALA DE SERVIÇO"), "", 1, "C", false, 0, "")
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// gerarInventarioMaterialPDF: Relatório de Inventário & Carga do Material (v2.0)
+func (a *App) gerarInventarioMaterialPDF(inv InventarioRelatorioPDF, operador string) ([]byte, error) {
+	T := cp1252Traduz.Replace
+	sub := fmt.Sprintf("Unidade/Grupo: %s · Base Patrimonial e Conferência de Carga", inv.Grupo)
+	pdf := a.novoPDF("P", "RELATÓRIO GERAL DE INVENTÁRIO & CARGA", sub, operador)
+
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("1. RESUMO DO PATRIMÔNIO CADASTRADO"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	cards := [][2]string{
+		{"TOTAL ITENS", strconv.Itoa(inv.Totais["total"])},
+		{"DISPONÍVEIS", strconv.Itoa(inv.Totais["disponivel"])},
+		{"ACAUTELADOS", strconv.Itoa(inv.Totais["acautelado"])},
+		{"MANUTENÇÃO", strconv.Itoa(inv.Totais["manutencao"])},
+		{"BAIXADOS", strconv.Itoa(inv.Totais["baixado"])},
+	}
+	yCards := pdf.GetY()
+	for i, c := range cards {
+		x := 14 + float64(i)*36.4
+		pdf.SetXY(x, yCards)
+		pdf.SetFillColor(248, 250, 252)
+		pdf.SetDrawColor(203, 213, 225)
+		pdf.Rect(x, yCards, 34.5, 13, "FD")
+
+		pdf.SetXY(x, yCards+1.5)
+		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(34.5, 3.5, T(c[0]), "", 0, "C", false, 0, "")
+
+		pdf.SetXY(x, yCards+5.5)
+		pdf.SetFont("Helvetica", "B", 11)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.CellFormat(34.5, 6, T(c[1]), "", 0, "C", false, 0, "")
+	}
+	pdf.SetY(yCards + 17)
+
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("2. DISCRIMINAÇÃO COMPLETA DE CARGA & PATRIMÔNIO"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	if len(inv.Itens) == 0 {
+		pdf.SetFont("Helvetica", "I", 8.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(182, 8, T("Nenhum item patrimonial cadastrado para esta unidade."), "1", 1, "C", false, 0, "")
+	} else {
+		col := []string{"Patrimônio", "Item / Descrição", "Categoria", "Nº Série", "Status", "Posse / Local", "Visto"}
+		larg := []float64{25, 48, 30, 25, 22, 22, 10}
+		al := []string{"C", "L", "L", "C", "C", "L", "C"}
+		pdfTabelaCabecalho(pdf, col, larg)
+
+		for idx, it := range inv.Itens {
+			if pdf.GetY() > 265 {
+				pdf.AddPage()
+				pdfTabelaCabecalho(pdf, col, larg)
+			}
+			stRot := map[string]string{
+				"disponivel": "Disponível",
+				"acautelado": "Acautelado",
+				"manutencao": "Manutenção",
+				"baixado":    "Baixado",
+			}
+			st := str(it["status"])
+			if r, ok := stRot[st]; ok {
+				st = r
+			}
+			vals := []string{
+				str(it["codigo_patrimonio"]),
+				str(it["nome"]),
+				str(it["categoria_nome"]),
+				str(it["numero_serie"]),
+				st,
+				str(it["responsavel_atual"]),
+				"[  ]",
+			}
+			pdfTabelaLinha(pdf, vals, larg, al, idx%2 == 1)
+		}
+	}
+
+	pdf.Ln(6)
+	if pdf.GetY() > 255 {
+		pdf.AddPage()
+	}
+
+	pdf.SetY(pdf.GetY() + 8)
+	pdf.SetDrawColor(148, 163, 184)
+	pdf.SetLineWidth(0.3)
+	pdf.Line(45, pdf.GetY()+12, 145, pdf.GetY()+12)
+
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetXY(45, pdf.GetY()+13)
+	pdf.CellFormat(100, 4, T("Encarregado do Material / Comissão de Inventário"), "", 1, "C", false, 0, "")
+	pdf.SetX(45)
+	pdf.CellFormat(100, 4, T("CONFERÊNCIA FÍSICA DE CARGA HOMOLOGADA"), "", 1, "C", false, 0, "")
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {

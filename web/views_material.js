@@ -30,6 +30,7 @@
           <p style="color:var(--tx2); font-size:13px; margin:0">Controle de carga, armamento, viaturas, chaves e cautelas com escaneamento de fichas.</p>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="acao-linha" id="btImprimirInventario" style="color:var(--verde-claro)">📄 Imprimir Inventário</button>
           <button class="acao-linha" id="btAjudaScanner" title="Guia de uso de leitores de código e câmera">❓ Ajuda</button>
           <button class="acao-linha" id="btScannerMaterial">📷 Escanear QR / Código</button>
           <button class="acao-linha" id="btNovoItemMaterial">+ Novo Item / Bem</button>
@@ -59,6 +60,7 @@
       };
     });
 
+    $('#btImprimirInventario').onclick = () => window.open('/api/material/inventario/pdf', '_blank');
     $('#btAjudaScanner').onclick = () => modalAjudaScanner();
     $('#btScannerMaterial').onclick = () => modalScannerMaterial();
     $('#btNovoItemMaterial').onclick = () => modalNovoItem(null, () => window.ViewMaterial());
@@ -133,11 +135,14 @@
                     <small style="color:var(--tx3)">Saída: ${(c.data_saida || '').slice(0,16).replace('T',' ')} · Resp: ${esc(c.responsavel_entrega || '—')}</small>
                     ${c.obs_saida ? `<br><small style="color:var(--tx3)">Obs: ${esc(c.obs_saida)}</small>` : ''}
                   </div>
-                  <div style="display:flex; gap:6px">
+                  <div style="display:flex; gap:6px; flex-wrap:wrap">
                     <button class="acao-linha" style="font-size:12px; padding:4px 8px" data-anexos="${c.id}" data-itemnome="${esc(it.nome)}">
                       📎 Fichas / Anexos
                     </button>
-                    <button class="primario" style="flex:1; font-size:13px; padding:6px 0" data-devolver="${c.id || it.id}" data-itemnome="${esc(it.nome)}">
+                    <button class="acao-linha" style="font-size:12px; padding:4px 8px" data-recibo="${c.id}" title="Imprimir Recibo / Ticket formal de cautela">
+                      📄 Recibo
+                    </button>
+                    <button class="primario" style="flex:1; font-size:13px; padding:6px 0; min-width:80px" data-devolver="${c.id || it.id}" data-itemnome="${esc(it.nome)}">
                       📥 Devolver
                     </button>
                   </div>
@@ -211,6 +216,14 @@
         const cid = +b.dataset.anexos;
         const nome = b.dataset.itemnome;
         modalGerenciarAnexos(cid, nome);
+      };
+    });
+
+    // Botões de Recibo
+    cont.querySelectorAll('button[data-recibo]').forEach(b => {
+      b.onclick = () => {
+        const cid = +b.dataset.recibo;
+        window.open('/api/material/cautelas/' + cid + '/recibo.pdf', '_blank');
       };
     });
   }
@@ -474,6 +487,9 @@
               <button class="acao-linha" style="font-size:12px; padding:3px 8px" data-anexoshist="${c.id}" data-itemnome="${esc(c.item_nome)}">
                 📎 Documentos / Fichas
               </button>
+              <button class="acao-linha" style="font-size:12px; padding:3px 8px; margin-left:4px" data-recibohist="${c.id}" title="Imprimir Recibo / Ticket formal de cautela">
+                📄 Recibo
+              </button>
             </td>
           </tr>
         `;
@@ -492,7 +508,7 @@
                   <th>Data de Saída</th>
                   <th>Devolução</th>
                   <th>Situação</th>
-                  <th>Anexos & Documentos</th>
+                  <th>Ações & Documentos</th>
                 </tr>
               </thead>
               <tbody>${linhas || '<tr><td colspan="7"><span class="vazio">Nenhum registro de cautela encontrado.</span></td></tr>'}</tbody>
@@ -506,6 +522,13 @@
           const cid = +b.dataset.anexoshist;
           const nome = b.dataset.itemnome;
           modalGerenciarAnexos(cid, nome);
+        };
+      });
+
+      cont.querySelectorAll('button[data-recibohist]').forEach(b => {
+        b.onclick = () => {
+          const cid = +b.dataset.recibohist;
+          window.open('/api/material/cautelas/' + cid + '/recibo.pdf', '_blank');
         };
       });
     } catch (e) {

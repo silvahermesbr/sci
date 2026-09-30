@@ -1481,6 +1481,7 @@
        <td>${esc(p.funcao || 'INDEFINIDO')}</td>
        <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
        <td><button class="acao-linha" data-edit="${p.id}">editar</button>
+       <button class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button>
        <button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button></td></tr>`).join('');
 
     const optsMoverGer = `<option value="">— destino (dentro da sua hierarquia) —</option>` +
@@ -1705,6 +1706,15 @@
         $('#pId').value = p.id; $('#pNg').value = p.nome_guerra; $('#pNc').value = p.nome_completo;
         $('#pSetor').value = p.setor_id || ''; $('#pFuncao').value = p.funcao_id || ''; $('#pStatus').value = p.status;
         window.scrollTo({ top: 0, behavior: 'smooth' });
+      };
+    });
+
+    /* --- imprimir ficha de pessoal --- */
+    document.querySelectorAll('#tabP [data-fichap]').forEach(bt => {
+      bt.onclick = ev => {
+        ev.stopPropagation();
+        const id = bt.dataset.fichap;
+        window.open('/api/pessoas/' + id + '/pdf', '_blank');
       };
     });
 
