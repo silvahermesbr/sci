@@ -360,7 +360,8 @@ func TestWhiteLabelAndConfiguracoes(t *testing.T) {
 
 	adminCookie := loginAs(t, app, "admin", "admin123")
 
-	// 1. Ler configurações públicas (sem auth)
+	// 1. Ler configurações públicas (sem auth) — FIX P0-2: SÓ chaves públicas saem;
+	// chaves internas (MODO_RESERVA) NUNCA vaziam pela rota pública
 	rrGet, respGet := doJSONReq(app, "GET", "/api/configuracoes", nil, nil)
 	if rrGet.Code != http.StatusOK {
 		t.Fatalf("erro ao ler /api/configuracoes: %v", respGet)
@@ -368,6 +369,16 @@ func TestWhiteLabelAndConfiguracoes(t *testing.T) {
 	cfgMap, ok := respGet["configuracoes"].(map[string]any)
 	if !ok || cfgMap["NOME_SISTEMA"] != "SCI" {
 		t.Fatalf("configuração inicial incorreta: %v", cfgMap)
+	}
+	_, _ = st.db.Exec(`INSERT INTO configuracoes (chave, valor) VALUES ('MODO_RESERVA', '1')
+		ON CONFLICT(chave) DO UPDATE SET valor = '1'`)
+	rrGet2, respGet2 := doJSONReq(app, "GET", "/api/configuracoes", nil, nil)
+	if rrGet2.Code != http.StatusOK {
+		t.Fatalf("erro ao reler /api/configuracoes: %v", respGet2)
+	}
+	cfgMap2 := respGet2["configuracoes"].(map[string]any)
+	if _, vazou := cfgMap2["MODO_RESERVA"]; vazou {
+		t.Fatalf("P0-2 regredido: chave interna MODO_RESERVA vazou na rota pública")
 	}
 
 	// 2. Modificar configurações para White-Label (ex.: Hospital Militar)
@@ -450,6 +461,47 @@ func TestFechamentoNaoVerificado(t *testing.T) {
 		map[string]any{"pessoa_id": p1, "situacao": "nao_verificado", "verificado": false}, gerente)
 	if rrM.Code != http.StatusOK {
 		t.Fatalf("autosave rejeitou situacao 'nao_verificado': %v", respM)
+	}
+}
+
+// TestCarryOver (ordem Tenante 30/09, FIX P0-1 da revisão DEV-L): conferência nova
+// HERDA situação+destino da última conferência fechada (hoje/ontem). Regressão do
+// SQL quebrado silenciosamente pela v1.0.
+func TestCarryOver(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	resGrupo, _ := st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('Cia CO', 'CO0001')`)
+	grupoID, _ := resGrupo.LastInsertId()
+	hashGer, _ := hashSenha("gerco12345")
+	_, _ = st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, ativo) VALUES ('gerco', ?, 'gerente', ?, 1)`, hashGer, grupoID)
+	gerente := loginAs(t, app, "gerco", "gerco12345")
+
+	resP, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('HERDADO', 'Deve Herdar', ?, 'ativo')`, grupoID)
+	p1, _ := resP.LastInsertId()
+	resD, _ := st.db.Exec(`INSERT INTO destinos (nome, ativo) VALUES ('Serviço Teste CO', 1)`)
+	destID, _ := resD.LastInsertId()
+
+	// 1ª conferência: falta COM destino, fechada
+	_, respConf1 := doJSONReq(app, "POST", "/api/conferencia/iniciar", map[string]string{"local": "A"}, gerente)
+	c1 := int64(respConf1["id"].(float64))
+	rrF1, respF1 := doJSONReq(app, "POST", "/api/conferencia/fechar", map[string]any{
+		"id": c1, "lancamentos": []map[string]any{
+			{"pessoa_id": p1, "situacao": "falta", "destino_id": destID, "verificado": true}}}, gerente)
+	if rrF1.Code != http.StatusOK {
+		t.Fatalf("setup: fechar 1ª conf falhou: %v", respF1)
+	}
+
+	// 2ª conferência HOJE: o carry-over deve trazer falta + destino
+	_, respConf2 := doJSONReq(app, "POST", "/api/conferencia/iniciar", map[string]string{"local": "B"}, gerente)
+	c2 := int64(respConf2["id"].(float64))
+	var sit string
+	var dest *int64
+	if err := st.db.QueryRow(`SELECT situacao, destino_id FROM presencas WHERE conferencia_id = ? AND pessoa_id = ?`, c2, p1).Scan(&sit, &dest); err != nil {
+		t.Fatalf("carry-over não gravou presença na conferência nova (P0-1 regredido?): %v", err)
+	}
+	if sit != "falta" || dest == nil || *dest != destID {
+		t.Fatalf("carry-over deveria herdar falta+destino; obtido sit=%s dest=%v", sit, dest)
 	}
 }
 // TestNukeGrupo (ordem Tenente 30/09): exclusão TOTAL só-admin com senha — apaga

@@ -758,7 +758,9 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	//   última conf há 2+ dias     → reseta para 'presente' (ex.: sexta → segunda)
 	//   nunca conferido            → nada a herdar (default 'presente')
 	// Herda APENAS pessoas ativas do grupo.
-	_, _ = a.st.db.Exec(`INSERT INTO presencas
+	// FIX P0-1 (revisão DEV-L 30/09): fechamento da subquery ROW_NUMBER foi apagado na
+	// v1.0 e o erro morria no `_, _ =` — toda conferência nova nascia SEM herdar estado.
+	if _, err := a.st.db.Exec(`INSERT INTO presencas
 		(conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em, verificado)
 		SELECT ?, pr.pessoa_id, pr.situacao, pr.destino_id, pr.observacao, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 0
 		FROM presencas pr
@@ -767,9 +769,12 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		      SELECT p2.pessoa_id, p2.conferencia_id,
 		             ROW_NUMBER() OVER (PARTITION BY p2.pessoa_id ORDER BY c2.data DESC, c2.id DESC) rn
 		      FROM presencas p2 JOIN conferencias c2 ON c2.id = p2.conferencia_id AND c2.status='fechada'
+		      ) WHERE rn = 1) u2 ON u2.pessoa_id = pr.pessoa_id AND u2.conferencia_id = c.id
 		WHERE julianday(?) - julianday(c.data) <= 1
 		  AND pr.pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ? AND status = 'ativo')`,
-		id, u.ID, data, grupoID) // herança best-effort: falha não impede a conferência
+		id, u.ID, data, grupoID); err != nil {
+		log.Printf("sci carry-over conf %d: %v", id, err) // nunca mais silencioso
+	}
 
 	// v1.0: MOTOR INTELIGENTE — Se houver militares escalados na data (módulo Escalas),
 	// garante o destino 'Serviço de Escala' e pré-associa na conferência como Justificada/Serviço.
@@ -783,7 +788,8 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if destServicoID > 0 {
-		_, _ = a.st.db.Exec(`
+		// FIX P1-1 (revisão DEV-L 30/09): erro do motor NUNCA silencioso
+		if _, err := a.st.db.Exec(`
 			INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em, verificado)
 			SELECT ?, ep.pessoa_id, 'justificada', ?, 'Escala: ' || etp.nome, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 0
 			FROM escala_pessoas ep
@@ -797,7 +803,9 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 			  observacao = excluded.observacao,
 			  alterado_por = excluded.marcado_por,
 			  alterado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-		`, id, destServicoID, u.ID, grupoID, data, data)
+		`, id, destServicoID, u.ID, grupoID, data, data); err != nil {
+			log.Printf("sci motor-escalas conf %d: %v", id, err)
+		}
 	}
 
 	a.st.Auditoria(&u.ID, "iniciar", "conferencias", &id, "data="+data+" (carry over e escalas aplicados)", ipDe(r))
@@ -4289,6 +4297,15 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 // =====================================================================
 
 func (a *App) hConfiguracoesGet(w http.ResponseWriter, _ *http.Request) {
+	// FIX P0-2 (revisão DEV-L 30/09): a rota é PÚBLICA (o login precisa dos rótulos e
+	// do tema antes da sessão) — só as chaves de aparência/termos saem. Chaves internas
+	// (MODO_RESERVA e futuras flags) NUNCA vazem por aqui.
+	publicas := map[string]bool{
+		"NOME_SISTEMA": true, "SUBTITULO_SISTEMA": true, "TITULO_ORGANIZACAO": true,
+		"ROTULO_GRUPO": true, "ROTULO_SETOR": true, "ROTULO_FUNCAO": true,
+		"ROTULO_PESSOA": true, "ROTULO_IDENTIFICADOR": true,
+		"COR_PRIMARIA": true, "COR_PRIMARIA_CLARO": true, "COR_PRIMARIA_ESCURO": true,
+	}
 	rows, err := a.st.db.Query(`SELECT chave, valor FROM configuracoes`)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -4298,7 +4315,7 @@ func (a *App) hConfiguracoesGet(w http.ResponseWriter, _ *http.Request) {
 	configs := map[string]string{}
 	for rows.Next() {
 		var k, v string
-		if rows.Scan(&k, &v) == nil {
+		if rows.Scan(&k, &v) == nil && publicas[k] {
 			configs[k] = v
 		}
 	}

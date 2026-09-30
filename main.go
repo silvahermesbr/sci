@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"syscall"
 	"time"
 )
 
@@ -89,7 +90,9 @@ func main() {
 	}()
 
 	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, os.Interrupt, os.Kill)
+	// FIX P2-2 (revisão DEV-L 30/09): deploy mata por PID (SIGTERM) — sem ele na lista,
+	// o shutdown elegante nunca rodava no fluxo real. os.Kill não é capturável (mantido por doc).
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit
 	log.Println("Encerrando o servidor (graceful shutdown)...")
 
