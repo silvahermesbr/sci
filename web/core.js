@@ -969,7 +969,14 @@ window.SCI_BOOT = function () {
     try {
       const r = await api('/api/me');
       definirUsuario(r && r.usuario);
-    } catch (e) { return; } // 401 → api() já abriu o login; falha de rede → toast exibido
+      if (r && r.usuario && r.usuario.precisa_setup && window.showSetupModal) {
+        window.showSetupModal();
+      }
+    } catch (e) {
+      definirUsuario(null);
+      irPara('#/login');
+      return;
+    }
     if (!location.hash || location.hash === '#' || location.hash === '#/') {
       location.hash = rotaInicial(); // dispara hashchange → rotear
     } else {
@@ -1085,41 +1092,54 @@ window.modalNotificacoes = modalNotificacoes;
 
 window.showSetupModal = function() {
   if (document.getElementById('setupModalGlobal')) return;
+  const usuarioAtual = (typeof ME !== 'undefined' && ME) || window.ME || {};
   const html = `
     <div style="text-align:center; padding: 20px 0">
       <h2 style="margin-top:0; color:var(--tx1)">Atualização Obrigatória (v1.2)</h2>
       <p style="color:var(--tx2); margin-bottom:24px; line-height:1.5">
-        Para continuar, você precisa atualizar seu Login para um <b>Nº de Identificação Único</b> (ex: CPF) e cadastrar uma nova senha pessoal.
+        Para acessar o sistema na versão 1.2, informe seu <b>Nº de Identificação Único</b> (ex: CPF) e cadastre uma nova senha pessoal.
       </p>
-      <div class="form-linha" style="text-align:left; max-width:300px; margin:0 auto 16px auto">
-        <label>Nº de Identificação Único (Login) *</label>
-        <input id="setupLogin" placeholder="ex: 123.456.789-00" autocomplete="off">
+      <div class="form-linha" style="text-align:left; max-width:320px; margin:0 auto 16px auto">
+        <label style="font-weight:700">Nº de Identificação Único (CPF/ID) *</label>
+        <input id="setupLogin" placeholder="ex: 000.000.000-00" value="${esc(usuarioAtual.login || '')}" autocomplete="off" style="width:100%;height:38px">
       </div>
-      <div class="form-linha" style="text-align:left; max-width:300px; margin:0 auto 24px auto">
-        <label>Nova Senha (mín. 8) *</label>
-        <input type="password" id="setupSenha" placeholder="Sua nova senha segura" autocomplete="new-password">
+      <div class="form-linha" style="text-align:left; max-width:320px; margin:0 auto 20px auto">
+        <label style="font-weight:700">Nova Senha Pessoal (mín. 8 caracteres) *</label>
+        <input type="password" id="setupSenha" placeholder="Sua nova senha segura" autocomplete="new-password" style="width:100%;height:38px">
       </div>
-      <button class="primario" id="setupBtn" style="width:100%; max-width:300px; padding:12px">Salvar e Continuar</button>
+      <button class="primario" id="setupBtn" style="width:100%; max-width:320px; padding:12px; font-weight:700">Salvar e Conectar</button>
+      <div style="margin-top:14px">
+        <button type="button" class="fantasma" id="setupLogoutBtn" style="font-size:12px; color:var(--tx3)">Desconectar / Trocar de Conta</button>
+      </div>
     </div>
   `;
-  const div = modal(html);
-  if (!div) return;
-  div.id = 'setupModalGlobal';
-  const closeBtn = div.parentNode.querySelector('.modal-fechar');
-  if (closeBtn) closeBtn.style.display = 'none';
-  div.parentNode.parentNode.onclick = null;
+  const mask = modal(html);
+  if (!mask) return;
+  mask.id = 'setupModalGlobal';
+  mask.onclick = (e) => e.stopPropagation();
 
-  div.querySelector('#setupBtn').onclick = async () => {
-    const login = div.querySelector('#setupLogin').value.trim();
-    const senha = div.querySelector('#setupSenha').value;
-    if (!login || !senha) return toast('Preencha todos os campos', 'erro');
+  mask.querySelector('#setupBtn').onclick = async () => {
+    const login = mask.querySelector('#setupLogin').value.trim();
+    const senha = mask.querySelector('#setupSenha').value;
+    if (!login || !senha) return toast('Preencha a identificação e a nova senha', 'erro');
     if (senha.length < 8) return toast('A senha deve ter no mínimo 8 caracteres', 'erro');
     try {
       const res = await api('/api/setup', { method: 'POST', body: JSON.stringify({ novo_login: login, nova_senha: senha }) });
-      toast(res.msg || 'Atualizado com sucesso!');
-      setTimeout(() => location.reload(), 1500);
+      toast(res.msg || 'Cadastro atualizado com sucesso!');
+      setTimeout(() => location.reload(), 1200);
     } catch (e) {}
   };
+
+  const btnLogout = mask.querySelector('#setupLogoutBtn');
+  if (btnLogout) {
+    btnLogout.onclick = async () => {
+      try { await api('/api/logout', { method: 'POST' }); } catch (e) {}
+      definirUsuario(null);
+      mask.remove();
+      irPara('#/login');
+      rotear();
+    };
+  }
 };
 
 })();

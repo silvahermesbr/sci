@@ -211,12 +211,9 @@ func (a *App) auth(admin bool, prox http.HandlerFunc) http.Handler {
 			http.Error(w, `{"erro":"sessão expirada"}`, http.StatusUnauthorized)
 			return
 		}
-		if u.PrecisaSetup && r.URL.Path != "/api/setup" {
-			// Permite apenas logout e setup
-			if r.URL.Path != "/api/logout" {
-				http.Error(w, `{"erro":"atualização de cadastro obrigatória", "req_setup": true}`, http.StatusForbidden)
-				return
-			}
+		if u.PrecisaSetup && r.URL.Path != "/api/setup" && r.URL.Path != "/api/me" && r.URL.Path != "/api/logout" {
+			http.Error(w, `{"erro":"atualização de cadastro obrigatória", "req_setup": true}`, http.StatusForbidden)
+			return
 		}
 		if admin && u.Papel != "admin" {
 			http.Error(w, `{"erro":"restrito ao admin"}`, http.StatusForbidden)
