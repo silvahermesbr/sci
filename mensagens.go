@@ -762,6 +762,329 @@ func (a *App) hMensagensMoverPasta(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true})
 }
 
+func (a *App) hMensagensThread(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
+		return
+	}
+	msgID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || msgID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	// 1. Dados da mensagem raiz
+	var mID, remPapelID, remUID int64
+	var assunto, corpo, criadaEm, tipo, anexosJSON string
+	var exigeResp int
+	err = a.st.db.QueryRow(`
+		SELECT id, assunto, corpo, criada_em, remetente_papel_id, remetente_usuario_id,
+		       COALESCE(tipo, 'comum'), COALESCE(exige_resposta, 0), COALESCE(anexos, '[]')
+		FROM mensagens WHERE id = ?`, msgID).Scan(
+		&mID, &assunto, &corpo, &criadaEm, &remPapelID, &remUID,
+		&tipo, &exigeResp, &anexosJSON)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "mensagem não encontrada")
+		return
+	}
+
+	// 2. Destinatários da mensagem
+	dRows, err := a.st.db.Query(`
+		SELECT md.id, md.destinatario_papel_id, up.usuario_id, u.login,
+		       COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
+		       up.papel, up.grupo_id, COALESCE(g.nome,''),
+		       up.funcao_id, COALESCE(f.nome,''),
+		       md.lida_em, md.visualizado_em, md.respondido_em, md.arquivada
+		FROM mensagem_destinatarios md
+		JOIN usuario_papeis up ON up.id = md.destinatario_papel_id
+		JOIN usuarios u ON u.id = up.usuario_id
+		LEFT JOIN grupos g ON g.id = up.grupo_id
+		LEFT JOIN funcoes f ON f.id = up.funcao_id
+		WHERE md.mensagem_id = ? AND md.excluida = 0`, msgID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	destinatarios := []map[string]any{}
+	ehDestinatario := false
+	var meuRespondidoEm *string
+	var meuLidaEm *string
+	var meuVisualizadoEm *string
+	minhaRespostaPendente := false
+
+	for dRows.Next() {
+		var mdID, destPapelID, destUID int64
+		var dLogin, dGuerra, dCompleto, dPapel, dGNome, dFNome string
+		var lidaEm, visEm, respEm *string
+		var dGID, dFID *int64
+		var arq int
+		if dRows.Scan(&mdID, &destPapelID, &destUID, &dLogin, &dGuerra, &dCompleto,
+			&dPapel, &dGID, &dGNome, &dFID, &dFNome,
+			&lidaEm, &visEm, &respEm, &arq) == nil {
+
+			if destPapelID == *u.PapelAtivoID {
+				ehDestinatario = true
+				meuRespondidoEm = respEm
+				meuLidaEm = lidaEm
+				meuVisualizadoEm = visEm
+				if exigeResp == 1 && respEm == nil {
+					minhaRespostaPendente = true
+				}
+			}
+
+			destinatarios = append(destinatarios, map[string]any{
+				"id":             mdID,
+				"papel_id":       destPapelID,
+				"usuario_id":     destUID,
+				"login":          dLogin,
+				"nome_guerra":    dGuerra,
+				"nome_completo":  dCompleto,
+				"papel":          dPapel,
+				"grupo_id":       dGID,
+				"grupo_nome":     dGNome,
+				"funcao_id":      dFID,
+				"funcao_nome":    dFNome,
+				"lida_em":        lidaEm,
+				"visualizado_em": visEm,
+				"respondido_em":  respEm,
+				"arquivada":      arq == 1,
+			})
+		}
+	}
+	dRows.Close()
+
+	ehRemetente := (remPapelID == *u.PapelAtivoID)
+	if !ehRemetente && !ehDestinatario && u.Papel != "admin" {
+		jsonErro(w, http.StatusForbidden, "acesso não autorizado a este despacho")
+		return
+	}
+
+	// Se for destinatário e ainda não tinha visualizado, marca visualizado_em e lida_em agora!
+	if ehDestinatario {
+		agora := time.Now().UTC().Format(time.RFC3339)
+		if meuVisualizadoEm == nil || meuLidaEm == nil {
+			_, _ = a.st.db.Exec(`
+				UPDATE mensagem_destinatarios
+				SET visualizado_em = COALESCE(visualizado_em, ?),
+				    lida_em = COALESCE(lida_em, ?),
+				    lida_por_usuario_id = COALESCE(lida_por_usuario_id, ?)
+				WHERE mensagem_id = ? AND destinatario_papel_id = ?`,
+				agora, agora, u.ID, msgID, *u.PapelAtivoID)
+			if meuVisualizadoEm == nil {
+				meuVisualizadoEm = &agora
+			}
+			if meuLidaEm == nil {
+				meuLidaEm = &agora
+			}
+		}
+	}
+
+	// 3. Remetente da mensagem raiz
+	var remLogin, remGuerra, remCompleto, remPapel, remGNome, remFNome, remExibicao string
+	var remGID, remFID *int64
+	_ = a.st.db.QueryRow(`
+		SELECT u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
+		       up.papel, up.grupo_id, COALESCE(g.nome,''),
+		       up.funcao_id, COALESCE(f.nome,''), COALESCE(up.nome_exibicao,'')
+		FROM usuario_papeis up
+		JOIN usuarios u ON u.id = up.usuario_id
+		LEFT JOIN grupos g ON g.id = up.grupo_id
+		LEFT JOIN funcoes f ON f.id = up.funcao_id
+		WHERE up.id = ?`, remPapelID).Scan(
+		&remLogin, &remGuerra, &remCompleto,
+		&remPapel, &remGID, &remGNome,
+		&remFID, &remFNome, &remExibicao)
+
+	var anexosList []any
+	_ = json.Unmarshal([]byte(anexosJSON), &anexosList)
+	if anexosList == nil {
+		anexosList = []any{}
+	}
+
+	// 4. Posts / Respostas da Thread
+	rRows, err := a.st.db.Query(`
+		SELECT mr.id, mr.corpo, mr.anexos, mr.criada_em,
+		       mr.remetente_papel_id, mr.remetente_usuario_id,
+		       u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
+		       up.papel, up.grupo_id, COALESCE(g.nome,''),
+		       up.funcao_id, COALESCE(f.nome,''), COALESCE(up.nome_exibicao,'')
+		FROM mensagem_respostas mr
+		JOIN usuario_papeis up ON up.id = mr.remetente_papel_id
+		JOIN usuarios u ON u.id = mr.remetente_usuario_id
+		LEFT JOIN grupos g ON g.id = up.grupo_id
+		LEFT JOIN funcoes f ON f.id = up.funcao_id
+		WHERE mr.mensagem_id = ?
+		ORDER BY mr.id ASC`, msgID)
+
+	respostas := []map[string]any{}
+	if err == nil {
+		for rRows.Next() {
+			var respID, respPapelID, respUID int64
+			var rCorpo, rAnxJSON, rCriadaEm, rLogin, rGuerra, rCompleto, rPapel, rGNome, rFNome, rExib string
+			var rGID, rFID *int64
+			if rRows.Scan(&respID, &rCorpo, &rAnxJSON, &rCriadaEm,
+				&respPapelID, &respUID,
+				&rLogin, &rGuerra, &rCompleto,
+				&rPapel, &rGID, &rGNome,
+				&rFID, &rFNome, &rExib) == nil {
+
+				var rAnxList []any
+				_ = json.Unmarshal([]byte(rAnxJSON), &rAnxList)
+				if rAnxList == nil {
+					rAnxList = []any{}
+				}
+
+				respostas = append(respostas, map[string]any{
+					"id":        respID,
+					"corpo":     rCorpo,
+					"anexos":    rAnxList,
+					"criada_em": rCriadaEm,
+					"remetente": map[string]any{
+						"papel_id":      respPapelID,
+						"usuario_id":    respUID,
+						"login":         rLogin,
+						"nome_guerra":   rGuerra,
+						"nome_completo": rCompleto,
+						"papel":         rPapel,
+						"grupo_id":      rGID,
+						"grupo_nome":    rGNome,
+						"funcao_id":     rFID,
+						"funcao_nome":   rFNome,
+						"nome_exibicao": rExib,
+					},
+				})
+			}
+		}
+		rRows.Close()
+	}
+
+	jsonOK(w, map[string]any{
+		"mensagem": map[string]any{
+			"id":             mID,
+			"assunto":        assunto,
+			"corpo":          corpo,
+			"criada_em":      criadaEm,
+			"tipo":           tipo,
+			"exige_resposta": exigeResp == 1,
+			"anexos":         anexosList,
+			"remetente": map[string]any{
+				"papel_id":      remPapelID,
+				"usuario_id":    remUID,
+				"login":         remLogin,
+				"nome_guerra":   remGuerra,
+				"nome_completo": remCompleto,
+				"papel":         remPapel,
+				"grupo_id":      remGID,
+				"grupo_nome":    remGNome,
+				"funcao_id":     remFID,
+				"funcao_nome":   remFNome,
+				"nome_exibicao": remExibicao,
+			},
+		},
+		"destinatarios":            destinatarios,
+		"respostas":                respostas,
+		"eh_remetente":             ehRemetente,
+		"eh_destinatario":          ehDestinatario,
+		"minha_resposta_pendente":  minhaRespostaPendente,
+		"meu_visualizado_em":       meuVisualizadoEm,
+		"meu_respondido_em":        meuRespondidoEm,
+	})
+}
+
+func (a *App) hMensagensResponderThread(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
+		return
+	}
+	msgID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || msgID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	var req struct {
+		Corpo  string `json:"corpo"`
+		Anexos any    `json:"anexos"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Corpo) == "" {
+		jsonErro(w, http.StatusBadRequest, "o texto da resposta é obrigatório")
+		return
+	}
+
+	// 1. Validar se a mensagem raiz existe e se o usuário tem acesso (é remetente ou destinatário)
+	var remPapelID int64
+	var exigeResp int
+	err = a.st.db.QueryRow(`
+		SELECT remetente_papel_id, COALESCE(exige_resposta, 0)
+		FROM mensagens WHERE id = ?`, msgID).Scan(&remPapelID, &exigeResp)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "mensagem não encontrada")
+		return
+	}
+
+	ehRemetente := (remPapelID == *u.PapelAtivoID)
+
+	var isDestinatario int
+	var respEm *string
+	_ = a.st.db.QueryRow(`
+		SELECT 1, respondido_em
+		FROM mensagem_destinatarios
+		WHERE mensagem_id = ? AND destinatario_papel_id = ?`,
+		msgID, *u.PapelAtivoID).Scan(&isDestinatario, &respEm)
+
+	if !ehRemetente && isDestinatario != 1 && u.Papel != "admin" {
+		jsonErro(w, http.StatusForbidden, "apenas os participantes desta mensagem podem postar na thread")
+		return
+	}
+
+	anexosJSON := "[]"
+	if req.Anexos != nil {
+		if b, err := json.Marshal(req.Anexos); err == nil {
+			anexosJSON = string(b)
+		}
+	}
+
+	// 2. Inserir resposta na thread
+	res, err := a.st.db.Exec(`
+		INSERT INTO mensagem_respostas (mensagem_id, remetente_usuario_id, remetente_papel_id, corpo, anexos)
+		VALUES (?, ?, ?, ?, ?)`,
+		msgID, u.ID, *u.PapelAtivoID, strings.TrimSpace(req.Corpo), anexosJSON)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao registrar resposta: "+err.Error())
+		return
+	}
+	respID, _ := res.LastInsertId()
+
+	agora := time.Now().UTC().Format(time.RFC3339)
+
+	// 3. REGRA CRÍTICA (Bugfix #3):
+	// Apenas se o usuário atual for o DESTINATÁRIO do despacho é que seu respondido_em é marcado!
+	// Se o remetente original postar na thread, ele adiciona o acompanhamento, mas o despacho do alvo NÃO é atendido!
+	if isDestinatario == 1 {
+		_, _ = a.st.db.Exec(`
+			UPDATE mensagem_destinatarios
+			SET respondido_em = ?,
+			    visualizado_em = COALESCE(visualizado_em, ?),
+			    lida_em = COALESCE(lida_em, ?)
+			WHERE mensagem_id = ? AND destinatario_papel_id = ? AND respondido_em IS NULL`,
+			agora, agora, agora, msgID, *u.PapelAtivoID)
+	}
+
+	a.st.Auditoria(&u.ID, "responder_thread", "mensagem_respostas", &respID,
+		fmt.Sprintf("msg_id=%d is_dest=%d", msgID, isDestinatario), ipDe(r))
+
+	jsonOK(w, map[string]any{
+		"ok":                true,
+		"id":                respID,
+		"criada_em":         agora,
+		"atendido":          isDestinatario == 1,
+		"despacho_atendido": isDestinatario == 1,
+	})
+}
+
 func (a *App) hMensagensContador(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {

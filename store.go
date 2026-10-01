@@ -253,6 +253,19 @@ func (s *Store) migrar() error {
 		_, _ = s.db.Exec(`UPDATE usuarios SET precisa_setup = 1 WHERE login != 'admin'`)
 	}
 
+	_, _ = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS mensagem_respostas (
+			id INTEGER PRIMARY KEY,
+			mensagem_id INTEGER NOT NULL REFERENCES mensagens(id) ON DELETE CASCADE,
+			remetente_usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			remetente_papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id),
+			corpo TEXT NOT NULL,
+			anexos TEXT NOT NULL DEFAULT '[]',
+			criada_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		);
+		CREATE INDEX IF NOT EXISTS idx_msg_respostas ON mensagem_respostas(mensagem_id);
+	`)
+
 	return err
 }
 
@@ -1360,6 +1373,16 @@ func (s *Store) migrarV22() error {
 			criada_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
 			UNIQUE (usuario_id, nome)
 		)`,
+		`CREATE TABLE IF NOT EXISTS mensagem_respostas (
+			id INTEGER PRIMARY KEY,
+			mensagem_id INTEGER NOT NULL REFERENCES mensagens(id) ON DELETE CASCADE,
+			remetente_usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			remetente_papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id),
+			corpo TEXT NOT NULL,
+			anexos TEXT NOT NULL DEFAULT '[]',
+			criada_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_msg_respostas ON mensagem_respostas(mensagem_id)`,
 	}
 
 	for _, q := range ddl {

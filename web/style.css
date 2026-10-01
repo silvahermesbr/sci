@@ -2764,5 +2764,70 @@ input[type="checkbox"] {
   border-bottom: none;
 }
 
+/* ---------- Estilos de Thread de Mensagens & Despachos ---------- */
+.msg-thread-container {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-height: 480px;
+  overflow-y: auto;
+  padding: 8px 4px;
+  margin: 14px 0;
+}
+
+.msg-thread-post {
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 14px 16px;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.msg-thread-post.raiz {
+  border-left: 4px solid var(--verde);
+  background: linear-gradient(to right, rgba(16, 185, 129, 0.04), transparent);
+}
+
+.msg-thread-post.resposta-formal {
+  border-left: 4px solid var(--verde-claro);
+  background: rgba(16, 185, 129, 0.05);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.msg-thread-post-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.msg-thread-post-autor {
+  font-size: 13.5px;
+  color: var(--tx1);
+}
+
+.msg-thread-post-data {
+  font-size: 11.5px;
+  color: var(--tx3);
+}
+
+.msg-thread-post-corpo {
+  font-size: 13.5px;
+  color: var(--tx2);
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.msg-thread-box-resposta {
+  background: var(--painel2);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 14px;
+  margin-top: 12px;
+}
+
 
 

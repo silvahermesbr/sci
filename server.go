@@ -201,6 +201,8 @@ func (a *App) rotas() {
 	m.Handle("POST /api/mensagens/pastas", a.auth(false, a.hMensagensPastasAdd))
 	m.Handle("DELETE /api/mensagens/pastas/{id}", a.auth(false, a.hMensagensPastasDel))
 	m.Handle("POST /api/mensagens/{id}/mover-pasta", a.auth(false, a.hMensagensMoverPasta))
+	m.Handle("GET /api/mensagens/{id}/thread", a.auth(false, a.hMensagensThread))
+	m.Handle("POST /api/mensagens/{id}/responder", a.auth(false, a.hMensagensResponderThread))
 	m.Handle("GET /api/mensagens/contador", a.auth(false, a.hMensagensContador))
 	m.Handle("GET /api/mensagens/destinatarios", a.auth(false, a.hMensagensDestinatarios))
 

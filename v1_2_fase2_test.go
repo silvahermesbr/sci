@@ -166,3 +166,104 @@ func TestFase2DespachosEAvisos(t *testing.T) {
 		t.Fatalf("esperado 1 comentário no aviso, obtido: %d", len(comentarios))
 	}
 }
+
+func TestFase2ThreadDespachoEExclusividadeResposta(t *testing.T) {
+	app, _, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	adminCookie := loginAs(t, app, "admin", "admin123")
+
+	// Criar dois grupos com seus respectivos gerentes
+	rr, res := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome":        "Setor Financeiro",
+		"login":       "gerente_fin",
+		"senha":       "senha12345",
+		"nome_guerra": "Fin",
+	}, adminCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao criar grupo Fin: %v", res)
+	}
+
+	rr, res = doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome":        "Setor Operacional",
+		"login":       "gerente_ops",
+		"senha":       "senha12345",
+		"nome_guerra": "Ops",
+	}, adminCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao criar grupo Ops: %v", res)
+	}
+
+	finCookie := loginAs(t, app, "gerente_fin", "senha12345")
+	opsCookie := loginAs(t, app, "gerente_ops", "senha12345")
+
+	rr, res = doJSONReq(app, "GET", "/api/me", nil, opsCookie)
+	opsU := res["usuario"].(map[string]any)
+	opsPapelID := int64(opsU["papel_ativo_id"].(float64))
+
+	// 1. Financeiro envia um DESPACHO para Operacional
+	rr, res = doJSONReq(app, "POST", "/api/mensagens", map[string]any{
+		"destinatario_papel_ids": []int64{opsPapelID},
+		"assunto":                "Despacho: Prestação de Contas da Operação",
+		"corpo":                  "Favor encaminhar prestação detalhada.",
+		"tipo":                   "despacho",
+		"exige_resposta":         true,
+	}, finCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao enviar despacho: %v", res)
+	}
+	msgID := int64(res["id"].(float64))
+
+	// 2. Financeiro (remetente) adiciona uma nota/acompanhamento na thread
+	rr, res = doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/responder", msgID), map[string]any{
+		"corpo": "Lembrando que o prazo improrrogável é hoje.",
+	}, finCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao postar acompanhamento pelo remetente: %v", res)
+	}
+	if res["despacho_atendido"] == true {
+		t.Fatalf("erro: acompanhamento do remetente NÃO pode marcar despacho_atendido=true")
+	}
+
+	// 3. Operacional consulta a thread: sua resposta AINDA deve constar como pendente!
+	rr, res = doJSONReq(app, "GET", fmt.Sprintf("/api/mensagens/%d/thread", msgID), nil, opsCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao obter thread: %v", res)
+	}
+	if res["minha_resposta_pendente"] != true {
+		t.Fatalf("despacho deveria continuar pendente para o destinatário")
+	}
+
+	// 4. Operacional tenta excluir antes de responder -> Deve falhar com 400
+	rr, _ = doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/excluir", msgID), nil, opsCookie)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("esperava bloqueio de exclusão para despacho pendente, obtido: %d", rr.Code)
+	}
+
+	// 5. Operacional responde formalmente na thread
+	rr, res = doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/responder", msgID), map[string]any{
+		"corpo": "Segue a prestação de contas anexa em conformidade.",
+	}, opsCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao responder formalmente: %v", res)
+	}
+	if res["despacho_atendido"] != true {
+		t.Fatalf("esperado despacho_atendido=true quando o destinatário responde")
+	}
+
+	// 6. Operacional consulta thread novamente -> Não mais pendente
+	rr, res = doJSONReq(app, "GET", fmt.Sprintf("/api/mensagens/%d/thread", msgID), nil, opsCookie)
+	if res["minha_resposta_pendente"] == true {
+		t.Fatalf("despacho não deveria mais estar pendente")
+	}
+	respostas := res["respostas"].([]any)
+	if len(respostas) != 2 {
+		t.Fatalf("esperado 2 posts na thread (1 de fin e 1 de ops), obtido: %d", len(respostas))
+	}
+
+	// 7. Agora Operacional consegue arquivar normalmente
+	rr, res = doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/arquivar", msgID), nil, opsCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao arquivar despacho já atendido: %v", res)
+	}
+}

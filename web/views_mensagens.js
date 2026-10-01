@@ -344,51 +344,74 @@
       });
     }
 
-    function abrirModalVisualizar(m, modo) {
-      const rem = m.remetente || {};
+    async function abrirModalVisualizar(m, modo) {
+      let thread;
+      try {
+        thread = await api('/api/mensagens/' + m.id + '/thread');
+      } catch (e) {
+        toast('Erro ao carregar detalhes da mensagem', 'erro');
+        return;
+      }
+
+      const msg = thread.mensagem;
+      const rem = msg.remetente || {};
       const nomeRem = formatarNomeRemetente(rem.nome_completo, rem.nome_guerra);
       const funcaoRem = rem.funcao_nome || 'Função não definida';
       const papelRem = (rem.papel || '').toUpperCase() + (rem.grupo_nome ? ' — ' + rem.grupo_nome : ' — Global');
 
-      let lidaInfo = '';
-      if (m.lida_em) {
-        lidaInfo = `<span class="msg-lida-audit">✓ Lida por <b>${esc(m.lida_por_nome || 'membro da equipe')}</b> em ${fmtData(m.lida_em)} às ${fmtHora(m.lida_em)}</span>`;
-      } else {
-        lidaInfo = `<span class="msg-lida-audit nao-lida">● Mensagem Não Lida</span>`;
-      }
+      const ehDespacho = msg.tipo === 'despacho' || msg.exige_resposta;
 
-      // Painel especial de Despacho
-      let painelDespacho = '';
-      const ehDespacho = m.tipo === 'despacho' || m.exige_resposta;
+      // Status do Despacho
+      let bannerDespacho = '';
       if (ehDespacho) {
-        if (!m.respondido_em) {
-          painelDespacho = `
-            <div style="background:rgba(239, 68, 68, 0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;padding:12px 14px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        if (thread.minha_resposta_pendente) {
+          bannerDespacho = `
+            <div style="background:rgba(239, 68, 68, 0.12);border:1px solid rgba(239,68,68,0.35);border-radius:6px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
               <div>
                 <b style="color:var(--verm-txt);display:block;margin-bottom:2px">⚠️ DESPACHO COM RETORNO OBRIGATÓRIO</b>
-                <span style="font-size:12.5px;color:var(--tx2)">Esta solicitação exige resposta formal. O arquivamento ou exclusão está bloqueado até o atendimento.</span>
+                <span style="font-size:12.5px;color:var(--tx2)">Esta solicitação exige resposta formal. O arquivamento ou exclusão está bloqueado até o envio da resposta abaixo nesta thread.</span>
               </div>
-              <button type="button" class="primario" id="btDespacharAgora" style="padding:6px 14px;font-size:12.5px">Responder Agora</button>
+              <button type="button" class="primario" id="btRolarParaResposta" style="padding:6px 14px;font-size:12.5px;white-space:nowrap">⬇️ Responder Abaixo</button>
             </div>
           `;
-        } else {
-          painelDespacho = `
-            <div style="background:rgba(16, 185, 129, 0.1);border:1px solid rgba(16,185,129,0.3);border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12.5px;color:var(--verde-txt)">
-              ✓ <b>Despacho Atendido:</b> Resposta formal enviada em ${fmtData(m.respondido_em)} às ${fmtHora(m.respondido_em)}.
+        } else if (thread.eh_destinatario && thread.meu_respondido_em) {
+          bannerDespacho = `
+            <div style="background:rgba(16, 185, 129, 0.1);border:1px solid rgba(16,185,129,0.3);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--verde-txt)">
+              ✓ <b>Despacho Atendido:</b> Sua resposta formal foi registrada nesta thread em ${fmtData(thread.meu_respondido_em)} às ${fmtHora(thread.meu_respondido_em)}.
+            </div>
+          `;
+        } else if (thread.eh_remetente) {
+          const destsAudit = thread.destinatarios || [];
+          bannerDespacho = `
+            <div style="background:var(--painel2);border:1px solid var(--borda);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px">
+              <b style="display:block;margin-bottom:4px;color:var(--tx1)">⚖️ AUDITORIA DO DESPACHO:</b>
+              <div style="display:flex;flex-direction:column;gap:4px">
+                ${destsAudit.map(d => {
+                  const nome = formatarNomeRemetente(d.nome_completo, d.nome_guerra);
+                  const pTxt = (d.papel || '').toUpperCase() + (d.grupo_nome ? ' — ' + d.grupo_nome : '');
+                  const func = d.funcao_nome ? ` (${d.funcao_nome})` : '';
+                  let statusResp = d.respondido_em 
+                    ? `<span style="color:var(--verde-txt);font-weight:600">✓ Respondido em ${fmtData(d.respondido_em)} às ${fmtHora(d.respondido_em)}</span>`
+                    : `<span style="color:var(--verm-txt);font-weight:700">⏳ Resposta Pendente</span>`;
+                  let statusVis = d.visualizado_em
+                    ? `<span style="color:var(--tx2);margin-left:6px">(Visualizado em ${fmtData(d.visualizado_em)} às ${fmtHora(d.visualizado_em)})</span>`
+                    : `<span style="color:var(--tx3);margin-left:6px">(Não visualizado)</span>`;
+                  return `<div>• <b>${esc(nome)}</b> - <small>${esc(pTxt)}${esc(func)}</small>: ${statusResp} ${statusVis}</div>`;
+                }).join('')}
+              </div>
             </div>
           `;
         }
       }
 
-      // Anexos
-      let anexosHtml = '';
-      if (m.anexos && m.anexos.length > 0) {
-        anexosHtml = `
-          <div style="margin-top:16px;padding-top:12px;border-top:1px dashed var(--borda)">
-            <b style="font-size:12px;color:var(--tx2);display:block;margin-bottom:8px">ANEXOS (${m.anexos.length}):</b>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              ${m.anexos.map((anx, idx) => `
-                <a class="msg-anexo-item" data-anxidx="${idx}" download="${esc(anx.nome || 'anexo')}">
+      function gerarHtmlAnexos(anexos, prefixo) {
+        if (!anexos || anexos.length === 0) return '';
+        return `
+          <div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--borda)">
+            <b style="font-size:11.5px;color:var(--tx2);display:block;margin-bottom:6px">ANEXOS (${anexos.length}):</b>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              ${anexos.map((anx, idx) => `
+                <a class="msg-anexo-item ${prefixo}-anexo-link" data-idx="${idx}" download="${esc(anx.nome || 'anexo')}" style="cursor:pointer">
                   📎 ${esc(anx.nome || 'arquivo')} <small style="opacity:0.7">(${formatarTamanho(anx.tamanho)})</small>
                 </a>
               `).join('')}
@@ -397,32 +420,100 @@
         `;
       }
 
+      // Timeline de Respostas da Thread
+      const respostas = thread.respostas || [];
+      const respostasHtml = respostas.map((r, rIdx) => {
+        const rRem = r.remetente || {};
+        const rNome = formatarNomeRemetente(rRem.nome_completo, rRem.nome_guerra);
+        const rFuncao = rRem.funcao_nome ? ` — ${rRem.funcao_nome}` : '';
+        const rPapel = (rRem.papel || '').toUpperCase() + (rRem.grupo_nome ? ' — ' + rRem.grupo_nome : '');
+
+        // Identifica se quem postou é destinatário do despacho
+        const destMatch = (thread.destinatarios || []).find(d => d.papel_id === rRem.papel_id);
+        const ehRespFormal = ehDespacho && !!destMatch;
+
+        return `
+          <div class="msg-thread-post ${ehRespFormal ? 'resposta-formal' : ''}">
+            <div class="msg-thread-post-topo">
+              <div class="msg-thread-post-autor">
+                <b>${esc(rNome)}</b>
+                <span class="destaque-funcao" style="margin-left:6px;font-size:12px">${esc(rFuncao)}</span>
+                <span style="margin-left:6px;font-size:11px;color:var(--tx3)">(${esc(rPapel)})</span>
+                ${ehRespFormal ? '<span class="badge-despacho-ok" style="margin-left:8px;font-size:11px;padding:1px 6px">⚖️ RESPOSTA FORMAL AO DESPACHO</span>' : '<span class="badge-tag" style="margin-left:8px;font-size:11px;padding:1px 6px">💬 ACOMPANHAMENTO</span>'}
+              </div>
+              <div class="msg-thread-post-data">
+                ${fmtData(r.criada_em)} às ${fmtHora(r.criada_em)}
+              </div>
+            </div>
+            <div class="msg-thread-post-corpo">${esc(r.corpo)}</div>
+            ${gerarHtmlAnexos(r.anexos, `r-${rIdx}`)}
+          </div>
+        `;
+      }).join('');
+
       // Opções de Mover Pasta
       const opcoesPastas = (pastasUsuario || []).map(p => `
         <option value="${p.id}" ${m.pasta_id === p.id ? 'selected' : ''}>${esc(p.nome)}</option>
       `).join('');
 
       const html = `
-        <div class="modal" style="max-width:700px;width:95%">
-          ${painelDespacho}
+        <div class="modal" style="max-width:760px;width:95%;max-height:92vh;display:flex;flex-direction:column">
+          ${bannerDespacho}
 
-          <div class="msg-view-cabecalho">
-            <div class="msg-view-tit">${esc(m.assunto)}</div>
-            <div class="msg-view-meta">
-              <div class="msg-view-linha1">${nomeRem} - <span class="destaque-funcao">${esc(funcaoRem)}</span></div>
-              <div class="msg-view-linha2">${esc(papelRem)}</div>
-              <div class="msg-view-linha3">
-                <span>Enviada em ${fmtData(m.criada_em)} às ${fmtHora(m.criada_em)}</span>
-                ${lidaInfo}
-              </div>
+          <div class="msg-view-cabecalho" style="margin-bottom:12px">
+            <div class="msg-view-tit" style="font-size:18px">${esc(msg.assunto)}</div>
+            <div style="font-size:12px;color:var(--tx3);margin-top:2px">
+              Thread de Comunicação Institucional #${msg.id} &bull; ${ehDespacho ? '⚖️ Despacho com Auditoria' : '✉️ Mensagem Comum'}
             </div>
           </div>
 
-          <div class="msg-view-corpo" style="margin-top:14px">${esc(m.corpo).replace(/\n/g, '<br>')}</div>
+          <!-- Container da Thread com Scroll -->
+          <div class="msg-thread-container" id="threadScrollContainer" style="overflow-y:auto;flex:1;max-height:48vh;padding-right:6px;display:flex;flex-direction:column;gap:12px">
+            <!-- Post Raiz -->
+            <div class="msg-thread-post raiz">
+              <div class="msg-thread-post-topo">
+                <div class="msg-thread-post-autor">
+                  <b>${nomeRem}</b>
+                  <span class="destaque-funcao" style="margin-left:6px;font-size:12px">${esc(funcaoRem)}</span>
+                  <span style="margin-left:6px;font-size:11px;color:var(--tx3)">(${esc(papelRem)})</span>
+                </div>
+                <div class="msg-thread-post-data">
+                  Post original &bull; ${fmtData(msg.criada_em)} às ${fmtHora(msg.criada_em)}
+                </div>
+              </div>
+              <div class="msg-thread-post-corpo">${esc(msg.corpo)}</div>
+              ${gerarHtmlAnexos(msg.anexos, 'raiz')}
+            </div>
 
-          ${anexosHtml}
+            <!-- Respostas Anteriores -->
+            ${respostasHtml}
+            <div id="threadFimScroll"></div>
+          </div>
 
-          <div class="modal-acoes" style="justify-content:space-between;border-top:1px solid var(--borda);padding-top:14px;margin-top:20px;flex-wrap:wrap;gap:10px">
+          <!-- Box de Nova Resposta / Post na Thread -->
+          <div class="msg-thread-box-resposta" id="boxRespostaThread" style="margin-top:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <label style="font-weight:700;font-size:12.5px;display:flex;align-items:center;gap:6px">
+                ${thread.minha_resposta_pendente 
+                  ? '<span style="color:var(--verm-txt)">⚖️ Sua Resposta Formal ao Despacho (Obrigatória):</span>' 
+                  : '<span>💬 Adicionar Resposta / Acompanhamento na Thread:</span>'}
+              </label>
+              <label class="acao-linha" style="cursor:pointer;font-size:11.5px;padding:2px 8px">
+                📎 Anexar
+                <input type="file" id="threadInputAnexo" multiple style="display:none">
+              </label>
+            </div>
+            <textarea id="threadNovoPostCorpo" rows="3" placeholder="${thread.minha_resposta_pendente ? 'Digite aqui sua manifestação / despacho formal em atendimento a esta solicitação...' : 'Escreva um acompanhamento ou comentário para todos nesta thread...'}" style="width:100%;resize:vertical"></textarea>
+            <div id="threadListaAnexos" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"></div>
+            <div style="display:flex;justify-content:flex-end;margin-top:8px">
+              <button type="button" class="primario" id="btEnviarRespostaThread" style="padding:6px 18px">
+                ${thread.minha_resposta_pendente ? '⚖️ Enviar Resposta Formal ao Despacho' : '💬 Postar Acompanhamento'}
+              </button>
+            </div>
+          </div>
+
+          <!-- Ações Inferiores -->
+          <div class="modal-acoes" style="justify-content:space-between;border-top:1px solid var(--borda);padding-top:12px;margin-top:12px;flex-wrap:wrap;gap:10px">
             <div style="display:flex;gap:8px;align-items:center">
               ${modo !== 'enviadas' ? `
                 <select id="selMoverPasta" style="height:32px;font-size:12px;padding:2px 8px">
@@ -443,9 +534,6 @@
                 <button type="button" class="acao-linha" id="btEncaminharMsg">
                   Encaminhar
                 </button>
-                <button type="button" class="primario" id="btResponderMsg">
-                  ${ehDespacho ? 'Responder / Despachar' : 'Responder'}
-                </button>
               ` : ''}
               <button type="button" class="fantasma" id="btFecharMsgView">Fechar</button>
             </div>
@@ -455,44 +543,118 @@
 
       const mModal = modal(html);
 
-      // Download de Anexos
-      if (m.anexos && m.anexos.length > 0) {
-        mModal.querySelectorAll('.msg-anexo-item').forEach(link => {
-          link.onclick = (e) => {
-            const idx = +link.dataset.anxidx;
-            const anx = m.anexos[idx];
-            if (anx && anx.dados_base64) {
-              link.href = anx.dados_base64;
-            }
+      // Eventos de Anexos do Post Raiz
+      if (msg.anexos && msg.anexos.length > 0) {
+        mModal.querySelectorAll('.raiz-anexo-link').forEach(link => {
+          link.onclick = () => {
+            const idx = +link.dataset.idx;
+            const anx = msg.anexos[idx];
+            if (anx && anx.dados_base64) link.href = anx.dados_base64;
           };
         });
       }
 
-      // Marcar como lida automaticamente se estiver na inbox
-      if (modo !== 'enviadas' && !m.lida_em) {
-        api(`/api/mensagens/${m.id}/ler`, { method: 'POST' }).then(() => {
-          m.lida_em = new Date().toISOString();
-          atualizarBadges();
-        }).catch(() => {});
+      // Eventos de Anexos das Respostas
+      respostas.forEach((r, rIdx) => {
+        if (r.anexos && r.anexos.length > 0) {
+          mModal.querySelectorAll(`.r-${rIdx}-anexo-link`).forEach(link => {
+            link.onclick = () => {
+              const idx = +link.dataset.idx;
+              const anx = r.anexos[idx];
+              if (anx && anx.dados_base64) link.href = anx.dados_base64;
+            };
+          });
+        }
+      });
+
+      // Rolar para baixo se tiver respostas
+      const scroller = mModal.querySelector('#threadScrollContainer');
+      if (scroller && respostas.length > 0) {
+        scroller.scrollTop = scroller.scrollHeight;
       }
 
-      mModal.querySelector('#btFecharMsgView').onclick = () => mModal.remove();
+      // Botão Rolar para Resposta
+      const btnRolar = mModal.querySelector('#btRolarParaResposta');
+      if (btnRolar) {
+        btnRolar.onclick = () => {
+          const txtArea = mModal.querySelector('#threadNovoPostCorpo');
+          if (txtArea) {
+            txtArea.scrollIntoView({ behavior: 'smooth' });
+            txtArea.focus();
+          }
+        };
+      }
 
-      // Botões de Despacho / Resposta
-      const acaoResponder = () => {
-        mModal.remove();
-        abrirModalCompor({
-          destinatario_id: m.remetente ? m.remetente.papel_id : null,
-          assunto: m.assunto.startsWith('Re: ') ? m.assunto : 'Re: ' + m.assunto,
-          pai_id: m.id,
-          tipo: ehDespacho ? 'despacho' : 'comum'
+      // Gestão de Anexos da Nova Resposta
+      let anexosResposta = [];
+      const contAnxResp = mModal.querySelector('#threadListaAnexos');
+      const inputAnxResp = mModal.querySelector('#threadInputAnexo');
+
+      function renderAnexosResposta() {
+        contAnxResp.innerHTML = anexosResposta.map((a, i) => `
+          <span class="msg-anexo-item" style="font-size:11px">
+            📄 ${esc(a.nome)} <small>(${formatarTamanho(a.tamanho)})</small>
+            <span data-remanx="${i}" style="cursor:pointer;font-weight:bold;margin-left:4px;color:var(--verm-txt)">&times;</span>
+          </span>
+        `).join('');
+        contAnxResp.querySelectorAll('[data-remanx]').forEach(b => {
+          b.onclick = () => {
+            anexosResposta.splice(+b.dataset.remanx, 1);
+            renderAnexosResposta();
+          };
         });
-      };
+      }
 
-      const btnResp = mModal.querySelector('#btResponderMsg');
-      if (btnResp) btnResp.onclick = acaoResponder;
-      const btnDespNow = mModal.querySelector('#btDespacharAgora');
-      if (btnDespNow) btnDespNow.onclick = acaoResponder;
+      if (inputAnxResp) {
+        inputAnxResp.onchange = (e) => {
+          const files = Array.from(e.target.files || []);
+          files.forEach(file => {
+            if (file.size > 25 * 1024 * 1024) {
+              return toast(`Arquivo ${file.name} excede o limite de 25MB`, 'erro');
+            }
+            const reader = new FileReader();
+            reader.onload = () => {
+              anexosResposta.push({
+                nome: file.name,
+                tamanho: file.size,
+                tipo: file.type,
+                dados_base64: reader.result
+              });
+              renderAnexosResposta();
+            };
+            reader.readAsDataURL(file);
+          });
+        };
+      }
+
+      // Enviar Post / Resposta na Thread
+      const btnEnviarResp = mModal.querySelector('#btEnviarRespostaThread');
+      if (btnEnviarResp) {
+        btnEnviarResp.onclick = async () => {
+          const corpo = (mModal.querySelector('#threadNovoPostCorpo').value || '').trim();
+          if (!corpo) {
+            toast('Por favor, digite uma mensagem para enviar na thread', 'erro');
+            return;
+          }
+          btnEnviarResp.disabled = true;
+          try {
+            const resp = await api(`/api/mensagens/${m.id}/responder`, {
+              method: 'POST',
+              body: JSON.stringify({
+                corpo: corpo,
+                anexos: anexosResposta
+              })
+            });
+            toast(resp.despacho_atendido ? 'Resposta formal ao despacho registrada com sucesso!' : 'Acompanhamento postado na thread!');
+            atualizarBadges();
+            mModal.remove();
+            abrirModalVisualizar(m, modo);
+            alternarAba(abaAtual);
+          } catch (e) {
+            btnEnviarResp.disabled = false;
+          }
+        };
+      }
 
       // Encaminhar
       const btnEnc = mModal.querySelector('#btEncaminharMsg');
@@ -500,9 +662,9 @@
         btnEnc.onclick = () => {
           mModal.remove();
           abrirModalCompor({
-            assunto: m.assunto.startsWith('Enc: ') ? m.assunto : 'Enc: ' + m.assunto,
-            corpo: `\n\n--- Mensagem Encaminhada ---\nDe: ${rem.nome_guerra || rem.login} (${rem.papel})\nData: ${fmtData(m.criada_em)}\n\n${m.corpo}`,
-            anexos: m.anexos || []
+            assunto: msg.assunto.startsWith('Enc: ') ? msg.assunto : 'Enc: ' + msg.assunto,
+            corpo: `\n\n--- Mensagem Encaminhada ---\nDe: ${nomeRem} (${papelRem})\nData: ${fmtData(msg.criada_em)}\n\n${msg.corpo}`,
+            anexos: msg.anexos || []
           });
         };
       }
@@ -511,8 +673,8 @@
       const btnArq = mModal.querySelector('#btArquivarMsg');
       if (btnArq) {
         btnArq.onclick = async () => {
-          if (ehDespacho && !m.respondido_em) {
-            return toast('Despacho com resposta pendente. Não é possível arquivar antes de responder.', 'erro');
+          if (thread.minha_resposta_pendente) {
+            return toast('Despacho com resposta pendente. É obrigatório responder formalmente na thread antes de arquivar.', 'erro');
           }
           try {
             const endpoint = m.arquivada ? `/api/mensagens/${m.id}/desarquivar` : `/api/mensagens/${m.id}/arquivar`;
@@ -546,8 +708,8 @@
       const btnExc = mModal.querySelector('#btExcluirMsg');
       if (btnExc) {
         btnExc.onclick = async () => {
-          if (ehDespacho && !m.respondido_em) {
-            return toast('Despacho com resposta pendente. Não é possível excluir antes de responder.', 'erro');
+          if (thread.minha_resposta_pendente) {
+            return toast('Despacho com resposta pendente. É obrigatório responder formalmente na thread antes de excluir.', 'erro');
           }
           if (!confirm('Deseja excluir esta mensagem da sua caixa?')) return;
           try {
@@ -558,6 +720,8 @@
           } catch (e) {}
         };
       }
+
+      mModal.querySelector('#btFecharMsgView').onclick = () => mModal.remove();
     }
 
     async function abrirModalCompor(dadosIniciais) {
@@ -586,15 +750,19 @@
             Compor Mensagem Institucional ou Despacho
           </h3>
 
-          <div style="display:flex;gap:12px;margin-bottom:14px;background:var(--painel2);padding:10px;border-radius:6px;border:1px solid var(--borda)">
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:700">
-              <input type="radio" name="rTipoMsg" value="comum" ${dadosIniciais.tipo !== 'despacho' ? 'checked' : ''}>
-              Mensagem Comum
+          <div class="campo" style="margin-bottom:14px">
+            <label style="font-weight:700;display:flex;align-items:center;gap:6px">
+              Tipo de Comunicação Institucional
             </label>
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:700;color:var(--verm-txt)">
-              <input type="radio" name="rTipoMsg" value="despacho" ${dadosIniciais.tipo === 'despacho' ? 'checked' : ''}>
-              ⚖️ Despacho (Retorno Obrigatório)
-            </label>
+            <select id="mTipo" style="width:100%;height:38px;font-weight:600;background:var(--painel2);border:1px solid var(--borda2);border-radius:var(--raio)">
+              <option value="comum" ${dadosIniciais.tipo !== 'despacho' ? 'selected' : ''}>✉️ Mensagem Comum (Informativo / Padrão)</option>
+              <option value="despacho" ${dadosIniciais.tipo === 'despacho' ? 'selected' : ''}>⚖️ Despacho Formal (Retorno Obrigatório & Auditoria)</option>
+            </select>
+            <div id="mTipoDesc" style="font-size:12px;color:var(--tx2);margin-top:4px">
+              ${dadosIniciais.tipo === 'despacho'
+                ? '⚖️ <b style="color:var(--verm-txt)">Despacho Formal:</b> Exige manifestação/resposta formal obrigatória do destinatário antes que ele possa arquivar ou excluir.'
+                : '✉️ <b style="color:var(--tx1)">Mensagem Comum:</b> Comunicação direta e informativa, sem trava de resposta obrigatória.'}
+            </div>
           </div>
 
           <div class="campo" style="margin-bottom:12px">
@@ -680,13 +848,21 @@
         });
       };
 
+      // Alternância de descrição do tipo de comunicação
+      q('#mTipo').onchange = (e) => {
+        const isDesp = e.target.value === 'despacho';
+        q('#mTipoDesc').innerHTML = isDesp
+          ? '⚖️ <b style="color:var(--verm-txt)">Despacho Formal:</b> Exige manifestação/resposta formal obrigatória do destinatário antes que ele possa arquivar ou excluir.'
+          : '✉️ <b style="color:var(--tx1)">Mensagem Comum:</b> Comunicação direta e informativa, sem trava de resposta obrigatória.';
+      };
+
       q('#mBtnCancel').onclick = () => mModal.remove();
 
       q('#mBtnEnviar').onclick = async () => {
         const destId = +q('#mDest').value;
         const assunto = q('#mAssunto').value.trim();
         const corpo = q('#mCorpo').value.trim();
-        const tipo = q('input[name="rTipoMsg"]:checked').value;
+        const tipo = q('#mTipo').value;
 
         if (!destId) { toast('Selecione o destinatário', 'erro'); return; }
         if (!assunto) { toast('Informe o assunto', 'erro'); return; }
