@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 )
 
@@ -87,6 +88,46 @@ func TestPDFEndpointsV2(t *testing.T) {
 	}
 	if !bytes.HasPrefix(rrRel.Body.Bytes(), []byte("%PDF-1.")) {
 		t.Fatalf("resposta de relatorio geral não começa com %%PDF-1.")
+	}
+
+	// 7. Testar Relatório de Conferência com Função (/api/conferencia/{id} e /api/conferencia/{id}/relatorio.pdf)
+	resF, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, ativo) VALUES ('Comandante de Pelotão', ?, 1)`, gid)
+	fID, _ := resF.LastInsertId()
+	_, _ = st.db.Exec(`UPDATE pessoas SET funcao_id = ? WHERE id = ?`, fID, pid)
+
+	var tipoConfID int64
+	_ = st.db.QueryRow(`SELECT id FROM conferencia_tipos LIMIT 1`).Scan(&tipoConfID)
+	if tipoConfID == 0 {
+		resTipo, _ := st.db.Exec(`INSERT INTO conferencia_tipos (nome) VALUES ('Conferência Diária')`)
+		tipoConfID, _ = resTipo.LastInsertId()
+	}
+
+	resConf, err := st.db.Exec(`INSERT INTO conferencias (tipo_id, data, status, criado_por, grupo_id, fechada_em) VALUES (?, '2026-09-30', 'fechada', 1, ?, '2026-09-30T10:00:00Z')`, tipoConfID, gid)
+	if err != nil {
+		t.Fatalf("falha ao criar conferencia: %v", err)
+	}
+	confID, _ := resConf.LastInsertId()
+	_, _ = st.db.Exec(`INSERT INTO presencas (conferencia_id, pessoa_id, situacao, marcado_por, verificado) VALUES (?, ?, 'presente', 1, 1)`, confID, pid)
+
+	rrConfJSON, resConfJSON := doJSONReq(app, "GET", "/api/conferencia/"+strconv.FormatInt(confID, 10), nil, adminCookie)
+	if rrConfJSON.Code != http.StatusOK {
+		t.Fatalf("esperado 200 em /api/conferencia/%d, obtido %d", confID, rrConfJSON.Code)
+	}
+	lancamentos, ok := resConfJSON["lancamentos"].([]any)
+	if !ok || len(lancamentos) == 0 {
+		t.Fatalf("esperado lancamentos em /api/conferencia/%d, body: %s", confID, rrConfJSON.Body.String())
+	}
+	primeiro := lancamentos[0].(map[string]any)
+	if primeiro["funcao"] != "Comandante de Pelotão" {
+		t.Fatalf("esperado funcao 'Comandante de Pelotão', obtido %v", primeiro["funcao"])
+	}
+
+	rrConfPDF, _ := doRawReq(app, "GET", "/api/conferencia/"+strconv.FormatInt(confID, 10)+"/relatorio.pdf", nil, adminCookie)
+	if rrConfPDF.Code != http.StatusOK {
+		t.Fatalf("esperado 200 em /api/conferencia/%d/relatorio.pdf, obtido: %d - %s", confID, rrConfPDF.Code, rrConfPDF.Body.String())
+	}
+	if !bytes.HasPrefix(rrConfPDF.Body.Bytes(), []byte("%PDF-1.")) {
+		t.Fatalf("resposta de conferencia PDF não começa com %%PDF-1.")
 	}
 
 	_ = cautID

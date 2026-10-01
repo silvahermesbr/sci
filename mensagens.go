@@ -129,6 +129,14 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, _ := res.LastInsertId()
+	if req.FuncaoID != nil {
+		var pID *int64
+		_ = a.st.db.QueryRow(`SELECT pessoa_id FROM usuarios WHERE id = ?`, usuarioID).Scan(&pID)
+		if pID != nil {
+			_, _ = a.st.db.Exec(`UPDATE pessoas SET funcao_id = ? WHERE id = ?`, req.FuncaoID, *pID)
+		}
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET funcao_id = ? WHERE id = ?`, req.FuncaoID, usuarioID)
+	}
 	a.st.Auditoria(&u.ID, "adicionar_papel", "usuario_papeis", &id,
 		fmt.Sprintf("usuario_id=%d papel=%s grupo_id=%v", usuarioID, papel, req.GrupoID), ipDe(r))
 

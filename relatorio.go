@@ -606,9 +606,13 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 		if r, ok := sitRot[st]; ok {
 			st = r
 		}
+		fn := str(l["funcao"])
+		if fn == "" {
+			fn = "—"
+		}
 		vals := []string{
 			strconv.Itoa(l["ord"].(int)),
-			str(l["funcao"]),
+			fn,
 			str(l["nome_guerra"]),
 			str(l["setor"]),
 			st,

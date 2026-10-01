@@ -1453,10 +1453,30 @@
     const [grupos, arvore, pessoas, setores, funcoes, contas] = await Promise.all([
       api('/api/grupos'), api('/api/grupos/arvore'), api('/api/pessoas'),
       api('/api/catalogo/setores'), api('/api/catalogo/funcoes'), api('/api/usuarios')]);
-    const meus = grupos.filter(g => g.id === eu.grupo_id);
-    const optSetores = ativosDe(setores), optFuncoes = ativosDe(funcoes);
+    let optSetores = ativosDe(setores), optFuncoes = ativosDe(funcoes);
     setoresCat = setores; funcoesCat = funcoes; // cache p/ carregarCats (v9.16.9)
     const operadores = contas.filter(c => c.grupo_id === eu.grupo_id && c.papel === 'operador');
+
+    async function atualizarSelectsCatalogos() {
+      try {
+        const [setoresNovos, funcoesNovas] = await Promise.all([
+          api('/api/catalogo/setores'), api('/api/catalogo/funcoes')
+        ]);
+        optSetores = ativosDe(setoresNovos);
+        optFuncoes = ativosDe(funcoesNovas);
+        const selS = $('#pSetor'), selF = $('#pFuncao');
+        if (selS) {
+          const val = selS.value;
+          selS.innerHTML = '<option value="">—</option>' + optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
+          selS.value = val;
+        }
+        if (selF) {
+          const val = selF.value;
+          selF.innerHTML = '<option value="">—</option>' + optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
+          selF.value = val;
+        }
+      } catch (e) {}
+    }
 
     /* --- formulário de militar (criar/editar) + adição em lote --- */
     const formPessoa = `
@@ -1580,6 +1600,7 @@
       });
       document.querySelectorAll('.abas button[data-g]').forEach(x => x.classList.toggle('ativo', x.dataset.g === abaGer));
       if (abaGer === 'tags') carregarCats(); // v9.16.9: carrega ao clicar (não só na 1ª renderização)
+      if (abaGer === 'pessoal') atualizarSelectsCatalogos();
     });
     ligarToggles($('#app'));
 
@@ -1604,9 +1625,26 @@
       await processar(async () => {
         for (const l of linhas) {
           const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
-          if (!ng || !nc) { falha++; continue; }
-          const sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
-          const fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
+          let sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
+          if (st && !sid) {
+            try {
+              const resSt = await api('/api/catalogo/setores', { method: 'POST', body: JSON.stringify({ nome: st }) });
+              if (resSt && resSt.id) {
+                sid = resSt.id;
+                optSetores.push({ id: sid, nome: st, ativo: 1 });
+              }
+            } catch (e) {}
+          }
+          let fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
+          if (fn && !fid) {
+            try {
+              const resFn = await api('/api/catalogo/funcoes', { method: 'POST', body: JSON.stringify({ nome: fn }) });
+              if (resFn && resFn.id) {
+                fid = resFn.id;
+                optFuncoes.push({ id: fid, nome: fn, ativo: 1 });
+              }
+            } catch (e) {}
+          }
           try { await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo' }) }); ok++; }
           catch (e) { falha++; }
         }
@@ -1965,6 +2003,7 @@
         if ($('#cgSigla')) $('#cgSigla').value = '';
         setoresCat = funcoesCat = null;
         carregarCats();
+        atualizarSelectsCatalogos();
       }
     };
     if (abaGer === 'tags') carregarCats(); else $('#gerTags').addEventListener('renderTags', carregarCats, { once: true });

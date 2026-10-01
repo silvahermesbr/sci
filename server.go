@@ -498,6 +498,8 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 		Endereco       *string `json:"endereco"`
 		FotoBase64     *string `json:"foto_base64"`
 		GrupoID        *int64  `json:"grupo_id"`
+		FuncaoID       *int64  `json:"funcao_id"`
+		SetorID        *int64  `json:"setor_id"`
 		Ativo          *bool   `json:"ativo"`
 	}
 	if err = decodificar(r, &req); err != nil {
@@ -564,6 +566,22 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 			_, _ = a.st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, gid, id)
 			// Adiciona ou preserva papel no grupo
 			_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'operador')`, id, gid)
+		}
+	}
+	if req.FuncaoID != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET funcao_id = ? WHERE id = ?`, req.FuncaoID, id)
+		var pID *int64
+		_ = a.st.db.QueryRow(`SELECT pessoa_id FROM usuarios WHERE id = ?`, id).Scan(&pID)
+		if pID != nil {
+			_, _ = a.st.db.Exec(`UPDATE pessoas SET funcao_id = ? WHERE id = ?`, req.FuncaoID, *pID)
+		}
+	}
+	if req.SetorID != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, req.SetorID, id)
+		var pID *int64
+		_ = a.st.db.QueryRow(`SELECT pessoa_id FROM usuarios WHERE id = ?`, id).Scan(&pID)
+		if pID != nil {
+			_, _ = a.st.db.Exec(`UPDATE pessoas SET setor_id = ? WHERE id = ?`, req.SetorID, *pID)
 		}
 	}
 	if req.Ativo != nil {
@@ -814,10 +832,15 @@ func (a *App) hEfetivoAtual(w http.ResponseWriter, r *http.Request) {
 // pessoasAtivas(escopo): escopo 0 = todas (admin); N = só do grupo N.
 func (a *App) pessoasAtivas(escopo int64) []map[string]any {
 	q := `
-		SELECT p.id, p.nome_guerra, p.nome_completo, COALESCE(s.nome,''), COALESCE(fu.nome,'')
+		SELECT p.id, p.nome_guerra, p.nome_completo, COALESCE(s.nome,''),
+		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), '')))
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN usuarios u2 ON u2.pessoa_id = p.id
+		LEFT JOIN funcoes fu_u ON fu_u.id = u2.funcao_id
+		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
+		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		WHERE p.status = 'ativo'`
 	var rows *sql.Rows
 	var err error
@@ -1681,12 +1704,19 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, e := a.st.db.Query(`
 		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
-		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), u.login, pr.marcado_em
+		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), COALESCE(u.login,''), COALESCE(pr.marcado_em,''),
+		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), '—'))),
+		       COALESCE(pr.verificado, 0)
 		FROM presencas pr
 		JOIN pessoas p ON p.id = pr.pessoa_id
 		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN usuarios u2 ON u2.pessoa_id = p.id
+		LEFT JOIN funcoes fu_u ON fu_u.id = u2.funcao_id
+		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
+		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN destinos d ON d.id = pr.destino_id
-		JOIN usuarios u ON u.id = pr.marcado_por
+		LEFT JOIN usuarios u ON u.id = pr.marcado_por
 		WHERE pr.conferencia_id = ?
 		ORDER BY pr.situacao, p.nome_guerra`, id)
 	if e != nil {
@@ -1697,24 +1727,33 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	lanc := []map[string]any{}
 	cont := map[string]int{}
 	for rows.Next() {
-		var ng, setor, sit, destino, obs, por, em string
-		if rows.Scan(&ng, &setor, &sit, &destino, &obs, &por, &em) == nil {
+		var ng, setor, sit, destino, obs, por, em, funcao string
+		var verificado int
+		if rows.Scan(&ng, &setor, &sit, &destino, &obs, &por, &em, &funcao, &verificado) == nil {
 			lanc = append(lanc, map[string]any{
-				"nome_guerra": ng, "setor": setor, "situacao": sit,
+				"nome_guerra": ng, "funcao": funcao, "setor": setor, "situacao": sit,
 				"destino": destino, "observacao": obs, "marcado_por": por, "marcado_em": em,
+				"verificado": verificado == 1,
 			})
 			cont[sit]++
 		}
 	}
-	jsonOK(w, map[string]any{
+	cMap := map[string]any{
 		"id": id, "data": data, "status": status, "hora": hora, "local": local,
 		"criada_em": criadaEm, "fechada_em": fechada, "criado_por": criadoPor,
+	}
+	res := map[string]any{
+		"id": id, "data": data, "status": status, "hora": hora, "local": local,
+		"criada_em": criadaEm, "fechada_em": fechada, "criado_por": criadoPor,
+		"conferencia": cMap,
 		"lancamentos": lanc,
+		"presencas":   lanc,
 		"resumo": map[string]any{
 			"presentes": cont["presente"], "atrasos": cont["atraso"],
 			"faltas": cont["falta"], "justificadas": cont["justificada"],
 		},
-	})
+	}
+	jsonOK(w, res)
 }
 
 // hConferenciaPDF: relatório próprio — SOMENTE de conferência fechada (ordem Tenente 28/09).
@@ -1769,13 +1808,18 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
 		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), u.login,
-		       COALESCE(fu.nome,''), COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor')
+		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), '—'))),
+		       COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor')
 		FROM presencas pr
 		JOIN pessoas p ON p.id = pr.pessoa_id
 		LEFT JOIN setores s ON s.id = p.setor_id
 		LEFT JOIN cam_setor cs2 ON cs2.id = s.id
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
 		LEFT JOIN cam_funcao cf2 ON cf2.id = fu.id
+		LEFT JOIN usuarios u2 ON u2.pessoa_id = p.id
+		LEFT JOIN funcoes fu_u ON fu_u.id = u2.funcao_id
+		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
+		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN destinos d ON d.id = pr.destino_id
 		JOIN usuarios u ON u.id = pr.marcado_por
 		WHERE pr.conferencia_id = ?
@@ -1960,7 +2004,9 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		       COALESCE(SUM(pr.situacao='falta'),0),
 		       COALESCE(SUM(pr.situacao='justificada'),0),
 		       COALESCE(SUM(pr.situacao='nao_verificado'),0),
-		       COUNT(pr.id), p.funcao_id, COALESCE(fu.nome,''),
+		       COUNT(pr.id),
+		       COALESCE(p.funcao_id, u2.funcao_id, up2.funcao_id),
+		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), ''))),
 		       ROW_NUMBER() OVER (ORDER BY COALESCE(cf2.caminho,'~sem função'),
 		                                  COALESCE(cs2.caminho,'~sem setor'),
 		                                  p.nome_guerra COLLATE NOCASE) AS antig,
@@ -1970,6 +2016,10 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		LEFT JOIN cam_setor cs2 ON cs2.id = s.id
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
 		LEFT JOIN cam_funcao cf2 ON cf2.id = fu.id
+		LEFT JOIN usuarios u2 ON u2.pessoa_id = p.id
+		LEFT JOIN funcoes fu_u ON fu_u.id = u2.funcao_id
+		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
+		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN grupos g2 ON g2.id = p.grupo_id
 		/* FIX S4-P1 (verif5): escopo filtrado DENTRO do join de presencas —
 		   pessoa ativa sem lançamento no período permanece na lista (zeros),
@@ -2869,11 +2919,18 @@ func (a *App) hPessoasList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) pessoasTodas(escopo int64) []map[string]any {
 	q := `
-		SELECT p.id, p.nome_guerra, p.nome_completo, p.setor_id, p.funcao_id, p.status,
-		       COALESCE(s.nome,''), COALESCE(fu.nome,''), COALESCE(g.nome,'')
+		SELECT p.id, p.nome_guerra, p.nome_completo, p.setor_id,
+		       COALESCE(p.funcao_id, u2.funcao_id, up2.funcao_id), p.status,
+		       COALESCE(s.nome,''),
+		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), ''))),
+		       COALESCE(g.nome,'')
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN usuarios u2 ON u2.pessoa_id = p.id
+		LEFT JOIN funcoes fu_u ON fu_u.id = u2.funcao_id
+		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
+		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN grupos g ON g.id = p.grupo_id`
 	var rows *sql.Rows
 	var err error
@@ -3197,6 +3254,12 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+	if req.FuncaoID != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET funcao_id = ? WHERE pessoa_id = ?`, req.FuncaoID, id)
+	}
+	if req.SetorID != nil {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE pessoa_id = ?`, req.SetorID, id)
 	}
 	a.st.Auditoria(&u.ID, "alterar", "pessoas", &id, req.NomeGuerra, ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})

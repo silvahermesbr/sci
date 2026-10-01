@@ -844,8 +844,8 @@
 
       try {
         const r = await api('/api/conferencia/' + confId);
-        const c = r.conferencia || {};
-        const pres = r.presencas || [];
+        const c = r.conferencia || r || {};
+        const pres = r.presencas || r.lancamentos || [];
 
         let pgPres = 1;
         const inner = m.querySelector('.modal-inner');
