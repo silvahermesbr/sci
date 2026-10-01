@@ -2829,5 +2829,594 @@ input[type="checkbox"] {
   margin-top: 12px;
 }
 
+/* ==========================================================================
+   MÓDULO DRIVE LOCAL (v1.2 Fase 3)
+   ========================================================================== */
+.drive-topo-wrapper {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.drive-topo-acoes {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.drive-tabs {
+  display: flex;
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 3px;
+  gap: 4px;
+}
+
+.btn-tab-drive {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--tx2);
+  border-radius: var(--raio-p);
+  transition: all 0.15s ease;
+}
+
+.btn-tab-drive:hover {
+  color: var(--tx);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.btn-tab-drive.ativo {
+  color: var(--tx);
+  background: var(--painel3);
+  font-weight: 600;
+}
+
+.btn-acao-drive {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--raio);
+  background: var(--painel2);
+  border: 1px solid var(--borda2);
+  color: var(--tx);
+  cursor: pointer;
+}
+
+.btn-acao-drive:hover {
+  background: var(--painel3);
+  border-color: var(--verde);
+}
+
+.btn-acao-drive.primario {
+  background: var(--verdeesc2);
+  border-color: var(--verde);
+  color: #fff;
+}
+
+.btn-acao-drive.primario:hover {
+  background: var(--verde);
+  color: #062a1b;
+}
+
+.drive-bar-navegacao {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.drive-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  flex-wrap: wrap;
+}
+
+.crumb-item.clicavel {
+  color: var(--verde-claro);
+  cursor: pointer;
+}
+
+.crumb-item.clicavel:hover {
+  text-decoration: underline;
+}
+
+.crumb-item.ativo {
+  font-weight: 700;
+  color: var(--tx);
+}
+
+.crumb-sep {
+  color: var(--tx3);
+  user-select: none;
+}
+
+.drive-busca-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--campo-bg);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-p);
+  padding: 4px 10px;
+  width: 220px;
+}
+
+.drive-busca-box input {
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 13px;
+  color: var(--tx);
+  width: 100%;
+}
+
+.drive-dropzone {
+  min-height: 380px;
+  border: 2px dashed transparent;
+  border-radius: var(--raio-g);
+  transition: all 0.2s ease;
+}
+
+.drive-dropzone.drag-ativo {
+  border-color: var(--verde);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.drive-vazio {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--tx3);
+}
+
+.drive-vazio svg {
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.drive-vazio h4 {
+  font-size: 16px;
+  color: var(--tx2);
+  margin-bottom: 6px;
+}
+
+.drive-secao-titulo {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--tx3);
+  margin-bottom: 10px;
+}
+
+.drive-grid-pastas {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.drive-cartao-pasta {
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.drive-cartao-pasta:hover {
+  background: var(--painel2);
+  border-color: var(--borda2);
+  transform: translateY(-1px);
+}
+
+.pasta-info-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pasta-icone-nome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pasta-nome {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--tx);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pasta-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--tx3);
+}
+
+.drive-grid-arquivos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.drive-cartao-arquivo {
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 12px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: all 0.15s ease;
+}
+
+.drive-cartao-arquivo:hover {
+  background: var(--painel2);
+  border-color: var(--borda2);
+}
+
+.arquivo-preview-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.drive-badge-tipo {
+  display: inline-block;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 800;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+.badge-pdf { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+.badge-img { background: rgba(59, 130, 246, 0.18); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); }
+.badge-doc { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+.badge-plan { background: rgba(16, 185, 129, 0.25); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.4); }
+.badge-zip { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+.badge-bin { background: rgba(148, 163, 184, 0.18); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.3); }
+
+.arquivo-tamanho {
+  font-size: 11px;
+  color: var(--tx3);
+}
+
+.arquivo-nome {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.arquivo-subinfo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--tx3);
+}
+
+.arquivo-botoes-hover {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  border-top: 1px solid var(--borda);
+  padding-top: 8px;
+}
+
+.btn-mini-acao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--raio-p);
+  background: var(--painel2);
+  border: 1px solid var(--borda);
+  color: var(--tx2);
+  text-decoration: none;
+}
+
+.btn-mini-acao:hover {
+  background: var(--painel3);
+  color: var(--tx);
+  border-color: var(--verde);
+}
+
+.menu-acoes-drive-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.btn-drive-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  font-size: 13.5px;
+  border-radius: var(--raio);
+  background: var(--painel2);
+  border: 1px solid var(--borda);
+  color: var(--tx);
+  text-decoration: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.btn-drive-menu-item:hover {
+  background: var(--painel3);
+  border-color: var(--borda2);
+}
+
+.btn-drive-menu-item.perigo {
+  color: var(--verm-txt);
+}
+
+.btn-drive-menu-item.perigo:hover {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: var(--verm);
+}
+
+/* ==========================================================================
+   MÓDULO CALENDÁRIO OPERACIONAL (v1.2 Fase 3)
+   ========================================================================== */
+.cal-header-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.cal-acoes-topo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.cal-nav-mes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 4px;
+}
+
+.btn-cal-nav {
+  padding: 4px 10px;
+  font-size: 13px;
+  border-radius: var(--raio-p);
+  color: var(--tx2);
+}
+
+.btn-cal-nav:hover {
+  background: var(--painel2);
+  color: var(--tx);
+}
+
+.cal-mes-rotulo {
+  font-weight: 700;
+  font-size: 14px;
+  padding: 0 10px;
+  color: var(--tx);
+  min-width: 140px;
+  text-align: center;
+}
+
+.cal-filtros-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  padding: 8px 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.cal-filtro-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--tx2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.cal-cor-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.cal-container {
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-g);
+  overflow: hidden;
+}
+
+.cal-semana-dias {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  background: var(--painel2);
+  border-bottom: 1px solid var(--borda);
+}
+
+.cal-dia-col-header {
+  padding: 10px 4px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tx3);
+  text-transform: uppercase;
+}
+
+.cal-grade-corpo {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: minmax(105px, auto);
+}
+
+.cal-celula {
+  border-right: 1px solid var(--borda);
+  border-bottom: 1px solid var(--borda);
+  padding: 6px;
+  background: var(--painel);
+  min-height: 105px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.cal-celula:nth-child(7n) {
+  border-right: 0;
+}
+
+.cal-celula:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.cal-celula-outro-mes {
+  opacity: 0.35;
+  background: rgba(0, 0, 0, 0.2);
+  cursor: default;
+}
+
+.cal-celula-hoje {
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.cal-celula-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.cal-dia-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tx2);
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.hoje-badge {
+  background: var(--verde);
+  color: #062a1b !important;
+  font-weight: 800;
+}
+
+.btn-cal-add-dia {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--tx3);
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.cal-celula:hover .btn-cal-add-dia {
+  opacity: 1;
+}
+
+.btn-cal-add-dia:hover {
+  background: var(--painel3);
+  color: var(--tx);
+}
+
+.cal-itens-container {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.cal-chip {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.cal-chip:hover {
+  filter: brightness(1.15);
+  transform: translateX(1px);
+}
+
+.cal-chip-evento {
+  background: var(--painel2);
+  border-left: 3px solid #2563eb;
+  color: var(--tx);
+}
+
+.cal-chip-escala {
+  background: rgba(16, 185, 129, 0.12);
+  border-left: 3px solid var(--verde);
+  color: var(--verde-claro);
+}
+
+.cal-chip-despacho {
+  background: rgba(245, 158, 11, 0.12);
+  border-left: 3px solid var(--ambar);
+  color: var(--ambar-txt);
+}
+
 
 

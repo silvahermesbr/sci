@@ -110,6 +110,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV22(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV23(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1429,5 +1432,104 @@ func (s *Store) migrarV22() error {
 	}
 
 	return s.marcarVersao(22)
+}
+
+// migrarV23: Módulo de Drive Local (Armazenamento Físico e Compartilhamento) e Calendário Operacional (Fase 3 do v1.2)
+func (s *Store) migrarV23() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 23`).Scan(&v)
+	if v == 23 {
+		return nil
+	}
+
+	ddl := []string{
+		// DRIVE LOCAL - PASTAS HIERÁRQUICAS
+		`CREATE TABLE IF NOT EXISTS drive_pastas (
+			id INTEGER PRIMARY KEY,
+			nome TEXT NOT NULL,
+			grupo_id INTEGER NOT NULL REFERENCES grupos(id) ON DELETE CASCADE,
+			pai_id INTEGER REFERENCES drive_pastas(id) ON DELETE CASCADE,
+			autor_usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			autor_papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id),
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_pastas_grupo ON drive_pastas(grupo_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_pastas_pai ON drive_pastas(pai_id)`,
+
+		// DRIVE LOCAL - ARQUIVOS FÍSICOS (GUARDADOS EM ./dados/drive)
+		`CREATE TABLE IF NOT EXISTS drive_arquivos (
+			id INTEGER PRIMARY KEY,
+			pasta_id INTEGER REFERENCES drive_pastas(id) ON DELETE CASCADE,
+			grupo_id INTEGER NOT NULL REFERENCES grupos(id) ON DELETE CASCADE,
+			nome_original TEXT NOT NULL,
+			nome_armazenado TEXT NOT NULL UNIQUE,
+			tipo TEXT NOT NULL DEFAULT 'application/octet-stream',
+			tamanho INTEGER NOT NULL DEFAULT 0,
+			autor_usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			autor_papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id),
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_arquivos_pasta ON drive_arquivos(pasta_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_arquivos_grupo ON drive_arquivos(grupo_id)`,
+
+		// DRIVE LOCAL - COMPARTILHAMENTO GRANULAR ESTILO GOOGLE DRIVE (POR GRUPO, PAPEL OU USUÁRIO)
+		`CREATE TABLE IF NOT EXISTS drive_compartilhamentos (
+			id INTEGER PRIMARY KEY,
+			pasta_id INTEGER REFERENCES drive_pastas(id) ON DELETE CASCADE,
+			arquivo_id INTEGER REFERENCES drive_arquivos(id) ON DELETE CASCADE,
+			alvo_grupo_id INTEGER REFERENCES grupos(id) ON DELETE CASCADE,
+			alvo_papel_id INTEGER REFERENCES usuario_papeis(id) ON DELETE CASCADE,
+			alvo_usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+			pode_editar INTEGER NOT NULL DEFAULT 0,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			CHECK (pasta_id IS NOT NULL OR arquivo_id IS NOT NULL),
+			CHECK (alvo_grupo_id IS NOT NULL OR alvo_papel_id IS NOT NULL OR alvo_usuario_id IS NOT NULL)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_comp_pasta ON drive_compartilhamentos(pasta_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_comp_arquivo ON drive_compartilhamentos(arquivo_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_comp_grupo ON drive_compartilhamentos(alvo_grupo_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_drive_comp_usuario ON drive_compartilhamentos(alvo_usuario_id)`,
+
+		// CALENDÁRIO OPERACIONAL - EVENTOS DA UNIDADE E INSTITUCIONAIS
+		`CREATE TABLE IF NOT EXISTS calendario_eventos (
+			id INTEGER PRIMARY KEY,
+			titulo TEXT NOT NULL,
+			descricao TEXT,
+			tipo TEXT NOT NULL DEFAULT 'evento',
+			cor TEXT NOT NULL DEFAULT '#2563eb',
+			data_inicio TEXT NOT NULL,
+			data_fim TEXT,
+			dia_inteiro INTEGER NOT NULL DEFAULT 1,
+			grupo_id INTEGER REFERENCES grupos(id) ON DELETE CASCADE,
+			autor_usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			autor_papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id),
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cal_eventos_data ON calendario_eventos(data_inicio)`,
+		`CREATE INDEX IF NOT EXISTS idx_cal_eventos_grupo ON calendario_eventos(grupo_id)`,
+
+		// CALENDÁRIO OPERACIONAL - COMPARTILHAMENTO ESTILO GOOGLE CALENDAR
+		`CREATE TABLE IF NOT EXISTS calendario_compartilhamentos (
+			id INTEGER PRIMARY KEY,
+			evento_id INTEGER NOT NULL REFERENCES calendario_eventos(id) ON DELETE CASCADE,
+			alvo_grupo_id INTEGER REFERENCES grupos(id) ON DELETE CASCADE,
+			alvo_papel_id INTEGER REFERENCES usuario_papeis(id) ON DELETE CASCADE,
+			alvo_usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+			pode_editar INTEGER NOT NULL DEFAULT 0,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			CHECK (alvo_grupo_id IS NOT NULL OR alvo_papel_id IS NOT NULL OR alvo_usuario_id IS NOT NULL)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_cal_comp_evento ON calendario_compartilhamentos(evento_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cal_comp_grupo ON calendario_compartilhamentos(alvo_grupo_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_cal_comp_usuario ON calendario_compartilhamentos(alvo_usuario_id)`,
+	}
+
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v23 ddl: %w", err)
+		}
+	}
+
+	return s.marcarVersao(23)
 }
 

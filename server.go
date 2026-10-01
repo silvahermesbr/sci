@@ -215,6 +215,27 @@ func (a *App) rotas() {
 	m.Handle("GET /api/avisos/{id}/detalhes", a.auth(false, a.hAvisosDetalhes))
 	m.Handle("POST /api/avisos/{id}/repostar", a.auth(false, a.hAvisosRepostar))
 
+	// Módulo de Drive Local (v1.2 Fase 3)
+	m.Handle("GET /api/drive/itens", a.auth(false, a.hDriveItens))
+	m.Handle("POST /api/drive/pastas", a.auth(false, a.hDrivePastasAdd))
+	m.Handle("PATCH /api/drive/pastas/{id}", a.auth(false, a.hDrivePastasEdit))
+	m.Handle("DELETE /api/drive/pastas/{id}", a.auth(false, a.hDrivePastasDel))
+	m.Handle("POST /api/drive/upload", a.auth(false, a.hDriveUpload))
+	m.Handle("GET /api/drive/download/{id}", a.auth(false, a.hDriveDownload))
+	m.Handle("PATCH /api/drive/arquivos/{id}", a.auth(false, a.hDriveArquivosEdit))
+	m.Handle("DELETE /api/drive/arquivos/{id}", a.auth(false, a.hDriveArquivosDel))
+	m.Handle("POST /api/drive/compartilhar", a.auth(false, a.hDriveCompartilhar))
+	m.Handle("GET /api/drive/compartilhamentos", a.auth(false, a.hDriveCompartilhamentosList))
+	m.Handle("DELETE /api/drive/compartilhamentos/{id}", a.auth(false, a.hDriveCompartilhamentosDel))
+
+	// Módulo de Calendário Operacional & Mesh (v1.2 Fase 3)
+	m.Handle("GET /api/calendario/visao", a.auth(false, a.hCalendarioVisao))
+	m.Handle("POST /api/calendario/eventos", a.auth(false, a.hCalendarioEventosSave))
+	m.Handle("DELETE /api/calendario/eventos/{id}", a.auth(false, a.hCalendarioEventosDel))
+	m.Handle("POST /api/calendario/compartilhar", a.auth(false, a.hCalendarioCompartilhar))
+	m.Handle("GET /api/calendario/compartilhamentos", a.auth(false, a.hCalendarioCompartilhamentosList))
+	m.Handle("DELETE /api/calendario/compartilhamentos/{id}", a.auth(false, a.hCalendarioCompartilhamentosDel))
+
 	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria)
 	confAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
 
