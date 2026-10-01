@@ -365,15 +365,16 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 		pdf.Ln(9)
 		pdf.SetFont("Helvetica", "", 8)
 		pdf.SetTextColor(60, 60, 60)
+		y := pdf.GetY()
 		for i, seg := range segmentos {
 			c := seg[1].([3]int)
 			xs := 15 + float64(i)*36
 			pdf.SetFillColor(c[0], c[1], c[2])
-			pdf.Rect(xs, pdf.GetY(), 3, 3, "F")
-			pdf.SetXY(xs+4.5, pdf.GetY()-0.8)
+			pdf.Rect(xs, y, 3, 3, "F")
+			pdf.SetXY(xs+4.5, y-0.8)
 			pdf.Cell(33, 4, T(fmt.Sprintf("%s (%d)", seg[0], valores[i])))
 		}
-		pdf.Ln(8)
+		pdf.SetY(y + 8)
 	} else {
 		pdf.SetFont("Helvetica", "", 9)
 		pdf.SetTextColor(120, 120, 120)

@@ -77,6 +77,10 @@ async function api(path, opts) {
   const ehJson = (r.headers.get('content-type') || '').indexOf('json') !== -1;
   const data = ehJson ? await r.json().catch(() => null) : await r.text();
   if (!r.ok) {
+    if (data && data.req_setup && window.showSetupModal) {
+      window.showSetupModal();
+      const err = new Error('setup pendente'); err.status = 403; throw err;
+    }
     const msg = (data && data.erro) || ('Falha ' + r.status);
     toast(msg, 'erro');
     const err = new Error(msg); err.status = r.status; throw err;
@@ -691,8 +695,13 @@ function viewLogin() {
     try {
       const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ login: login, senha: senha }) });
       definirUsuario(r.usuario);
+      if (r.usuario.precisa_setup && window.showSetupModal) {
+        window.showSetupModal();
+        if (btn) btn.disabled = false;
+        return;
+      }
       montarShell(r.usuario);
-      toast('Bem-vindo, ' + r.usuario.login);
+      toast('Bem-vindo, ' + (r.usuario.nome_guerra || r.usuario.login));
       irPara(rotaInicial());
     } catch (e) {
       if (btn) btn.disabled = false;
@@ -1048,5 +1057,44 @@ function modalNotificacoes() {
   }).catch(() => toast('Falha ao obter notificações', 'erro'));
 }
 window.modalNotificacoes = modalNotificacoes;
+
+window.showSetupModal = function() {
+  if (document.getElementById('setupModalGlobal')) return;
+  const html = `
+    <div style="text-align:center; padding: 20px 0">
+      <h2 style="margin-top:0; color:var(--tx1)">Atualização Obrigatória (v1.2)</h2>
+      <p style="color:var(--tx2); margin-bottom:24px; line-height:1.5">
+        Para continuar, você precisa atualizar seu Login para um <b>Nº de Identificação Único</b> (ex: CPF) e cadastrar uma nova senha pessoal.
+      </p>
+      <div class="form-linha" style="text-align:left; max-width:300px; margin:0 auto 16px auto">
+        <label>Nº de Identificação Único (Login) *</label>
+        <input id="setupLogin" placeholder="ex: 123.456.789-00" autocomplete="off">
+      </div>
+      <div class="form-linha" style="text-align:left; max-width:300px; margin:0 auto 24px auto">
+        <label>Nova Senha (mín. 8) *</label>
+        <input type="password" id="setupSenha" placeholder="Sua nova senha segura" autocomplete="new-password">
+      </div>
+      <button class="primario" id="setupBtn" style="width:100%; max-width:300px; padding:12px">Salvar e Continuar</button>
+    </div>
+  `;
+  const div = modal(html);
+  if (!div) return;
+  div.id = 'setupModalGlobal';
+  const closeBtn = div.parentNode.querySelector('.modal-fechar');
+  if (closeBtn) closeBtn.style.display = 'none';
+  div.parentNode.parentNode.onclick = null;
+
+  div.querySelector('#setupBtn').onclick = async () => {
+    const login = div.querySelector('#setupLogin').value.trim();
+    const senha = div.querySelector('#setupSenha').value;
+    if (!login || !senha) return toast('Preencha todos os campos', 'erro');
+    if (senha.length < 8) return toast('A senha deve ter no mínimo 8 caracteres', 'erro');
+    try {
+      const res = await api('/api/setup', { method: 'POST', body: JSON.stringify({ novo_login: login, nova_senha: senha }) });
+      toast(res.msg || 'Atualizado com sucesso!');
+      setTimeout(() => location.reload(), 1500);
+    } catch (e) {}
+  };
+};
 
 })();

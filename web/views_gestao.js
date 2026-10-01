@@ -504,7 +504,7 @@
       let fotoAtual = u.foto_base64 || '';
       const sangueOpts = ["", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
       const html = `
-        <div class="modal" style="max-width:620px">
+        <div class="modal" style="max-width:620px; max-height:90vh; overflow-y:auto">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px">
             <div>
               <h3 style="margin:0 0 2px">👤 Perfil do Usuário — ${esc(u.login)}</h3>
@@ -652,12 +652,12 @@
 
           <div class="form-linha" style="margin-bottom:8px">
             <div class="campo" style="flex:1">
-              <label>Login de Acesso *</label>
-              <input id="nuLogin" placeholder="ex.: silva.gerente">
+              <label>Nº Identificação (CPF/ID) *</label>
+              <input id="nuLogin" placeholder="ex.: 000.000.000-00">
             </div>
             <div class="campo" style="flex:1">
-              <label>Senha Inicial (mín. 8) *</label>
-              <input type="password" id="nuSenha" placeholder="••••••••">
+              <label>Senha Inicial (opcional)</label>
+              <input type="password" id="nuSenha" placeholder="Padrão: sci">
             </div>
           </div>
 
@@ -727,12 +727,12 @@
         const papel = selP.value;
         const grupoId = +div.querySelector('#nuGrupo').value || null;
 
-        if (!login || !senha || !completo || !guerra) {
-          toast('Preencha todos os campos obrigatórios', 'erro');
+        if (!login || !completo || !guerra) {
+          toast('Preencha os campos obrigatórios (*)', 'erro');
           return;
         }
-        if (senha.length < 8) {
-          toast('A senha deve ter no mínimo 8 caracteres', 'erro');
+        if (senha && senha.length > 0 && senha.length < 8) {
+          toast('Se preencher a senha, use no mínimo 8 caracteres. (Padrão: sci)', 'erro');
           return;
         }
         if (papel !== 'admin' && !grupoId) {
@@ -1141,13 +1141,27 @@
             </div>
           `}
 
-          <div style="display:flex; justify-content:flex-end; gap:8px">
-            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-            ${contasGrupo.length > 0 ? `<button class="primario" id="mBtnTrocarGer">Promover a Gerente</button>` : ''}
+          <div style="display:flex; justify-content:space-between; align-items:center">
+            ${temGerente ? `<button type="button" class="perigo acao-linha" id="mBtnRemoverGer" style="padding:4px 8px">Remover Gerente</button>` : `<div></div>`}
+            <div style="display:flex; gap:8px">
+              <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+              ${contasGrupo.length > 0 ? `<button class="primario" id="mBtnTrocarGer">Promover a Gerente</button>` : ''}
+            </div>
           </div>
         </div>
       `;
       const m = modal(html);
+      const btnRem = m.querySelector('#mBtnRemoverGer');
+      if (btnRem) {
+        btnRem.onclick = async () => {
+          try {
+            await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login: "__REMOVE__" }) });
+            toast('Gerência vaga com sucesso.');
+            m.remove();
+            window.ViewAdmin();
+          } catch (e) {}
+        };
+      }
       const btn = m.querySelector('#mBtnTrocarGer');
       if (btn) {
         btn.onclick = async () => {

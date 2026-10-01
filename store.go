@@ -240,6 +240,14 @@ func (s *Store) migrar() error {
 	_, err := s.db.Exec(
 		`INSERT INTO schema_migrations (versao) SELECT 1
 		 WHERE NOT EXISTS (SELECT 1 FROM schema_migrations WHERE versao = 1)`)
+
+	if !s.colunaExiste("usuarios", "precisa_setup") {
+		_, err := s.db.Exec(`ALTER TABLE usuarios ADD COLUMN precisa_setup INTEGER NOT NULL DEFAULT 1`)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migracao v18 usuarios.precisa_setup: %w", err)
+		}
+	}
+
 	return err
 }
 
@@ -986,7 +994,7 @@ func (s *Store) UsuarioDaSessao(tokenCru string) (*Usuario, error) {
 	var grupoIDAtivo, funcaoIDAtivo sql.NullInt64
 
 	err := s.db.QueryRow(
-		`SELECT u.id, u.login, u.papel, u.pessoa_id, u.grupo_id,
+		`SELECT u.id, u.login, u.papel, u.pessoa_id, u.grupo_id, u.precisa_setup,
 		        COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
 		        COALESCE(u.data_nascimento,''), COALESCE(u.tipo_sanguineo,''),
 		        COALESCE(u.telefone,''), COALESCE(u.email,''),
@@ -1000,7 +1008,7 @@ func (s *Store) UsuarioDaSessao(tokenCru string) (*Usuario, error) {
 		 LEFT JOIN funcoes f ON f.id = up.funcao_id
 		 WHERE se.token_hash = ? AND se.expira_em > ? AND u.ativo = 1`,
 		hash, time.Now().UTC().Format(time.RFC3339)).
-		Scan(&u.ID, &u.Login, &u.Papel, &u.PessoaID, &u.GrupoID,
+		Scan(&u.ID, &u.Login, &u.Papel, &u.PessoaID, &u.GrupoID, &u.PrecisaSetup,
 			&u.NomeGuerra, &u.NomeCompleto,
 			&u.DataNascimento, &u.TipoSanguineo,
 			&u.Telefone, &u.Email,

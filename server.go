@@ -177,6 +177,7 @@ func (a *App) rotas() {
 	m := a.mux
 	m.HandleFunc("GET /api/health", a.hHealth)
 	m.HandleFunc("POST /api/login", a.hLogin)
+	m.Handle("POST /api/setup", a.auth(false, a.hAuthSetup))
 	m.Handle("GET /api/me", a.auth(false, a.hMe))
 	m.Handle("POST /api/logout", a.auth(false, a.hLogout))
 	m.Handle("POST /api/senha", a.auth(false, a.hTrocarSenha))
@@ -258,6 +259,7 @@ func (a *App) rotas() {
 	m.Handle("PATCH /api/usuarios/{id}/mover", a.auth(false, a.hMoverConta)) // v9.5: admin qualquer; gerente dentro da própria árvore
 	m.Handle("POST /api/comentarios", confAuth(a.hComentariosAdd))
 	m.Handle("GET /api/comentarios/{id}", confAuth(a.hComentariosList))
+	m.Handle("GET /api/pessoas/{id}/comentarios", confAuth(a.hPessoaComentarios))
 
 	m.Handle("GET /api/relatorio", a.auth(false, a.hRelatorioJSON))
 	m.Handle("GET /api/relatorio.pdf", a.auth(false, a.hRelatorioPDF))
@@ -347,6 +349,46 @@ func (a *App) hLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode, MaxAge: int(ttlSessao.Seconds()),
 	})
 	jsonOK(w, map[string]any{"usuario": u, "expira": expira})
+}
+
+func (a *App) hAuthSetup(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if !u.PrecisaSetup {
+		jsonErro(w, http.StatusBadRequest, "usuário não precisa de setup")
+		return
+	}
+	var req struct {
+		NovoLogin string `json:"novo_login"`
+		NovaSenha string `json:"nova_senha"`
+	}
+	if err := decodificar(r, &req); err != nil || req.NovoLogin == "" || req.NovaSenha == "" {
+		jsonErro(w, http.StatusBadRequest, "identificação e nova senha são obrigatórios")
+		return
+	}
+	if len(req.NovaSenha) < 8 {
+		jsonErro(w, http.StatusBadRequest, "a nova senha deve ter no mínimo 8 caracteres")
+		return
+	}
+	
+	hash, err := hashSenha(req.NovaSenha)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao processar senha")
+		return
+	}
+
+	req.NovoLogin = strings.ToLower(strings.TrimSpace(req.NovoLogin))
+
+	_, err = a.st.db.Exec(`UPDATE usuarios SET login = ?, senha_hash = ?, precisa_setup = 0 WHERE id = ?`, req.NovoLogin, hash, u.ID)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE constraint") {
+			jsonErro(w, http.StatusConflict, "este número de identificação já está em uso por outro usuário")
+			return
+		}
+		jsonErro(w, http.StatusInternalServerError, "falha ao salvar novos dados")
+		return
+	}
+	a.st.Auditoria(&u.ID, "setup_concluido", "usuarios", &u.ID, "login atualizado", ipDe(r))
+	jsonOK(w, map[string]string{"msg": "Cadastro atualizado com sucesso. Faça o login novamente."})
 }
 
 func (a *App) hMe(w http.ResponseWriter, r *http.Request) {
@@ -1389,6 +1431,51 @@ func (a *App) hPessoaFicha(w http.ResponseWriter, r *http.Request) {
 		"setor": setor, "funcao": funcao, "grupo": grupo, "status": status})
 }
 
+// hPessoaComentarios: histórico completo de comentários de uma pessoa (para a ficha individual).
+func (a *App) hPessoaComentarios(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	// Validação de escopo: o usuário só vê comentários de quem ele enxerga na ficha
+	if escopo > 0 {
+		var check int
+		if e := a.st.db.QueryRow(`SELECT 1 FROM pessoas WHERE id = ? AND grupo_id = ?`, id, escopo).Scan(&check); e != nil {
+			jsonErro(w, http.StatusNotFound, "pessoa não encontrada no seu escopo")
+			return
+		}
+	}
+	q := `
+		SELECT c.id, c.conferencia_id, COALESCE(t.nome,''), c.comentario,
+		       COALESCE(NULLIF(u.nome_guerra,''), u.login), c.criado_em
+		FROM comentarios c
+		LEFT JOIN tags t ON t.id = c.tag_id
+		LEFT JOIN usuarios u ON u.id = c.operador_id
+		WHERE c.pessoa_id = ?
+		ORDER BY c.criado_em DESC, c.ordem DESC`
+	rows, err := a.st.db.Query(q, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []map[string]any{}
+	for rows.Next() {
+		var cid, confID int64
+		var tag, comentario, op, data string
+		if rows.Scan(&cid, &confID, &tag, &comentario, &op, &data) == nil {
+			out = append(out, map[string]any{
+				"id": cid, "conferencia_id": confID, "tag": tag,
+				"comentario": comentario, "operador": op, "datahora": data,
+			})
+		}
+	}
+	jsonOK(w, out)
+}
+
 // hConferenciaList: conferências DO ESCOPO (grupo não vê grupo; admin vê todas).
 func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
@@ -1887,16 +1974,27 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		args = append(args, ft.args...)
 	}
 	_ = a.st.db.QueryRow(`
+		WITH ultima_presenca AS (
+		  SELECT p.situacao,
+		         ROW_NUMBER() OVER(PARTITION BY p.pessoa_id ORDER BY f.data DESC, f.hora DESC, f.id DESC) as rn
+		  FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro+`
+		)
 		SELECT COUNT(*),
-		       COALESCE(SUM(p.situacao='presente'),0), COALESCE(SUM(p.situacao='atraso'),0),
-		       COALESCE(SUM(p.situacao='falta'),0), COALESCE(SUM(p.situacao='justificada'),0),
-		       COALESCE(SUM(p.situacao='nao_verificado'),0)
-		FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro,
+		       COALESCE(SUM(situacao='presente'),0), COALESCE(SUM(situacao='atraso'),0),
+		       COALESCE(SUM(situacao='falta'),0), COALESCE(SUM(situacao='justificada'),0),
+		       COALESCE(SUM(situacao='nao_verificado'),0)
+		FROM ultima_presenca WHERE rn = 1`,
 		args...).Scan(&b.TotalLanc, &b.Presentes, &b.Atrasos, &b.Faltas, &b.Justificadas, &b.NaoVerificados)
 	// "efetivo pronto" = presentes SEM ressalva (ordem do Tenente, 28/09)
+	// "efetivo pronto" = presentes SEM ressalva (ordem do Tenente, 28/09)
 	_ = a.st.db.QueryRow(`
-		SELECT COALESCE(SUM(p.situacao='presente'),0)
-		FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro,
+		WITH ultima_presenca AS (
+		  SELECT p.situacao, p.observacao,
+		         ROW_NUMBER() OVER(PARTITION BY p.pessoa_id ORDER BY f.data DESC, f.hora DESC, f.id DESC) as rn
+		  FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro+`
+		)
+		SELECT COALESCE(SUM(situacao='presente' AND (observacao IS NULL OR observacao = '')),0)
+		FROM ultima_presenca WHERE rn = 1`,
 		args...).Scan(&b.PresentesPuros)
 	// FIX S4-P0 (verif5): conferencias precisa do MESMO alias "f" da cláusula de
 	// árvore — sem alias, "no such column: f.grupo_id" era engolido pelo `_ =`
@@ -1936,17 +2034,22 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	}
 
 	rows, err := a.st.db.Query(`
+		WITH ultima_presenca AS (
+		  SELECT pr.situacao, p.setor_id,
+		         ROW_NUMBER() OVER(PARTITION BY pr.pessoa_id ORDER BY f.data DESC, f.hora DESC, f.id DESC) as rn
+		  FROM presencas pr
+		  JOIN pessoas p ON p.id = pr.pessoa_id
+		  JOIN conferencias f ON f.id = pr.conferencia_id
+		  WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`+a.clSetor(escopo)+`
+		)
 		SELECT COALESCE(s.nome,'INDEFINIDO') AS setor_nome,
-		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0) AS pres,
-		       COALESCE(SUM(pr.situacao='falta'),0) AS faltas,
-		       COALESCE(SUM(pr.situacao='justificada'),0) AS just,
-		       COUNT(pr.id) AS lanc
-		FROM presencas pr
-		JOIN pessoas p ON p.id = pr.pessoa_id
-		LEFT JOIN setores s ON s.id = p.setor_id
-		JOIN conferencias f ON f.id = pr.conferencia_id
-		WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`+
-		a.clSetor(escopo)+`
+		       COALESCE(SUM(upr.situacao IN ('presente','atraso')),0) AS pres,
+		       COALESCE(SUM(upr.situacao='falta'),0) AS faltas,
+		       COALESCE(SUM(upr.situacao='justificada'),0) AS just,
+		       COUNT(upr.situacao) AS lanc
+		FROM ultima_presenca upr
+		LEFT JOIN setores s ON s.id = upr.setor_id
+		WHERE upr.rn = 1
 		GROUP BY setor_nome ORDER BY pres DESC`, append([]any{de, ate}, a.argsArvore(escopo)...)...)
 	if err == nil {
 		for rows.Next() {
@@ -1962,13 +2065,17 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	}
 
 	rows, err = a.st.db.Query(`
+		WITH ultima_presenca AS (
+		  SELECT pr.situacao, pr.destino_id,
+		         ROW_NUMBER() OVER(PARTITION BY pr.pessoa_id ORDER BY f.data DESC, f.hora DESC, f.id DESC) as rn
+		  FROM presencas pr
+		  JOIN conferencias f ON f.id = pr.conferencia_id
+		  WHERE f.status='fechada' AND f.data BETWEEN ? AND ?`+a.clSetor(escopo)+`
+		)
 		SELECT COALESCE(d.nome,'(sem destino)'), COUNT(*)
-		FROM presencas pr
-		JOIN conferencias f ON f.id = pr.conferencia_id
-		LEFT JOIN destinos d ON d.id = pr.destino_id
-		WHERE f.status='fechada' AND f.data BETWEEN ? AND ?
-		  AND pr.situacao IN ('falta','justificada')`+
-		a.clSetor(escopo)+`
+		FROM ultima_presenca upr
+		LEFT JOIN destinos d ON d.id = upr.destino_id
+		WHERE upr.rn = 1 AND upr.situacao IN ('falta','justificada')
 		GROUP BY d.id ORDER BY 2 DESC`, append([]any{de, ate}, a.argsArvore(escopo)...)...)
 	if err == nil {
 		for rows.Next() {
@@ -1997,14 +2104,21 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		  SELECT id, nome FROM funcoes WHERE pai_id IS NULL
 		  UNION ALL
 		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
+		),
+		ultima_presenca AS (
+		  SELECT pr.pessoa_id, pr.situacao,
+		         ROW_NUMBER() OVER(PARTITION BY pr.pessoa_id ORDER BY f.data DESC, f.hora DESC, f.id DESC) as rn
+		  FROM presencas pr
+		  JOIN conferencias f ON f.id = pr.conferencia_id
+		  WHERE f.status='fechada' AND f.data BETWEEN ? AND ? `+ftP2.clause+`
 		)
 		SELECT p.id, p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'),
-		       COALESCE(SUM(pr.situacao IN ('presente','atraso')),0),
-		       COALESCE(SUM(pr.situacao='atraso'),0),
-		       COALESCE(SUM(pr.situacao='falta'),0),
-		       COALESCE(SUM(pr.situacao='justificada'),0),
-		       COALESCE(SUM(pr.situacao='nao_verificado'),0),
-		       COUNT(pr.id),
+		       CASE WHEN upr.situacao IN ('presente','atraso') THEN 1 ELSE 0 END,
+		       CASE WHEN upr.situacao = 'atraso' THEN 1 ELSE 0 END,
+		       CASE WHEN upr.situacao = 'falta' THEN 1 ELSE 0 END,
+		       CASE WHEN upr.situacao = 'justificada' THEN 1 ELSE 0 END,
+		       CASE WHEN upr.situacao = 'nao_verificado' THEN 1 ELSE 0 END,
+		       CASE WHEN upr.situacao IS NOT NULL THEN 1 ELSE 0 END,
 		       COALESCE(p.funcao_id, u2.funcao_id, up2.funcao_id),
 		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), ''))),
 		       ROW_NUMBER() OVER (ORDER BY COALESCE(cf2.caminho,'~sem função'),
@@ -2021,18 +2135,8 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
 		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN grupos g2 ON g2.id = p.grupo_id
-		/* FIX S4-P1 (verif5): escopo filtrado DENTRO do join de presencas —
-		   pessoa ativa sem lançamento no período permanece na lista (zeros),
-		   e lançamentos fora da árvore não contam (COUNT(pr.id) só vê pr
-		   já filtrado; o LEFT JOIN f direto contava linha com f NULL). */
-		LEFT JOIN presencas pr ON pr.pessoa_id = p.id
-		       AND pr.conferencia_id IN (
-		           SELECT f2.id FROM conferencias f2
-		           WHERE f2.status='fechada' AND f2.data BETWEEN ? AND ?`+
-		ftP2.clause+`
-		       )
+		LEFT JOIN ultima_presenca upr ON upr.pessoa_id = p.id AND upr.rn = 1
 		WHERE p.status='ativo'`+a.filtroArvore(escopo, "p").clause+`
-		GROUP BY p.id
 		ORDER BY COALESCE(cf2.caminho,'~sem função'),
 		         COALESCE(cs2.caminho,'~sem setor'),
 		         p.nome_guerra COLLATE NOCASE`,
@@ -3650,18 +3754,6 @@ func (a *App) hMoverConta(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		// grupo de origem ficou vago: promove o operador mais antigo ativo (nunca grupo sem gerente)
-		var novoGer int64
-		err = tx.QueryRow(`SELECT id FROM usuarios WHERE grupo_id = ? AND papel = 'operador' AND ativo = 1 ORDER BY criado_em LIMIT 1`,
-			origem).Scan(&novoGer)
-		if err != nil {
-			jsonErro(w, http.StatusConflict, "grupo de origem ficaria sem gerente — crie/defina um gerente antes de mover")
-			return
-		}
-		if _, err = tx.Exec(`UPDATE usuarios SET papel = 'gerente' WHERE id = ?`, novoGer); err != nil {
-			jsonErro(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 	} else {
 		if _, err = tx.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, req.GrupoID, id); err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -3941,9 +4033,12 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		PessoaID *int64 `json:"pessoa_id"`
 		GrupoID  *int64 `json:"grupo_id"`
 	}
-	if err := decodificar(r, &req); err != nil || req.Login == "" || req.Senha == "" {
-		jsonErro(w, http.StatusBadRequest, "login e senha obrigatórios")
+	if err := decodificar(r, &req); err != nil || req.Login == "" {
+		jsonErro(w, http.StatusBadRequest, "identificação obrigatória")
 		return
+	}
+	if req.Senha == "" {
+		req.Senha = "sci"
 	}
 	u := usuarioDoCtx(r)
 	papel := strings.ToLower(strings.TrimSpace(req.Papel))
@@ -3981,8 +4076,8 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := a.st.db.Exec(
-		`INSERT INTO usuarios (login, senha_hash, papel, pessoa_id, grupo_id) VALUES (?,?,?,?,?)`,
-		strings.ToLower(strings.TrimSpace(req.Login)), hash, papel, req.PessoaID, req.GrupoID)
+		`INSERT INTO usuarios (login, senha_hash, papel, pessoa_id, grupo_id, precisa_setup) VALUES (?,?,?,?,?,?)`,
+		strings.ToLower(strings.TrimSpace(req.Login)), hash, papel, req.PessoaID, req.GrupoID, 1)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "não criado (duplicado?): "+err.Error())
 		return
@@ -4080,7 +4175,6 @@ func (a *App) hUsuarioExcluir(w http.ResponseWriter, r *http.Request) {
 	}
 	if papel == "gerente" {
 		var gid int64
-		var temOutro int
 		if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM usuarios WHERE id = ?`, id).Scan(&gid); err != nil {
 			jsonErro(w, http.StatusNotFound, "usuário inexistente")
 			return
@@ -4089,11 +4183,7 @@ func (a *App) hUsuarioExcluir(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusConflict, "gerente sem grupo — mova a conta antes de excluir")
 			return
 		}
-		if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM usuarios WHERE grupo_id = ? AND papel = 'gerente' AND id <> ? AND ativo = 1`,
-			gid, id).Scan(&temOutro); err == nil && temOutro == 0 {
-			jsonErro(w, http.StatusConflict, "excluiria o único gerente do grupo — troque o gerente antes")
-			return
-		}
+
 	}
 	var marcou, criou, comentou int
 	_ = a.st.db.QueryRow(`SELECT
@@ -4233,21 +4323,27 @@ func (a *App) hGrupoTrocarGerente(w http.ResponseWriter, r *http.Request) {
 		Login string `json:"login"`
 	}
 	if err = decodificar(r, &req); err != nil || strings.TrimSpace(req.Login) == "" {
-		jsonErro(w, http.StatusBadRequest, "login do novo gerente obrigatório")
+		jsonErro(w, http.StatusBadRequest, "login do novo gerente obrigatório (ou __REMOVE__ para vagar)")
 		return
 	}
 	req.Login = strings.ToLower(strings.TrimSpace(req.Login))
+	
+	removeGerente := req.Login == "__remove__"
+	
 	var uid int64
 	var papel string
 	var uGrupoID *int64
-	if err := a.st.db.QueryRow(`SELECT id, papel, grupo_id FROM usuarios WHERE login = ? AND ativo = 1`,
-		req.Login).Scan(&uid, &papel, &uGrupoID); err != nil {
-		jsonErro(w, http.StatusNotFound, "conta não encontrada")
-		return
-	}
-	if papel == "gerente" && uGrupoID != nil && *uGrupoID == gid {
-		jsonErro(w, http.StatusBadRequest, "esta conta já é o gerente deste grupo")
-		return
+	
+	if !removeGerente {
+		if err := a.st.db.QueryRow(`SELECT id, papel, grupo_id FROM usuarios WHERE login = ? AND ativo = 1`,
+			req.Login).Scan(&uid, &papel, &uGrupoID); err != nil {
+			jsonErro(w, http.StatusNotFound, "conta não encontrada")
+			return
+		}
+		if papel == "gerente" && uGrupoID != nil && *uGrupoID == gid {
+			jsonErro(w, http.StatusBadRequest, "esta conta já é o gerente deste grupo")
+			return
+		}
 	}
 
 	tx, err := a.st.db.Begin()
@@ -4258,23 +4354,30 @@ func (a *App) hGrupoTrocarGerente(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	// Rebaixa qualquer gerente anterior do grupo para operador
-	_, _ = tx.Exec(`UPDATE usuarios SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND id <> ? AND ativo = 1`, gid, uid)
-	_, _ = tx.Exec(`UPDATE usuario_papeis SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND usuario_id <> ?`, gid, uid)
-
-	// Promove o usuário selecionado a Gerente e vincula ao grupo
-	if _, err = tx.Exec(`UPDATE usuarios SET papel = 'gerente', grupo_id = ? WHERE id = ?`, gid, uid); err != nil {
-		jsonErro(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Atualiza ou insere o papel em usuario_papeis (herança de função)
-	var papelID int64
-	errP := tx.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, uid, gid).Scan(&papelID)
-	if errP == nil {
-		_, _ = tx.Exec(`UPDATE usuario_papeis SET papel = 'gerente' WHERE id = ?`, papelID)
+	if removeGerente {
+		_, _ = tx.Exec(`UPDATE usuarios SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND ativo = 1`, gid)
+		_, _ = tx.Exec(`UPDATE usuario_papeis SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente'`, gid)
 	} else {
-		_, _ = tx.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'gerente')`, uid, gid)
+		_, _ = tx.Exec(`UPDATE usuarios SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND id <> ? AND ativo = 1`, gid, uid)
+		_, _ = tx.Exec(`UPDATE usuario_papeis SET papel = 'operador' WHERE grupo_id = ? AND papel = 'gerente' AND usuario_id <> ?`, gid, uid)
+
+		// Promove o usuário selecionado a Gerente e vincula ao grupo
+		if _, err = tx.Exec(`UPDATE usuarios SET papel = 'gerente', grupo_id = ? WHERE id = ?`, gid, uid); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		// Atualiza ou insere o papel em usuario_papeis (herança de função)
+		var papelID int64
+		errP := tx.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, uid, gid).Scan(&papelID)
+		if errP == nil {
+			_, _ = tx.Exec(`UPDATE usuario_papeis SET papel = 'gerente' WHERE id = ?`, papelID)
+		} else {
+			_, _ = tx.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'gerente')`, uid, gid)
+		}
 	}
+
+
 
 	if err = tx.Commit(); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())

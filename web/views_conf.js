@@ -73,7 +73,8 @@
     if (modoTela === 'arquivo') {
       qs = '?arq=1';
     } else {
-      const p = (window.__perConfSel || { m: 'semana' });
+      const p = window.__perConfSel || { m: 'semana', dia: dataLocal(hojeD) };
+      window.__perConfSel = p; // garante inicialização imediata
       const sem = d => { const dd = new Date(d + 'T12:00:00'); const dow = (dd.getDay() + 6) % 7; const i = new Date(dd.getTime() - dow * 864e5); return [dataLocal(i), dataLocal(new Date(i.getTime() + 6 * 864e5))]; };
       if (p.m === 'dia') qs = '?de=' + p.dia + '&ate=' + p.dia;
       else if (p.m === 'semana') { const [a, b] = sem(p.dia); qs = '?de=' + a + '&ate=' + b; }
@@ -358,7 +359,12 @@
         const lista = await api(`/api/comentarios/${cid}`);
         const meus = lista.filter(c => p && c.pessoa === p.nome_guerra);
         C.temComentario[pessoaId] = meus.length > 0;
-        raiz.querySelector('#cmLista').innerHTML = meus.length ? meus.map(c =>
+        
+        const mostrar = meus.slice(-3);
+        const omitidos = meus.length - mostrar.length;
+        const msgOmitidos = omitidos > 0 ? `<div style="text-align:center;font-size:12px;color:var(--tx3);margin-bottom:8px">▲ ${omitidos} comentários anteriores ocultos. Acesse a Busca Individual para ver todos.</div>` : '';
+        
+        raiz.querySelector('#cmLista').innerHTML = meus.length ? msgOmitidos + mostrar.map(c =>
           `<div class="cartao" style="padding:8px;margin-bottom:6px">
            <small style="color:var(--tx2)">#${c.ordem} · ${esc(c.operador)} · ${(c.datahora || '').slice(0, 16).replace('T', ' ')}</small>
            <div>${esc(c.comentario)}</div></div>`).join('') : '<span class="vazio">sem comentários</span>';
@@ -1005,10 +1011,41 @@
               <div class="campo"><label>Comentário</label><textarea id="mcTxt" rows="2"></textarea></div>
               <button class="primario" id="mcGo" style="min-height:38px">Gravar Comentário</button>
             </div>
-            <div class="modal-acoes"><button class="fantasma" id="mcX">Fechar</button></div>
+            <div id="historicoComentariosBox" style="margin-top:14px; display:none">
+              <h4 style="margin:0 0 6px">Histórico de Comentários</h4>
+              <div id="hcLista" class="rolagem" style="max-height:200px"></div>
+            </div>
+            <div class="modal-acoes" style="justify-content:space-between">
+              <button class="acao-linha" id="btnVerComentarios">Ver Histórico de Comentários</button>
+              <button class="fantasma" id="mcX">Fechar</button>
+            </div>
           </div>`);
         if (!div) return;
         div.querySelector('#mcX').onclick = () => div.remove();
+        div.querySelector('#btnVerComentarios').onclick = async () => {
+          const btn = div.querySelector('#btnVerComentarios');
+          const box = div.querySelector('#historicoComentariosBox');
+          const listaDiv = div.querySelector('#hcLista');
+          if (box.style.display === 'block') {
+            box.style.display = 'none';
+            btn.textContent = 'Ver Histórico de Comentários';
+            return;
+          }
+          btn.textContent = 'Ocultar Comentários';
+          box.style.display = 'block';
+          listaDiv.innerHTML = '<span class="vazio">carregando...</span>';
+          try {
+            const coms = await api('/api/pessoas/' + pessoaId + '/comentarios');
+            listaDiv.innerHTML = coms.length ? coms.map(c => 
+              `<div class="cartao" style="padding:8px;margin-bottom:6px">
+                <small style="color:var(--tx2)">Data: ${(c.datahora || '').slice(0, 16).replace('T', ' ')} · Conf #${c.conferencia_id} · Op: ${esc(c.operador)} ${c.tag ? `· Tag: <b>${esc(c.tag)}</b>` : ''}</small>
+                <div style="margin-top:4px">${esc(c.comentario)}</div>
+              </div>`
+            ).join('') : '<span class="vazio">Nenhum comentário registrado.</span>';
+          } catch (e) {
+            listaDiv.innerHTML = '<span class="vazio">Erro ao carregar comentários.</span>';
+          }
+        };
         div.querySelector('#mcGo').onclick = async () => {
           const txt = div.querySelector('#mcTxt').value.trim();
           if (!txt) { toast('Escreva o comentário', 'erro'); return; }

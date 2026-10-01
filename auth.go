@@ -54,6 +54,7 @@ type Usuario struct {
 	FuncaoNome     string         `json:"funcao_nome,omitempty"`
 	PapelAtivoID   *int64         `json:"papel_ativo_id,omitempty"`
 	Papeis         []UsuarioPapel `json:"papeis,omitempty"`
+	PrecisaSetup   bool           `json:"precisa_setup"`
 }
 
 type ctxKeyChave int
@@ -210,6 +211,13 @@ func (a *App) auth(admin bool, prox http.HandlerFunc) http.Handler {
 			http.Error(w, `{"erro":"sessão expirada"}`, http.StatusUnauthorized)
 			return
 		}
+		if u.PrecisaSetup && r.URL.Path != "/api/setup" {
+			// Permite apenas logout e setup
+			if r.URL.Path != "/api/logout" {
+				http.Error(w, `{"erro":"atualização de cadastro obrigatória", "req_setup": true}`, http.StatusForbidden)
+				return
+			}
+		}
 		if admin && u.Papel != "admin" {
 			http.Error(w, `{"erro":"restrito ao admin"}`, http.StatusForbidden)
 			return
@@ -241,15 +249,16 @@ func (a *App) validarCredenciais(login, senha, ip string) (*Usuario, error) {
 		return nil, fmt.Errorf("muitas tentativas; aguarde alguns minutos")
 	}
 	var (
-		id       int64
-		papel    string
-		pessoaID *int64
-		hash     string
-		ativo    int
+		id           int64
+		papel        string
+		pessoaID     *int64
+		hash         string
+		ativo        int
+		precisaSetup bool
 	)
 	err := a.st.db.QueryRow(
-		`SELECT id, papel, pessoa_id, senha_hash, ativo FROM usuarios WHERE login = ?`, login).
-		Scan(&id, &papel, &pessoaID, &hash, &ativo)
+		`SELECT id, papel, pessoa_id, senha_hash, ativo, precisa_setup FROM usuarios WHERE login = ?`, login).
+		Scan(&id, &papel, &pessoaID, &hash, &ativo, &precisaSetup)
 	if err != nil || ativo != 1 || !verificaSenha(senha, hash) {
 		a.lim.falhou(chaveIP)
 		a.lim.falhou(chaveLogin)
@@ -272,5 +281,5 @@ func (a *App) validarCredenciais(login, senha, ip string) (*Usuario, error) {
 	return &Usuario{ID: id, Login: login, Papel: papel, PessoaID: pessoaID, GrupoID: grupoID,
 		NomeGuerra: ng, NomeCompleto: nc, DataNascimento: dataNasc, TipoSanguineo: tipoSang,
 		Telefone: tel, Email: email, Endereco: endr, FotoBase64: foto,
-		SetorID: setorID, FuncaoID: funcaoID}, nil
+		SetorID: setorID, FuncaoID: funcaoID, PrecisaSetup: precisaSetup}, nil
 }
