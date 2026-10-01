@@ -726,7 +726,7 @@ function animarEntradaView() {
 window.animarEntradaView = animarEntradaView;
 
 /* ---------- invocação de view tolerante a módulo ausente ---------- */
-function chamarView(nome) {
+function chamarView(nome, ...args) {
   const app = garantirApp();
   animarEntradaView();
   const fn = window[nome];
@@ -735,7 +735,7 @@ function chamarView(nome) {
     return;
   }
   try {
-    const r = fn();
+    const r = fn(...args);
     if (r && typeof r.catch === 'function') {
       r.catch(err => {
         console.error('[SCI]', nome, err);
@@ -807,6 +807,8 @@ function rotear() {
 
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
   if (h === '#/mensagens') { chamarView('ViewMensagens'); return; }
+  if (h === '#/despachos') { chamarView('ViewMensagens', 'despachos'); return; }
+  if (h === '#/avisos') { chamarView('ViewMensagens', 'avisos'); return; }
   if (h === '#/conferencia') { chamarView('ViewConferencia'); return; } // edição da conf aberta (v9.14)
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
   if (h === '#/admin') {
@@ -1006,6 +1008,24 @@ function modalNotificacoes() {
           </h3>
           <span style="font-size:12px; color:var(--tx3)">SLA Padrão: ${prazo}h</span>
         </div>
+        ${res.despachos_pendentes ? `
+          <div style="background:rgba(239, 68, 68, 0.12); border:1px solid rgba(239, 68, 68, 0.35); border-radius:var(--raio); padding:10px 12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center">
+            <div>
+              <b style="color:var(--verm-txt); font-size:13px">⚖️ ${res.despachos_pendentes} Despacho(s) Pendente(s)</b>
+              <div style="font-size:12px; color:var(--tx2)">Demandas com resposta obrigatória aguardando seu atendimento.</div>
+            </div>
+            <button class="primario" id="btIrDespachosNotif" style="font-size:12px; padding:4px 10px">Ver Despachos</button>
+          </div>
+        ` : ''}
+        ${res.avisos_pendentes ? `
+          <div style="background:rgba(59, 130, 246, 0.12); border:1px solid rgba(59, 130, 246, 0.35); border-radius:var(--raio); padding:10px 12px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center">
+            <div>
+              <b style="color:#60a5fa; font-size:13px">📢 ${res.avisos_pendentes} Novo(s) Comunicado(s)</b>
+              <div style="font-size:12px; color:var(--tx2)">Avisos do comando aguardando confirmação de ciente.</div>
+            </div>
+            <button class="acao-linha" id="btIrAvisosNotif" style="font-size:12px; padding:4px 10px">Ver Mural</button>
+          </div>
+        ` : ''}
         ${atrasos.length ? `
           <div style="color:var(--verm); font-size:13px; font-weight:600; margin-bottom:10px">
             ⚠️ Atenção: ${atrasos.length} cautela(s) excederam o prazo regulamentar de devolução!
@@ -1029,13 +1049,13 @@ function modalNotificacoes() {
               </div>
             `).join('')}
           </div>
-        ` : `
+        ` : (!res.despachos_pendentes && !res.avisos_pendentes ? `
           <div class="vazio" style="padding:24px 0; text-align:center">
             <span style="font-size:28px">🛡️</span>
             <div style="margin-top:8px; font-weight:600">Nenhum alerta pendente</div>
-            <p style="font-size:12.5px; color:var(--tx3); margin:4px 0 0">Todas as cautelas de material estão dentro do prazo de SLA configurado.</p>
+            <p style="font-size:12.5px; color:var(--tx3); margin:4px 0 0">Todas as comunicações, despachos e cautelas estão regularizados.</p>
           </div>
-        `}
+        ` : '')}
         <div style="display:flex; justify-content:flex-end; gap:8px">
           ${atrasos.length && ME && ME.papel !== 'admin' ? `
             <button class="primario" id="btIrMaterialNotif" style="font-size:13px; padding:6px 14px">Ir para Balcão de Material</button>
@@ -1045,13 +1065,18 @@ function modalNotificacoes() {
       </div>
     `;
     const m = abrirModal(html);
-    const btFechar = m.querySelector('#btFecharNotif');
-    if (btFechar) btFechar.onclick = () => m.remove();
-    const btIr = m.querySelector('#btIrMaterialNotif');
-    if (btIr) {
-      btIr.onclick = () => {
+    const btDesp = m.querySelector('#btIrDespachosNotif');
+    if (btDesp) {
+      btDesp.onclick = () => {
         m.remove();
-        irPara('#/material');
+        irPara('#/despachos');
+      };
+    }
+    const btAv = m.querySelector('#btIrAvisosNotif');
+    if (btAv) {
+      btAv.onclick = () => {
+        m.remove();
+        irPara('#/avisos');
       };
     }
   }).catch(() => toast('Falha ao obter notificações', 'erro'));

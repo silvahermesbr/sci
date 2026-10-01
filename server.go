@@ -189,14 +189,29 @@ func (a *App) rotas() {
 	m.Handle("POST /api/usuarios/{id}/papeis", a.auth(false, a.hUsuarioPapelAdd))
 	m.Handle("DELETE /api/usuarios/{id}/papeis/{papel_id}", a.auth(false, a.hUsuarioPapelDel))
 
-	// Módulo de Mensageria Interna por Função
+	// Módulo de Mensageria Interna por Função & Despachos (v1.2 Fase 2)
 	m.Handle("GET /api/mensagens/inbox", a.auth(false, a.hMensagensInbox))
 	m.Handle("GET /api/mensagens/enviadas", a.auth(false, a.hMensagensEnviadas))
 	m.Handle("POST /api/mensagens", a.auth(false, a.hMensagensEnviar))
 	m.Handle("POST /api/mensagens/{id}/ler", a.auth(false, a.hMensagensMarcarLida))
 	m.Handle("POST /api/mensagens/{id}/excluir", a.auth(false, a.hMensagensExcluir))
+	m.Handle("POST /api/mensagens/{id}/arquivar", a.auth(false, a.hMensagensArquivar))
+	m.Handle("POST /api/mensagens/{id}/desarquivar", a.auth(false, a.hMensagensDesarquivar))
+	m.Handle("GET /api/mensagens/pastas", a.auth(false, a.hMensagensPastasList))
+	m.Handle("POST /api/mensagens/pastas", a.auth(false, a.hMensagensPastasAdd))
+	m.Handle("DELETE /api/mensagens/pastas/{id}", a.auth(false, a.hMensagensPastasDel))
+	m.Handle("POST /api/mensagens/{id}/mover-pasta", a.auth(false, a.hMensagensMoverPasta))
 	m.Handle("GET /api/mensagens/contador", a.auth(false, a.hMensagensContador))
 	m.Handle("GET /api/mensagens/destinatarios", a.auth(false, a.hMensagensDestinatarios))
+
+	// Fórum & Mural de Avisos Gerenciais (v1.2 Fase 2)
+	m.Handle("GET /api/avisos", a.auth(false, a.hAvisosList))
+	m.Handle("POST /api/avisos", a.auth(false, a.hAvisosAdd))
+	m.Handle("DELETE /api/avisos/{id}", a.auth(false, a.hAvisosDel))
+	m.Handle("POST /api/avisos/{id}/ciente", a.auth(false, a.hAvisosCiente))
+	m.Handle("POST /api/avisos/{id}/comentar", a.auth(false, a.hAvisosComentar))
+	m.Handle("GET /api/avisos/{id}/detalhes", a.auth(false, a.hAvisosDetalhes))
+	m.Handle("POST /api/avisos/{id}/repostar", a.auth(false, a.hAvisosRepostar))
 
 	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria)
 	confAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
@@ -4037,8 +4052,11 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "identificação obrigatória")
 		return
 	}
+	precisaSetup := 1
 	if req.Senha == "" {
 		req.Senha = "sci"
+	} else if req.Senha != "sci" {
+		precisaSetup = 0
 	}
 	u := usuarioDoCtx(r)
 	papel := strings.ToLower(strings.TrimSpace(req.Papel))
@@ -4077,7 +4095,7 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := a.st.db.Exec(
 		`INSERT INTO usuarios (login, senha_hash, papel, pessoa_id, grupo_id, precisa_setup) VALUES (?,?,?,?,?,?)`,
-		strings.ToLower(strings.TrimSpace(req.Login)), hash, papel, req.PessoaID, req.GrupoID, 1)
+		strings.ToLower(strings.TrimSpace(req.Login)), hash, papel, req.PessoaID, req.GrupoID, precisaSetup)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "não criado (duplicado?): "+err.Error())
 		return
@@ -4265,9 +4283,13 @@ func (a *App) hGruposAdd(w http.ResponseWriter, r *http.Request) {
 		if ng == "" {
 			ng = req.Login
 		}
-		res2, err := tx.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, nome_guerra, nome_completo)
-			VALUES (?,?,?,?,?,?)`,
-			req.Login, hash, "gerente", gid, ng, ng)
+		precisaSetup := 1
+		if req.Senha != "" && req.Senha != "sci" {
+			precisaSetup = 0
+		}
+		res2, err := tx.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, nome_guerra, nome_completo, precisa_setup)
+			VALUES (?,?,?,?,?,?,?)`,
+			req.Login, hash, "gerente", gid, ng, ng, precisaSetup)
 		if err != nil {
 			jsonErro(w, http.StatusBadRequest, "gerente não criado: "+err.Error())
 			return
@@ -5796,10 +5818,34 @@ func (a *App) hNotificacoesHub(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Despachos e Avisos Pendentes (v1.2 Fase 2)
+	despachosPendentes := 0
+	if u.PapelAtivoID != nil && *u.PapelAtivoID > 0 {
+		_ = a.st.db.QueryRow(`
+			SELECT COUNT(*)
+			FROM mensagem_destinatarios md
+			JOIN mensagens m ON m.id = md.mensagem_id
+			WHERE md.destinatario_papel_id = ? AND m.exige_resposta = 1 AND md.respondido_em IS NULL AND md.excluida = 0`,
+			*u.PapelAtivoID).Scan(&despachosPendentes)
+	}
+
+	avisosPendentes := 0
+	if escopo > 0 {
+		_ = a.st.db.QueryRow(`
+			SELECT COUNT(*)
+			FROM avisos a
+			WHERE a.grupo_id = ?
+			  AND NOT EXISTS (SELECT 1 FROM aviso_cientes ac WHERE ac.aviso_id = a.id AND ac.usuario_id = ?)`,
+			escopo, u.ID).Scan(&avisosPendentes)
+	}
+
 	jsonOK(w, map[string]any{
-		"prazo_horas":        prazoHoras,
-		"total_atrasadas":    len(atrasadas),
-		"cautelas_atrasadas": atrasadas,
+		"prazo_horas":         prazoHoras,
+		"total_atrasadas":     len(atrasadas),
+		"cautelas_atrasadas":  atrasadas,
+		"despachos_pendentes": despachosPendentes,
+		"avisos_pendentes":    avisosPendentes,
+		"total_geral":         len(atrasadas) + despachosPendentes + avisosPendentes,
 	})
 }
 

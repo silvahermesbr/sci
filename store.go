@@ -107,6 +107,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV21(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV22(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -242,10 +245,12 @@ func (s *Store) migrar() error {
 		 WHERE NOT EXISTS (SELECT 1 FROM schema_migrations WHERE versao = 1)`)
 
 	if !s.colunaExiste("usuarios", "precisa_setup") {
-		_, err := s.db.Exec(`ALTER TABLE usuarios ADD COLUMN precisa_setup INTEGER NOT NULL DEFAULT 1`)
+		_, err := s.db.Exec(`ALTER TABLE usuarios ADD COLUMN precisa_setup INTEGER NOT NULL DEFAULT 0`)
 		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
 			return fmt.Errorf("migracao v18 usuarios.precisa_setup: %w", err)
 		}
+		// Marca usuários existentes em produção para fazer o setup no próximo acesso
+		_, _ = s.db.Exec(`UPDATE usuarios SET precisa_setup = 1 WHERE login != 'admin'`)
 	}
 
 	return err
@@ -900,7 +905,7 @@ func (s *Store) SeedIfEmpty(senhaAdmin string) error {
 		return err
 	}
 	if _, err := s.db.Exec(
-		`INSERT INTO usuarios (login, senha_hash, papel) VALUES ('admin', ?, 'admin')`, hash); err != nil {
+		`INSERT INTO usuarios (login, senha_hash, papel, precisa_setup) VALUES ('admin', ?, 'admin', 0)`, hash); err != nil {
 		return err
 	}
 	var adminID int64
@@ -1306,5 +1311,100 @@ func (s *Store) migrarV21() error {
 	}
 
 	return s.marcarVersao(21)
+}
+
+// migrarV22: Módulo de Comunicação, Despachos & Fórum de Avisos (Fase 2 do v1.2)
+func (s *Store) migrarV22() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 22`).Scan(&v)
+	if v == 22 {
+		return nil
+	}
+
+	ddl := []string{
+		`CREATE TABLE IF NOT EXISTS avisos (
+			id INTEGER PRIMARY KEY,
+			titulo TEXT NOT NULL,
+			conteudo TEXT NOT NULL,
+			autor_usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			autor_papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id),
+			grupo_id INTEGER NOT NULL REFERENCES grupos(id),
+			grupo_origem_id INTEGER REFERENCES grupos(id),
+			aviso_origem_id INTEGER REFERENCES avisos(id),
+			fixado INTEGER NOT NULL DEFAULT 0,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_avisos_grupo ON avisos(grupo_id)`,
+		`CREATE TABLE IF NOT EXISTS aviso_cientes (
+			id INTEGER PRIMARY KEY,
+			aviso_id INTEGER NOT NULL REFERENCES avisos(id) ON DELETE CASCADE,
+			usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			papel_id INTEGER REFERENCES usuario_papeis(id),
+			ciente_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			UNIQUE (aviso_id, usuario_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_aviso_cientes_aviso ON aviso_cientes(aviso_id)`,
+		`CREATE TABLE IF NOT EXISTS aviso_comentarios (
+			id INTEGER PRIMARY KEY,
+			aviso_id INTEGER NOT NULL REFERENCES avisos(id) ON DELETE CASCADE,
+			usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			papel_id INTEGER REFERENCES usuario_papeis(id),
+			comentario TEXT NOT NULL,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_aviso_comentarios_aviso ON aviso_comentarios(aviso_id)`,
+		`CREATE TABLE IF NOT EXISTS mensagem_pastas (
+			id INTEGER PRIMARY KEY,
+			usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+			nome TEXT NOT NULL,
+			criada_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+			UNIQUE (usuario_id, nome)
+		)`,
+	}
+
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v22 ddl: %w", err)
+		}
+	}
+
+	// Colunas em mensagens
+	colunasMensagens := []struct {
+		nome string
+		tipo string
+	}{
+		{"pai_id", "INTEGER REFERENCES mensagens(id)"},
+		{"exige_resposta", "INTEGER NOT NULL DEFAULT 0"},
+		{"tipo", "TEXT NOT NULL DEFAULT 'comum'"},
+		{"anexos", "TEXT NOT NULL DEFAULT '[]'"},
+	}
+	for _, c := range colunasMensagens {
+		if !s.colunaExiste("mensagens", c.nome) {
+			_, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE mensagens ADD COLUMN %s %s`, c.nome, c.tipo))
+			if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migração v22 mensagens.%s: %w", c.nome, err)
+			}
+		}
+	}
+
+	// Colunas em mensagem_destinatarios
+	colunasDestinatarios := []struct {
+		nome string
+		tipo string
+	}{
+		{"visualizado_em", "TEXT"},
+		{"respondido_em", "TEXT"},
+		{"pasta_id", "INTEGER REFERENCES mensagem_pastas(id)"},
+	}
+	for _, c := range colunasDestinatarios {
+		if !s.colunaExiste("mensagem_destinatarios", c.nome) {
+			_, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE mensagem_destinatarios ADD COLUMN %s %s`, c.nome, c.tipo))
+			if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migração v22 mensagem_destinatarios.%s: %w", c.nome, err)
+			}
+		}
+	}
+
+	return s.marcarVersao(22)
 }
 

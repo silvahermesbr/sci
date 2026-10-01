@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -199,7 +200,7 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true})
 }
 
-// ---------- Módulo de Mensageria Interna por Função ----------
+// ---------- Módulo de Mensageria Interna, Despachos & Pastas (v1.2 Fase 2) ----------
 
 func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
@@ -208,10 +209,37 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := a.st.db.Query(`
+	soArquivadas := r.URL.Query().Get("arquivadas") == "1"
+	pastaIDStr := r.URL.Query().Get("pasta_id")
+	soDespachos := r.URL.Query().Get("despacho") == "1"
+
+	var filtroExtra string
+	var args []any
+	args = append(args, *u.PapelAtivoID)
+
+	if soArquivadas {
+		filtroExtra += " AND md.arquivada = 1"
+	} else {
+		filtroExtra += " AND md.arquivada = 0"
+		if pastaIDStr != "" {
+			if pid, err := strconv.ParseInt(pastaIDStr, 10, 64); err == nil && pid > 0 {
+				filtroExtra += " AND md.pasta_id = ?"
+				args = append(args, pid)
+			}
+		}
+	}
+
+	if soDespachos {
+		filtroExtra += " AND m.tipo = 'despacho'"
+	}
+
+	q := `
 		SELECT m.id, m.assunto, m.corpo, m.criada_em,
+		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
+		       COALESCE(m.anexos, '[]'), m.pai_id,
 		       md.id, md.lida_em, md.lida_por_usuario_id,
 		       COALESCE(u_lida.nome_guerra, ''),
+		       md.visualizado_em, md.respondido_em, md.pasta_id, md.arquivada,
 		       m.remetente_papel_id, m.remetente_usuario_id,
 		       u_rem.login, COALESCE(u_rem.nome_guerra, ''), COALESCE(u_rem.nome_completo, ''),
 		       up_rem.papel, up_rem.grupo_id, COALESCE(g_rem.nome, ''),
@@ -223,8 +251,10 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN grupos g_rem ON g_rem.id = up_rem.grupo_id
 		LEFT JOIN funcoes f_rem ON f_rem.id = up_rem.funcao_id
 		LEFT JOIN usuarios u_lida ON u_lida.id = md.lida_por_usuario_id
-		WHERE md.destinatario_papel_id = ? AND md.excluida = 0
-		ORDER BY m.id DESC LIMIT 100`, *u.PapelAtivoID)
+		WHERE md.destinatario_papel_id = ? AND md.excluida = 0` + filtroExtra + `
+		ORDER BY m.id DESC LIMIT 150`
+
+	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao buscar mensagens: "+err.Error())
 		return
@@ -236,27 +266,44 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		var msgID, destID, remPapelID, remUsuarioID int64
 		var assunto, corpo, criadaEm, remLogin, remNomeGuerra, remNomeCompleto string
 		var remPapel, remGrupoNome, remFuncaoNome, remNomeExibicao string
-		var lidaPorGuerra string
-		var lidaEm *string
-		var lidaPorID, remGrupoID, remFuncaoID *int64
+		var lidaPorGuerra, tipo, anexosJSON string
+		var exigeResposta, arquivada int
+		var lidaEm, visualizadoEm, respondidoEm *string
+		var lidaPorID, remGrupoID, remFuncaoID, paiID, pastaID *int64
 
 		if err := rows.Scan(
 			&msgID, &assunto, &corpo, &criadaEm,
+			&tipo, &exigeResposta, &anexosJSON, &paiID,
 			&destID, &lidaEm, &lidaPorID, &lidaPorGuerra,
+			&visualizadoEm, &respondidoEm, &pastaID, &arquivada,
 			&remPapelID, &remUsuarioID,
 			&remLogin, &remNomeGuerra, &remNomeCompleto,
 			&remPapel, &remGrupoID, &remGrupoNome,
 			&remFuncaoID, &remFuncaoNome, &remNomeExibicao,
 		); err == nil {
+			var anexosList []any
+			_ = json.Unmarshal([]byte(anexosJSON), &anexosList)
+			if anexosList == nil {
+				anexosList = []any{}
+			}
+
 			item := map[string]any{
 				"id":               msgID,
 				"destinatario_id":  destID,
 				"assunto":          assunto,
 				"corpo":            corpo,
 				"criada_em":        criadaEm,
+				"tipo":             tipo,
+				"exige_resposta":   exigeResposta == 1,
+				"anexos":           anexosList,
+				"pai_id":           paiID,
 				"lida_em":          lidaEm,
 				"lida_por_id":      lidaPorID,
 				"lida_por_nome":    lidaPorGuerra,
+				"visualizado_em":   visualizadoEm,
+				"respondido_em":    respondidoEm,
+				"pasta_id":         pastaID,
+				"arquivada":        arquivada == 1,
 				"remetente": map[string]any{
 					"usuario_id":    remUsuarioID,
 					"login":         remLogin,
@@ -284,7 +331,9 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := a.st.db.Query(`
-		SELECT m.id, m.assunto, m.corpo, m.criada_em
+		SELECT m.id, m.assunto, m.corpo, m.criada_em,
+		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
+		       COALESCE(m.anexos, '[]'), m.pai_id
 		FROM mensagens m
 		WHERE m.remetente_papel_id = ?
 		ORDER BY m.id DESC LIMIT 100`, *u.PapelAtivoID)
@@ -296,24 +345,37 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 	var msgs []map[string]any
 	for rows.Next() {
 		var id int64
-		var assunto, corpo, criadaEm string
-		if err := rows.Scan(&id, &assunto, &corpo, &criadaEm); err == nil {
+		var assunto, corpo, criadaEm, tipo, anexosJSON string
+		var exigeResposta int
+		var paiID *int64
+		if err := rows.Scan(&id, &assunto, &corpo, &criadaEm, &tipo, &exigeResposta, &anexosJSON, &paiID); err == nil {
+			var anexosList []any
+			_ = json.Unmarshal([]byte(anexosJSON), &anexosList)
+			if anexosList == nil {
+				anexosList = []any{}
+			}
+
 			msgs = append(msgs, map[string]any{
-				"id":        id,
-				"assunto":   assunto,
-				"corpo":     corpo,
-				"criada_em": criadaEm,
+				"id":             id,
+				"assunto":        assunto,
+				"corpo":          corpo,
+				"criada_em":      criadaEm,
+				"tipo":           tipo,
+				"exige_resposta": exigeResposta == 1,
+				"anexos":         anexosList,
+				"pai_id":         paiID,
 			})
 		}
 	}
-	rows.Close() // FIXED: explicitly close the outer query before executing inner queries
+	rows.Close()
 
 	out := []map[string]any{}
 	for _, msg := range msgs {
 		id := msg["id"].(int64)
 		destRows, _ := a.st.db.Query(`
 			SELECT md.destinatario_papel_id, up.papel, COALESCE(g.nome, ''),
-			       COALESCE(f.nome, ''), md.lida_em, COALESCE(u_lida.nome_guerra, '')
+			       COALESCE(f.nome, ''), md.lida_em, COALESCE(u_lida.nome_guerra, ''),
+			       md.visualizado_em, md.respondido_em
 			FROM mensagem_destinatarios md
 			JOIN usuario_papeis up ON up.id = md.destinatario_papel_id
 			LEFT JOIN grupos g ON g.id = up.grupo_id
@@ -326,15 +388,17 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 			for destRows.Next() {
 				var papelID int64
 				var papel, gNome, fNome, lidaPorGuerra string
-				var lidaEm *string
-				if err := destRows.Scan(&papelID, &papel, &gNome, &fNome, &lidaEm, &lidaPorGuerra); err == nil {
+				var lidaEm, visEm, respEm *string
+				if err := destRows.Scan(&papelID, &papel, &gNome, &fNome, &lidaEm, &lidaPorGuerra, &visEm, &respEm); err == nil {
 					dests = append(dests, map[string]any{
-						"papel_id":      papelID,
-						"papel":         papel,
-						"grupo_nome":    gNome,
-						"funcao_nome":   fNome,
-						"lida_em":       lidaEm,
-						"lida_por_nome": lidaPorGuerra,
+						"papel_id":       papelID,
+						"papel":          papel,
+						"grupo_nome":     gNome,
+						"funcao_nome":    fNome,
+						"lida_em":        lidaEm,
+						"lida_por_nome":  lidaPorGuerra,
+						"visualizado_em": visEm,
+						"respondido_em":  respEm,
 					})
 				}
 			}
@@ -357,6 +421,10 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 		DestinatarioPapelIDs []int64 `json:"destinatario_papel_ids"`
 		Assunto              string  `json:"assunto"`
 		Corpo                string  `json:"corpo"`
+		Tipo                 string  `json:"tipo"`
+		ExigeResposta        bool    `json:"exige_resposta"`
+		PaiID                *int64  `json:"pai_id"`
+		Anexos               any     `json:"anexos"`
 	}
 	if err := decodificar(r, &req); err != nil {
 		jsonErro(w, http.StatusBadRequest, "dados inválidos")
@@ -374,10 +442,67 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tipo := strings.ToLower(strings.TrimSpace(req.Tipo))
+	if tipo != "despacho" {
+		tipo = "comum"
+	}
+
+	exigeRespInt := 0
+	if req.ExigeResposta || tipo == "despacho" {
+		exigeRespInt = 1
+	}
+
+	anexosJSON := "[]"
+	if req.Anexos != nil {
+		if b, err := json.Marshal(req.Anexos); err == nil {
+			anexosJSON = string(b)
+		}
+	}
+
+	// Validação de Hierarquia de Envio:
+	// Operador só pode enviar para o mesmo grupo, para seu gerente, ou responder a quem enviou (pai_id).
+	if u.Papel == "operador" && u.GrupoID != nil {
+		var permitidoPara []int64
+		// Busca quem o operador pode enviar
+		rowsP, _ := a.st.db.Query(`
+			SELECT id FROM usuario_papeis
+			WHERE grupo_id = ? OR papel = 'admin' OR (grupo_id = ? AND papel = 'gerente')`,
+			*u.GrupoID, *u.GrupoID)
+		if rowsP != nil {
+			for rowsP.Next() {
+				var pID int64
+				if rowsP.Scan(&pID) == nil {
+					permitidoPara = append(permitidoPara, pID)
+				}
+			}
+			rowsP.Close()
+		}
+
+		// Se tem pai_id, também pode responder ao remetente da mensagem pai
+		if req.PaiID != nil {
+			var remetentePaiPapelID int64
+			if a.st.db.QueryRow(`SELECT remetente_papel_id FROM mensagens WHERE id = ?`, *req.PaiID).Scan(&remetentePaiPapelID) == nil {
+				permitidoPara = append(permitidoPara, remetentePaiPapelID)
+			}
+		}
+
+		mapaPerm := map[int64]bool{}
+		for _, pid := range permitidoPara {
+			mapaPerm[pid] = true
+		}
+
+		for _, dID := range req.DestinatarioPapelIDs {
+			if !mapaPerm[dID] {
+				jsonErro(w, http.StatusForbidden, "operadores só podem enviar mensagens para membros da própria equipe ou gerência")
+				return
+			}
+		}
+	}
+
 	res, err := a.st.db.Exec(`
-		INSERT INTO mensagens (assunto, corpo, remetente_papel_id, remetente_usuario_id)
-		VALUES (?, ?, ?, ?)`,
-		req.Assunto, req.Corpo, *u.PapelAtivoID, u.ID)
+		INSERT INTO mensagens (assunto, corpo, remetente_papel_id, remetente_usuario_id, tipo, exige_resposta, anexos, pai_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.Assunto, req.Corpo, *u.PapelAtivoID, u.ID, tipo, exigeRespInt, anexosJSON, req.PaiID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao salvar mensagem: "+err.Error())
 		return
@@ -393,8 +518,18 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 			VALUES (?, ?)`, msgID, destID)
 	}
 
+	// Se for resposta a um despacho que exigia resposta, baixa o despacho marcando respondido_em!
+	if req.PaiID != nil {
+		agora := time.Now().UTC().Format(time.RFC3339)
+		_, _ = a.st.db.Exec(`
+			UPDATE mensagem_destinatarios
+			SET respondido_em = ?
+			WHERE mensagem_id = ? AND destinatario_papel_id = ? AND respondido_em IS NULL`,
+			agora, *req.PaiID, *u.PapelAtivoID)
+	}
+
 	a.st.Auditoria(&u.ID, "enviar_mensagem", "mensagens", &msgID,
-		fmt.Sprintf("assunto=%s destinatarios=%d", req.Assunto, len(req.DestinatarioPapelIDs)), ipDe(r))
+		fmt.Sprintf("assunto=%s tipo=%s exige_resp=%d dests=%d", req.Assunto, tipo, exigeRespInt, len(req.DestinatarioPapelIDs)), ipDe(r))
 
 	jsonOK(w, map[string]any{"ok": true, "id": msgID})
 }
@@ -415,15 +550,87 @@ func (a *App) hMensagensMarcarLida(w http.ResponseWriter, r *http.Request) {
 	agora := time.Now().UTC().Format(time.RFC3339)
 	_, err = a.st.db.Exec(`
 		UPDATE mensagem_destinatarios
-		SET lida_em = ?, lida_por_usuario_id = ?
-		WHERE mensagem_id = ? AND destinatario_papel_id = ? AND lida_em IS NULL`,
-		agora, u.ID, msgID, *u.PapelAtivoID)
+		SET lida_em = COALESCE(lida_em, ?),
+		    visualizado_em = COALESCE(visualizado_em, ?),
+		    lida_por_usuario_id = COALESCE(lida_por_usuario_id, ?)
+		WHERE mensagem_id = ? AND destinatario_papel_id = ?`,
+		agora, agora, u.ID, msgID, *u.PapelAtivoID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao marcar como lida: "+err.Error())
 		return
 	}
 
-	jsonOK(w, map[string]any{"ok": true, "lida_em": agora})
+	jsonOK(w, map[string]any{"ok": true, "lida_em": agora, "visualizado_em": agora})
+}
+
+func (a *App) hMensagensArquivar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
+		return
+	}
+
+	msgID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || msgID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	// Bloqueio de Despacho com resposta pendente
+	var exigeResp int
+	var respEm *string
+	err = a.st.db.QueryRow(`
+		SELECT COALESCE(m.exige_resposta,0), md.respondido_em
+		FROM mensagem_destinatarios md
+		JOIN mensagens m ON m.id = md.mensagem_id
+		WHERE md.mensagem_id = ? AND md.destinatario_papel_id = ?`,
+		msgID, *u.PapelAtivoID).Scan(&exigeResp, &respEm)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "mensagem não encontrada")
+		return
+	}
+	if exigeResp == 1 && respEm == nil {
+		jsonErro(w, http.StatusBadRequest, "Despacho com resposta exigida. É obrigatório responder antes de arquivar.")
+		return
+	}
+
+	_, err = a.st.db.Exec(`
+		UPDATE mensagem_destinatarios
+		SET arquivada = 1
+		WHERE mensagem_id = ? AND destinatario_papel_id = ?`,
+		msgID, *u.PapelAtivoID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao arquivar: "+err.Error())
+		return
+	}
+
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hMensagensDesarquivar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
+		return
+	}
+
+	msgID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || msgID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	_, err = a.st.db.Exec(`
+		UPDATE mensagem_destinatarios
+		SET arquivada = 0
+		WHERE mensagem_id = ? AND destinatario_papel_id = ?`,
+		msgID, *u.PapelAtivoID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao desarquivar: "+err.Error())
+		return
+	}
+
+	jsonOK(w, map[string]any{"ok": true})
 }
 
 func (a *App) hMensagensExcluir(w http.ResponseWriter, r *http.Request) {
@@ -436,6 +643,20 @@ func (a *App) hMensagensExcluir(w http.ResponseWriter, r *http.Request) {
 	msgID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || msgID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	// Bloqueio de Despacho com resposta pendente
+	var exigeResp int
+	var respEm *string
+	err = a.st.db.QueryRow(`
+		SELECT COALESCE(m.exige_resposta,0), md.respondido_em
+		FROM mensagem_destinatarios md
+		JOIN mensagens m ON m.id = md.mensagem_id
+		WHERE md.mensagem_id = ? AND md.destinatario_papel_id = ?`,
+		msgID, *u.PapelAtivoID).Scan(&exigeResp, &respEm)
+	if err == nil && exigeResp == 1 && respEm == nil {
+		jsonErro(w, http.StatusBadRequest, "Despacho com resposta exigida. É obrigatório responder antes de excluir.")
 		return
 	}
 
@@ -452,20 +673,124 @@ func (a *App) hMensagensExcluir(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true})
 }
 
+func (a *App) hMensagensPastasList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	rows, err := a.st.db.Query(`SELECT id, nome, criada_em FROM mensagem_pastas WHERE usuario_id = ? ORDER BY nome`, u.ID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var nome, em string
+		if rows.Scan(&id, &nome, &em) == nil {
+			var total int
+			_ = a.st.db.QueryRow(`
+				SELECT COUNT(*) FROM mensagem_destinatarios md
+				WHERE md.pasta_id = ? AND md.destinatario_papel_id = ? AND md.excluida = 0`,
+				id, u.PapelAtivoID).Scan(&total)
+			out = append(out, map[string]any{
+				"id":        id,
+				"nome":      nome,
+				"criada_em": em,
+				"total":     total,
+			})
+		}
+	}
+	jsonOK(w, out)
+}
+
+func (a *App) hMensagensPastasAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	var req struct {
+		Nome string `json:"nome"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
+		jsonErro(w, http.StatusBadRequest, "nome da pasta obrigatório")
+		return
+	}
+	res, err := a.st.db.Exec(`INSERT INTO mensagem_pastas (usuario_id, nome) VALUES (?, ?)`, u.ID, strings.TrimSpace(req.Nome))
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "pasta já existente ou erro: "+err.Error())
+		return
+	}
+	id, _ := res.LastInsertId()
+	jsonOK(w, map[string]any{"id": id, "nome": req.Nome})
+}
+
+func (a *App) hMensagensPastasDel(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	// Limpa vínculo nas mensagens
+	_, _ = a.st.db.Exec(`UPDATE mensagem_destinatarios SET pasta_id = NULL WHERE pasta_id = ?`, id)
+	_, _ = a.st.db.Exec(`DELETE FROM mensagem_pastas WHERE id = ? AND usuario_id = ?`, id, u.ID)
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hMensagensMoverPasta(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
+		return
+	}
+	msgID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || msgID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	var req struct {
+		PastaID *int64 `json:"pasta_id"`
+	}
+	_ = decodificar(r, &req)
+
+	_, err = a.st.db.Exec(`
+		UPDATE mensagem_destinatarios
+		SET pasta_id = ?, arquivada = 0
+		WHERE mensagem_id = ? AND destinatario_papel_id = ?`,
+		req.PastaID, msgID, *u.PapelAtivoID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao mover mensagem: "+err.Error())
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true})
+}
+
 func (a *App) hMensagensContador(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
-		jsonOK(w, map[string]any{"nao_lidas": 0})
+		jsonOK(w, map[string]any{"nao_lidas": 0, "despachos_pendentes": 0, "arquivadas": 0})
 		return
 	}
 
-	var count int
+	var naoLidas, despachosPendentes, arquivadas int
 	_ = a.st.db.QueryRow(`
 		SELECT COUNT(*)
 		FROM mensagem_destinatarios
-		WHERE destinatario_papel_id = ? AND lida_em IS NULL AND excluida = 0`, *u.PapelAtivoID).Scan(&count)
+		WHERE destinatario_papel_id = ? AND lida_em IS NULL AND excluida = 0 AND arquivada = 0`, *u.PapelAtivoID).Scan(&naoLidas)
 
-	jsonOK(w, map[string]any{"nao_lidas": count})
+	_ = a.st.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM mensagem_destinatarios md
+		JOIN mensagens m ON m.id = md.mensagem_id
+		WHERE md.destinatario_papel_id = ? AND m.exige_resposta = 1 AND md.respondido_em IS NULL AND md.excluida = 0`, *u.PapelAtivoID).Scan(&despachosPendentes)
+
+	_ = a.st.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM mensagem_destinatarios
+		WHERE destinatario_papel_id = ? AND arquivada = 1 AND excluida = 0`, *u.PapelAtivoID).Scan(&arquivadas)
+
+	jsonOK(w, map[string]any{
+		"nao_lidas":           naoLidas,
+		"despachos_pendentes": despachosPendentes,
+		"arquivadas":          arquivadas,
+	})
 }
 
 func (a *App) hMensagensDestinatarios(w http.ResponseWriter, r *http.Request) {
@@ -514,4 +839,356 @@ func (a *App) hMensagensDestinatarios(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonOK(w, out)
+}
+
+// ---------- Módulo de Fórum & Avisos Gerenciais (v1.2 Fase 2) ----------
+
+func (a *App) hAvisosList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	var filtroGrupo string
+	var args []any
+
+	if escopo > 0 {
+		filtroGrupo = "WHERE a.grupo_id = ? OR a.grupo_id IN (SELECT id FROM grupos WHERE id = ?)"
+		args = append(args, escopo, escopo)
+	}
+
+	q := `
+		SELECT a.id, a.titulo, a.conteudo, a.fixado, a.criado_em,
+		       a.autor_usuario_id, u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
+		       a.autor_papel_id, up.papel, COALESCE(up.nome_exibicao,''),
+		       a.grupo_id, COALESCE(g.nome,''),
+		       a.grupo_origem_id, COALESCE(g_orig.nome,''), a.aviso_origem_id,
+		       (SELECT COUNT(*) FROM aviso_cientes ac WHERE ac.aviso_id = a.id) as total_cientes,
+		       (SELECT COUNT(*) FROM aviso_comentarios comm WHERE comm.aviso_id = a.id) as total_comentarios,
+		       (SELECT COUNT(*) FROM aviso_cientes ac_me WHERE ac_me.aviso_id = a.id AND ac_me.usuario_id = ?) as meu_ciente
+		FROM avisos a
+		JOIN usuarios u ON u.id = a.autor_usuario_id
+		JOIN usuario_papeis up ON up.id = a.autor_papel_id
+		JOIN grupos g ON g.id = a.grupo_id
+		LEFT JOIN grupos g_orig ON g_orig.id = a.grupo_origem_id
+		` + filtroGrupo + `
+		ORDER BY a.fixado DESC, a.id DESC LIMIT 100`
+
+	qArgs := append([]any{u.ID}, args...)
+	rows, err := a.st.db.Query(q, qArgs...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao listar avisos: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := []map[string]any{}
+	for rows.Next() {
+		var id, autorUID, autorPID, grupoID int64
+		var titulo, conteudo, criadoEm, login, guerra, completo, papel, exibicao, gNome string
+		var gOrigNome string
+		var fixado, totalCientes, totalComentarios, meuCiente int
+		var gOrigID, avisoOrigID *int64
+
+		if err := rows.Scan(
+			&id, &titulo, &conteudo, &fixado, &criadoEm,
+			&autorUID, &login, &guerra, &completo,
+			&autorPID, &papel, &exibicao,
+			&grupoID, &gNome,
+			&gOrigID, &gOrigNome, &avisoOrigID,
+			&totalCientes, &totalComentarios, &meuCiente,
+		); err == nil {
+			out = append(out, map[string]any{
+				"id":                id,
+				"titulo":            titulo,
+				"conteudo":          conteudo,
+				"fixado":            fixado == 1,
+				"criado_em":         criadoEm,
+				"total_cientes":     totalCientes,
+				"total_comentarios": totalComentarios,
+				"meu_ciente":        meuCiente > 0,
+				"grupo_id":          grupoID,
+				"grupo_nome":        gNome,
+				"origem": map[string]any{
+					"grupo_id":   gOrigID,
+					"grupo_nome": gOrigNome,
+					"aviso_id":   avisoOrigID,
+				},
+				"autor": map[string]any{
+					"usuario_id":    autorUID,
+					"login":         login,
+					"nome_guerra":   guerra,
+					"nome_completo": completo,
+					"papel":         papel,
+					"nome_exibicao": exibicao,
+				},
+			})
+		}
+	}
+	jsonOK(w, out)
+}
+
+func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.Papel != "admin" && u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "apenas gerentes de grupo ou administradores podem publicar avisos")
+		return
+	}
+	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "sem papel ativo na sessão")
+		return
+	}
+
+	var req struct {
+		Titulo   string `json:"titulo"`
+		Conteudo string `json:"conteudo"`
+		Fixado   bool   `json:"fixado"`
+		GrupoID  *int64 `json:"grupo_id"`
+	}
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "dados inválidos")
+		return
+	}
+
+	req.Titulo = strings.TrimSpace(req.Titulo)
+	req.Conteudo = strings.TrimSpace(req.Conteudo)
+	if req.Titulo == "" || req.Conteudo == "" {
+		jsonErro(w, http.StatusBadRequest, "título e conteúdo são obrigatórios")
+		return
+	}
+
+	grupoID := u.GrupoID
+	if u.Papel == "admin" && req.GrupoID != nil && *req.GrupoID > 0 {
+		grupoID = req.GrupoID
+	}
+	if grupoID == nil || *grupoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "aviso deve estar vinculado a um grupo")
+		return
+	}
+
+	fixadoInt := 0
+	if req.Fixado {
+		fixadoInt = 1
+	}
+
+	res, err := a.st.db.Exec(`
+		INSERT INTO avisos (titulo, conteudo, autor_usuario_id, autor_papel_id, grupo_id, fixado)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		req.Titulo, req.Conteudo, u.ID, *u.PapelAtivoID, *grupoID, fixadoInt)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao publicar aviso: "+err.Error())
+		return
+	}
+
+	id, _ := res.LastInsertId()
+	// O próprio autor já dá o ciente automático
+	_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO aviso_cientes (aviso_id, usuario_id, papel_id) VALUES (?, ?, ?)`, id, u.ID, *u.PapelAtivoID)
+
+	a.st.Auditoria(&u.ID, "publicar_aviso", "avisos", &id, req.Titulo, ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": id})
+}
+
+func (a *App) hAvisosDel(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	var autorUID int64
+	var gID int64
+	err = a.st.db.QueryRow(`SELECT autor_usuario_id, grupo_id FROM avisos WHERE id = ?`, id).Scan(&autorUID, &gID)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "aviso inexistente")
+		return
+	}
+
+	if u.Papel != "admin" && (u.ID != autorUID || (u.Papel == "gerente" && (u.GrupoID == nil || *u.GrupoID != gID))) {
+		jsonErro(w, http.StatusForbidden, "sem permissão para excluir este aviso")
+		return
+	}
+
+	_, _ = a.st.db.Exec(`DELETE FROM aviso_comentarios WHERE aviso_id = ?`, id)
+	_, _ = a.st.db.Exec(`DELETE FROM aviso_cientes WHERE aviso_id = ?`, id)
+	_, err = a.st.db.Exec(`DELETE FROM avisos WHERE id = ?`, id)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	a.st.Auditoria(&u.ID, "excluir_aviso", "avisos", &id, "", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hAvisosCiente(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	agora := time.Now().UTC().Format(time.RFC3339)
+	_, err = a.st.db.Exec(`
+		INSERT INTO aviso_cientes (aviso_id, usuario_id, papel_id, ciente_em)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(aviso_id, usuario_id) DO UPDATE SET ciente_em = excluded.ciente_em`,
+		id, u.ID, u.PapelAtivoID, agora)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao registrar ciente: "+err.Error())
+		return
+	}
+
+	a.st.Auditoria(&u.ID, "ciente_aviso", "avisos", &id, "", ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "ciente_em": agora})
+}
+
+func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	var req struct {
+		Comentario string `json:"comentario"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Comentario) == "" {
+		jsonErro(w, http.StatusBadRequest, "comentário não pode estar vazio")
+		return
+	}
+
+	res, err := a.st.db.Exec(`
+		INSERT INTO aviso_comentarios (aviso_id, usuario_id, papel_id, comentario)
+		VALUES (?, ?, ?, ?)`,
+		id, u.ID, u.PapelAtivoID, strings.TrimSpace(req.Comentario))
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao inserir comentário: "+err.Error())
+		return
+	}
+
+	comID, _ := res.LastInsertId()
+	jsonOK(w, map[string]any{"ok": true, "id": comID})
+}
+
+func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	// Comentários
+	cRows, _ := a.st.db.Query(`
+		SELECT ac.id, ac.comentario, ac.criado_em,
+		       u.id, u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
+		       COALESCE(up.papel,''), COALESCE(up.nome_exibicao,'')
+		FROM aviso_comentarios ac
+		JOIN usuarios u ON u.id = ac.usuario_id
+		LEFT JOIN usuario_papeis up ON up.id = ac.papel_id
+		WHERE ac.aviso_id = ? ORDER BY ac.id ASC`, id)
+
+	comentarios := []map[string]any{}
+	if cRows != nil {
+		for cRows.Next() {
+			var cid, uid int64
+			var com, dts, login, guerra, completo, papel, exibicao string
+			if cRows.Scan(&cid, &com, &dts, &uid, &login, &guerra, &completo, &papel, &exibicao) == nil {
+				comentarios = append(comentarios, map[string]any{
+					"id":            cid,
+					"comentario":    com,
+					"criado_em":     dts,
+					"usuario_id":    uid,
+					"login":         login,
+					"nome_guerra":   guerra,
+					"nome_completo": completo,
+					"papel":         papel,
+					"nome_exibicao": exibicao,
+				})
+			}
+		}
+		cRows.Close()
+	}
+
+	// Cientes
+	ciRows, _ := a.st.db.Query(`
+		SELECT ac.id, ac.ciente_em,
+		       u.id, u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
+		       COALESCE(up.papel,''), COALESCE(up.nome_exibicao,'')
+		FROM aviso_cientes ac
+		JOIN usuarios u ON u.id = ac.usuario_id
+		LEFT JOIN usuario_papeis up ON up.id = ac.papel_id
+		WHERE ac.aviso_id = ? ORDER BY ac.ciente_em ASC`, id)
+
+	cientes := []map[string]any{}
+	if ciRows != nil {
+		for ciRows.Next() {
+			var cid, uid int64
+			var dts, login, guerra, completo, papel, exibicao string
+			if ciRows.Scan(&cid, &dts, &uid, &login, &guerra, &completo, &papel, &exibicao) == nil {
+				cientes = append(cientes, map[string]any{
+					"id":            cid,
+					"ciente_em":     dts,
+					"usuario_id":    uid,
+					"login":         login,
+					"nome_guerra":   guerra,
+					"nome_completo": completo,
+					"papel":         papel,
+					"nome_exibicao": exibicao,
+				})
+			}
+		}
+		ciRows.Close()
+	}
+
+	jsonOK(w, map[string]any{
+		"comentarios": comentarios,
+		"cientes":     cientes,
+	})
+}
+
+func (a *App) hAvisosRepostar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.Papel != "admin" && u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "apenas gerentes podem repostar comunicados")
+		return
+	}
+	if u.PapelAtivoID == nil || u.GrupoID == nil {
+		jsonErro(w, http.StatusBadRequest, "sem grupo ativo para repostar")
+		return
+	}
+
+	avisoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || avisoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	var titulo, conteudo string
+	var grupoOrigID int64
+	err = a.st.db.QueryRow(`SELECT titulo, conteudo, grupo_id FROM avisos WHERE id = ?`, avisoID).Scan(&titulo, &conteudo, &grupoOrigID)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "aviso original inexistente")
+		return
+	}
+
+	if grupoOrigID == *u.GrupoID {
+		jsonErro(w, http.StatusBadRequest, "aviso já pertence ao seu próprio grupo")
+		return
+	}
+
+	res, err := a.st.db.Exec(`
+		INSERT INTO avisos (titulo, conteudo, autor_usuario_id, autor_papel_id, grupo_id, grupo_origem_id, aviso_origem_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		titulo, conteudo, u.ID, *u.PapelAtivoID, *u.GrupoID, grupoOrigID, avisoID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao repostar: "+err.Error())
+		return
+	}
+
+	novoID, _ := res.LastInsertId()
+	_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO aviso_cientes (aviso_id, usuario_id, papel_id) VALUES (?, ?, ?)`, novoID, u.ID, *u.PapelAtivoID)
+
+	a.st.Auditoria(&u.ID, "repostar_aviso", "avisos", &novoID, fmt.Sprintf("origem=%d", avisoID), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": novoID})
 }
