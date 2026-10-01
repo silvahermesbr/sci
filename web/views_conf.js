@@ -127,10 +127,11 @@
         <div class="form-linha" style="margin-top:8px"><div id="perConfEntrada"></div>
         <button class="primario" id="perConfIr" style="min-height:40px">Aplicar</button></div></div>`;
     }
+    const ehChefeSetor = (window.ME && window.ME.papel) === 'chefe_setor';
     $('#app').innerHTML = `<h2>Conferências</h2>${abasTela}${seletor}
       ${modoTela !== 'arquivo' ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-        <button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>
-        <span style="color:var(--tx2);font-size:12px">abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)</span></div>
+        ${!ehChefeSetor ? `<button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>` : ''}
+        <span style="color:var(--tx2);font-size:12px">${ehChefeSetor ? 'Como Chefe de Setor, selecione uma conferência aberta para lançar presença do seu efetivo.' : 'abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)'}</span></div>
       <div class="cartao" style="margin-bottom:10px"><div class="campo" style="margin:0"><label>Pesquisar por ID da conferência</label><input id="fConfID" placeholder="ex.: 3"></div></div>` +
       tabela('Abertas', abertas) + tabela('Fechadas', fechadas)
       : tabela('Arquivadas', lista, 'nenhuma conferência arquivada')}
@@ -212,22 +213,34 @@
       }
     }
     const escalados = d.escalados || [];
-    C = { c: d.conferencia, pessoas: d.pessoas || [], destinos, est, dest, obs, verif, temComentario, escalados };
+    let pessoasLista = d.pessoas || [];
+    const ehChefe = window.ME && window.ME.papel === 'chefe_setor';
+    if (ehChefe) {
+      const meuSetorId = window.ME.setor_id;
+      if (meuSetorId) {
+        pessoasLista = pessoasLista.filter(p => p.setor_id === meuSetorId);
+      }
+    }
+    C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados };
     confRender();
     $('#btVoltar').onclick = () => { location.hash = '#/hoje'; };
-    $('#btDescartar').onclick = async () => {
-      if (!(await confirmar(`DESCARTAR a conferência #${C.c.id}? O estado parcial gravado será apagado. Esta ação não pode ser desfeita.`))) return;
-      try {
-        await api('/api/conferencia/' + C.c.id, { method: 'DELETE' });
-        toast('Conferência descartada');
-        location.hash = '#/hoje';
-        location.reload();
-      } catch (e) {}
-    };
+    const btDesc = $('#btDescartar');
+    if (btDesc) {
+      btDesc.onclick = async () => {
+        if (!(await confirmar(`DESCARTAR a conferência #${C.c.id}? O estado parcial gravado será apagado. Esta ação não pode ser desfeita.`))) return;
+        try {
+          await api('/api/conferencia/' + C.c.id, { method: 'DELETE' });
+          toast('Conferência descartada');
+          location.hash = '#/hoje';
+          location.reload();
+        } catch (e) {}
+      };
+    }
   };
 
   function confRender(filtro = '') {
     const semC = !C.c;
+    const ehChefe = window.ME && window.ME.papel === 'chefe_setor';
     const f = (filtro || '').trim().toLowerCase();
     const porSetor = {};
     C.pessoas
@@ -239,41 +252,61 @@
     for (const s of Object.keys(porSetor)) porSetor[s].sort(ordemCheck);
     let listas = '';
     for (const setor of Object.keys(porSetor).sort()) {
-      listas += `<div class="grupo-setor"><h4>${esc(setor)} · ${porSetor[setor].length}</h4><div class="lista-pessoa">` +
-        porSetor[setor].map(p => {
-          const sit = sitDe(p);
-          const escInfo = (C.escalados || []).find(x => x.pessoa_id === p.id);
-          const badgeEscala = escInfo
-            ? `<span style="background:rgba(87,161,115,.2); color:var(--verde-claro); font-size:11px; padding:1px 6px; border-radius:4px; font-weight:700" title="Escalado em ${esc(escInfo.tipo_nome)}">🛡️ ${esc(escInfo.tipo_nome)}</span>`
-            : '';
-          const selDest = sit === 'justificada'
-            ? `<select class="sel-destino" data-id="${p.id}"><option value="">destino…</option>` +
-              C.destinos.map(dx => `<option value="${dx.id}" ${C.dest[p.id] == dx.id ? 'selected' : ''}>${esc(dx.nome)}</option>`).join('') + '</select>'
-            : '';
-          const optSit = s => `<option value="${s}" ${sit === s ? 'selected' : ''}>${ROTULO[s]}</option>`;
-          return `<div class="pessoa ${C.verif.has(p.id) ? 'verificado' : ''}" data-id="${p.id}">
-            <input type="checkbox" class="chk" data-id="${p.id}" ${C.verif.has(p.id) ? 'checked' : ''} title="verifiquei esta pessoa">
-            <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
-            <select class="sel-situacao" data-id="${p.id}" title="situação">${sit === 'nao_verificado' ? '<option value="nao_verificado" disabled selected>NÃO VERIFICADO</option>' : ''}${SITUACOES.map(optSit).join('')}</select>
-            ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
-        }).join('') + '</div></div>';
+      const pessoasSetor = porSetor[setor];
+      const totalVerif = pessoasSetor.filter(x => C.verif.has(x.id)).length;
+      let jaInseriuDivisor = false;
+
+      const itensHTML = pessoasSetor.map((p, idx) => {
+        const sit = sitDe(p);
+        const ehVerif = C.verif.has(p.id);
+        const escInfo = (C.escalados || []).find(x => x.pessoa_id === p.id);
+        const badgeEscala = escInfo
+          ? `<span style="background:rgba(87,161,115,.2); color:var(--verde-claro); font-size:11px; padding:1px 6px; border-radius:4px; font-weight:700" title="Escalado em ${esc(escInfo.tipo_nome)}">🛡️ ${esc(escInfo.tipo_nome)}</span>`
+          : '';
+        const selDest = sit === 'justificada'
+          ? `<select class="sel-destino" data-id="${p.id}"><option value="">destino…</option>` +
+            C.destinos.map(dx => `<option value="${dx.id}" ${C.dest[p.id] == dx.id ? 'selected' : ''}>${esc(dx.nome)}</option>`).join('') + '</select>'
+          : '';
+        const optSit = s => `<option value="${s}" ${sit === s ? 'selected' : ''}>${ROTULO[s]}</option>`;
+
+        let divisorHTML = '';
+        if (ehVerif && !jaInseriuDivisor) {
+          jaInseriuDivisor = true;
+          divisorHTML = `
+            <div class="divisor-verificados">
+              <span class="divisor-linha"></span>
+              <span class="divisor-rotulo">✓ Verificados (${totalVerif} de ${pessoasSetor.length})</span>
+              <span class="divisor-linha"></span>
+            </div>
+          `;
+        }
+
+        return divisorHTML + `<div class="pessoa ${ehVerif ? 'verificado' : ''}" data-id="${p.id}">
+          <input type="checkbox" class="chk" data-id="${p.id}" ${ehVerif ? 'checked' : ''} title="verifiquei esta pessoa">
+          <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
+          <select class="sel-situacao" data-id="${p.id}" title="situação">${sit === 'nao_verificado' ? '<option value="nao_verificado" disabled selected>NÃO VERIFICADO</option>' : ''}${SITUACOES.map(optSit).join('')}</select>
+          ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
+      }).join('');
+
+      listas += `<div class="grupo-setor"><h4>${esc(setor)} · ${pessoasSetor.length}</h4><div class="lista-pessoa">${itensHTML}</div></div>`;
     }
     const banner = semC
       ? `<div class="cartao"><p style="color:var(--tx2)">Nenhuma conferência aberta. Ao iniciar, a data e o horário de Brasília são registrados automaticamente.</p>
-         <div style="display:flex;gap:8px;align-items:end;margin-top:10px">
-           <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div></div>`
+         ${!ehChefe ? `<div style="display:flex;gap:8px;align-items:end;margin-top:10px">
+           <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div>` : '<p style="color:var(--tx3);font-size:12px;margin-top:8px">Aguarde o Gerente ou Operador iniciar a conferência do grupo.</p>'}</div>`
       : `<div class="cartao">
          <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span></div>`;
     $('#app').innerHTML = `<div style="margin-bottom:10px"><button class="fantasma" id="btVoltar" style="min-height:38px">← Retornar</button></div>
       <h2 style="margin-top:0">Conferência de pessoal</h2>${banner}
       <div class="barra-fixa">
         <input id="busca" placeholder="buscar nome…">
-        <button class="primario" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>
+        ${!ehChefe ? `<button class="primario" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>` : `<span style="font-size:12px;color:var(--tx2);font-weight:600">Área do Chefe de Setor</span>`}
       </div>
       <div id="lista">${listas}</div>
+      ${!ehChefe ? `
       <div style="display:flex;justify-content:flex-end;margin-top:28px;padding-top:14px;border-top:1px solid var(--borda)">
         <button class="perigo" id="btDescartar" style="min-height:40px">🗑 Descartar conferência</button>
-      </div>`;
+      </div>` : ''}`;
     const contSpan = () => `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
     const atualizar = () => {
       // v9.15.1: NÃO recriar a barra (perdia foco a cada dígito) — só o contador muda
@@ -293,19 +326,25 @@
           if (inp2) { inp2.focus(); inp2.setSelectionRange(pos, pos); }
         }, 250);
       };
-      $('#btFecharBarra').onclick = confFechar;
+      const btF = $('#btFecharBarra');
+      if (btF) btF.onclick = confFechar;
     };
     atualizar();
-    /* situação por DROP-DOWN (não cíclico) — falta/justificada abre modal */
+    /* situação por DROP-DOWN — mudança de situação NÃO dá check automático (check é manual) */
     document.querySelectorAll('.sel-situacao').forEach(s => s.onchange = () => {
       const id = +s.dataset.id;
       const novo = s.value;
       const atual = C.est[id] || 'nao_verificado';
       if (novo === atual) return;
       C.est[id] = novo;
-      C.verif.add(id);
-      if (novo === 'falta' || novo === 'justificada') confModalLancamento(id, novo, () => confRender($('#busca') ? $('#busca').value : ''));
-      else { marcarParcial(id, novo, C.dest[id] ?? null, C.obs[id] ?? null, true); confRender($('#busca').value); }
+      // Regra operacional: o check é estritamente manual, preserva o estado atual de verificação
+      const jaVerif = C.verif.has(id);
+      if (novo === 'falta' || novo === 'justificada') {
+        confModalLancamento(id, novo, () => confRender($('#busca') ? $('#busca').value : ''));
+      } else {
+        marcarParcial(id, novo, C.dest[id] ?? null, C.obs[id] ?? null, jaVerif);
+        confRender($('#busca') ? $('#busca').value : '');
+      }
     });
     document.querySelectorAll('.pessoa .chk').forEach(ch => ch.onchange = () => {
       const id = +ch.dataset.id;
@@ -313,9 +352,10 @@
       ch.closest('.pessoa').classList.toggle('verificado', ch.checked);
       atualizar();
       // salvamento parcial: check grava o estado atual + verificado; UNCHECK grava
-      // verificado=0 (situacao vazia) — senão o ✅ ressuscitava no reload
+      // verificado=0 (situacao preservada ou nula)
       if (ch.checked) marcarParcial(id, C.est[id] || 'presente', C.dest[id] ?? null, C.obs[id] ?? null, true);
-      else marcarParcial(id, null, C.dest[id] ?? null, C.obs[id] ?? null, false);
+      else marcarParcial(id, C.est[id] || null, C.dest[id] ?? null, C.obs[id] ?? null, false);
+      confRender($('#busca') ? $('#busca').value : '');
     });
     document.querySelectorAll('.sel-destino').forEach(s => s.onchange = () => {
       const id = +s.dataset.id;
@@ -405,8 +445,8 @@
       const obs = raiz.querySelector('#mObs').value.trim();
       if (sit === 'justificada' && !destino) { toast('Justificada exige destino', 'erro'); return; }
       C.dest[id] = destino; C.obs[id] = obs;
-      C.verif.add(id);
-      marcarParcial(id, sit, destino, obs, true); // salvamento parcial imediato (já verificado)
+      const jaVerif = C.verif.has(id);
+      marcarParcial(id, sit, destino, obs, jaVerif);
       fechar();
       if (aoSalvar) aoSalvar();
     };

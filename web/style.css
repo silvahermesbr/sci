@@ -3418,5 +3418,62 @@ input[type="checkbox"] {
   color: var(--ambar-txt);
 }
 
+/* Divisor Visual de Verificados (Conferência de Pessoal) */
+.divisor-verificados {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0 10px;
+  padding: 0 4px;
+  user-select: none;
+}
+.divisor-verificados .divisor-linha {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(87, 161, 115, 0.4), transparent);
+}
+.divisor-verificados .divisor-rotulo {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--verde-claro, #57a173);
+  background: rgba(87, 161, 115, 0.12);
+  border: 1px solid rgba(87, 161, 115, 0.3);
+  padding: 3px 12px;
+  border-radius: 12px;
+}
 
+/* Alerta Permanente de Conectividade (Heartbeat Falhou > 10s) */
+#alertaConectividade {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: #dc2626;
+  color: #fff;
+  z-index: 99999;
+  text-align: center;
+  padding: 10px 16px;
+  font-weight: 700;
+  font-size: 13px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.5);
+  letter-spacing: 0.02em;
+  animation: pulseConexao 2s infinite ease-in-out;
+}
 
+@keyframes pulseConexao {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.82; }
+}
+
+/* Chip de Papel: Chefe de Setor */
+.papel-chip.chefe_setor {
+  background: rgba(14, 165, 233, 0.15);
+  border-color: rgba(14, 165, 233, 0.4);
+  color: #38bdf8;
+}

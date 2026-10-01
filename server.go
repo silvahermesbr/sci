@@ -175,6 +175,11 @@ func (s *Store) migrarV2() error {
 
 func (a *App) rotas() {
 	m := a.mux
+	m.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true,"timestamp":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+	})
 	m.HandleFunc("GET /api/health", a.hHealth)
 	m.HandleFunc("POST /api/login", a.hLogin)
 	m.Handle("POST /api/setup", a.auth(false, a.hAuthSetup))
@@ -238,6 +243,7 @@ func (a *App) rotas() {
 
 	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria)
 	confAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
+	confMarcarAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador", "chefe_setor"}, h) }
 
 	// Arquivo de conferências + filtro de período (ordem Tenente 30/09):
 	// FECHADAS × ARQUIVADAS; gerente arquiva, admin-only exclui arquivada.
@@ -252,7 +258,7 @@ func (a *App) rotas() {
 	m.Handle("GET /api/conferencia/hoje", a.auth(false, a.hConferenciaHoje))
 	m.Handle("POST /api/conferencia/iniciar", confAuth(a.hConferenciaIniciar))
 	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
-	m.Handle("POST /api/conferencia/marcar", confAuth(a.hConferenciaMarcar))
+	m.Handle("POST /api/conferencia/marcar", confMarcarAuth(a.hConferenciaMarcar))
 	m.Handle("GET /api/conferencia/lista", a.auth(false, a.hConferenciaList))
 	m.Handle("GET /api/conferencia/{id}", a.auth(false, a.hConferenciaGet))
 	m.Handle("DELETE /api/conferencia/{id}", confAuth(a.hConferenciaDescartar))
@@ -308,6 +314,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/backup", a.auth(true, a.hBackup))
 	m.Handle("POST /api/backup/importar", a.auth(true, a.hBackupImportar)) // R9
 	m.Handle("GET /api/backup/download", a.auth(true, a.hBackupDownload))
+	m.Handle("GET /api/admin/sistema/metricas", a.auth(true, a.hAdminSistemaMetricas))
 
 	// Módulos ESCALA e MATERIAL EM RESERVA (ordem Tenente 30/09): fora do frontend e
 	// APIs desativadas por flag MODO_RESERVA=1 em `configuracoes`. Código INTACTO —
@@ -510,6 +517,11 @@ func (a *App) hBackupDownload(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, caminho)
 }
 
+func (a *App) hAdminSistemaMetricas(w http.ResponseWriter, r *http.Request) {
+	metricas := coletarMetricas(a.st.dataDir)
+	jsonOK(w, metricas)
+}
+
 // hUsuarioSenha: admin redefine a senha de qualquer conta; GERENTE redefine a de
 // OPERADOR do próprio grupo (v9.4 — aba Gerenciar). Senha de gerente só admin muda.
 func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
@@ -533,8 +545,8 @@ func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusNotFound, "usuário inexistente")
 			return
 		}
-		if alvoPapel != "operador" || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
-			jsonErro(w, http.StatusForbidden, "gerente só redefine senha de operador do próprio grupo")
+		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
+			jsonErro(w, http.StatusForbidden, "gerente só redefine senha de membros do próprio grupo")
 			return
 		}
 	}
@@ -587,8 +599,8 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	solicitante := usuarioDoCtx(r)
-	if solicitante.Papel == "operador" {
-		jsonErro(w, http.StatusForbidden, "operador não edita usuários")
+	if solicitante.Papel == "operador" || solicitante.Papel == "chefe_setor" {
+		jsonErro(w, http.StatusForbidden, "usuário sem permissão para editar outros usuários")
 		return
 	}
 	if solicitante.Papel == "gerente" {
@@ -598,8 +610,8 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusNotFound, "usuário inexistente")
 			return
 		}
-		if alvoPapel != "operador" || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
-			jsonErro(w, http.StatusForbidden, "gerente só edita operador do próprio grupo")
+		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
+			jsonErro(w, http.StatusForbidden, "gerente só edita membros do próprio grupo")
 			return
 		}
 	}
@@ -801,6 +813,26 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "pessoa fora do seu escopo")
 		return
 	}
+
+	// Regra de Setor: Chefe de Setor só tira falta/presença do seu próprio setor
+	if u.Papel == "chefe_setor" {
+		var setorChefe *int64
+		if u.SetorID != nil {
+			setorChefe = u.SetorID
+		} else if u.PessoaID != nil {
+			_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorChefe)
+		}
+		if setorChefe == nil {
+			jsonErro(w, http.StatusForbidden, "chefe de setor sem setor atribuído no cadastro")
+			return
+		}
+		var setorPessoa *int64
+		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, req.PessoaID).Scan(&setorPessoa)
+		if setorPessoa == nil || *setorPessoa != *setorChefe {
+			jsonErro(w, http.StatusForbidden, "chefe de setor só pode lançar presença para militares do seu próprio setor")
+			return
+		}
+	}
 	if req.Situacao == "" {
 		// "desmarcar" o check (ordem Tenente 30/09): REMOVE a verificação — grava
 		// verificado=0 no lançamento existente (antes o uncheck não persistia e o ✅
@@ -913,7 +945,8 @@ func (a *App) hEfetivoAtual(w http.ResponseWriter, r *http.Request) {
 func (a *App) pessoasAtivas(escopo int64) []map[string]any {
 	q := `
 		SELECT p.id, p.nome_guerra, p.nome_completo, COALESCE(s.nome,''),
-		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), '')))
+		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), ''))),
+		       p.setor_id
 		FROM pessoas p
 		LEFT JOIN setores s ON s.id = p.setor_id
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
@@ -941,10 +974,17 @@ func (a *App) pessoasAtivas(escopo int64) []map[string]any {
 	for rows.Next() {
 		var id int64
 		var ng, nc, setor, funcao string
-		if rows.Scan(&id, &ng, &nc, &setor, &funcao) == nil {
-			out = append(out, map[string]any{
+		var setorID *int64
+		if rows.Scan(&id, &ng, &nc, &setor, &funcao, &setorID) == nil {
+			item := map[string]any{
 				"id": id, "nome_guerra": ng, "nome_completo": nc, "setor": setor, "funcao": funcao,
-			})
+			}
+			if setorID != nil {
+				item["setor_id"] = *setorID
+			} else {
+				item["setor_id"] = nil
+			}
+			out = append(out, item)
 		}
 	}
 	return out
@@ -3888,13 +3928,15 @@ func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	type GrupoN struct {
-		ID           int64     `json:"id"`
-		Nome         string    `json:"nome"`
-		Codigo       string    `json:"codigo"`
-		Efetivo      int       `json:"efetivo"`       // próprio (sem subordinados)
-		EfetivoTotal int       `json:"efetivo_total"` // recursivo: próprio + subárvore
-		Contas       int       `json:"contas"`
-		Filhos       []*GrupoN `json:"filhos"`
+		ID             int64     `json:"id"`
+		Nome           string    `json:"nome"`
+		Codigo         string    `json:"codigo"`
+		Efetivo        int       `json:"efetivo"`         // próprio (sem subordinados)
+		EfetivoTotal   int       `json:"efetivo_total"`   // recursivo: próprio + subárvore
+		Contas         int       `json:"contas"`          // próprias (sem subordinados)
+		ContasTotal    int       `json:"contas_total"`    // recursivo: próprias + subárvore
+		SubgruposTotal int       `json:"subgrupos_total"` // total de grupos subordinados na subárvore
+		Filhos         []*GrupoN `json:"filhos"`
 	}
 	nos := map[int64]*GrupoN{}
 	filhosDe := map[int64][]int64{}
@@ -3930,10 +3972,14 @@ func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		no.EfetivoTotal = no.Efetivo
+		no.ContasTotal = no.Contas
+		no.SubgruposTotal = 0
 		for _, filho := range filhosDe[id] {
 			if f := montar(filho, profundidade+1); f != nil {
 				no.Filhos = append(no.Filhos, f)
 				no.EfetivoTotal += f.EfetivoTotal
+				no.ContasTotal += f.ContasTotal
+				no.SubgruposTotal += 1 + f.SubgruposTotal
 			}
 		}
 		return no
@@ -4084,21 +4130,21 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	papel := strings.ToLower(strings.TrimSpace(req.Papel))
 	switch papel {
-	case "admin", "gerente", "operador":
+	case "admin", "gerente", "operador", "chefe_setor":
 	default:
-		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador)")
+		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador | chefe_setor)")
 		return
 	}
 	// hierarquia de criação (v9.3):
 	// - ADMIN é o ÚNICO que cria GERENTE (e admin)
-	// - GERENTE cria OPERADOR, sempre no PRÓPRIO grupo
-	// - OPERADOR COMUM não cria conta nenhuma
-	if u.Papel == "operador" {
-		jsonErro(w, http.StatusForbidden, "operador não cria contas")
+	// - GERENTE cria OPERADOR e CHEFE_SETOR, sempre no PRÓPRIO grupo
+	// - OPERADOR / CHEFE_SETOR não cria conta nenhuma
+	if u.Papel == "operador" || u.Papel == "chefe_setor" {
+		jsonErro(w, http.StatusForbidden, "operador ou chefe de setor não cria contas")
 		return
 	}
 	if u.Papel != "admin" {
-		if papel != "operador" {
+		if papel != "operador" && papel != "chefe_setor" {
 			jsonErro(w, http.StatusForbidden, "somente o admin cria gerentes")
 			return
 		}
@@ -4197,8 +4243,8 @@ func (a *App) hUsuarioExcluir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "conta admin não é excluída")
 		return
 	}
-	// v9.4: GERENTE exclui OPERADOR do próprio grupo; operador não exclui ninguém.
-	if eu.Papel == "operador" {
+	// v9.4: GERENTE exclui OPERADOR/CHEFE_SETOR do próprio grupo; operador/chefe não exclui ninguém.
+	if eu.Papel == "operador" || eu.Papel == "chefe_setor" {
 		jsonErro(w, http.StatusForbidden, "somente admin e gerente excluem contas")
 		return
 	}
@@ -4209,8 +4255,8 @@ func (a *App) hUsuarioExcluir(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusNotFound, "usuário inexistente")
 			return
 		}
-		if alvoPapel != "operador" || eu.GrupoID == nil || alvoGrupo != *eu.GrupoID {
-			jsonErro(w, http.StatusForbidden, "gerente só exclui operador do próprio grupo")
+		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || eu.GrupoID == nil || alvoGrupo != *eu.GrupoID {
+			jsonErro(w, http.StatusForbidden, "gerente só exclui membros do próprio grupo")
 			return
 		}
 	}

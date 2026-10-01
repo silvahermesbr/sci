@@ -80,20 +80,20 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	papel := strings.ToLower(strings.TrimSpace(req.Papel))
 	switch papel {
-	case "admin", "gerente", "operador":
+	case "admin", "gerente", "operador", "chefe_setor":
 	default:
-		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador)")
+		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador | chefe_setor)")
 		return
 	}
 
-	// Permissões: Admin cria qualquer papel. Gerente só cria operador no seu próprio grupo.
-	if u.Papel == "operador" {
-		jsonErro(w, http.StatusForbidden, "operador não gerencia papéis")
+	// Permissões: Admin cria qualquer papel. Gerente só cria operador/chefe_setor no seu próprio grupo.
+	if u.Papel == "operador" || u.Papel == "chefe_setor" {
+		jsonErro(w, http.StatusForbidden, "operador ou chefe de setor não gerencia papéis")
 		return
 	}
 	if u.Papel == "gerente" {
-		if papel != "operador" {
-			jsonErro(w, http.StatusForbidden, "gerente só pode atribuir papel de operador")
+		if papel != "operador" && papel != "chefe_setor" {
+			jsonErro(w, http.StatusForbidden, "gerente só pode atribuir papel de operador ou chefe de setor")
 			return
 		}
 		if u.GrupoID == nil {
@@ -204,10 +204,6 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonOK(w, []any{})
 		return
@@ -329,10 +325,6 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonOK(w, []any{})
 		return
@@ -420,10 +412,6 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo na sessão")
 		return
@@ -548,10 +536,6 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensMarcarLida(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -581,10 +565,6 @@ func (a *App) hMensagensMarcarLida(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensArquivar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -629,10 +609,6 @@ func (a *App) hMensagensArquivar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensDesarquivar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -659,10 +635,6 @@ func (a *App) hMensagensDesarquivar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensExcluir(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -703,11 +675,16 @@ func (a *App) hMensagensExcluir(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensPastasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
-	rows, err := a.st.db.Query(`SELECT id, nome, criada_em FROM mensagem_pastas WHERE usuario_id = ? ORDER BY nome`, u.ID)
+	rows, err := a.st.db.Query(`
+		SELECT p.id, p.nome, p.criada_em, COUNT(md.id)
+		FROM mensagem_pastas p
+		LEFT JOIN mensagem_destinatarios md 
+		  ON md.pasta_id = p.id 
+		  AND md.destinatario_papel_id = ? 
+		  AND md.excluida = 0
+		WHERE p.usuario_id = ? 
+		GROUP BY p.id, p.nome, p.criada_em
+		ORDER BY p.nome`, u.PapelAtivoID, u.ID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -718,12 +695,8 @@ func (a *App) hMensagensPastasList(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id int64
 		var nome, em string
-		if rows.Scan(&id, &nome, &em) == nil {
-			var total int
-			_ = a.st.db.QueryRow(`
-				SELECT COUNT(*) FROM mensagem_destinatarios md
-				WHERE md.pasta_id = ? AND md.destinatario_papel_id = ? AND md.excluida = 0`,
-				id, u.PapelAtivoID).Scan(&total)
+		var total int
+		if rows.Scan(&id, &nome, &em, &total) == nil {
 			out = append(out, map[string]any{
 				"id":        id,
 				"nome":      nome,
@@ -737,10 +710,6 @@ func (a *App) hMensagensPastasList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensPastasAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	var req struct {
 		Nome string `json:"nome"`
 	}
@@ -759,10 +728,6 @@ func (a *App) hMensagensPastasAdd(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensPastasDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -776,10 +741,6 @@ func (a *App) hMensagensPastasDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensMoverPasta(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -808,10 +769,6 @@ func (a *App) hMensagensMoverPasta(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensThread(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -1043,10 +1000,6 @@ func (a *App) hMensagensThread(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensResponderThread(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -1139,10 +1092,6 @@ func (a *App) hMensagensResponderThread(w http.ResponseWriter, r *http.Request) 
 
 func (a *App) hMensagensContador(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonOK(w, map[string]any{"nao_lidas": 0, "despachos_pendentes": 0, "arquivadas": 0})
 		return
@@ -1174,10 +1123,6 @@ func (a *App) hMensagensContador(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensDestinatarios(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
-		return
-	}
 	var papelAtivoID int64
 	if u.PapelAtivoID != nil {
 		papelAtivoID = *u.PapelAtivoID
@@ -1185,8 +1130,9 @@ func (a *App) hMensagensDestinatarios(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := a.st.db.Query(`
 		SELECT up.id, up.usuario_id, u.login, COALESCE(u.nome_guerra, ''), COALESCE(u.nome_completo, ''),
-		       up.papel, up.grupo_id, COALESCE(g.nome, ''),
-		       up.funcao_id, COALESCE(f.nome, ''), COALESCE(up.nome_exibicao, '')
+		       up.papel, up.grupo_id, COALESCE(NULLIF(g.nome, ''), 'Administração Geral'),
+		       up.funcao_id, COALESCE(NULLIF(f.nome, ''), CASE WHEN up.papel = 'admin' THEN 'Administrador do Sistema' ELSE '' END),
+		       COALESCE(NULLIF(up.nome_exibicao, ''), CASE WHEN up.papel = 'admin' THEN 'Administração do Sistema' ELSE '' END)
 		FROM usuario_papeis up
 		JOIN usuarios u ON u.id = up.usuario_id
 		LEFT JOIN grupos g ON g.id = up.grupo_id

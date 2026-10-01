@@ -70,42 +70,37 @@ func TestAdminRestricaoOperacional(t *testing.T) {
 		}
 	})
 
-	// 3. Módulo MENSAGENS E AVISOS: Admin deve ser terminantemente proibido (HTTP 403)
-	t.Run("Mensagens e Avisos Restritos ao Admin", func(t *testing.T) {
+	// 3. Módulo MENSAGENS: Admin possui caixa de correio própria (HTTP 200)
+	t.Run("Mensagens Permitidas com Caixa Propria ao Admin", func(t *testing.T) {
 		rr, _ := doJSONReq(app, "GET", "/api/mensagens/inbox", nil, adminCookie)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("GET /api/mensagens/inbox deveria retornar 403, obteve %d", rr.Code)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET /api/mensagens/inbox deveria retornar 200 para o admin, obteve %d", rr.Code)
 		}
 
 		rr, _ = doJSONReq(app, "GET", "/api/mensagens/enviadas", nil, adminCookie)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("GET /api/mensagens/enviadas deveria retornar 403, obteve %d", rr.Code)
-		}
-
-		rr, _ = doJSONReq(app, "POST", "/api/mensagens", map[string]any{
-			"assunto": "Teste",
-			"corpo":   "Mensagem",
-		}, adminCookie)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("POST /api/mensagens deveria retornar 403, obteve %d", rr.Code)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET /api/mensagens/enviadas deveria retornar 200 para o admin, obteve %d", rr.Code)
 		}
 
 		rr, _ = doJSONReq(app, "GET", "/api/mensagens/contador", nil, adminCookie)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("GET /api/mensagens/contador deveria retornar 403, obteve %d", rr.Code)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET /api/mensagens/contador deveria retornar 200 para o admin, obteve %d", rr.Code)
 		}
 
-		rr, _ = doJSONReq(app, "GET", "/api/avisos", nil, adminCookie)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("GET /api/avisos deveria retornar 403, obteve %d", rr.Code)
+		// Listagem de destinatários permitida ao admin
+		rr, _ = doJSONReq(app, "GET", "/api/mensagens/destinatarios", nil, adminCookie)
+		if rr.Code != http.StatusOK {
+			t.Errorf("GET /api/mensagens/destinatarios deveria retornar 200 para o admin, obteve %d", rr.Code)
 		}
 
-		rr, _ = doJSONReq(app, "POST", "/api/avisos", map[string]any{
-			"titulo":   "Aviso Proibido",
-			"conteudo": "Conteudo",
+		// Envio de mensagem pelo admin
+		rr, _ = doJSONReq(app, "POST", "/api/mensagens", map[string]any{
+			"assunto":                "Comunicado da Administração",
+			"corpo":                  "Mensagem enviada pelo admin do sistema",
+			"destinatario_papel_ids": []int64{1},
 		}, adminCookie)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("POST /api/avisos deveria retornar 403, obteve %d", rr.Code)
+		if rr.Code != http.StatusOK {
+			t.Errorf("POST /api/mensagens deveria retornar 200 para o admin, obteve %d", rr.Code)
 		}
 	})
 

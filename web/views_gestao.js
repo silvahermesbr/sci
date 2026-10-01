@@ -7,7 +7,7 @@
 'use strict';
 (function () {
   const $ = s => document.querySelector(s);
-  const rotuloPapel = p => p === 'admin' ? 'ADMIN' : p === 'gerente' ? 'GERENTE' : 'OPERADOR';
+  const rotuloPapel = p => p === 'admin' ? 'ADMIN' : p === 'gerente' ? 'GERENTE' : p === 'chefe_setor' ? 'CHEFE DE SETOR' : 'OPERADOR';
   const quem = () => (typeof ME !== 'undefined' && ME) || window.ME || null;
   const ativosDe = l => (l || []).filter(x => x.ativo === 1 || x.ativo === true);
 
@@ -86,10 +86,24 @@
   const noCardHTML = (n, nivel, comGerente, arvoreTotal) => {
     const temFilhos = !!(n.filhos && n.filhos.length);
     const idCollapse = 'noArv_' + n.id + '_' + nivel + '_' + Math.random().toString(36).slice(2, 6);
-    const rec = n.efetivo_total !== undefined && n.efetivo_total !== n.efetivo;
-    const efetTxt = rec
+    
+    // Efetivo (próprio vs total da subárvore)
+    const recEf = n.efetivo_total !== undefined && n.efetivo_total !== n.efetivo;
+    const efetTxt = recEf
       ? `<span style="color:var(--verde-claro);font-weight:700">${n.efetivo_total}</span> <small style="color:var(--tx3)">(próprio: ${n.efetivo})</small>`
       : `<span style="font-weight:600">${n.efetivo}</span>`;
+
+    // Contas (próprias vs total da subárvore)
+    const recCt = n.contas_total !== undefined && n.contas_total !== n.contas;
+    const contasTxt = recCt
+      ? `<span style="color:var(--verde-claro);font-weight:700">${n.contas_total}</span> <small style="color:var(--tx3)">(próprias: ${n.contas || 0})</small>`
+      : `<span style="font-weight:600">${n.contas || 0}</span>`;
+
+    // Subgrupos (diretos vs total no ramo)
+    const subTot = n.subgrupos_total !== undefined ? n.subgrupos_total : (n.filhos ? n.filhos.length : 0);
+    const subTxt = temFilhos
+      ? `<span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:4px 9px; border-radius:6px; border:1px solid rgba(59,130,246,0.3); font-weight:600">🌲 ${n.filhos.length} direto(s) · ${subTot} no total</span>`
+      : '';
 
     const isFocado = FOCO_GRUPO_ID === n.id;
     const margemEsq = Math.min(nivel * 20, 160);
@@ -97,12 +111,16 @@
     const corBordaEsq = isFocado ? 'var(--verde-claro)' : nivel === 0 ? '#10b981' : temFilhos ? '#3b82f6' : '#8b5cf6';
     const tagNivel = nivel === 0 ? '🏛️ Unidade Raiz' : `🌲 Nível ${nivel + 1}`;
 
+    // Regra operacional: ao focar em um grupo, olhar apenas até o nível 2 a partir do ponto de observação
+    const maxNivel = FOCO_GRUPO_ID ? 2 : 32;
+    const podeExibirFilhos = temFilhos && nivel < maxNivel;
+
     return `
       <div class="grupo-node-card" data-gid="${n.id}"
            style="margin-left:${margemEsq}px; margin-bottom:12px; background:linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%), var(--painel2); border:1px solid ${isFocado ? 'var(--verde-claro)' : 'var(--borda)'}; border-left:5px solid ${corBordaEsq}; border-radius:10px; padding:14px 16px; box-shadow:${isFocado ? '0 0 16px rgba(16,185,129,0.25)' : '0 3px 12px rgba(0,0,0,0.25)'}; transition:all 0.2s ease">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px">
           <div style="display:flex; align-items:center; gap:10px; flex:1; min-width:250px">
-            ${temFilhos
+            ${podeExibirFilhos
               ? `<button type="button" data-tgl="${idCollapse}" style="background:var(--painel3); border:1px solid var(--borda); color:var(--tx); border-radius:6px; width:28px; height:28px; cursor:pointer; font-weight:bold; display:flex; align-items:center; justify-content:center; padding:0; flex-shrink:0; font-size:13px; transition:transform 0.15s ease" title="Expandir/Recolher subgrupos">▾</button>`
               : `<span style="width:28px; display:inline-block; text-align:center; color:var(--tx3); font-size:14px; flex-shrink:0">•</span>`}
             
@@ -121,26 +139,25 @@
           <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--tx2); flex-wrap:wrap">
             ${comGerente ? (n.gerente ? `<span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda); display:flex; align-items:center; gap:4px">👤 <b>${esc(n.gerente)}</b></span>` : `<span class="badge-sem-gerente">⚠️ Sem Gerente</span>`) : ''}
             <span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda)">👥 Efetivo: ${efetTxt}</span>
-            <span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda)">🔑 ${n.contas || 0} conta(s)</span>
-            ${temFilhos ? `<span style="background:rgba(59,130,246,0.15); color:#60a5fa; padding:4px 9px; border-radius:6px; border:1px solid rgba(59,130,246,0.3); font-weight:600">🌲 ${n.filhos.length} subgrupo(s)</span>` : ''}
+            <span style="background:var(--painel3); padding:4px 9px; border-radius:6px; border:1px solid var(--borda)">🔑 Contas: ${contasTxt}</span>
+            ${subTxt}
           </div>
         </div>
 
-        <div style="display:flex; justify-content:flex-end; gap:6px; margin-top:10px; border-top:1px solid rgba(255,255,255,0.06); padding-top:10px; flex-wrap:wrap">
-          <button class="acao-linha" style="font-size:12px; padding:4px 10px; font-weight:600" data-focargrupo="${n.id}">🔍 Focar / Drilldown</button>
-          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-novosub="${n.id}" data-nome="${esc(n.nome)}">+ Subgrupo</button>
-          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-alocaruser="${n.id}" data-nome="${esc(n.nome)}">👥 Alocar Usuário</button>
-          <button class="acao-linha" style="font-size:12px; padding:4px 10px; font-weight:${n.gerente ? 'normal' : '700'}" data-trocarger="${n.id}" data-nome="${esc(n.nome)}">👤 ${n.gerente ? 'Trocar Gerente' : 'Definir Gerente'}</button>
-          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-subordinar="${n.id}" data-nome="${esc(n.nome)}">⛓️ Subordinação</button>
-          <button class="acao-linha" style="font-size:12px; padding:4px 10px" data-contas="${n.id}" data-nome="${esc(n.nome)}">📊 Auditar</button>
-          <button class="acao-linha perigo" style="font-size:12px; padding:4px 10px" data-excluir="${n.id}" data-nome="${esc(n.nome)}">🗑️ Excluir</button>
+        <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px; border-top:1px solid rgba(255,255,255,0.06); padding-top:10px; flex-wrap:wrap">
+          <button class="acao-linha" style="font-size:12px; padding:4px 12px; font-weight:600" data-focargrupo="${n.id}">🔍 Focar / Drilldown</button>
+          <button class="primario" style="font-size:12px; padding:4px 14px; font-weight:600" data-editargrupo="${n.id}">⚙️ Editar</button>
         </div>
 
-        ${temFilhos ? `
+        ${podeExibirFilhos ? `
           <div id="${idCollapse}" class="subgrupos-container" style="margin-top:10px; border-left:2px dashed rgba(16,185,129,0.35); padding-left:10px; transition:all 0.2s ease">
             ${n.filhos.map(f => noCardHTML(f, nivel + 1, comGerente, arvoreTotal)).join('')}
           </div>
-        ` : ''}
+        ` : (temFilhos && nivel >= maxNivel ? `
+          <div style="margin-top:8px; font-size:11.5px; color:var(--tx3); font-style:italic; padding-left:10px">
+            ↳ Contém ${n.filhos.length} subgrupo(s) em níveis inferiores (clique em <b>Focar</b> para explorar este ramo).
+          </div>
+        ` : '')}
       </div>
     `;
   };
@@ -156,6 +173,7 @@
       const caminho = obterCaminhoAncestrais(nos, FOCO_GRUPO_ID) || [];
       if (noFocado) {
         nosParaExibir = [noFocado];
+        const superiorImediato = caminho.length > 1 ? caminho[caminho.length - 2] : null;
         htmlBreadcrumb = `
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; background:linear-gradient(90deg, rgba(16,185,129,0.12) 0%, rgba(16,185,129,0.03) 100%); border:1px solid rgba(16,185,129,0.35); border-radius:10px; padding:12px 16px; margin-bottom:16px">
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-size:13.5px">
@@ -168,7 +186,14 @@
                 </button>
               `).join('')}
             </div>
-            <button class="acao-linha" data-focargrupo="0" style="font-size:12px; padding:4px 12px">🌐 Ver Estrutura Completa</button>
+            ${superiorImediato ? `
+              <div style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--tx2)">
+                <span>⬆️ Superior:</span>
+                <button class="acao-linha" style="font-size:11.5px; padding:3px 9px" data-focargrupo="${superiorImediato.id}">
+                  ${esc(superiorImediato.nome)}
+                </button>
+              </div>
+            ` : ''}
           </div>
         `;
       }
@@ -337,6 +362,7 @@
               <option value="admin">Administrador</option>
               <option value="gerente">Gerente</option>
               <option value="operador">Operador</option>
+              <option value="chefe_setor">Chefe de Setor</option>
             </select>
           </div>
           <div class="campo" style="min-width:120px">
@@ -677,6 +703,7 @@
               <label>Papel Inicial *</label>
               <select id="nuPapel">
                 <option value="operador">Operador (Função Múltipla)</option>
+                <option value="chefe_setor">Chefe de Setor (Conferência do Setor)</option>
                 <option value="gerente">Gerente (Função Única por Grupo)</option>
                 <option value="admin">Administrador (Global)</option>
               </select>
@@ -712,6 +739,9 @@
         } else if (p === 'gerente') {
           grpField.style.display = 'block';
           ajuda.innerHTML = '🔒 <b>Gerente (Função Única):</b> Comandante da unidade. Cada grupo só pode ter 1 gerente titular ativo.';
+        } else if (p === 'chefe_setor') {
+          grpField.style.display = 'block';
+          ajuda.innerHTML = '🏢 <b>Chefe de Setor:</b> Responsável pela conferência de faltas e presenças exclusivamente do seu próprio setor/efetivo.';
         } else {
           grpField.style.display = 'block';
           ajuda.innerHTML = 'ℹ️ <b>Operador (Função Múltipla):</b> Acesso operacional diário às conferências e caixa de email compartilhada do grupo.';
@@ -777,6 +807,7 @@
               <label>Papel / Responsabilidade *</label>
               <select id="apPapel">
                 <option value="operador">Operador (Função Múltipla)</option>
+                <option value="chefe_setor">Chefe de Setor (Conferência do Setor)</option>
                 <option value="gerente">Gerente (Função Única por Grupo)</option>
                 <option value="admin">Administrador (Global)</option>
               </select>
@@ -820,6 +851,9 @@
         } else if (p === 'gerente') {
           grpField.style.display = 'block';
           ajuda.innerHTML = '🔒 <b>Gerente (Função Única):</b> Cada grupo só pode ter 1 gerente titular ativo. Se o grupo já tiver gerente, a operação será recusada.';
+        } else if (p === 'chefe_setor') {
+          grpField.style.display = 'block';
+          ajuda.innerHTML = '🏢 <b>Chefe de Setor:</b> Permite ao usuário conduzir a conferência e marcar faltas/presenças de pessoas do seu setor.';
         } else {
           grpField.style.display = 'block';
           ajuda.innerHTML = '👥 <b>Operador (Função Múltipla):</b> O grupo pode comportar múltiplos operadores com acesso operacional compartilhado.';
@@ -917,7 +951,7 @@
               <p style="color:var(--tx2); font-size:13px; margin:0">Navegue, expanda e foque em unidades e subgrupos recursivamente.</p>
             </div>
             <div style="display:flex; gap:8px; flex-wrap:wrap">
-              ${FOCO_GRUPO_ID ? `<button class="acao-linha" id="btVoltarTodos">🌐 Ver Toda a Estrutura</button>` : ''}
+              <button class="acao-linha" id="btRetornarTopo" title="Retornar à visão do topo/raiz">⬆️ Retornar ao Topo</button>
               <button class="primario" id="btNovoGrupoRaiz">+ Novo Grupo Raiz</button>
             </div>
           </div>
@@ -948,9 +982,15 @@
         };
       });
 
-      if ($('#btVoltarTodos')) {
-        $('#btVoltarTodos').onclick = () => {
-          FOCO_GRUPO_ID = null;
+      // Retornar ao Topo (Admin vai para a raiz geral; Gerente/Usuário com grupo vai para o seu grupo raiz)
+      if ($('#btRetornarTopo')) {
+        $('#btRetornarTopo').onclick = () => {
+          const eu = quem();
+          if (eu && eu.papel !== 'admin' && eu.grupo_id) {
+            FOCO_GRUPO_ID = eu.grupo_id;
+          } else {
+            FOCO_GRUPO_ID = null; // Admin ou sem grupo retorna à raiz
+          }
           renderConteudo();
         };
       }
@@ -958,57 +998,13 @@
       // Botão de Novo Grupo Raiz
       $('#btNovoGrupoRaiz').onclick = () => modalCriarGrupo(null);
 
-      // Botões de Novo Subgrupo
-      $('#arvoreAdm').querySelectorAll('[data-novosub]').forEach(b => {
-        b.onclick = () => {
-          const supId = +b.dataset.novosub;
-          const supNome = b.dataset.nome;
-          modalCriarGrupo(supId, supNome);
-        };
-      });
-
-      // Botões de Trocar Gerente
-      $('#arvoreAdm').querySelectorAll('[data-trocarger]').forEach(b => {
-        b.onclick = () => {
-          const gid = +b.dataset.trocarger;
-          const gnome = b.dataset.nome;
-          modalTrocarGerente(gid, gnome);
-        };
-      });
-
-      // Botões de Alocar Usuário
-      $('#arvoreAdm').querySelectorAll('[data-alocaruser]').forEach(b => {
-        b.onclick = () => {
-          const gid = +b.dataset.alocaruser;
-          const gnome = b.dataset.nome;
-          modalAlocarUsuariosGrupo(gid, gnome);
-        };
-      });
-
-      // Botões de Subordinação
-      $('#arvoreAdm').querySelectorAll('[data-subordinar]').forEach(b => {
-        b.onclick = () => {
-          const gid = +b.dataset.subordinar;
-          const gnome = b.dataset.nome;
-          modalGerenciarSubordinacao(gid, gnome);
-        };
-      });
-
-      // Botões de Auditar Contas
-      $('#arvoreAdm').querySelectorAll('[data-contas]').forEach(b => {
-        b.onclick = () => {
-          const gid = +b.dataset.contas;
-          const nome = b.dataset.nome;
-          modalAuditarContas(gid, nome);
-        };
-      });
-
-      // Botões de Excluir
-      $('#arvoreAdm').querySelectorAll('[data-excluir]').forEach(b => {
-        b.onclick = () => {
-          const gid = +b.dataset.excluir;
-          const gnome = b.dataset.nome;
-          modalExcluirGrupo(gid, gnome);
+      // Botão Consolidado "Editar" (abre modal de gestão da unidade)
+      $('#arvoreAdm').querySelectorAll('[data-editargrupo]').forEach(b => {
+        b.onclick = (e) => {
+          e.stopPropagation();
+          const gid = +b.dataset.editargrupo;
+          const no = buscarNoPorId(arvore, gid);
+          if (no) modalEditarGrupo(no);
         };
       });
 
@@ -1033,6 +1029,59 @@
         ligarEventosArvore();
       };
     };
+
+    function modalEditarGrupo(n) {
+      const temGer = !!n.gerente;
+      const html = `
+        <div class="modal" style="max-width:500px">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <h3 style="margin:0; font-size:16px">⚙️ Gerenciar Unidade</h3>
+            <span>${codigoChip(n.codigo)}</span>
+          </div>
+          <div style="background:var(--painel3); padding:10px 14px; border-radius:8px; border:1px solid var(--borda); margin-bottom:16px; font-size:12.5px; line-height:1.6">
+            <div style="font-size:14px; font-weight:700; color:var(--tx); margin-bottom:4px">${esc(n.nome)} <small style="color:var(--tx3); font-family:monospace">#${n.id}</small></div>
+            <div style="color:var(--tx2)">
+              👤 Gerente: <b>${esc(n.gerente || 'Sem gerente definido')}</b><br>
+              👥 Efetivo: <b>${n.efetivo_total || n.efetivo}</b> · 🔑 Contas: <b>${n.contas_total || n.contas || 0}</b> · 🌲 Subgrupos: <b>${n.subgrupos_total !== undefined ? n.subgrupos_total : (n.filhos ? n.filhos.length : 0)}</b>
+            </div>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:8px">
+            <button type="button" class="acao-linha" id="mEdSubgrupo" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              ➕ <b style="margin-left:6px">Criar Subgrupo</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Novo subordinado</span>
+            </button>
+            <button type="button" class="acao-linha" id="mEdAlocar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              👥 <b style="margin-left:6px">Alocar Usuário</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Associar operador</span>
+            </button>
+            <button type="button" class="acao-linha" id="mEdGerente" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              👤 <b style="margin-left:6px">${temGer ? 'Trocar Gerente' : 'Definir Gerente'}</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Liderança</span>
+            </button>
+            <button type="button" class="acao-linha" id="mEdSubordinar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              ⛓️ <b style="margin-left:6px">Subordinação Hierárquica</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Vínculo superior</span>
+            </button>
+            <button type="button" class="acao-linha" id="mEdAuditar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              📊 <b style="margin-left:6px">Auditar Contas & Efetivo</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Auditoria</span>
+            </button>
+            <button type="button" class="acao-linha perigo" id="mEdExcluir" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              🗑️ <b style="margin-left:6px">Excluir Unidade</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Remoção segura</span>
+            </button>
+          </div>
+
+          <div class="modal-acoes" style="margin-top:16px">
+            <button type="button" class="fantasma" id="mEdFechar">Fechar</button>
+          </div>
+        </div>
+      `;
+      const div = modal(html);
+      if (!div) return;
+      div.querySelector('#mEdFechar').onclick = () => div.fechar && div.fechar();
+      div.querySelector('#mEdSubgrupo').onclick = () => { div.fechar && div.fechar(); modalCriarGrupo(n.id, n.nome); };
+      div.querySelector('#mEdAlocar').onclick = () => { div.fechar && div.fechar(); modalAlocarUsuariosGrupo(n.id, n.nome); };
+      div.querySelector('#mEdGerente').onclick = () => { div.fechar && div.fechar(); modalTrocarGerente(n.id, n.nome); };
+      div.querySelector('#mEdSubordinar').onclick = () => { div.fechar && div.fechar(); modalGerenciarSubordinacao(n.id, n.nome); };
+      div.querySelector('#mEdAuditar').onclick = () => { div.fechar && div.fechar(); modalAuditarContas(n.id, n.nome); };
+      div.querySelector('#mEdExcluir').onclick = () => { div.fechar && div.fechar(); modalExcluirGrupo(n.id, n.nome); };
+    }
 
     function modalCriarGrupo(superiorId, superiorNome) {
       const html = `
@@ -1342,10 +1391,77 @@
     renderConteudo();
   }
 
-  /* --- ADMIN › backup: gerar download .db + IMPORTAR upload com confirmação --- */
+  /* --- ADMIN › backup: telemetria em tempo real + gerar download .db + IMPORTAR upload com confirmação --- */
   function admBackup() {
     const anoAtual = new Date().getFullYear();
     $('#adm').innerHTML = `
+      <!-- Telemetria e Monitoramento de Recursos em Tempo Real -->
+      <div class="cartao" style="margin-bottom:14px" id="cardTelemetria">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
+          <div>
+            <h3 style="margin:0; display:flex; align-items:center; gap:8px">
+              <span>⚡</span> <span>Telemetria do Servidor em Tempo Real</span>
+            </h3>
+            <p style="color:var(--tx2); font-size:12px; margin:2px 0 0">
+              Consumo dinâmico de CPU, memória RAM e alocação de armazenamento no host.
+            </p>
+          </div>
+          <span id="badgeLiveStatus" style="font-size:11px; font-weight:700; color:var(--verde-claro); display:inline-flex; align-items:center; gap:6px; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.3); padding:4px 12px; border-radius:12px">
+            <span style="width:7px; height:7px; background:var(--verde-claro); border-radius:50%; display:inline-block"></span> AO VIVO
+          </span>
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:4px">
+          <!-- CPU -->
+          <div style="background:var(--painel3); border:1px solid var(--borda); border-radius:8px; padding:12px 14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+              <span style="font-size:12px; color:var(--tx2); font-weight:600">🖥️ Uso de CPU</span>
+              <span id="txtCPUVal" style="font-size:15px; font-weight:700; color:var(--verde-claro)">-- %</span>
+            </div>
+            <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden">
+              <div id="barCPU" style="height:100%; width:0%; background:var(--verde-claro); transition:width 0.4s ease"></div>
+            </div>
+            <div id="txtCPUSub" style="font-size:11px; color:var(--tx3); margin-top:6px">-- núcleos ativos</div>
+          </div>
+
+          <!-- RAM -->
+          <div style="background:var(--painel3); border:1px solid var(--borda); border-radius:8px; padding:12px 14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+              <span style="font-size:12px; color:var(--tx2); font-weight:600">🧠 Memória RAM</span>
+              <span id="txtRAMVal" style="font-size:15px; font-weight:700; color:#60a5fa">-- MB</span>
+            </div>
+            <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden">
+              <div id="barRAM" style="height:100%; width:0%; background:#60a5fa; transition:width 0.4s ease"></div>
+            </div>
+            <div id="txtRAMSub" style="font-size:11px; color:var(--tx3); margin-top:6px">Sys: -- MB · Heap: -- MB</div>
+          </div>
+
+          <!-- Armazenamento DATA -->
+          <div style="background:var(--painel3); border:1px solid var(--borda); border-radius:8px; padding:12px 14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+              <span style="font-size:12px; color:var(--tx2); font-weight:600">📁 Armazenamento (DATA)</span>
+              <span id="txtDataVal" style="font-size:15px; font-weight:700; color:#fbbf24">-- MB</span>
+            </div>
+            <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden">
+              <div id="barDisco" style="height:100%; width:0%; background:#fbbf24; transition:width 0.4s ease"></div>
+            </div>
+            <div id="txtDataSub" style="font-size:11px; color:var(--tx3); margin-top:6px">Disco livre: -- GB de -- GB</div>
+          </div>
+
+          <!-- Tamanho Banco SQLite -->
+          <div style="background:var(--painel3); border:1px solid var(--borda); border-radius:8px; padding:12px 14px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+              <span style="font-size:12px; color:var(--tx2); font-weight:600">🗄️ Banco SQLite (sci.db)</span>
+              <span id="txtBancoVal" style="font-size:15px; font-weight:700; color:#c084fc">-- MB</span>
+            </div>
+            <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden">
+              <div id="barBanco" style="height:100%; width:0%; background:#c084fc; transition:width 0.4s ease"></div>
+            </div>
+            <div id="txtBancoSub" style="font-size:11px; color:var(--tx3); margin-top:6px">Modo WAL ativo · Integridade OK</div>
+          </div>
+        </div>
+      </div>
+
       <div class="cartao"><h3 style="margin-top:0">Backup Integral do Sistema</h3>
         <p style="color:var(--tx2);font-size:13px">O SCI faz backup automático a cada conferência fechada e no boot
         (<code>VACUUM INTO</code> + SHA-256 + MANIFEST). Aqui você força uma cópia agora — o download do .db começa em seguida.</p>
@@ -1453,6 +1569,70 @@
         if (typeof rotear === 'function') rotear(); else location.reload();
       } catch (e) { $('#bkImpOut').textContent = 'falha de rede'; }
     };
+
+    // Atualização contínua de telemetria em tempo real
+    let telemetriaTimer = null;
+    const atualizarTelemetria = async () => {
+      try {
+        const m = await api('/api/admin/sistema/metricas');
+        if (!m || !$('#cardTelemetria')) return;
+
+        // CPU
+        const cpu = (m.cpu_percent || 0).toFixed(1);
+        const cpuValEl = $('#txtCPUVal');
+        const barCPUEl = $('#barCPU');
+        const cpuSubEl = $('#txtCPUSub');
+        if (cpuValEl) cpuValEl.textContent = cpu + '%';
+        if (barCPUEl) {
+          barCPUEl.style.width = Math.min(100, Math.max(3, m.cpu_percent)) + '%';
+          barCPUEl.style.background = m.cpu_percent > 80 ? 'var(--verm)' : m.cpu_percent > 50 ? 'var(--ambar)' : 'var(--verde-claro)';
+        }
+        if (cpuSubEl) cpuSubEl.textContent = `${m.num_cpu} núcleos · ${m.goroutines} rotinas Go`;
+
+        // RAM
+        const ramMB = (m.ram_processo_mb || 0).toFixed(1);
+        const ramSys = (m.ram_sistema_mb || 0).toFixed(1);
+        const ramValEl = $('#txtRAMVal');
+        const barRAMEl = $('#barRAM');
+        const ramSubEl = $('#txtRAMSub');
+        if (ramValEl) ramValEl.textContent = ramMB + ' MB';
+        if (barRAMEl) {
+          const ramPct = Math.min(100, (m.ram_processo_mb / 200) * 100);
+          barRAMEl.style.width = Math.max(3, ramPct) + '%';
+        }
+        if (ramSubEl) ramSubEl.textContent = `Sys: ${ramSys} MB · Heap: ${(m.ram_heap_mb || 0).toFixed(1)} MB`;
+
+        // DATA Folder
+        let dataTxt = (m.dados_mb || 0).toFixed(2) + ' MB';
+        if (m.dados_mb > 1024) dataTxt = (m.dados_mb / 1024).toFixed(2) + ' GB';
+        const dataValEl = $('#txtDataVal');
+        const barDiscoEl = $('#barDisco');
+        const dataSubEl = $('#txtDataSub');
+        if (dataValEl) dataValEl.textContent = dataTxt;
+        if (barDiscoEl) barDiscoEl.style.width = Math.min(100, Math.max(5, m.disco_usado_pct || 15)) + '%';
+        if (dataSubEl) dataSubEl.textContent = `Livre: ${(m.disco_livre_gb || 0).toFixed(1)} GB de ${(m.disco_total_gb || 0).toFixed(1)} GB`;
+
+        // Database
+        let bancoTxt = (m.banco_mb || 0).toFixed(2) + ' MB';
+        if (m.banco_mb > 1024) bancoTxt = (m.banco_mb / 1024).toFixed(2) + ' GB';
+        const bancoValEl = $('#txtBancoVal');
+        const barBancoEl = $('#barBanco');
+        if (bancoValEl) bancoValEl.textContent = bancoTxt;
+        if (barBancoEl) barBancoEl.style.width = Math.min(100, Math.max(5, (m.banco_mb / 20) * 100)) + '%';
+      } catch (e) {}
+    };
+
+    atualizarTelemetria();
+    telemetriaTimer = setInterval(atualizarTelemetria, 2500);
+
+    const observer = new MutationObserver(() => {
+      if (!$('#cardTelemetria')) {
+        clearInterval(telemetriaTimer);
+        observer.disconnect();
+      }
+    });
+    const appEl = $('#app');
+    if (appEl) observer.observe(appEl, { childList: true, subtree: true });
   }
 
   /* =====================================================================

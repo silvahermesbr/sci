@@ -28,7 +28,7 @@ type UsuarioPapel struct {
 	UsuarioID    int64  `json:"usuario_id"`
 	GrupoID      *int64 `json:"grupo_id"`
 	GrupoNome    string `json:"grupo_nome,omitempty"`
-	Papel        string `json:"papel"` // admin | gerente | operador
+	Papel        string `json:"papel"` // admin | gerente | operador | chefe_setor
 	FuncaoID     *int64 `json:"funcao_id"`
 	FuncaoNome   string `json:"funcao_nome,omitempty"`
 	NomeExibicao string `json:"nome_exibicao,omitempty"`
@@ -37,7 +37,7 @@ type UsuarioPapel struct {
 type Usuario struct {
 	ID             int64          `json:"id"`
 	Login          string         `json:"login"`
-	Papel          string         `json:"papel"` // admin | gerente | operador (papel ativo)
+	Papel          string         `json:"papel"` // admin | gerente | operador | chefe_setor (papel ativo)
 	PessoaID       *int64         `json:"pessoa_id"`
 	GrupoID        *int64         `json:"grupo_id"` // grupo do papel ativo
 	GrupoNome      string         `json:"grupo_nome,omitempty"`

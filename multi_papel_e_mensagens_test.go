@@ -153,16 +153,6 @@ func TestMensageriaInternaPorFuncao(t *testing.T) {
 	alfaU := res["usuario"].(map[string]any)
 	alfaPapelID := int64(alfaU["papel_ativo_id"].(float64))
 
-	// 0. Validar que Admin recebe 403 Forbidden ao tentar enviar mensagem operacional
-	rrAdmin, _ := doJSONReq(app, "POST", "/api/mensagens", map[string]any{
-		"destinatario_papel_ids": []int64{alfaPapelID},
-		"assunto":                "Tentativa Admin",
-		"corpo":                  "Teste",
-	}, adminCookie)
-	if rrAdmin.Code != http.StatusForbidden {
-		t.Fatalf("esperado 403 Forbidden para envio por admin, obtido: %d", rrAdmin.Code)
-	}
-
 	// 1. Gerente do Comando envia mensagem para o papel de gerente_alfa
 	rr, res = doJSONReq(app, "POST", "/api/mensagens", map[string]any{
 		"destinatario_papel_ids": []int64{alfaPapelID},

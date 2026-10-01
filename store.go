@@ -113,6 +113,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV23(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV24(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1235,7 +1238,7 @@ func (s *Store) migrarV20() error {
 			id INTEGER PRIMARY KEY,
 			usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
 			grupo_id INTEGER REFERENCES grupos(id),
-			papel TEXT NOT NULL CHECK (papel IN ('admin', 'gerente', 'operador')),
+			papel TEXT NOT NULL CHECK (papel IN ('admin', 'gerente', 'operador', 'chefe_setor')),
 			funcao_id INTEGER REFERENCES funcoes(id),
 			nome_exibicao TEXT,
 			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -1430,6 +1433,7 @@ func (s *Store) migrarV22() error {
 			}
 		}
 	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_msg_dest_pasta ON mensagem_destinatarios(pasta_id)`)
 
 	return s.marcarVersao(22)
 }
@@ -1531,5 +1535,53 @@ func (s *Store) migrarV23() error {
 	}
 
 	return s.marcarVersao(23)
+}
+
+// migrarV24: Papel 'chefe_setor' em usuario_papeis e suporte a Setores de conferência
+func (s *Store) migrarV24() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 24`).Scan(&v)
+	if v == 24 {
+		return nil
+	}
+
+	var ddl string
+	if err := s.db.QueryRow(`SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='table' AND name='usuario_papeis'`).Scan(&ddl); err != nil {
+		return err
+	}
+
+	// Se usuario_papeis tem CHECK que não inclui 'chefe_setor', reconstruir a tabela com foreign_keys=OFF
+	if strings.Contains(ddl, "CHECK") && !strings.Contains(ddl, "chefe_setor") {
+		if _, err := s.db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
+		steps := []string{
+			`CREATE TABLE usuario_papeis_v24 (
+				id INTEGER PRIMARY KEY,
+				usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+				grupo_id INTEGER REFERENCES grupos(id),
+				papel TEXT NOT NULL CHECK (papel IN ('admin', 'gerente', 'operador', 'chefe_setor')),
+				funcao_id INTEGER REFERENCES funcoes(id),
+				nome_exibicao TEXT,
+				criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+				UNIQUE (usuario_id, grupo_id, papel)
+			)`,
+			`INSERT INTO usuario_papeis_v24 (id, usuario_id, grupo_id, papel, funcao_id, nome_exibicao, criado_em)
+				SELECT id, usuario_id, grupo_id, papel, funcao_id, nome_exibicao, criado_em FROM usuario_papeis`,
+			`DROP TABLE usuario_papeis`,
+			`ALTER TABLE usuario_papeis_v24 RENAME TO usuario_papeis`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_usuario_papeis_unico_gerente ON usuario_papeis(grupo_id) WHERE papel = 'gerente'`,
+		}
+		for _, q := range steps {
+			if _, err := s.db.Exec(q); err != nil {
+				return fmt.Errorf("migração v24 rebuild usuario_papeis: %w", err)
+			}
+		}
+		if _, err := s.db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+			return err
+		}
+	}
+
+	return s.marcarVersao(24)
 }
 
