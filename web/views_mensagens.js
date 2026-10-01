@@ -37,6 +37,7 @@
   window.ViewMensagens = async function (subAbaInicial) {
     const u = quem();
     if (!u) { location.hash = '#/login'; return; }
+    if (u.papel === 'admin') { location.hash = '#/admin'; return; }
     if (window.navAtiva) navAtiva('#/mensagens');
 
     const app = document.getElementById('app');
@@ -57,7 +58,7 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
             Nova Mensagem / Despacho
           </button>
-          ${(u.papel === 'gerente' || u.papel === 'admin') ? `
+          ${(u.papel === 'gerente') ? `
             <button type="button" class="acao-linha" id="btNovoAviso" style="display:flex;align-items:center;gap:6px;padding:8px 14px">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               Publicar Aviso
@@ -914,7 +915,7 @@
         return;
       }
 
-      const ehGerente = (u.papel === 'gerente' || u.papel === 'admin');
+      const ehGerente = (u.papel === 'gerente');
 
       const html = avisos.map(a => {
         const autor = a.autor || {};
@@ -936,9 +937,9 @@
           btnRepostar = `<button type="button" class="acao-linha" data-repostar="${a.id}" style="font-size:12px;padding:3px 8px">🔄 Repostar p/ meu Grupo</button>`;
         }
 
-        // Excluir (autor ou admin)
+        // Excluir (autor ou gerente do grupo)
         let btnExcluir = '';
-        if (u.papel === 'admin' || (autor.usuario_id === u.id)) {
+        if ((autor.usuario_id === u.id) || (ehGerente && a.grupo_id === u.grupo_id)) {
           btnExcluir = `<button type="button" class="acao-linha" data-delaviso="${a.id}" style="font-size:12px;color:var(--verm-txt);padding:3px 8px">Excluir</button>`;
         }
 

@@ -18,6 +18,7 @@
   window.ViewCalendario = async function (mesParam) {
     const u = quem();
     if (!u) { location.hash = '#/login'; return; }
+    if (u.papel === 'admin') { location.hash = '#/admin'; return; }
     if (window.navAtiva) navAtiva('#/calendario');
 
     const app = document.getElementById('app');

@@ -204,6 +204,10 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonOK(w, []any{})
 		return
@@ -325,6 +329,10 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonOK(w, []any{})
 		return
@@ -412,6 +420,10 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo na sessão")
 		return
@@ -536,6 +548,10 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensMarcarLida(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -565,6 +581,10 @@ func (a *App) hMensagensMarcarLida(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensArquivar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -609,6 +629,10 @@ func (a *App) hMensagensArquivar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensDesarquivar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -635,6 +659,10 @@ func (a *App) hMensagensDesarquivar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensExcluir(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -675,6 +703,10 @@ func (a *App) hMensagensExcluir(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensPastasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	rows, err := a.st.db.Query(`SELECT id, nome, criada_em FROM mensagem_pastas WHERE usuario_id = ? ORDER BY nome`, u.ID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -705,6 +737,10 @@ func (a *App) hMensagensPastasList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensPastasAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	var req struct {
 		Nome string `json:"nome"`
 	}
@@ -723,6 +759,10 @@ func (a *App) hMensagensPastasAdd(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensPastasDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -736,6 +776,10 @@ func (a *App) hMensagensPastasDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensMoverPasta(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -764,6 +808,10 @@ func (a *App) hMensagensMoverPasta(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensThread(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -856,7 +904,7 @@ func (a *App) hMensagensThread(w http.ResponseWriter, r *http.Request) {
 	dRows.Close()
 
 	ehRemetente := (remPapelID == *u.PapelAtivoID)
-	if !ehRemetente && !ehDestinatario && u.Papel != "admin" {
+	if !ehRemetente && !ehDestinatario {
 		jsonErro(w, http.StatusForbidden, "acesso não autorizado a este despacho")
 		return
 	}
@@ -995,6 +1043,10 @@ func (a *App) hMensagensThread(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensResponderThread(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo")
 		return
@@ -1035,7 +1087,7 @@ func (a *App) hMensagensResponderThread(w http.ResponseWriter, r *http.Request) 
 		WHERE mensagem_id = ? AND destinatario_papel_id = ?`,
 		msgID, *u.PapelAtivoID).Scan(&isDestinatario, &respEm)
 
-	if !ehRemetente && isDestinatario != 1 && u.Papel != "admin" {
+	if !ehRemetente && isDestinatario != 1 {
 		jsonErro(w, http.StatusForbidden, "apenas os participantes desta mensagem podem postar na thread")
 		return
 	}
@@ -1087,6 +1139,10 @@ func (a *App) hMensagensResponderThread(w http.ResponseWriter, r *http.Request) 
 
 func (a *App) hMensagensContador(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonOK(w, map[string]any{"nao_lidas": 0, "despachos_pendentes": 0, "arquivadas": 0})
 		return
@@ -1118,6 +1174,10 @@ func (a *App) hMensagensContador(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensDestinatarios(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso à mensageria operacional")
+		return
+	}
 	var papelAtivoID int64
 	if u.PapelAtivoID != nil {
 		papelAtivoID = *u.PapelAtivoID
@@ -1168,6 +1228,10 @@ func (a *App) hMensagensDestinatarios(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+		return
+	}
 	escopo := escopoDoUsuario(u)
 
 	var filtroGrupo string
@@ -1251,8 +1315,8 @@ func (a *App) hAvisosList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel != "admin" && u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "apenas gerentes de grupo ou administradores podem publicar avisos")
+	if u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "apenas gerentes de grupo podem publicar avisos")
 		return
 	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
@@ -1279,9 +1343,6 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	grupoID := u.GrupoID
-	if u.Papel == "admin" && req.GrupoID != nil && *req.GrupoID > 0 {
-		grupoID = req.GrupoID
-	}
 	if grupoID == nil || *grupoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "aviso deve estar vinculado a um grupo")
 		return
@@ -1311,6 +1372,10 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -1325,7 +1390,7 @@ func (a *App) hAvisosDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if u.Papel != "admin" && (u.ID != autorUID || (u.Papel == "gerente" && (u.GrupoID == nil || *u.GrupoID != gID))) {
+	if u.ID != autorUID && (u.Papel != "gerente" || u.GrupoID == nil || *u.GrupoID != gID) {
 		jsonErro(w, http.StatusForbidden, "sem permissão para excluir este aviso")
 		return
 	}
@@ -1344,6 +1409,10 @@ func (a *App) hAvisosDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosCiente(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -1367,6 +1436,10 @@ func (a *App) hAvisosCiente(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -1395,6 +1468,11 @@ func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -1472,7 +1550,7 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosRepostar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel != "admin" && u.Papel != "gerente" {
+	if u.Papel != "gerente" {
 		jsonErro(w, http.StatusForbidden, "apenas gerentes podem repostar comunicados")
 		return
 	}

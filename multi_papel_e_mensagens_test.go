@@ -123,8 +123,19 @@ func TestMensageriaInternaPorFuncao(t *testing.T) {
 
 	adminCookie := loginAs(t, app, "admin", "admin123")
 
-	// Criar grupo com gerente
+	// Criar grupo superior com gerente remetente
 	rr, res := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome":        "Comando da Companhia",
+		"login":       "gerente_cmt",
+		"senha":       "senha12345",
+		"nome_guerra": "Capitão",
+	}, adminCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao criar grupo comando: %v", res)
+	}
+
+	// Criar grupo subordinado com gerente alfa
+	rr, res = doJSONReq(app, "POST", "/api/grupos", map[string]any{
 		"nome":        "Pelotão Alfa",
 		"login":       "gerente_alfa",
 		"senha":       "senha12345",
@@ -134,11 +145,7 @@ func TestMensageriaInternaPorFuncao(t *testing.T) {
 		t.Fatalf("falha ao criar grupo: %v", res)
 	}
 
-	// Obter papel_id do admin
-	rr, res = doJSONReq(app, "GET", "/api/me", nil, adminCookie)
-	adminU := res["usuario"].(map[string]any)
-	adminPapelID := int64(adminU["papel_ativo_id"].(float64))
-	_ = adminPapelID
+	cmtCookie := loginAs(t, app, "gerente_cmt", "senha12345")
 
 	// Obter papel_id do gerente_alfa
 	alfaCookie := loginAs(t, app, "gerente_alfa", "senha12345")
@@ -146,12 +153,22 @@ func TestMensageriaInternaPorFuncao(t *testing.T) {
 	alfaU := res["usuario"].(map[string]any)
 	alfaPapelID := int64(alfaU["papel_ativo_id"].(float64))
 
-	// 1. Admin envia mensagem para o papel de gerente_alfa
+	// 0. Validar que Admin recebe 403 Forbidden ao tentar enviar mensagem operacional
+	rrAdmin, _ := doJSONReq(app, "POST", "/api/mensagens", map[string]any{
+		"destinatario_papel_ids": []int64{alfaPapelID},
+		"assunto":                "Tentativa Admin",
+		"corpo":                  "Teste",
+	}, adminCookie)
+	if rrAdmin.Code != http.StatusForbidden {
+		t.Fatalf("esperado 403 Forbidden para envio por admin, obtido: %d", rrAdmin.Code)
+	}
+
+	// 1. Gerente do Comando envia mensagem para o papel de gerente_alfa
 	rr, res = doJSONReq(app, "POST", "/api/mensagens", map[string]any{
 		"destinatario_papel_ids": []int64{alfaPapelID},
 		"assunto":                "Ordem de Serviço 01",
 		"corpo":                  "Favor encaminhar relatório semanal até sexta-feira.",
-	}, adminCookie)
+	}, cmtCookie)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("falha ao enviar mensagem: %v", res)
 	}

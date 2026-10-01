@@ -30,11 +30,11 @@ func hexAleatorioDrive(n int) string {
 
 // checarAcessoPasta valida se o usuário possui acesso à pasta (leitura ou edição).
 func (a *App) checarAcessoPasta(u *Usuario, pastaID int64, precisaEdicao bool) (bool, int64, error) {
+	if u.Papel == "admin" {
+		return false, 0, fmt.Errorf("administrador não possui acesso ao drive operacional")
+	}
 	if pastaID == 0 {
 		// Raiz do Drive
-		if u.Papel == "admin" {
-			return true, 0, nil
-		}
 		if u.GrupoID != nil {
 			return true, *u.GrupoID, nil
 		}
@@ -52,9 +52,6 @@ func (a *App) checarAcessoPasta(u *Usuario, pastaID int64, precisaEdicao bool) (
 		return false, 0, err
 	}
 
-	if u.Papel == "admin" {
-		return true, grupoID, nil
-	}
 	if u.ID == autorUsuarioID {
 		return true, grupoID, nil
 	}
@@ -138,7 +135,7 @@ func (a *App) checarAcessoArquivo(u *Usuario, arquivoID int64, precisaEdicao boo
 	}
 
 	if u.Papel == "admin" {
-		return true, meta, nil
+		return false, nil, fmt.Errorf("administrador não possui acesso ao drive operacional")
 	}
 	if u.ID == autorUsuarioID {
 		return true, meta, nil
@@ -198,6 +195,10 @@ func (a *App) checarAcessoArquivo(u *Usuario, arquivoID int64, precisaEdicao boo
 // GET /api/drive/itens?pasta_id={id}&compartilhados={0|1}
 func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	pIDStr := r.URL.Query().Get("pasta_id")
 	soCompartilhados := r.URL.Query().Get("compartilhados") == "1"
 
@@ -300,7 +301,7 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 				var pEdit int
 				_ = pRows.Scan(&p.ID, &p.Nome, &p.PaiID, &p.GrupoID, &p.CriadoEm, &p.AutorNome, &pEdit)
 				p.Compartilhada = true
-				p.PodeEditar = (pEdit == 1) || (u.Papel == "admin")
+				p.PodeEditar = (pEdit == 1)
 				pastas = append(pastas, p)
 			}
 		}
@@ -323,7 +324,7 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 				var pEdit int
 				_ = aRows.Scan(&ar.ID, &ar.PastaID, &ar.NomeOriginal, &ar.Tipo, &ar.Tamanho, &ar.CriadoEm, &ar.AutorNome, &pEdit)
 				ar.Compartilhado = true
-				ar.PodeEditar = (pEdit == 1) || (u.Papel == "admin")
+				ar.PodeEditar = (pEdit == 1)
 				arquivos = append(arquivos, ar)
 			}
 		}
@@ -332,33 +333,22 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 		var pQuery string
 		var pArgs []any
 		if pastaID == 0 {
-			if u.Papel == "admin" {
-				pQuery = `
-					SELECT dp.id, dp.nome, dp.pai_id, dp.grupo_id, dp.criado_em,
-					       COALESCE(u.nome_guerra, u.login, '—'),
-					       (SELECT COUNT(*) FROM drive_pastas sp WHERE sp.pai_id = dp.id) + 
-					       (SELECT COUNT(*) FROM drive_arquivos sa WHERE sa.pasta_id = dp.id) AS qtd_itens,
-					       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.pasta_id = dp.id) AS qtd_comp,
-					       dp.autor_usuario_id
-					FROM drive_pastas dp
-					LEFT JOIN usuarios u ON u.id = dp.autor_usuario_id
-					WHERE dp.pai_id IS NULL
-					ORDER BY dp.nome ASC
-				`
-			} else {
-				pQuery = `
-					SELECT dp.id, dp.nome, dp.pai_id, dp.grupo_id, dp.criado_em,
-					       COALESCE(u.nome_guerra, u.login, '—'),
-					       (SELECT COUNT(*) FROM drive_pastas sp WHERE sp.pai_id = dp.id) + 
-					       (SELECT COUNT(*) FROM drive_arquivos sa WHERE sa.pasta_id = dp.id) AS qtd_itens,
-					       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.pasta_id = dp.id) AS qtd_comp,
-					       dp.autor_usuario_id
-					FROM drive_pastas dp
-					LEFT JOIN usuarios u ON u.id = dp.autor_usuario_id
-					WHERE dp.pai_id IS NULL AND dp.grupo_id = ?
-					ORDER BY dp.nome ASC
-				`
+			pQuery = `
+				SELECT dp.id, dp.nome, dp.pai_id, dp.grupo_id, dp.criado_em,
+				       COALESCE(u.nome_guerra, u.login, '—'),
+				       (SELECT COUNT(*) FROM drive_pastas sp WHERE sp.pai_id = dp.id) + 
+				       (SELECT COUNT(*) FROM drive_arquivos sa WHERE sa.pasta_id = dp.id) AS qtd_itens,
+				       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.pasta_id = dp.id) AS qtd_comp,
+				       dp.autor_usuario_id
+				FROM drive_pastas dp
+				LEFT JOIN usuarios u ON u.id = dp.autor_usuario_id
+				WHERE dp.pai_id IS NULL AND dp.grupo_id = ?
+				ORDER BY dp.nome ASC
+			`
+			if u.GrupoID != nil {
 				pArgs = append(pArgs, *u.GrupoID)
+			} else {
+				pArgs = append(pArgs, 0)
 			}
 		} else {
 			pQuery = `
@@ -389,7 +379,7 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 				var autorUID int64
 				_ = pRows.Scan(&p.ID, &p.Nome, &p.PaiID, &p.GrupoID, &p.CriadoEm, &p.AutorNome, &p.QtdItens, &nComp, &autorUID)
 				p.Compartilhada = nComp > 0
-				p.PodeEditar = (u.Papel == "admin") || (u.ID == autorUID)
+				p.PodeEditar = (u.ID == autorUID)
 				if !p.PodeEditar && u.Papel == "gerente" && u.GrupoID != nil && (*u.GrupoID == p.GrupoID || int64Contem(subs, p.GrupoID)) {
 					p.PodeEditar = true
 				}
@@ -402,29 +392,20 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 		var aQuery string
 		var aArgs []any
 		if pastaID == 0 {
-			if u.Papel == "admin" {
-				aQuery = `
-					SELECT da.id, da.pasta_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
-					       COALESCE(u.nome_guerra, u.login, '—'),
-					       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.arquivo_id = da.id) AS qtd_comp,
-					       da.autor_usuario_id, da.grupo_id
-					FROM drive_arquivos da
-					LEFT JOIN usuarios u ON u.id = da.autor_usuario_id
-					WHERE da.pasta_id IS NULL
-					ORDER BY da.criado_em DESC
-				`
-			} else {
-				aQuery = `
-					SELECT da.id, da.pasta_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
-					       COALESCE(u.nome_guerra, u.login, '—'),
-					       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.arquivo_id = da.id) AS qtd_comp,
-					       da.autor_usuario_id, da.grupo_id
-					FROM drive_arquivos da
-					LEFT JOIN usuarios u ON u.id = da.autor_usuario_id
-					WHERE da.pasta_id IS NULL AND da.grupo_id = ?
-					ORDER BY da.criado_em DESC
-				`
+			aQuery = `
+				SELECT da.id, da.pasta_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
+				       COALESCE(u.nome_guerra, u.login, '—'),
+				       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.arquivo_id = da.id) AS qtd_comp,
+				       da.autor_usuario_id, da.grupo_id
+				FROM drive_arquivos da
+				LEFT JOIN usuarios u ON u.id = da.autor_usuario_id
+				WHERE da.pasta_id IS NULL AND da.grupo_id = ?
+				ORDER BY da.criado_em DESC
+			`
+			if u.GrupoID != nil {
 				aArgs = append(aArgs, *u.GrupoID)
+			} else {
+				aArgs = append(aArgs, 0)
 			}
 		} else {
 			aQuery = `
@@ -449,7 +430,7 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 				var arGrupoID int64
 				_ = aRows.Scan(&ar.ID, &ar.PastaID, &ar.NomeOriginal, &ar.Tipo, &ar.Tamanho, &ar.CriadoEm, &ar.AutorNome, &nComp, &autorUID, &arGrupoID)
 				ar.Compartilhado = nComp > 0
-				ar.PodeEditar = (u.Papel == "admin") || (u.ID == autorUID)
+				ar.PodeEditar = (u.ID == autorUID)
 				if !ar.PodeEditar && u.Papel == "gerente" && u.GrupoID != nil && (*u.GrupoID == arGrupoID || int64Contem(subs, arGrupoID)) {
 					ar.PodeEditar = true
 				}
@@ -474,6 +455,10 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 // POST /api/drive/pastas - Criar Pasta
 func (a *App) hDrivePastasAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	var req struct {
 		Nome    string `json:"nome"`
 		PastaID *int64 `json:"pasta_id"`
@@ -494,12 +479,10 @@ func (a *App) hDrivePastasAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		grupoID = gID
 	} else {
-		if req.GrupoID != nil && u.Papel == "admin" {
-			grupoID = *req.GrupoID
-		} else if u.GrupoID != nil {
+		if u.GrupoID != nil {
 			grupoID = *u.GrupoID
 		} else {
-			jsonErro(w, http.StatusBadRequest, "grupo_id é obrigatório para pasta raiz")
+			jsonErro(w, http.StatusBadRequest, "usuário sem grupo associado para criar pasta raiz")
 			return
 		}
 	}
@@ -521,6 +504,10 @@ func (a *App) hDrivePastasAdd(w http.ResponseWriter, r *http.Request) {
 // PATCH /api/drive/pastas/{id} - Renomear Pasta
 func (a *App) hDrivePastasEdit(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -555,6 +542,10 @@ func (a *App) hDrivePastasEdit(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/drive/pastas/{id} - Excluir Pasta e Arquivos Físicos Recursivamente
 func (a *App) hDrivePastasDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -618,6 +609,10 @@ func (a *App) hDrivePastasDel(w http.ResponseWriter, r *http.Request) {
 // POST /api/drive/upload - Upload Físico de Arquivo para ./dados/drive
 func (a *App) hDriveUpload(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 
 	// Limite de 128 MB por upload multipart
 	if err := r.ParseMultipartForm(128 << 20); err != nil {
@@ -650,14 +645,10 @@ func (a *App) hDriveUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		grupoID = gID
 	} else {
-		gStr := r.FormValue("grupo_id")
-		if gStr != "" && u.Papel == "admin" {
-			gid, _ := strconv.ParseInt(gStr, 10, 64)
-			grupoID = gid
-		} else if u.GrupoID != nil {
+		if u.GrupoID != nil {
 			grupoID = *u.GrupoID
 		} else {
-			jsonErro(w, http.StatusBadRequest, "grupo_id é obrigatório para envio na raiz")
+			jsonErro(w, http.StatusBadRequest, "usuário sem grupo associado para envio na raiz")
 			return
 		}
 	}
@@ -724,6 +715,10 @@ func (a *App) hDriveUpload(w http.ResponseWriter, r *http.Request) {
 // GET /api/drive/download/{id} - Download ou Visualização em Stream Físico
 func (a *App) hDriveDownload(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -765,6 +760,10 @@ func (a *App) hDriveDownload(w http.ResponseWriter, r *http.Request) {
 // PATCH /api/drive/arquivos/{id} - Renomear Arquivo
 func (a *App) hDriveArquivosEdit(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -799,6 +798,10 @@ func (a *App) hDriveArquivosEdit(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/drive/arquivos/{id} - Excluir Arquivo Físico e Registro
 func (a *App) hDriveArquivosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -829,6 +832,10 @@ func (a *App) hDriveArquivosDel(w http.ResponseWriter, r *http.Request) {
 // POST /api/drive/compartilhar - Conceder Permissão Estilo Google Drive
 func (a *App) hDriveCompartilhar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 
 	var req struct {
 		PastaID       *int64 `json:"pasta_id"`
@@ -896,6 +903,10 @@ func (a *App) hDriveCompartilhar(w http.ResponseWriter, r *http.Request) {
 // GET /api/drive/compartilhamentos?pasta_id={id}&arquivo_id={id} - Listar Permissões Ativas
 func (a *App) hDriveCompartilhamentosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	pStr := r.URL.Query().Get("pasta_id")
 	aStr := r.URL.Query().Get("arquivo_id")
 
@@ -994,6 +1005,10 @@ func (a *App) hDriveCompartilhamentosList(w http.ResponseWriter, r *http.Request
 // DELETE /api/drive/compartilhamentos/{id} - Revogar Compartilhamento
 func (a *App) hDriveCompartilhamentosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")

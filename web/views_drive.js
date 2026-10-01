@@ -39,6 +39,7 @@
   window.ViewDrive = async function (pastaIdParam) {
     const u = quem();
     if (!u) { location.hash = '#/login'; return; }
+    if (u.papel === 'admin') { location.hash = '#/admin'; return; }
     if (window.navAtiva) navAtiva('#/drive');
 
     const app = document.getElementById('app');

@@ -44,7 +44,7 @@ func (a *App) checarAcessoEvento(u *Usuario, eventoID int64, precisaEdicao bool)
 	}
 
 	if u.Papel == "admin" {
-		return true, meta, nil
+		return false, meta, fmt.Errorf("administrador não tem acesso a eventos de grupo")
 	}
 	if u.ID == autorUsuarioID {
 		return true, meta, nil
@@ -55,8 +55,7 @@ func (a *App) checarAcessoEvento(u *Usuario, eventoID int64, precisaEdicao bool)
 		if !precisaEdicao {
 			return true, meta, nil
 		}
-		// Apenas admin pode editar evento global
-		return u.Papel == "admin", meta, nil
+		return false, meta, nil
 	}
 
 	// Gerente da Unidade ou Unidade Superior
@@ -104,6 +103,10 @@ func (a *App) checarAcessoEvento(u *Usuario, eventoID int64, precisaEdicao bool)
 // Visão Unificada Mesh: Agrega Eventos, Escalas de Serviço e Prazos/Despachos
 func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao calendário operacional")
+		return
+	}
 
 	mes := r.URL.Query().Get("mes")
 	inicio := r.URL.Query().Get("inicio")
@@ -155,43 +158,39 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 	var condVis []string
 	var argsVis []any
 
-	if u.Papel == "admin" {
-		condVis = append(condVis, "1=1")
-	} else {
-		condVis = append(condVis, "ce.grupo_id IS NULL") // Globais
-		condVis = append(condVis, "ce.autor_usuario_id = ?")
-		argsVis = append(argsVis, u.ID)
+	condVis = append(condVis, "ce.grupo_id IS NULL") // Globais
+	condVis = append(condVis, "ce.autor_usuario_id = ?")
+	argsVis = append(argsVis, u.ID)
 
-		if u.GrupoID != nil {
-			condVis = append(condVis, "ce.grupo_id = ?")
-			argsVis = append(argsVis, *u.GrupoID)
+	if u.GrupoID != nil {
+		condVis = append(condVis, "ce.grupo_id = ?")
+		argsVis = append(argsVis, *u.GrupoID)
 
-			if u.Papel == "gerente" {
-				subs := a.gruposSubordinadosAtivos(*u.GrupoID)
-				if len(subs) > 0 {
-					ph := strings.TrimSuffix(strings.Repeat("?,", len(subs)), ",")
-					condVis = append(condVis, fmt.Sprintf("ce.grupo_id IN (%s)", ph))
-					for _, s := range subs {
-						argsVis = append(argsVis, s)
-					}
+		if u.Papel == "gerente" {
+			subs := a.gruposSubordinadosAtivos(*u.GrupoID)
+			if len(subs) > 0 {
+				ph := strings.TrimSuffix(strings.Repeat("?,", len(subs)), ",")
+				condVis = append(condVis, fmt.Sprintf("ce.grupo_id IN (%s)", ph))
+				for _, s := range subs {
+					argsVis = append(argsVis, s)
 				}
 			}
 		}
-
-		// Compartilhados
-		var condComp []string
-		condComp = append(condComp, "cc.alvo_usuario_id = ?")
-		argsVis = append(argsVis, u.ID)
-		if u.PapelAtivoID != nil {
-			condComp = append(condComp, "cc.alvo_papel_id = ?")
-			argsVis = append(argsVis, *u.PapelAtivoID)
-		}
-		if u.GrupoID != nil {
-			condComp = append(condComp, "cc.alvo_grupo_id = ?")
-			argsVis = append(argsVis, *u.GrupoID)
-		}
-		condVis = append(condVis, fmt.Sprintf("ce.id IN (SELECT evento_id FROM calendario_compartilhamentos cc WHERE %s)", strings.Join(condComp, " OR ")))
 	}
+
+	// Compartilhados
+	var condComp []string
+	condComp = append(condComp, "cc.alvo_usuario_id = ?")
+	argsVis = append(argsVis, u.ID)
+	if u.PapelAtivoID != nil {
+		condComp = append(condComp, "cc.alvo_papel_id = ?")
+		argsVis = append(argsVis, *u.PapelAtivoID)
+	}
+	if u.GrupoID != nil {
+		condComp = append(condComp, "cc.alvo_grupo_id = ?")
+		argsVis = append(argsVis, *u.GrupoID)
+	}
+	condVis = append(condVis, fmt.Sprintf("ce.id IN (SELECT evento_id FROM calendario_compartilhamentos cc WHERE %s)", strings.Join(condComp, " OR ")))
 
 	qEventos := fmt.Sprintf(`
 		SELECT DISTINCT ce.id, ce.titulo, COALESCE(ce.descricao, ''), ce.tipo, ce.cor,
@@ -219,7 +218,7 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 				&ev.DataInicio, &dFim, &dInt, &ev.GrupoID, &ev.GrupoNome, &ev.AutorNome, &autorUID)
 			ev.DataFim = dFim
 			ev.DiaInteiro = dInt == 1
-			ev.PodeEditar = (u.Papel == "admin") || (u.ID == autorUID)
+			ev.PodeEditar = (u.ID == autorUID)
 			if !ev.PodeEditar && u.Papel == "gerente" && u.GrupoID != nil && ev.GrupoID != nil && *ev.GrupoID == *u.GrupoID {
 				ev.PodeEditar = true
 			}
@@ -248,9 +247,7 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 
 	var escGrupCond string
 	var escGrupArgs []any
-	if u.Papel == "admin" {
-		escGrupCond = "1=1"
-	} else if u.GrupoID != nil {
+	if u.GrupoID != nil {
 		if u.Papel == "gerente" {
 			grupos := append([]int64{*u.GrupoID}, a.gruposSubordinadosAtivos(*u.GrupoID)...)
 			ph := strings.TrimSuffix(strings.Repeat("?,", len(grupos)), ",")
@@ -354,6 +351,10 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 // POST /api/calendario/eventos - Criar ou Atualizar Evento
 func (a *App) hCalendarioEventosSave(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao calendário operacional")
+		return
+	}
 
 	var req struct {
 		ID          int64   `json:"id"`
@@ -384,9 +385,7 @@ func (a *App) hCalendarioEventosSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var grupoID *int64
-	if req.GrupoID != nil && u.Papel == "admin" {
-		grupoID = req.GrupoID
-	} else if u.GrupoID != nil {
+	if u.GrupoID != nil {
 		grupoID = u.GrupoID
 	}
 
@@ -432,6 +431,10 @@ func (a *App) hCalendarioEventosSave(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/calendario/eventos/{id} - Excluir Evento
 func (a *App) hCalendarioEventosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao calendário operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -457,6 +460,10 @@ func (a *App) hCalendarioEventosDel(w http.ResponseWriter, r *http.Request) {
 // POST /api/calendario/compartilhar - Conceder Permissão a Evento
 func (a *App) hCalendarioCompartilhar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao calendário operacional")
+		return
+	}
 
 	var req struct {
 		EventoID   int64  `json:"evento_id"`
@@ -515,6 +522,10 @@ func (a *App) hCalendarioCompartilhar(w http.ResponseWriter, r *http.Request) {
 // GET /api/calendario/compartilhamentos?evento_id={id} - Listar Compartilhamentos
 func (a *App) hCalendarioCompartilhamentosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao calendário operacional")
+		return
+	}
 	evStr := r.URL.Query().Get("evento_id")
 	evID, _ := strconv.ParseInt(evStr, 10, 64)
 	if evID <= 0 {
@@ -569,6 +580,10 @@ func (a *App) hCalendarioCompartilhamentosList(w http.ResponseWriter, r *http.Re
 // DELETE /api/calendario/compartilhamentos/{id} - Revogar Compartilhamento
 func (a *App) hCalendarioCompartilhamentosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if u.Papel == "admin" {
+		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao calendário operacional")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
