@@ -22,3 +22,6 @@ FLAG_BACKUP.txt
 # artefatos locais
 /tmp/
 *.zip
+
+# binários de build (nunca no repo)
+bin/
