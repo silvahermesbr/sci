@@ -16,8 +16,8 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v1.2 Fase 3 = 23). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 23
+// (v1.2 Fase 3 = 24: v23 Drive/Calendário + v24 chefe_setor). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
+const versaoSchemaBinario = 24
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio

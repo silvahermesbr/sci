@@ -1439,13 +1439,16 @@ func (s *Store) migrarV22() error {
 }
 
 // migrarV23: Módulo de Drive Local (Armazenamento Físico e Compartilhamento) e Calendário Operacional (Fase 3 do v1.2)
+//
+// ATENÇÃO: o número 23 já foi GASTO pelo binário b67b391 (etapa F0, produção até
+// 01/10/26) com outro conteúdo (seed MODO_RESERVA + papel_modulos). Num banco que
+// rodou aquele binário, o guard por número PULARIA esta migração e as tabelas de
+// Drive/Calendário não nasceriam (rotas /api/drive e /api/calendario => 500). Por
+// isso o DDL abaixo executa SEMPRE — é todo IF NOT EXISTS/IF NOT EXISTS-index,
+// idempotente por construção. MODO_RESERVA não é replicado aqui: na árvore nova o
+// banco zerado nasce SEM a flag (módulos ativos) e a produção retém a sua própria
+// linha '1' persistida em configuracoes.
 func (s *Store) migrarV23() error {
-	var v int
-	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 23`).Scan(&v)
-	if v == 23 {
-		return nil
-	}
-
 	ddl := []string{
 		// DRIVE LOCAL - PASTAS HIERÁRQUICAS
 		`CREATE TABLE IF NOT EXISTS drive_pastas (
@@ -1532,6 +1535,17 @@ func (s *Store) migrarV23() error {
 		if _, err := s.db.Exec(q); err != nil {
 			return fmt.Errorf("migração v23 ddl: %w", err)
 		}
+	}
+
+	// Reconciliação de estado legado (sempre executa, idempotente): a v23 ANTIGA
+	// (b67b391/F0) criou a tabela papel_modulos — se ela já existir no banco de
+	// produção, permanece (sem DROP; a onda nova apenas não a usa).
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS papel_modulos (
+		papel_id INTEGER NOT NULL REFERENCES usuario_papeis(id) ON DELETE CASCADE,
+		modulo TEXT NOT NULL,
+		PRIMARY KEY (papel_id, modulo)
+	)`); err != nil {
+		return err
 	}
 
 	return s.marcarVersao(23)
