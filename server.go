@@ -343,9 +343,21 @@ func (a *App) rotas() {
 	m.Handle("DELETE /api/escalas/tipos/{id}", reservaAuth(a.hEscalasTiposDel))
 	m.Handle("GET /api/escalas/turnos", reservaAuth(a.hEscalasTurnosList))
 	m.Handle("POST /api/escalas/turnos", reservaAuth(a.hEscalasTurnosSave))
-	m.Handle("DELETE /api/escalas/turnos/{id}", reservaAuth(a.hEscalasTurnosDel))
 	m.Handle("GET /api/escalas/hoje", reservaAuth(a.hEscalasHoje))
 	m.Handle("GET /api/escalas/pdf", a.auth(false, a.hEscalasPDF))
+
+	// Escalas 2.0 (v1.5) — Modelos, Fases, Delegação e Minhas Escalas
+	m.Handle("GET /api/escalas/modelos", reservaAuth(a.hEscalasModelosList))
+	m.Handle("POST /api/escalas/modelos", reservaAuth(a.hEscalasModelosSave))
+	m.Handle("GET /api/escalas/modelos/{id}", reservaAuth(a.hEscalasModelosGet))
+	m.Handle("DELETE /api/escalas/modelos/{id}", reservaAuth(a.hEscalasModelosDel))
+	m.Handle("POST /api/escalas/aplicar-modelo", reservaAuth(a.hEscalasAplicarModelo))
+	m.Handle("POST /api/escalas/limpar-dia", reservaAuth(a.hEscalasLimparDia))
+	m.Handle("POST /api/escalas/turnos/{id}/alocar", reservaAuth(a.hEscalasTurnoAlocar))
+	m.Handle("POST /api/escalas/turnos/{id}/delegar", reservaAuth(a.hEscalasTurnoDelegar))
+	m.Handle("PATCH /api/escalas/fase", reservaAuth(a.hEscalasAlterarFase))
+	m.Handle("GET /api/escalas/relatorio-dia.pdf", a.auth(false, a.hEscalasRelatorioDiaPDF))
+	m.Handle("GET /api/escalas/minhas", a.auth(false, a.hEscalasMinhas))
 
 	// Módulo de Material e Cautelas (v1.0) — EM RESERVA (ordem Tenente 30/09)
 	m.Handle("GET /api/material/categorias", reservaAuth(a.hMaterialCategoriasList))
@@ -4869,13 +4881,16 @@ func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
 	dataQ := r.URL.Query().Get("data")
 
 	q := `SELECT et.id, et.grupo_id, et.tipo_id, etp.nome, et.data_inicio, et.data_fim, COALESCE(et.observacao,''),
-	             COALESCE(u.login,''), et.criado_em, COALESCE(g.nome, '')
+	             COALESCE(u.login,''), et.criado_em, COALESCE(g.nome, ''),
+	             COALESCE(et.fase, 'aberto'), et.modelo_id, et.grupo_delegado_id, COALESCE(et.status_delegacao, 'proprio'),
+	             COALESCE(gd.nome, '')
 	      FROM escala_turnos et
 	      JOIN escala_tipos etp ON etp.id = et.tipo_id
 	      LEFT JOIN usuarios u ON u.id = et.criado_por
 	      LEFT JOIN grupos g ON g.id = et.grupo_id
-	      WHERE (? <= 0 OR et.grupo_id = ?)`
-	var args = []any{escopo, escopo}
+	      LEFT JOIN grupos gd ON gd.id = et.grupo_delegado_id
+	      WHERE (? <= 0 OR et.grupo_id = ? OR et.grupo_delegado_id = ?)`
+	var args = []any{escopo, escopo, escopo}
 
 	if mes != "" {
 		q += ` AND (et.data_inicio LIKE ? OR et.data_fim LIKE ?)`
@@ -4884,8 +4899,8 @@ func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
 		q += ` AND et.data_fim >= ? AND et.data_inicio <= ?`
 		args = append(args, de, ate)
 	} else if dataQ != "" {
-		q += ` AND et.data_inicio <= ? AND et.data_fim >= ?`
-		args = append(args, dataQ, dataQ)
+		q += ` AND (et.data_inicio LIKE ? OR (et.data_inicio <= ? AND et.data_fim >= ?))`
+		args = append(args, dataQ+"%", dataQ+"T23:59:59", dataQ+"T00:00:00")
 	}
 	q += ` ORDER BY et.data_inicio DESC, et.id DESC`
 
@@ -4897,23 +4912,29 @@ func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type TurnoItem struct {
-		ID         int64            `json:"id"`
-		GrupoID    int64            `json:"grupo_id"`
-		GrupoNome  string           `json:"grupo_nome"`
-		TipoID     int64            `json:"tipo_id"`
-		TipoNome   string           `json:"tipo_nome"`
-		DataInicio string           `json:"data_inicio"`
-		DataFim    string           `json:"data_fim"`
-		Observacao string           `json:"observacao"`
-		CriadoPor  string           `json:"criado_por"`
-		CriadoEm   string           `json:"criado_em"`
-		Pessoas    []map[string]any `json:"pessoas"`
+		ID                 int64            `json:"id"`
+		GrupoID            int64            `json:"grupo_id"`
+		GrupoNome          string           `json:"grupo_nome"`
+		TipoID             int64            `json:"tipo_id"`
+		TipoNome           string           `json:"tipo_nome"`
+		DataInicio         string           `json:"data_inicio"`
+		DataFim            string           `json:"data_fim"`
+		Observacao         string           `json:"observacao"`
+		CriadoPor          string           `json:"criado_por"`
+		CriadoEm           string           `json:"criado_em"`
+		Fase               string           `json:"fase"`
+		ModeloID           *int64           `json:"modelo_id"`
+		GrupoDelegadoID    *int64           `json:"grupo_delegado_id"`
+		StatusDelegacao    string           `json:"status_delegacao"`
+		GrupoDelegadoNome  string           `json:"grupo_delegado_nome"`
+		Pessoas            []map[string]any `json:"pessoas"`
 	}
-	var turnos []TurnoItem
+	turnos := []TurnoItem{}
 	var turnoIDs []any
 	for rows.Next() {
 		var t TurnoItem
-		if rows.Scan(&t.ID, &t.GrupoID, &t.TipoID, &t.TipoNome, &t.DataInicio, &t.DataFim, &t.Observacao, &t.CriadoPor, &t.CriadoEm, &t.GrupoNome) == nil {
+		if rows.Scan(&t.ID, &t.GrupoID, &t.TipoID, &t.TipoNome, &t.DataInicio, &t.DataFim, &t.Observacao, &t.CriadoPor, &t.CriadoEm, &t.GrupoNome,
+			&t.Fase, &t.ModeloID, &t.GrupoDelegadoID, &t.StatusDelegacao, &t.GrupoDelegadoNome) == nil {
 			t.Pessoas = []map[string]any{}
 			turnos = append(turnos, t)
 			turnoIDs = append(turnoIDs, t.ID)
@@ -5090,6 +5111,654 @@ func (a *App) hEscalasHoje(w http.ResponseWriter, r *http.Request) {
 	dataHoje := time.Now().In(a.horaLocal).Format("2006-01-02")
 	escalados := a.escaladosNaData(escopo, dataHoje)
 	jsonOK(w, map[string]any{"data": dataHoje, "escalados": escalados})
+}
+
+// =====================================================================
+// ESCALAS 2.0 — MODELOS, APLICAÇÃO, DELEGAÇÃO E MINHAS ESCALAS (v1.5)
+// =====================================================================
+
+func (a *App) hEscalasModelosList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	q := `SELECT em.id, em.nome, COALESCE(em.descricao,''), em.ativo, em.criado_em,
+	             (SELECT COUNT(*) FROM escala_modelo_postos emp WHERE emp.modelo_id = em.id) AS total_postos,
+	             (SELECT COUNT(*) FROM escala_modelo_aptos ema WHERE ema.modelo_id = em.id) AS total_aptos
+	      FROM escala_modelos em
+	      WHERE (em.grupo_id = ? OR ? <= 0)
+	      ORDER BY em.nome ASC`
+	rows, err := a.st.db.Query(q, escopo, escopo)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+	var lista []map[string]any
+	for rows.Next() {
+		var id int64
+		var nome, desc, criadoEm string
+		var ativo, postos, aptos int
+		if rows.Scan(&id, &nome, &desc, &ativo, &criadoEm, &postos, &aptos) == nil {
+			lista = append(lista, map[string]any{
+				"id":           id,
+				"nome":         nome,
+				"descricao":    desc,
+				"ativo":        ativo == 1,
+				"criado_em":    criadoEm,
+				"total_postos": postos,
+				"total_aptos":  aptos,
+			})
+		}
+	}
+	jsonOK(w, map[string]any{"modelos": lista})
+}
+
+func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	var mod struct {
+		ID        int64  `json:"id"`
+		GrupoID   int64  `json:"grupo_id"`
+		Nome      string `json:"nome"`
+		Descricao string `json:"descricao"`
+		Ativo     bool   `json:"ativo"`
+	}
+	var ativoInt int
+	err = a.st.db.QueryRow(`SELECT id, grupo_id, nome, COALESCE(descricao,''), ativo FROM escala_modelos WHERE id = ?`, id).
+		Scan(&mod.ID, &mod.GrupoID, &mod.Nome, &mod.Descricao, &ativoInt)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Modelo não encontrado")
+		return
+	}
+	mod.Ativo = ativoInt == 1
+
+	// Postos
+	pRows, _ := a.st.db.Query(`
+		SELECT emp.id, emp.tipo_id, etp.nome, emp.hora_inicio, emp.hora_fim, emp.quantidade, emp.ordem
+		FROM escala_modelo_postos emp
+		JOIN escala_tipos etp ON etp.id = emp.tipo_id
+		WHERE emp.modelo_id = ?
+		ORDER BY emp.ordem ASC, emp.id ASC`, id)
+	var postos []map[string]any
+	if pRows != nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var pid, tid int64
+			var tnome, hi, hf string
+			var qtd, ord int
+			if pRows.Scan(&pid, &tid, &tnome, &hi, &hf, &qtd, &ord) == nil {
+				postos = append(postos, map[string]any{
+					"id":          pid,
+					"tipo_id":     tid,
+					"tipo_nome":   tnome,
+					"hora_inicio": hi,
+					"hora_fim":    hf,
+					"quantidade":  qtd,
+					"ordem":       ord,
+				})
+			}
+		}
+	}
+
+	// Aptos
+	aRows, _ := a.st.db.Query(`
+		SELECT ema.pessoa_id, p.nome_guerra, p.nome_completo, COALESCE(s.nome,'')
+		FROM escala_modelo_aptos ema
+		JOIN pessoas p ON p.id = ema.pessoa_id
+		LEFT JOIN setores s ON s.id = p.setor_id
+		WHERE ema.modelo_id = ?
+		ORDER BY p.nome_guerra ASC`, id)
+	var aptos []map[string]any
+	if aRows != nil {
+		defer aRows.Close()
+		for aRows.Next() {
+			var pid int64
+			var ng, nc, setor string
+			if aRows.Scan(&pid, &ng, &nc, &setor) == nil {
+				aptos = append(aptos, map[string]any{
+					"pessoa_id":     pid,
+					"nome_guerra":   ng,
+					"nome_completo": nc,
+					"setor":         setor,
+				})
+			}
+		}
+	}
+
+	jsonOK(w, map[string]any{
+		"modelo": mod,
+		"postos": postos,
+		"aptos":  aptos,
+	})
+}
+
+func (a *App) hEscalasModelosSave(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	if escopo <= 0 {
+		jsonErro(w, http.StatusBadRequest, "Usuário deve pertencer a um grupo")
+		return
+	}
+	var req struct {
+		ID        int64  `json:"id"`
+		Nome      string `json:"nome"`
+		Descricao string `json:"descricao"`
+		Postos    []struct {
+			TipoID     int64  `json:"tipo_id"`
+			HoraInicio string `json:"hora_inicio"`
+			HoraFim    string `json:"hora_fim"`
+			Quantidade int    `json:"quantidade"`
+			Ordem      int    `json:"ordem"`
+		} `json:"postos"`
+		AptosIDs []int64 `json:"aptos_ids"`
+	}
+	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
+		jsonErro(w, http.StatusBadRequest, "Nome do modelo é obrigatório")
+		return
+	}
+
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	modeloID := req.ID
+	if modeloID > 0 {
+		_, err = tx.Exec(`UPDATE escala_modelos SET nome = ?, descricao = ? WHERE id = ? AND grupo_id = ?`,
+			req.Nome, req.Descricao, modeloID, escopo)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, _ = tx.Exec(`DELETE FROM escala_modelo_postos WHERE modelo_id = ?`, modeloID)
+		_, _ = tx.Exec(`DELETE FROM escala_modelo_aptos WHERE modelo_id = ?`, modeloID)
+	} else {
+		res, err := tx.Exec(`INSERT INTO escala_modelos (grupo_id, nome, descricao, ativo) VALUES (?, ?, ?, 1)`,
+			escopo, req.Nome, req.Descricao)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		modeloID, _ = res.LastInsertId()
+	}
+
+	for _, p := range req.Postos {
+		qtd := p.Quantidade
+		if qtd <= 0 {
+			qtd = 1
+		}
+		hi := p.HoraInicio
+		if hi == "" {
+			hi = "07:00"
+		}
+		hf := p.HoraFim
+		if hf == "" {
+			hf = "07:00"
+		}
+		_, err = tx.Exec(`
+			INSERT INTO escala_modelo_postos (modelo_id, tipo_id, hora_inicio, hora_fim, quantidade, ordem)
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			modeloID, p.TipoID, hi, hf, qtd, p.Ordem)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	for _, pid := range req.AptosIDs {
+		_, _ = tx.Exec(`INSERT OR IGNORE INTO escala_modelo_aptos (modelo_id, pessoa_id) VALUES (?, ?)`, modeloID, pid)
+	}
+
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonOK(w, map[string]any{"id": modeloID, "ok": true})
+}
+
+func (a *App) hEscalasModelosDel(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	res, err := a.st.db.Exec(`DELETE FROM escala_modelos WHERE id = ? AND (? <= 0 OR grupo_id = ?)`, id, escopo, escopo)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		jsonErro(w, http.StatusNotFound, "Modelo não encontrado")
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	var req struct {
+		ModeloID int64  `json:"modelo_id"`
+		Data     string `json:"data"` // YYYY-MM-DD
+	}
+	if err := decodificar(r, &req); err != nil || req.ModeloID <= 0 || req.Data == "" {
+		jsonErro(w, http.StatusBadRequest, "modelo_id e data são obrigatórios")
+		return
+	}
+
+	// Buscar postos do modelo
+	pRows, err := a.st.db.Query(`
+		SELECT tipo_id, hora_inicio, hora_fim, quantidade
+		FROM escala_modelo_postos
+		WHERE modelo_id = ?
+		ORDER BY ordem ASC, id ASC`, req.ModeloID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer pRows.Close()
+
+	type postoDef struct {
+		tipoID int64
+		hi, hf string
+		qtd    int
+	}
+	var postos []postoDef
+	for pRows.Next() {
+		var p postoDef
+		if pRows.Scan(&p.tipoID, &p.hi, &p.hf, &p.qtd) == nil {
+			postos = append(postos, p)
+		}
+	}
+	pRows.Close()
+
+	if len(postos) == 0 {
+		jsonErro(w, http.StatusBadRequest, "o modelo selecionado não possui postos cadastrados")
+		return
+	}
+
+	tBase, errDate := time.Parse("2006-01-02", req.Data)
+	if errDate != nil {
+		jsonErro(w, http.StatusBadRequest, "formato de data inválido (esperado YYYY-MM-DD)")
+		return
+	}
+
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	criados := 0
+	for _, p := range postos {
+		dataIni := req.Data + "T" + p.hi + ":00"
+		dataFimDia := req.Data
+		if p.hf <= p.hi {
+			dataFimDia = tBase.AddDate(0, 0, 1).Format("2006-01-02")
+		}
+		dataFim := dataFimDia + "T" + p.hf + ":00"
+
+		for q := 0; q < p.qtd; q++ {
+			_, err = tx.Exec(`
+				INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim, modelo_id, fase, status_delegacao, criado_por)
+				VALUES (?, ?, ?, ?, ?, 'aberto', 'proprio', ?)`,
+				escopo, p.tipoID, dataIni, dataFim, req.ModeloID, u.ID)
+			if err != nil {
+				jsonErro(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			criados++
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonOK(w, map[string]any{"ok": true, "turnos_criados": criados, "fase": "aberto"})
+}
+
+func (a *App) hEscalasLimparDia(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	var req struct {
+		Data string `json:"data"` // YYYY-MM-DD
+	}
+	if err := decodificar(r, &req); err != nil || req.Data == "" {
+		jsonErro(w, http.StatusBadRequest, "data obrigatória")
+		return
+	}
+
+	res, err := a.st.db.Exec(`
+		DELETE FROM escala_turnos
+		WHERE grupo_id = ? AND data_inicio LIKE ?`,
+		escopo, req.Data+"%")
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	jsonOK(w, map[string]any{"ok": true, "removidos": n})
+}
+
+func (a *App) hEscalasTurnoAlocar(w http.ResponseWriter, r *http.Request) {
+	turnoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || turnoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID do turno inválido")
+		return
+	}
+	var req struct {
+		PessoaID     *int64 `json:"pessoa_id"` // se nil, desocupa o posto
+		FuncaoEscala string `json:"funcao_escala"`
+	}
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "requisição inválida")
+		return
+	}
+
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	_, _ = tx.Exec(`DELETE FROM escala_pessoas WHERE turno_id = ?`, turnoID)
+
+	if req.PessoaID != nil && *req.PessoaID > 0 {
+		_, err = tx.Exec(`INSERT INTO escala_pessoas (turno_id, pessoa_id, funcao_escala) VALUES (?, ?, ?)`,
+			turnoID, *req.PessoaID, req.FuncaoEscala)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, _ = tx.Exec(`UPDATE escala_turnos SET status_delegacao = 'preenchido' WHERE id = ?`, turnoID)
+	} else {
+		_, _ = tx.Exec(`UPDATE escala_turnos SET status_delegacao = 'proprio' WHERE id = ?`, turnoID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hEscalasTurnoDelegar(w http.ResponseWriter, r *http.Request) {
+	turnoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || turnoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID do turno inválido")
+		return
+	}
+	var req struct {
+		GrupoDelegadoID *int64 `json:"grupo_delegado_id"` // se nil, revoga delegação
+	}
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "requisição inválida")
+		return
+	}
+
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	if req.GrupoDelegadoID != nil && *req.GrupoDelegadoID > 0 {
+		subs := a.gruposSubordinadosAtivos(escopo)
+		if !int64Contem(subs, *req.GrupoDelegadoID) {
+			jsonErro(w, http.StatusForbidden, "o grupo destino não é subordinado direto ou ativo do seu grupo")
+			return
+		}
+		_, err = a.st.db.Exec(`
+			UPDATE escala_turnos
+			SET grupo_delegado_id = ?, status_delegacao = 'delegado'
+			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
+			*req.GrupoDelegadoID, turnoID, escopo, escopo)
+	} else {
+		_, err = a.st.db.Exec(`
+			UPDATE escala_turnos
+			SET grupo_delegado_id = NULL, status_delegacao = 'proprio'
+			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
+			turnoID, escopo, escopo)
+	}
+
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hEscalasAlterarFase(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	var req struct {
+		Data string `json:"data"` // YYYY-MM-DD
+		Fase string `json:"fase"` // aberto | preenchido | aprovado | publicado
+	}
+	if err := decodificar(r, &req); err != nil || req.Data == "" || req.Fase == "" {
+		jsonErro(w, http.StatusBadRequest, "data e fase são obrigatórios")
+		return
+	}
+	switch req.Fase {
+	case "aberto", "preenchido", "aprovado", "publicado":
+	default:
+		jsonErro(w, http.StatusBadRequest, "fase inválida (aberto | preenchido | aprovado | publicado)")
+		return
+	}
+
+	res, err := a.st.db.Exec(`
+		UPDATE escala_turnos
+		SET fase = ?
+		WHERE grupo_id = ? AND data_inicio LIKE ?`,
+		req.Fase, escopo, req.Data+"%")
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	jsonOK(w, map[string]any{"ok": true, "atualizados": n, "fase": req.Fase})
+}
+
+func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	data := r.URL.Query().Get("data")
+	if data == "" {
+		data = time.Now().In(a.horaLocal).Format("2006-01-02")
+	}
+
+	var grupoNome string
+	if escopo > 0 {
+		_ = a.st.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, escopo).Scan(&grupoNome)
+	}
+	if grupoNome == "" {
+		grupoNome = "Comando Geral"
+	}
+
+	var fase string = "aberto"
+	_ = a.st.db.QueryRow(`
+		SELECT COALESCE(fase, 'aberto')
+		FROM escala_turnos
+		WHERE (grupo_id = ? OR ? <= 0) AND data_inicio LIKE ?
+		ORDER BY id DESC LIMIT 1`, escopo, escopo, data+"%").Scan(&fase)
+
+	q := `SELECT et.id, etp.nome, et.data_inicio, et.data_fim,
+	             COALESCE(p.nome_guerra, ''), COALESCE(p.nome_completo, ''),
+	             COALESCE(s.nome, ''), COALESCE(et.status_delegacao, 'proprio'), COALESCE(gd.nome, '')
+	      FROM escala_turnos et
+	      JOIN escala_tipos etp ON etp.id = et.tipo_id
+	      LEFT JOIN escala_pessoas ep ON ep.turno_id = et.id
+	      LEFT JOIN pessoas p ON p.id = ep.pessoa_id
+	      LEFT JOIN setores s ON s.id = p.setor_id
+	      LEFT JOIN grupos gd ON gd.id = et.grupo_delegado_id
+	      WHERE (et.grupo_id = ? OR ? <= 0) AND et.data_inicio LIKE ?
+	      ORDER BY et.data_inicio ASC, et.id ASC`
+
+	rows, err := a.st.db.Query(q, escopo, escopo, data+"%")
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var turnosPDF []EscalaTurnoPDF
+	for rows.Next() {
+		var id int64
+		var posto, di, df, ng, nc, setor, stDeleg, gDeleg string
+		if rows.Scan(&id, &posto, &di, &df, &ng, &nc, &setor, &stDeleg, &gDeleg) == nil {
+			horario := ""
+			if len(di) >= 16 && len(df) >= 16 {
+				horario = di[11:16] + " às " + df[11:16]
+			}
+			origem := setor
+			if stDeleg == "delegado" {
+				if gDeleg != "" {
+					origem = "Delegado: " + gDeleg
+				} else {
+					origem = "Delegado"
+				}
+			}
+			turnosPDF = append(turnosPDF, EscalaTurnoPDF{
+				ID:            id,
+				PostoNome:     posto,
+				Horario:       horario,
+				MilitarNome:   nc,
+				MilitarGuerra: ng,
+				SetorOuOrigem: origem,
+				Status:        stDeleg,
+			})
+		}
+	}
+
+	pdfData, err := a.gerarEscalaDiaPDF(EscalaDiaPDF{
+		Data:      data,
+		GrupoNome: grupoNome,
+		Fase:      fase,
+		GeradoPor: u.Login,
+		Turnos:    turnosPDF,
+	})
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "erro ao gerar PDF de escala: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="escala_%s.pdf"`, data))
+	w.Header().Set("Content-Length", strconv.Itoa(len(pdfData)))
+	_, _ = w.Write(pdfData)
+}
+
+func (a *App) hEscalasMinhas(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.PessoaID == nil {
+		jsonOK(w, map[string]any{
+			"escalas_aptas":   []any{},
+			"proximos_turnos": []any{},
+			"historico":       []any{},
+		})
+		return
+	}
+	pid := *u.PessoaID
+	hoje := time.Now().In(a.horaLocal).Format("2006-01-02")
+
+	// Escalas aptas
+	mRows, _ := a.st.db.Query(`
+		SELECT em.id, em.nome, COALESCE(em.descricao,''), COALESCE(g.nome,'')
+		FROM escala_modelo_aptos ema
+		JOIN escala_modelos em ON em.id = ema.modelo_id
+		LEFT JOIN grupos g ON g.id = em.grupo_id
+		WHERE ema.pessoa_id = ? AND em.ativo = 1
+		ORDER BY em.nome ASC`, pid)
+	var escalasAptas []map[string]any
+	if mRows != nil {
+		defer mRows.Close()
+		for mRows.Next() {
+			var id int64
+			var nome, desc, gNome string
+			if mRows.Scan(&id, &nome, &desc, &gNome) == nil {
+				escalasAptas = append(escalasAptas, map[string]any{
+					"id":         id,
+					"nome":       nome,
+					"descricao":  desc,
+					"grupo_nome": gNome,
+				})
+			}
+		}
+	}
+
+	// Próximos turnos escalados
+	pRows, _ := a.st.db.Query(`
+		SELECT et.id, etp.nome, et.data_inicio, et.data_fim, COALESCE(ep.funcao_escala,''), COALESCE(et.fase,'aberto'), COALESCE(g.nome,'')
+		FROM escala_pessoas ep
+		JOIN escala_turnos et ON et.id = ep.turno_id
+		JOIN escala_tipos etp ON etp.id = et.tipo_id
+		LEFT JOIN grupos g ON g.id = et.grupo_id
+		WHERE ep.pessoa_id = ? AND et.data_fim >= ?
+		ORDER BY et.data_inicio ASC LIMIT 20`, pid, hoje)
+	var proximosTurnos []map[string]any
+	if pRows != nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var id int64
+			var posto, di, df, fEscala, fase, gNome string
+			if pRows.Scan(&id, &posto, &di, &df, &fEscala, &fase, &gNome) == nil {
+				proximosTurnos = append(proximosTurnos, map[string]any{
+					"turno_id":      id,
+					"posto_nome":    posto,
+					"data_inicio":   di,
+					"data_fim":      df,
+					"funcao_escala": fEscala,
+					"fase":          fase,
+					"grupo_nome":    gNome,
+				})
+			}
+		}
+	}
+
+	// Histórico recente (passados)
+	hRows, _ := a.st.db.Query(`
+		SELECT et.id, etp.nome, et.data_inicio, et.data_fim, COALESCE(ep.funcao_escala,''), COALESCE(g.nome,'')
+		FROM escala_pessoas ep
+		JOIN escala_turnos et ON et.id = ep.turno_id
+		JOIN escala_tipos etp ON etp.id = et.tipo_id
+		LEFT JOIN grupos g ON g.id = et.grupo_id
+		WHERE ep.pessoa_id = ? AND et.data_fim < ?
+		ORDER BY et.data_inicio DESC LIMIT 20`, pid, hoje)
+	var historico []map[string]any
+	if hRows != nil {
+		defer hRows.Close()
+		for hRows.Next() {
+			var id int64
+			var posto, di, df, fEscala, gNome string
+			if hRows.Scan(&id, &posto, &di, &df, &fEscala, &gNome) == nil {
+				historico = append(historico, map[string]any{
+					"turno_id":      id,
+					"posto_nome":    posto,
+					"data_inicio":   di,
+					"data_fim":      df,
+					"funcao_escala": fEscala,
+					"grupo_nome":    gNome,
+				})
+			}
+		}
+	}
+
+	jsonOK(w, map[string]any{
+		"escalas_aptas":   escalasAptas,
+		"proximos_turnos": proximosTurnos,
+		"historico":       historico,
+	})
 }
 
 // =====================================================================

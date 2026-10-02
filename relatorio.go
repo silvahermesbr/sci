@@ -1650,3 +1650,108 @@ func (a *App) gerarEtiquetasLotePDF(itens []MaterialItemEtiqueta) ([]byte, error
 	return buf.Bytes(), nil
 }
 
+// EscalaDiaPDF contém os dados estruturados para emissão do relatório diário de escala de serviço.
+type EscalaDiaPDF struct {
+	Data          string           `json:"data"`
+	GrupoNome     string           `json:"grupo_nome"`
+	Fase          string           `json:"fase"`
+	GeradoPor     string           `json:"gerado_por"`
+	HomologadoPor string           `json:"homologado_por,omitempty"`
+	Turnos        []EscalaTurnoPDF `json:"turnos"`
+}
+
+// EscalaTurnoPDF representa uma linha de posto na escala diária.
+type EscalaTurnoPDF struct {
+	ID            int64  `json:"id"`
+	PostoNome     string `json:"posto_nome"`
+	Horario       string `json:"horario"`
+	MilitarNome   string `json:"militar_nome"`
+	MilitarGuerra string `json:"militar_guerra"`
+	SetorOuOrigem string `json:"setor_ou_origem"`
+	Status        string `json:"status"`
+}
+
+// gerarEscalaDiaPDF produz o relatório oficial em PDF da escala diária de serviço.
+func (a *App) gerarEscalaDiaPDF(d EscalaDiaPDF) ([]byte, error) {
+	T := cp1252Traduz.Replace
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.SetMargins(14, 14, 14)
+	pdf.AddPage()
+
+	// Cabeçalho institucional
+	pdf.SetFont("Helvetica", "B", 13)
+	pdf.SetTextColor(15, 23, 42)
+	pdf.CellFormat(0, 7, T("ESCALA DIÁRIA DE SERVIÇO"), "", 1, "C", false, 0, "")
+
+	pdf.SetFont("Helvetica", "", 10)
+	pdf.SetTextColor(71, 85, 105)
+	pdf.CellFormat(0, 5, T("UNIDADE: "+strings.ToUpper(d.GrupoNome)), "", 1, "C", false, 0, "")
+	pdf.CellFormat(0, 5, T("DATA DE SERVIÇO: "+fmtDataBR(d.Data)), "", 1, "C", false, 0, "")
+	pdf.Ln(3)
+
+	// Barra de metadados e fase
+	pdf.SetFillColor(241, 245, 249)
+	pdf.SetDrawColor(203, 213, 225)
+	pdf.Rect(14, pdf.GetY(), 182, 10, "FD")
+	pdf.SetXY(17, pdf.GetY()+2.5)
+	pdf.SetFont("Helvetica", "B", 8.5)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(70, 5, T("FASE ATUAL: "+strings.ToUpper(d.Fase)), "", 0, "L", false, 0, "")
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetTextColor(100, 116, 139)
+	pdf.CellFormat(105, 5, T("Emitido por: "+d.GeradoPor+" em "+time.Now().Format("02/01/2006 15:04")), "", 1, "R", false, 0, "")
+	pdf.Ln(5)
+
+	// Tabela de postos e escalados
+	colunas := []string{"POSTO / SERVIÇO", "HORÁRIO", "MILITAR ESCALADO", "ORIGEM / SETOR", "SITUAÇÃO"}
+	larguras := []float64{45, 28, 48, 36, 25}
+	pdfTabelaCabecalho(pdf, colunas, larguras)
+
+	if len(d.Turnos) == 0 {
+		pdf.SetFont("Helvetica", "I", 8.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(182, 8, T("Nenhum posto registrado nesta escala."), "1", 1, "C", false, 0, "")
+	} else {
+		for i, t := range d.Turnos {
+			militar := t.MilitarGuerra
+			if militar == "" {
+				militar = t.MilitarNome
+			}
+			if militar == "" {
+				militar = "[AGUARDANDO ESCALA]"
+			}
+			vals := []string{
+				t.PostoNome,
+				t.Horario,
+				militar,
+				t.SetorOuOrigem,
+				strings.ToUpper(t.Status),
+			}
+			alinh := []string{"L", "C", "L", "L", "C"}
+			pdfTabelaLinha(pdf, vals, larguras, alinh, i%2 == 1)
+		}
+	}
+
+	// Assinatura física centralizada
+	pdf.Ln(14)
+	pdf.SetFont("Helvetica", "", 8.5)
+	pdf.SetTextColor(50, 50, 50)
+	pdf.CellFormat(0, 4, "________________________________________________________", "", 1, "C", false, 0, "")
+	nomeResp := d.GeradoPor
+	if d.HomologadoPor != "" {
+		nomeResp = d.HomologadoPor
+	}
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.CellFormat(0, 5, T(nomeResp), "", 1, "C", false, 0, "")
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(100, 116, 139)
+	pdf.CellFormat(0, 4, T("Responsável pela Escala de Serviço"), "", 1, "C", false, 0, "")
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+
