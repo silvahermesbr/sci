@@ -767,7 +767,15 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		dataHoje = f.Data
 	}
 	escalados := a.escaladosNaData(escopo, dataHoje)
-	jsonOK(w, map[string]any{"conferencia": form, "pessoas": a.pessoasAtivas(escopo), "escalados": escalados})
+	tHoje, _ := time.Parse("2006-01-02", dataHoje)
+	dataOntem := tHoje.AddDate(0, 0, -1).Format("2006-01-02")
+	escaladosOntem := a.escaladosNaData(escopo, dataOntem)
+	jsonOK(w, map[string]any{
+		"conferencia":     form,
+		"pessoas":         a.pessoasAtivas(escopo),
+		"escalados":       escalados,
+		"escalados_ontem": escaladosOntem,
+	})
 }
 
 type lancamentoReq struct {
@@ -865,12 +873,18 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "justificada exige destino")
 		return
 	}
-	// Fix destino órfão (ordem Tenente 02/10): destino só existe em justificada
-	// (obrigatório) e atraso (carry "saindo de serviço"). Presente/falta/não
-	// verificado NUNCA gravam destino — o corpo do front pode reenviá-lo ao trocar
-	// a situação e o resíduo aparecia no PDF.
-	if req.Situacao != "justificada" && req.Situacao != "atraso" {
+	// v1.5: Estados de presente, falta e atraso não têm destino (destino zerado); somente justificada aceita destino.
+	if req.Situacao != "justificada" {
 		req.DestinoID = nil
+	}
+
+	// v1.5: Caso o estado mude em relação ao anterior, a observação é resetada (salvo nova observação explícita).
+	var sitAnt, obsAnt string
+	_ = a.st.db.QueryRow(`SELECT situacao, COALESCE(observacao,'') FROM presencas WHERE conferencia_id = ? AND pessoa_id = ?`,
+		confID, req.PessoaID).Scan(&sitAnt, &obsAnt)
+	if sitAnt != "" && sitAnt != req.Situacao && req.Observacao == nil {
+		vazio := ""
+		req.Observacao = &vazio
 	}
 	// v9.16.4: ✅ de verificação persiste separado (carry over inicia zerado)
 	verificadoFlag := 0
@@ -1948,8 +1962,8 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 		  UNION ALL
 		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
 		)
-		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
-		       CASE WHEN pr.situacao IN ('justificada','atraso') THEN COALESCE(d.nome,'') ELSE '' END AS destino, COALESCE(pr.observacao,''), u.login,
+		SELECT p.nome_guerra, COALESCE(NULLIF(s.sigla,''), s.nome, 'INDEFINIDO'), pr.situacao,
+		       CASE WHEN pr.situacao = 'justificada' THEN COALESCE(d.nome,'') ELSE '' END AS destino, COALESCE(pr.observacao,''), u.login,
 		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), '—'))),
 		       COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor')
 		FROM presencas pr
@@ -2060,10 +2074,17 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 	} else if filtro == "justificados" {
 		selo = "_SO_JUSTIFICADOS"
 	}
+	var fechadoPorNome string
+	_ = a.st.db.QueryRow(`
+		SELECT COALESCE(NULLIF(u.nome_completo,''), NULLIF(u.nome_guerra,''), u.login)
+		FROM conferencias c
+		JOIN usuarios u ON u.id = COALESCE(c.fechada_por, c.criado_por)
+		WHERE c.id = ?`, id).Scan(&fechadoPorNome)
+
 	cp := ConferenciaPDF{
 		ID: id, Data: data, Status: status, CriadaEm: criadaEm, FechadaEm: fechada,
 		CriadoPor: criadoPor, GeradoPor: u.Login, Resumo: resumo, Lancamentos: lanc,
-		Filtro: filtro,
+		Filtro: filtro, FechadoPorNome: fechadoPorNome,
 	}
 	pdf, err := a.gerarConferenciaPDF(cp)
 	if err != nil {

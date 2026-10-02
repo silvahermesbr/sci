@@ -53,6 +53,70 @@
     };
   };
 
+  // Modal para abrir e inspecionar detalhes de qualquer conferência (fechada ou arquivada)
+  window.abrirModalDetalhesConferencia = async function (confID) {
+    try {
+      const d = await api('/api/conferencia/' + confID);
+      const res = d.resumo || {};
+      const pres = d.lancamentos || [];
+      const linhaLanc = l => `
+        <tr data-texto="${esc((l.nome_guerra + ' ' + (l.setor || '') + ' ' + (l.funcao || '') + ' ' + (l.observacao || '') + ' ' + (l.destino || '')).toLowerCase())}">
+          <td><b>${esc(l.nome_guerra)}</b><br><small style="color:var(--tx2)">${esc(l.funcao || '—')}</small></td>
+          <td><code style="font-size:11px">${esc(l.setor || '—')}</code></td>
+          <td>${pill(l.situacao)}</td>
+          <td>${esc(l.destino || '—')}</td>
+          <td style="font-size:12px;color:var(--tx2)">${esc(l.observacao || '—')}</td>
+        </tr>`;
+
+      const html = `
+        <div style="max-width:850px;width:95vw">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+            <div>
+              <h3 style="margin:0">Conferência #${d.id} · ${fmtData(d.data)} (${d.status ? d.status.toUpperCase() : 'CONFERÊNCIA'})</h3>
+              <div style="font-size:12px;color:var(--tx2)">Criada em ${fmtHora(d.criada_em)}${d.fechada_em ? ' · Fechada em ' + fmtHora(d.fechada_em) : ''} · Responsável: ${esc(d.criado_por || '—')}</div>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button type="button" class="primario" id="modalConfPDF">📄 Relatório PDF</button>
+              <button type="button" class="fantasma" id="modalConfFechar">✕ Fechar</button>
+            </div>
+          </div>
+          <div class="resumo" style="margin-bottom:12px">
+            <div class="caixa"><b style="color:var(--verde-claro)">${res.presentes || 0}</b><span>Presentes</span></div>
+            <div class="caixa"><b style="color:var(--ambar-txt)">${res.atrasos || 0}</b><span>Atrasos</span></div>
+            <div class="caixa"><b style="color:var(--verm)">${res.faltas || 0}</b><span>Faltas</span></div>
+            <div class="caixa"><b style="color:#60a5fa">${res.justificadas || 0}</b><span>Justificadas</span></div>
+          </div>
+          <div class="campo" style="margin-bottom:10px">
+            <input id="fModalLanc" placeholder="Filtrar por nome de guerra, setor, função ou observação…">
+          </div>
+          <div class="rolagem" style="max-height:55vh">
+            <table id="tabModalLanc">
+              <thead><tr><th>Militar</th><th>Setor</th><th>Situação</th><th>Destino</th><th>Observação</th></tr></thead>
+              <tbody>${pres.map(linhaLanc).join('') || '<tr><td colspan="5"><span class="vazio">Nenhum militar registrado.</span></td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>`;
+      const m = window.abrirModal(html);
+      m.modal.querySelector('#modalConfFechar').onclick = () => m.fechar();
+      m.modal.querySelector('#modalConfPDF').onclick = () => {
+        m.fechar();
+        window.abrirModalPDFConferencia(confID);
+      };
+      const fInp = m.modal.querySelector('#fModalLanc');
+      if (fInp) {
+        fInp.oninput = () => {
+          const q = fInp.value.trim().toLowerCase();
+          m.modal.querySelectorAll('#tabModalLanc tbody tr').forEach(tr => {
+            const txt = tr.dataset.texto || '';
+            tr.style.display = !q || txt.includes(q) ? '' : 'none';
+          });
+        };
+      }
+    } catch (e) {
+      toast('Falha ao abrir conferência: ' + (e.message || e), 'erro');
+    }
+  };
+
   /* ================================================================
      #/hoje — CONFERÊNCIA DE PESSOAL (gerente/operador)
      ================================================================ */
@@ -125,10 +189,13 @@
       <td>${esc(c.grupo || '—')}</td>
       <td>${esc(c.criado_por || '—')}</td>
       <td class="num">${c.lancamentos}</td>
-      <td>${modoTela === 'arquivo'
-        ? `<button class="perigo" data-excluir-arq="${c.id}" style="min-height:36px;padding:8px 12px">Excluir</button>`
+      <td style="white-space:nowrap">${modoTela === 'arquivo'
+        ? `<button class="primario" data-abrir-detalhes="${c.id}" style="min-height:36px;padding:8px 12px">Visualizar</button>
+           <button style="min-height:36px;padding:8px 12px" data-pdfconf="${c.id}">Relatório PDF</button>
+           ${souAdmin ? `<button class="perigo" data-excluir-arq="${c.id}" style="min-height:36px;padding:8px 12px">Excluir</button>` : ''}`
         : (c.status === 'fechada'
-          ? `<button class="primario" style="min-height:36px;padding:8px 12px" data-pdfconf="${c.id}">Relatório PDF</button>
+          ? `<button class="primario" data-abrir-detalhes="${c.id}" style="min-height:36px;padding:8px 12px">Visualizar</button>
+             <button style="min-height:36px;padding:8px 12px" data-pdfconf="${c.id}">Relatório PDF</button>
              <button data-arquivar="${c.id}" style="min-height:36px;padding:8px 12px">Arquivar</button>`
           : `<button class="primario" data-abrir="${c.id}" style="min-height:36px;padding:8px 12px">Abrir</button>`)}</td></tr>`;
     const porData = (a, b) => String(b.data || '').localeCompare(String(a.data || '')) || b.id - a.id;
@@ -159,14 +226,19 @@
     }
     const ehChefeSetor = (window.ME && window.ME.papel) === 'chefe_setor';
     $('#app').innerHTML = `<h2>Conferências</h2>${abasTela}${seletor}
+      <div class="cartao" style="margin-bottom:10px">
+        <div class="campo" style="margin:0">
+          <label>Pesquisar conferências por ID, Data ou Operador</label>
+          <input id="fConfID" placeholder="Digite para filtrar instantaneamente…">
+        </div>
+      </div>
       ${modoTela !== 'arquivo' ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
         ${!ehChefeSetor ? `<button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>` : ''}
-        <span style="color:var(--tx2);font-size:12px">${ehChefeSetor ? 'Como Chefe de Setor, selecione uma conferência aberta para lançar presença do seu efetivo.' : 'abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)'}</span></div>
-      <div class="cartao" style="margin-bottom:10px"><div class="campo" style="margin:0"><label>Pesquisar por ID da conferência</label><input id="fConfID" placeholder="ex.: 3"></div></div>` +
+        <span style="color:var(--tx2);font-size:12px">${ehChefeSetor ? 'Como Chefe de Setor, selecione uma conferência aberta para lançar presença do seu efetivo.' : 'abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)'}</span></div>` +
       tabela('Abertas', abertas) + tabela('Fechadas', fechadas)
       : tabela('Arquivadas', lista, 'nenhuma conferência arquivada')}
       <p style="color:var(--tx2);font-size:12px">${modoTela === 'arquivo'
-        ? 'Arquivadas ficam fora da listagem normal. Excluir arquivada é ação exclusiva do ADMIN e apaga conferência, lançamentos e comentários.'
+        ? 'No arquivo, você pode pesquisar, abrir e conferir registros antigos ou gerar relatórios PDF a qualquer momento.'
         : 'O relatório PDF só é gerado para conferências fechadas. Arquivar tira a conferência desta listagem (vai para o ARQUIVO).'}`;
     document.querySelectorAll('.abas button[data-t]').forEach(b => b.onclick = () => window.ViewHoje(b.dataset.t));
     const pc = $('#perConfEntrada');
@@ -200,6 +272,9 @@
     document.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
       location.hash = '#/conferencia?id=' + b.dataset.abrir;
     });
+    document.querySelectorAll('[data-abrir-detalhes]').forEach(b => b.onclick = () => {
+      window.abrirModalDetalhesConferencia(b.dataset.abrirDetalhes);
+    });
     document.querySelectorAll('[data-pdfconf]').forEach(b => {
       b.onclick = () => window.abrirModalPDFConferencia(b.dataset.pdfconf);
     });
@@ -216,9 +291,10 @@
     });
     const fID = $('#fConfID');
     if (fID) fID.oninput = () => {
-      const q = fID.value.trim().replace('#', '');
+      const q = fID.value.trim().toLowerCase().replace('#', '');
       document.querySelectorAll('#app tr[data-cid]').forEach(tr => {
-        tr.style.display = !q || tr.dataset.cid === q ? '' : 'none';
+        const text = tr.innerText.toLowerCase();
+        tr.style.display = !q || tr.dataset.cid === q || text.includes(q) ? '' : 'none';
       });
     };
   };
@@ -246,6 +322,7 @@
       }
     }
     const escalados = d.escalados || [];
+    const escaladosOntem = d.escalados_ontem || [];
     let pessoasLista = d.pessoas || [];
     const ehChefe = window.ME && window.ME.papel === 'chefe_setor';
     if (ehChefe) {
@@ -254,7 +331,7 @@
         pessoasLista = pessoasLista.filter(p => p.setor_id === meuSetorId);
       }
     }
-    C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados };
+    C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados, escaladosOntem };
     confRender();
     $('#btVoltar').onclick = () => { location.hash = '#/hoje'; };
     const btDesc = $('#btDescartar');
@@ -292,10 +369,14 @@
       const itensHTML = pessoasSetor.map((p, idx) => {
         const sit = sitDe(p);
         const ehVerif = C.verif.has(p.id);
-        const escInfo = (C.escalados || []).find(x => x.pessoa_id === p.id);
-        const badgeEscala = escInfo
-          ? `<span style="background:rgba(87,161,115,.2); color:var(--verde-claro); font-size:11px; padding:1px 6px; border-radius:4px; font-weight:700" title="Escalado em ${esc(escInfo.tipo_nome)}">🛡️ ${esc(escInfo.tipo_nome)}</span>`
-          : '';
+        const escHoje = (C.escalados || []).find(x => x.pessoa_id === p.id);
+        const escOntem = (C.escaladosOntem || []).find(x => x.pessoa_id === p.id);
+        let badgeEscala = '';
+        if (escHoje) {
+          badgeEscala = `<span style="display:inline-flex;align-items:center;margin-left:4px;cursor:help;font-size:13px" title="Escalado HOJE em: ${esc(escHoje.tipo_nome || 'Escala')}">📅🔴</span>`;
+        } else if (escOntem) {
+          badgeEscala = `<span style="display:inline-flex;align-items:center;margin-left:4px;cursor:help;font-size:13px" title="Escalado ONTEM (dia pós-escala) em: ${esc(escOntem.tipo_nome || 'Escala')}">📅🟡</span>`;
+        }
         const selDest = sit === 'justificada'
           ? `<select class="sel-destino" data-id="${p.id}"><option value="">destino…</option>` +
             C.destinos.map(dx => `<option value="${dx.id}" ${C.dest[p.id] == dx.id ? 'selected' : ''}>${esc(dx.nome)}</option>`).join('') + '</select>'
@@ -370,12 +451,18 @@
       const atual = C.est[id] || 'nao_verificado';
       if (novo === atual) return;
       C.est[id] = novo;
+      // v1.5: destinos só existem em justificada (presente/falta/atraso destino zerado)
+      if (novo !== 'justificada') {
+        C.dest[id] = null;
+      }
+      // v1.5: caso ocorra mudança de estado, a observação é resetada
+      C.obs[id] = '';
       // Regra operacional: o check é estritamente manual, preserva o estado atual de verificação
       const jaVerif = C.verif.has(id);
       if (novo === 'falta' || novo === 'justificada') {
         confModalLancamento(id, novo, () => confRender($('#busca') ? $('#busca').value : ''));
       } else {
-        marcarParcial(id, novo, C.dest[id] ?? null, C.obs[id] ?? null, jaVerif);
+        marcarParcial(id, novo, null, '', jaVerif);
         confRender($('#busca') ? $('#busca').value : '');
       }
     });

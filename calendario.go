@@ -556,6 +556,20 @@ func (a *App) hCalendarioCompartilhar(w http.ResponseWriter, r *http.Request) {
 		podeEdVal = 1
 	}
 
+	var existeID int64
+	if alvoUsuarioID != nil {
+		_ = a.st.db.QueryRow(`SELECT id FROM calendario_compartilhamentos WHERE evento_id = ? AND alvo_usuario_id = ?`, req.EventoID, *alvoUsuarioID).Scan(&existeID)
+	} else if alvoGrupoID != nil {
+		_ = a.st.db.QueryRow(`SELECT id FROM calendario_compartilhamentos WHERE evento_id = ? AND alvo_grupo_id = ?`, req.EventoID, *alvoGrupoID).Scan(&existeID)
+	} else if alvoPapelID != nil {
+		_ = a.st.db.QueryRow(`SELECT id FROM calendario_compartilhamentos WHERE evento_id = ? AND alvo_papel_id = ?`, req.EventoID, *alvoPapelID).Scan(&existeID)
+	}
+	if existeID > 0 {
+		_, _ = a.st.db.Exec(`UPDATE calendario_compartilhamentos SET pode_editar = ? WHERE id = ?`, podeEdVal, existeID)
+		jsonOK(w, map[string]any{"id": existeID, "ok": true, "atualizado": true})
+		return
+	}
+
 	res, err := a.st.db.Exec(`
 		INSERT INTO calendario_compartilhamentos (evento_id, alvo_grupo_id, alvo_usuario_id, alvo_papel_id, pode_editar)
 		VALUES (?, ?, ?, ?, ?)
@@ -987,6 +1001,20 @@ func (a *App) hCalendariosCompartilhar(w http.ResponseWriter, r *http.Request) {
 	forcarVal := 0
 	if req.Forcar {
 		forcarVal = 1
+	}
+
+	var existeID int64
+	if alvoUsuarioID != nil {
+		_ = a.st.db.QueryRow(`SELECT id FROM calendario_compartilhamentos WHERE calendario_id = ? AND alvo_usuario_id = ?`, calID, *alvoUsuarioID).Scan(&existeID)
+	} else if alvoGrupoID != nil {
+		_ = a.st.db.QueryRow(`SELECT id FROM calendario_compartilhamentos WHERE calendario_id = ? AND alvo_grupo_id = ?`, calID, *alvoGrupoID).Scan(&existeID)
+	} else if alvoPapelID != nil {
+		_ = a.st.db.QueryRow(`SELECT id FROM calendario_compartilhamentos WHERE calendario_id = ? AND alvo_papel_id = ?`, calID, *alvoPapelID).Scan(&existeID)
+	}
+	if existeID > 0 {
+		_, _ = a.st.db.Exec(`UPDATE calendario_compartilhamentos SET pode_editar = ?, forcar_inscricao = ? WHERE id = ?`, pEdVal, forcarVal, existeID)
+		jsonOK(w, map[string]any{"id": existeID, "ok": true, "atualizado": true})
+		return
 	}
 
 	res, err := a.st.db.Exec(`

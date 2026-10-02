@@ -1131,6 +1131,7 @@ func (s *Store) LimparSessoesExpiradas() {
 var catalogosValidos = map[string]bool{
 	"setores": true, "funcoes": true, "destinos": true,
 	"tags": true, "conferencia_tipos": true, "status_pessoal": true,
+	"material_tipos": true, "material_classes": true,
 }
 
 func tabelaDeCatalogo(tab string) (string, error) {
@@ -1812,6 +1813,24 @@ func (s *Store) migrarV27() error {
 			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_setor_sugestoes_status ON setor_sugestoes(grupo_id, setor_tipo, status)`,
+
+		// 3. Catálogos de Material (Tipos e Classes)
+		`CREATE TABLE IF NOT EXISTS material_tipos (
+			id INTEGER PRIMARY KEY,
+			nome TEXT NOT NULL,
+			grupo_id INTEGER REFERENCES grupos(id),
+			pai_id INTEGER,
+			ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0,1)),
+			antiguidade INTEGER DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS material_classes (
+			id INTEGER PRIMARY KEY,
+			nome TEXT NOT NULL,
+			grupo_id INTEGER REFERENCES grupos(id),
+			pai_id INTEGER,
+			ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0,1)),
+			antiguidade INTEGER DEFAULT 0
+		)`,
 	}
 
 	for _, q := range ddl {

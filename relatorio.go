@@ -31,6 +31,7 @@ type ConferenciaPDF struct {
 	Resumo      map[string]int   `json:"resumo"`
 	Lancamentos []map[string]any `json:"lancamentos"`
 	Filtro      string           `json:"filtro,omitempty"`
+	FechadoPorNome string        `json:"fechado_por_nome,omitempty"`
 }
 
 // cp1252Traduz converte UTF-8 PT-BR para bytes cp1252 (fontes core do fpdf).
@@ -629,6 +630,21 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 		}
 		pdfTabelaLinha(pdf, vals, larg, alinh, idx%2 == 1)
 	}
+
+	// Bloco centralizado para assinatura física (v1.5)
+	pdf.Ln(10)
+	pdf.SetFont("Helvetica", "", 8.5)
+	pdf.SetTextColor(50, 50, 50)
+	pdf.CellFormat(0, 4, "________________________________________________________", "", 1, "C", false, 0, "")
+	nomeResp := c.GeradoPor
+	if c.FechadoPorNome != "" {
+		nomeResp = c.FechadoPorNome
+	}
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.CellFormat(0, 5, T(nomeResp), "", 1, "C", false, 0, "")
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(100, 116, 139)
+	pdf.CellFormat(0, 4, T("Responsável pela Conferência"), "", 1, "C", false, 0, "")
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {

@@ -107,14 +107,15 @@ func TestDestinoJustificadaParaPresenteSome(t *testing.T) {
 	}
 }
 
-func TestAtrasoMantemDestino(t *testing.T) {
+// v1.5: Estados de presente, falta e atraso não têm destino (destino zerado)
+func TestAtrasoZeraDestino(t *testing.T) {
 	app, ger, confID, pesID, destID := setupConfDestino(t)
 	if rr := marcar(app, ger, confID, pesID, "atraso", &destID); rr.Code != http.StatusOK {
 		t.Fatalf("atraso: %d", rr.Code)
 	}
 	sit, dest := buscarPresenca(t, app, confID, pesID)
-	if sit != "atraso" || dest == nil || *dest != destID {
-		t.Fatalf("atraso deveria manter destino: sit=%s dest=%v", sit, dest)
+	if sit != "atraso" || dest != nil {
+		t.Fatalf("v1.5: atraso deve ter destino zerado: sit=%s dest=%v", sit, dest)
 	}
 }
 

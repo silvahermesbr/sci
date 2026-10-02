@@ -1866,10 +1866,18 @@
               <div class="campo" style="width:160px; margin:0">
                 <label>Tipo de Catálogo</label>
                 <select id="cgT">
-                  <option value="tags">🏷️ Tags</option>
-                  <option value="setores">🏢 Setores / Seções</option>
-                  <option value="funcoes">💼 Funções</option>
-                  <option value="destinos">📍 Destinos</option>
+                  <optgroup label="Tags de Pessoal">
+                    <option value="destinos">📍 Destinos (Faltas Justificadas)</option>
+                    <option value="funcoes">💼 Funções / Cargos</option>
+                  </optgroup>
+                  <optgroup label="Tags de Material">
+                    <option value="tags">🏷️ Situação do Material (Disponível, etc.)</option>
+                    <option value="material_tipos">📦 Tipos de Material</option>
+                    <option value="material_classes">🎖️ Classes de Material</option>
+                  </optgroup>
+                  <optgroup label="Estrutura Organizacional">
+                    <option value="setores">🏢 Setores / Seções</option>
+                  </optgroup>
                 </select>
               </div>
               <div class="campo" style="flex:1; margin:0">
@@ -2080,8 +2088,15 @@
       };
     });
 
-    /* --- aba TAGS: 4 catálogos com nova doutrina hierárquica --- */
-    const rotCat = { tags: 'Tags', setores: 'Setores / Seções', funcoes: 'Funções', destinos: 'Destinos' };
+    /* --- aba TAGS: Catálogos divididos em Pessoal e Material (v1.5) --- */
+    const rotCat = {
+      destinos: '📍 Destinos (Pessoal)',
+      funcoes: '💼 Funções / Cargos (Pessoal)',
+      tags: '🏷️ Situação do Material (Material)',
+      material_tipos: '📦 Tipos de Material (Material)',
+      material_classes: '🎖️ Classes de Material (Material)',
+      setores: '🏢 Setores / Seções (Estrutura)'
+    };
     
     // Toggle de campos no form do topo
     const cgTSel = $('#cgT');
@@ -2090,7 +2105,7 @@
         const val = cgTSel.value;
         const corWrap = $('#cgCorWrap');
         const siglaWrap = $('#cgSiglaWrap');
-        if (corWrap) corWrap.style.display = val === 'tags' ? 'block' : 'none';
+        if (corWrap) corWrap.style.display = (val === 'tags' || val === 'material_tipos' || val === 'material_classes') ? 'block' : 'none';
         if (siglaWrap) siglaWrap.style.display = val === 'setores' ? 'block' : 'none';
       };
     }
@@ -2098,7 +2113,7 @@
     const carregarCats = async () => {
       const cont = $('#catGer');
       if (!cont) return;
-      const tipos = ['tags', 'setores', 'funcoes', 'destinos'];
+      const tipos = ['destinos', 'funcoes', 'tags', 'material_tipos', 'material_classes', 'setores'];
       const meuGid = (window.ME && window.ME.grupo_id) || null;
       
       // Coletar IDs de grupos subordinados a partir da árvore
@@ -2122,7 +2137,11 @@
           ? Promise.resolve([t, cache[t]])
           : api('/api/catalogo/' + t).then(l => [t, l]).catch(() => [t, []])));
       
-      let html = '';
+      let html = `
+        <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:8px;padding:12px;margin-bottom:18px;font-size:12.5px;color:var(--tx2)">
+          💡 <b>Doutrina de Organização v1.5:</b> As tags estão divididas em <b>Pessoal</b> (Situação/Destino/Funções) e <b>Material</b> (Situação/Tipo/Classe). A tag de setor do militar é preenchida automaticamente pelo Setor ao qual ele está alocado.
+        </div>`;
+
       for (const [t, lista] of resultados) {
         const minhas = lista.filter(x => x.grupo_id === meuGid);
         const subordinadas = lista.filter(x => x.grupo_id && subsIds.has(x.grupo_id));
@@ -2134,13 +2153,13 @@
           return n;
         };
 
-        const chipCorTag = x => t === 'tags' && x.cor
+        const chipCorTag = x => (t === 'tags' || t === 'material_tipos' || t === 'material_classes') && x.cor
           ? `<span style="display:inline-block; width:12px; height:12px; border-radius:50%; background:${esc(x.cor)}; margin-right:6px; vertical-align:middle; border:1px solid rgba(255,255,255,0.2)"></span>`
           : '';
 
         const linhaLista = (x, tipoPermissao, nomeOrigem) => {
           const podeGerenciar = tipoPermissao === 'meu' || tipoPermissao === 'subordinado';
-          const recuo = (t === 'tags' && tipoPermissao === 'meu') ? `margin-left:${nivelTag(x) * 18}px` : '';
+          const recuo = ((t === 'tags' || t === 'material_tipos') && tipoPermissao === 'meu') ? `margin-left:${nivelTag(x) * 18}px` : '';
 
           return `
             <div class="cat-linha ${!podeGerenciar ? 'herdado' : ''}" style="${recuo}; display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:4px; background:var(--painel2); border:1px solid var(--borda); border-radius:6px">
@@ -2198,7 +2217,7 @@
           `;
         }
 
-        const btAnt = (t === 'tags' || t === 'setores' || t === 'funcoes') && minhas.length >= 2
+        const btAnt = (t === 'tags' || t === 'setores' || t === 'funcoes' || t === 'material_tipos') && minhas.length >= 2
           ? `<button class="fantasma" data-ant="${t}" style="min-height:30px; padding:4px 10px; font-size:12px">⚖ Definir antiguidade</button>` : '';
 
         html += `
