@@ -355,6 +355,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/material/itens", reservaAuth(a.hMaterialItensSave))
 	m.Handle("DELETE /api/material/itens/{id}", reservaAuth(a.hMaterialItensDel))
 	m.Handle("GET /api/material/itens/{id}/qr", reservaAuth(a.hMaterialItemQRCode))
+	m.Handle("GET /api/material/etiquetas-lote.pdf", reservaAuth(a.hMaterialEtiquetasLotePDF))
 	m.Handle("GET /api/material/inventario/pdf", a.auth(false, a.hMaterialInventarioPDF))
 	m.Handle("POST /api/material/cautelar", reservaAuth(a.hMaterialCautelar))
 	m.Handle("POST /api/material/devolver", reservaAuth(a.hMaterialDevolver))
@@ -5976,6 +5977,78 @@ func (a *App) hMaterialItemQRCode(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/png")
 	w.Header().Set("Content-Length", strconv.Itoa(len(pngData)))
 	_, _ = w.Write(pngData)
+}
+
+func (a *App) hMaterialEtiquetasLotePDF(w http.ResponseWriter, r *http.Request) {
+	if a.reservaAtivo() {
+		jsonErro(w, http.StatusLocked, "módulo em reserva (indisponível nesta instalação)")
+		return
+	}
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	idsParam := r.URL.Query().Get("ids")
+	var idList []int64
+	if idsParam != "" {
+		for _, s := range strings.Split(idsParam, ",") {
+			s = strings.TrimSpace(s)
+			if id, err := strconv.ParseInt(s, 10, 64); err == nil && id > 0 {
+				idList = append(idList, id)
+			}
+		}
+	}
+
+	q := `SELECT mi.id, mi.nome, mi.codigo_patrimonio, COALESCE(cat.nome, 'Geral'),
+	             COALESCE(mi.numero_serie, ''), COALESCE(mi.nivel_sensibilidade, 'padrao'),
+	             COALESCE(mi.tipo_material, ''), COALESCE(mi.classe_material, '')
+	      FROM material_itens mi
+	      LEFT JOIN material_categorias cat ON cat.id = mi.categoria_id
+	      WHERE 1=1`
+	var args []any
+	if escopo > 0 {
+		q += ` AND mi.grupo_id = ?`
+		args = append(args, escopo)
+	}
+	if len(idList) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(idList)), ",")
+		q += ` AND mi.id IN (` + ph + `)`
+		for _, id := range idList {
+			args = append(args, id)
+		}
+	}
+	q += ` ORDER BY mi.codigo_patrimonio ASC, mi.nome ASC`
+
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao buscar itens de material: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var itens []MaterialItemEtiqueta
+	for rows.Next() {
+		var it MaterialItemEtiqueta
+		if err := rows.Scan(&it.ID, &it.Nome, &it.CodigoPatrimonio, &it.CategoriaNome,
+			&it.NumeroSerie, &it.NivelSensibilidade, &it.TipoMaterial, &it.ClasseMaterial); err == nil {
+			itens = append(itens, it)
+		}
+	}
+
+	if len(itens) == 0 {
+		jsonErro(w, http.StatusNotFound, "nenhum item selecionado ou encontrado")
+		return
+	}
+
+	pdfBytes, err := a.gerarEtiquetasLotePDF(itens)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "erro ao gerar etiquetas em PDF: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `inline; filename="etiquetas_material_lote.pdf"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(pdfBytes)))
+	_, _ = w.Write(pdfBytes)
 }
 
 func (a *App) hNotificacoesHub(w http.ResponseWriter, r *http.Request) {

@@ -1520,3 +1520,133 @@ func (a *App) hExportarDados(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(dadosJSON)))
 	_, _ = w.Write(dadosJSON)
 }
+
+// MaterialItemEtiqueta representa os metadados do material para confecção de etiquetas.
+type MaterialItemEtiqueta struct {
+	ID                 int64  `json:"id"`
+	Nome               string `json:"nome"`
+	CodigoPatrimonio   string `json:"codigo_patrimonio"`
+	CategoriaNome      string `json:"categoria_nome"`
+	NumeroSerie        string `json:"numero_serie"`
+	NivelSensibilidade string `json:"nivel_sensibilidade"`
+	TipoMaterial       string `json:"tipo_material"`
+	ClasseMaterial     string `json:"classe_material"`
+}
+
+// gerarEtiquetasLotePDF gera uma grade padronizada de 10 etiquetas por folha A4 (2 colunas x 5 linhas)
+// com código QR de alta precisão e identificação completa do bem.
+func (a *App) gerarEtiquetasLotePDF(itens []MaterialItemEtiqueta) ([]byte, error) {
+	T := cp1252Traduz.Replace
+	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.SetMargins(7.5, 12, 7.5)
+	pdf.SetAutoPageBreak(false, 0)
+
+	etiquetaW := 95.0
+	etiquetaH := 52.0
+	colGap := 5.0
+	rowGap := 3.0
+	leftMargin := 7.5
+	topMargin := 12.0
+
+	for idx, it := range itens {
+		posNaPagina := idx % 10
+		if posNaPagina == 0 {
+			pdf.AddPage()
+		}
+		col := posNaPagina % 2
+		lin := posNaPagina / 2
+
+		x := leftMargin + float64(col)*(etiquetaW+colGap)
+		y := topMargin + float64(lin)*(etiquetaH+rowGap)
+
+		// Moldura com cantos arredondados
+		pdf.SetDrawColor(148, 163, 184)
+		pdf.SetLineWidth(0.3)
+		pdf.RoundedRect(x, y, etiquetaW, etiquetaH, 2.5, "1234", "D")
+
+		// Faixa superior de cabeçalho
+		pdf.SetFillColor(241, 245, 249)
+		pdf.RoundedRect(x, y, etiquetaW, 7.0, 2.5, "12", "F")
+		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetTextColor(51, 65, 85)
+		pdf.SetXY(x, y+1.5)
+		pdf.CellFormat(etiquetaW, 4.0, "SCI - CONTROLE PATRIMONIAL", "", 0, "C", false, 0, "")
+
+		// QR Code à direita (34x34 mm)
+		payload := fmt.Sprintf("sci://m:%d:%s", it.ID, it.CodigoPatrimonio)
+		qrObj, err := GerarQRCode(payload)
+		if err == nil {
+			pngBytes, errPng := qrObj.RenderPNG(4, 2)
+			if errPng == nil {
+				imgName := fmt.Sprintf("qr_etq_%d_%d", it.ID, idx)
+				opt := fpdf.ImageOptions{ImageType: "PNG"}
+				pdf.RegisterImageOptionsReader(imgName, opt, bytes.NewReader(pngBytes))
+				pdf.ImageOptions(imgName, x+etiquetaW-34.0-3.0, y+8.5, 34.0, 34.0, false, opt, 0, "")
+			}
+		}
+
+		// Textos à esquerda (largura 54 mm)
+		pdf.SetFont("Helvetica", "B", 9)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.SetXY(x+3.5, y+8.5)
+		nomeExibir := it.Nome
+		if len(nomeExibir) > 28 {
+			nomeExibir = nomeExibir[:26] + "..."
+		}
+		pdf.CellFormat(54.0, 4.5, T(nomeExibir), "", 1, "L", false, 0, "")
+
+		// Patrimônio
+		pdf.SetFont("Helvetica", "B", 8.5)
+		pdf.SetTextColor(2, 132, 199)
+		pdf.SetXY(x+3.5, y+14.0)
+		pdf.CellFormat(54.0, 4.0, T("PAT: #"+it.CodigoPatrimonio), "", 1, "L", false, 0, "")
+
+		// Categoria
+		pdf.SetFont("Helvetica", "", 7.5)
+		pdf.SetTextColor(71, 85, 105)
+		pdf.SetXY(x+3.5, y+19.0)
+		catTxt := it.CategoriaNome
+		if catTxt == "" {
+			catTxt = "Geral"
+		}
+		if it.TipoMaterial != "" {
+			catTxt += " · " + it.TipoMaterial
+		}
+		if len(catTxt) > 30 {
+			catTxt = catTxt[:28] + "..."
+		}
+		pdf.CellFormat(54.0, 3.5, T("Cat: "+catTxt), "", 1, "L", false, 0, "")
+
+		// Nº de Série
+		pdf.SetXY(x+3.5, y+23.0)
+		numSerie := it.NumeroSerie
+		if numSerie == "" {
+			numSerie = "—"
+		}
+		pdf.CellFormat(54.0, 3.5, T("Série: "+numSerie), "", 1, "L", false, 0, "")
+
+		// Classe / Sensibilidade
+		pdf.SetXY(x+3.5, y+27.0)
+		classeTxt := it.ClasseMaterial
+		if classeTxt == "" {
+			classeTxt = it.NivelSensibilidade
+		}
+		if classeTxt == "" {
+			classeTxt = "Padrão"
+		}
+		pdf.CellFormat(54.0, 3.5, T("Classe: "+strings.ToUpper(classeTxt)), "", 1, "L", false, 0, "")
+
+		// Rodapé da etiqueta
+		pdf.SetFont("Helvetica", "I", 6.5)
+		pdf.SetTextColor(148, 163, 184)
+		pdf.SetXY(x+2.0, y+45.5)
+		pdf.CellFormat(etiquetaW-4.0, 4.0, T("Exército Brasileiro · Material Identificado"), "", 0, "C", false, 0, "")
+	}
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+

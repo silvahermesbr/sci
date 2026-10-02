@@ -261,7 +261,8 @@
       }
 
       return `
-        <tr data-status="${esc(it.status)}" data-texto="${esc((it.nome + ' ' + it.codigo_patrimonio + ' ' + (it.categoria_nome || '') + ' ' + (it.numero_serie || '') + ' ' + (it.nivel_sensibilidade || '')).toLowerCase())}">
+        <tr data-id="${it.id}" data-status="${esc(it.status)}" data-texto="${esc((it.nome + ' ' + it.codigo_patrimonio + ' ' + (it.categoria_nome || '') + ' ' + (it.numero_serie || '') + ' ' + (it.nivel_sensibilidade || '')).toLowerCase())}">
+          <td style="width:36px; text-align:center"><input type="checkbox" class="chk-inv-item" data-id="${it.id}"></td>
           <td><b>#${esc(it.codigo_patrimonio)}</b></td>
           <td><b>${esc(it.nome)}</b></td>
           <td>${esc(it.categoria_nome || '—')}</td>
@@ -304,13 +305,19 @@
               </select>
             </div>
           </div>
-          <button class="primario" id="btIniciarCautelaInv">⚡ Iniciar Cautela de Item</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button class="primario" id="btImprimirLoteEtiquetas" disabled style="background:#0284c7; border-color:#0284c7" title="Imprimir 10 etiquetas por folha A4 com QR Code dos itens marcados">
+              🖨️ Etiquetas em Lote (<span id="countSelEtiquetas">0</span>)
+            </button>
+            <button class="primario" id="btIniciarCautelaInv">⚡ Iniciar Cautela de Item</button>
+          </div>
         </div>
 
         <div class="rolagem">
           <table id="tabInventario">
             <thead>
               <tr>
+                <th style="width:36px; text-align:center"><input type="checkbox" id="chkTodosInv" title="Selecionar todos"></th>
                 <th>Patrimônio</th>
                 <th>Descrição do Item</th>
                 <th>Categoria</th>
@@ -321,11 +328,47 @@
                 <th style="text-align:right">Ações</th>
               </tr>
             </thead>
-            <tbody>${linhas || '<tr><td colspan="8"><span class="vazio">Nenhum item cadastrado.</span></td></tr>'}</tbody>
+            <tbody>${linhas || '<tr><td colspan="9"><span class="vazio">Nenhum item cadastrado.</span></td></tr>'}</tbody>
           </table>
         </div>
       </div>
     `;
+
+    const atualizarBotoesLote = () => {
+      const marcados = cont.querySelectorAll('.chk-inv-item:checked');
+      const total = marcados.length;
+      const countEl = $('#countSelEtiquetas');
+      const btLote = $('#btImprimirLoteEtiquetas');
+      if (countEl) countEl.innerText = total;
+      if (btLote) btLote.disabled = total === 0;
+    };
+
+    const chkMaster = $('#chkTodosInv');
+    if (chkMaster) {
+      chkMaster.onchange = () => {
+        const estado = chkMaster.checked;
+        cont.querySelectorAll('#tabInventario tbody tr').forEach(tr => {
+          if (tr.style.display !== 'none') {
+            const chk = tr.querySelector('.chk-inv-item');
+            if (chk) chk.checked = estado;
+          }
+        });
+        atualizarBotoesLote();
+      };
+    }
+
+    cont.querySelectorAll('.chk-inv-item').forEach(c => {
+      c.onchange = atualizarBotoesLote;
+    });
+
+    const btLoteEtq = $('#btImprimirLoteEtiquetas');
+    if (btLoteEtq) {
+      btLoteEtq.onclick = () => {
+        const ids = Array.from(cont.querySelectorAll('.chk-inv-item:checked')).map(c => c.dataset.id);
+        if (ids.length === 0) return;
+        window.open('/api/material/etiquetas-lote.pdf?ids=' + ids.join(',') + '&t=' + Date.now(), '_blank');
+      };
+    }
 
     const filtrar = () => {
       const q = ($('#fBuscaInv').value || '').trim().toLowerCase();
@@ -346,6 +389,7 @@
         const ok = okStatus && (!q || txt.includes(q)) && (!cat || txt.includes(cat));
         tr.style.display = ok ? '' : 'none';
       });
+      atualizarBotoesLote();
     };
 
     $('#fBuscaInv').oninput = filtrar;
