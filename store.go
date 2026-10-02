@@ -116,6 +116,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV24(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV25(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1597,5 +1600,107 @@ func (s *Store) migrarV24() error {
 	}
 
 	return s.marcarVersao(24)
+}
+
+// migrarV25: Calendários Dinâmicos estilo Nextcloud/Google Calendar
+// Suporte a múltiplos calendários pessoais e compartilhados, com inscrição forçada por gerentes
+func (s *Store) migrarV25() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 25`).Scan(&v)
+	if v == 25 {
+		return nil
+	}
+
+	ddl := []string{
+		`CREATE TABLE IF NOT EXISTS calendarios (
+			id INTEGER PRIMARY KEY,
+			nome TEXT NOT NULL,
+			cor TEXT NOT NULL DEFAULT '#2563eb',
+			descricao TEXT,
+			autor_usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+			grupo_id INTEGER REFERENCES grupos(id) ON DELETE CASCADE,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_calendarios_autor ON calendarios(autor_usuario_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_calendarios_grupo ON calendarios(grupo_id)`,
+	}
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v25 ddl: %w", err)
+		}
+	}
+
+	// Adicionar coluna calendario_id em calendario_eventos se não existir
+	var colCalEv int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('calendario_eventos') WHERE name='calendario_id'`).Scan(&colCalEv)
+	if colCalEv == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE calendario_eventos ADD COLUMN calendario_id INTEGER REFERENCES calendarios(id) ON DELETE CASCADE`); err != nil {
+			return fmt.Errorf("migração v25 add calendario_id to calendario_eventos: %w", err)
+		}
+		if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_cal_eventos_calid ON calendario_eventos(calendario_id)`); err != nil {
+			return err
+		}
+	}
+
+	// Adicionar colunas calendario_id e forcar_inscricao em calendario_compartilhamentos
+	var colCalComp int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('calendario_compartilhamentos') WHERE name='calendario_id'`).Scan(&colCalComp)
+	if colCalComp == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE calendario_compartilhamentos ADD COLUMN calendario_id INTEGER REFERENCES calendarios(id) ON DELETE CASCADE`); err != nil {
+			return fmt.Errorf("migração v25 add calendario_id to calendario_compartilhamentos: %w", err)
+		}
+		if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_cal_comp_calid ON calendario_compartilhamentos(calendario_id)`); err != nil {
+			return err
+		}
+	}
+
+	var colForcar int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('calendario_compartilhamentos') WHERE name='forcar_inscricao'`).Scan(&colForcar)
+	if colForcar == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE calendario_compartilhamentos ADD COLUMN forcar_inscricao INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("migração v25 add forcar_inscricao to calendario_compartilhamentos: %w", err)
+		}
+	}
+
+	// Se calendario_compartilhamentos tem coluna evento_id NOT NULL, precisamos garantir que ela aceite NULL (pois agora compartilhamos o calendário todo)
+	var compSql string
+	_ = s.db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='calendario_compartilhamentos'`).Scan(&compSql)
+	if strings.Contains(compSql, "evento_id INTEGER NOT NULL") {
+		if _, err := s.db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+			return err
+		}
+		steps := []string{
+			`CREATE TABLE calendario_compartilhamentos_v25 (
+				id INTEGER PRIMARY KEY,
+				calendario_id INTEGER REFERENCES calendarios(id) ON DELETE CASCADE,
+				evento_id INTEGER REFERENCES calendario_eventos(id) ON DELETE CASCADE,
+				alvo_grupo_id INTEGER REFERENCES grupos(id) ON DELETE CASCADE,
+				alvo_papel_id INTEGER REFERENCES usuario_papeis(id) ON DELETE CASCADE,
+				alvo_usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+				pode_editar INTEGER NOT NULL DEFAULT 0,
+				forcar_inscricao INTEGER NOT NULL DEFAULT 0,
+				criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+				CHECK (alvo_grupo_id IS NOT NULL OR alvo_papel_id IS NOT NULL OR alvo_usuario_id IS NOT NULL)
+			)`,
+			`INSERT INTO calendario_compartilhamentos_v25 (id, calendario_id, evento_id, alvo_grupo_id, alvo_papel_id, alvo_usuario_id, pode_editar, forcar_inscricao, criado_em)
+				SELECT id, NULL, evento_id, alvo_grupo_id, alvo_papel_id, alvo_usuario_id, pode_editar, 0, criado_em FROM calendario_compartilhamentos`,
+			`DROP TABLE calendario_compartilhamentos`,
+			`ALTER TABLE calendario_compartilhamentos_v25 RENAME TO calendario_compartilhamentos`,
+			`CREATE INDEX IF NOT EXISTS idx_cal_comp_evento ON calendario_compartilhamentos(evento_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_cal_comp_calid ON calendario_compartilhamentos(calendario_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_cal_comp_grupo ON calendario_compartilhamentos(alvo_grupo_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_cal_comp_usuario ON calendario_compartilhamentos(alvo_usuario_id)`,
+		}
+		for _, q := range steps {
+			if _, err := s.db.Exec(q); err != nil {
+				return fmt.Errorf("migração v25 rebuild calendario_compartilhamentos: %w", err)
+			}
+		}
+		if _, err := s.db.Exec(`PRAGMA foreign_keys=ON`); err != nil {
+			return err
+		}
+	}
+
+	return s.marcarVersao(25)
 }
 

@@ -49,20 +49,14 @@
     app.innerHTML = `
       <div class="msg-header-topo">
         <div>
-          <h2 style="margin:0 0 4px">Mensageria, Despachos & Fórum</h2>
-          <p style="color:var(--tx2);font-size:13px;margin:0">Comunicação operacional, despachos auditáveis com retorno exigido e comunicados gerenciais.</p>
+          <h2 style="margin:0 0 4px">Mensageria & Despachos</h2>
+          <p style="color:var(--tx2);font-size:13px;margin:0">Comunicação operacional oficial, despachos auditáveis com retorno exigido e threads por função.</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button type="button" class="primario" id="btNovaMsg" style="display:flex;align-items:center;gap:6px;padding:8px 16px">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
             Nova Mensagem / Despacho
           </button>
-          ${(u.papel === 'gerente') ? `
-            <button type="button" class="acao-linha" id="btNovoAviso" style="display:flex;align-items:center;gap:6px;padding:8px 14px">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              Publicar Aviso
-            </button>
-          ` : ''}
         </div>
       </div>
 
@@ -82,10 +76,6 @@
         <button type="button" class="msg-aba-btn ${abaAtual === 'arquivadas' ? 'ativo' : ''}" id="abaArquivadas">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
           Arquivo
-        </button>
-        <button type="button" class="msg-aba-btn ${abaAtual === 'avisos' ? 'ativo' : ''}" id="abaAvisos">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-          Mural de Avisos
         </button>
       </div>
 
@@ -110,8 +100,7 @@
       inbox: document.getElementById('abaInbox'),
       despachos: document.getElementById('abaDespachos'),
       enviadas: document.getElementById('abaEnviadas'),
-      arquivadas: document.getElementById('abaArquivadas'),
-      avisos: document.getElementById('abaAvisos')
+      arquivadas: document.getElementById('abaArquivadas')
     };
 
     function alternarAba(novaAba) {
@@ -125,7 +114,6 @@
       else if (novaAba === 'despachos') carregarDespachos();
       else if (novaAba === 'enviadas') carregarEnviadas();
       else if (novaAba === 'arquivadas') carregarArquivadas();
-      else if (novaAba === 'avisos') carregarAvisos();
     }
 
     Object.keys(abas).forEach(k => {
@@ -133,8 +121,6 @@
     });
 
     document.getElementById('btNovaMsg').onclick = () => abrirModalCompor();
-    const btNovoAviso = document.getElementById('btNovoAviso');
-    if (btNovoAviso) btNovoAviso.onclick = () => abrirModalNovoAviso();
 
     document.getElementById('btAddPasta').onclick = async () => {
       const nome = prompt('Nome da nova pasta pessoal:');
@@ -445,7 +431,7 @@
                 ${fmtData(r.criada_em)} às ${fmtHora(r.criada_em)}
               </div>
             </div>
-            <div class="msg-thread-post-corpo">${esc(r.corpo)}</div>
+            <div class="msg-thread-post-corpo" style="word-break:break-word;line-height:1.6">${r.corpo}</div>
             ${gerarHtmlAnexos(r.anexos, `r-${rIdx}`)}
           </div>
         `;
@@ -481,7 +467,7 @@
                   Post original &bull; ${fmtData(msg.criada_em)} às ${fmtHora(msg.criada_em)}
                 </div>
               </div>
-              <div class="msg-thread-post-corpo">${esc(msg.corpo)}</div>
+              <div class="msg-thread-post-corpo" style="word-break:break-word;line-height:1.6">${msg.corpo}</div>
               ${gerarHtmlAnexos(msg.anexos, 'raiz')}
             </div>
 
@@ -503,7 +489,7 @@
                 <input type="file" id="threadInputAnexo" multiple style="display:none">
               </label>
             </div>
-            <textarea id="threadNovoPostCorpo" rows="3" placeholder="${thread.minha_resposta_pendente ? 'Digite aqui sua manifestação / despacho formal em atendimento a esta solicitação...' : 'Escreva um acompanhamento ou comentário para todos nesta thread...'}" style="width:100%;resize:vertical"></textarea>
+            <div id="threadNovoPostEditor"></div>
             <div id="threadListaAnexos" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"></div>
             <div style="display:flex;justify-content:flex-end;margin-top:8px">
               <button type="button" class="primario" id="btEnviarRespostaThread" style="padding:6px 18px">
@@ -542,6 +528,7 @@
       `;
 
       const mModal = modal(html);
+      const editorThread = window.montarRichEditor ? window.montarRichEditor(mModal.querySelector('#threadNovoPostEditor'), thread.minha_resposta_pendente ? 'Digite aqui sua resposta formal ao despacho…' : 'Escreva um acompanhamento…') : null;
 
       // Eventos de Anexos do Post Raiz
       if (msg.anexos && msg.anexos.length > 0) {
@@ -631,8 +618,8 @@
       const btnEnviarResp = mModal.querySelector('#btEnviarRespostaThread');
       if (btnEnviarResp) {
         btnEnviarResp.onclick = async () => {
-          const corpo = (mModal.querySelector('#threadNovoPostCorpo').value || '').trim();
-          if (!corpo) {
+          const corpo = editorThread ? editorThread.getHTML() : '';
+          if (!corpo || corpo === '<p><br></p>') {
             toast('Por favor, digite uma mensagem para enviar na thread', 'erro');
             return;
           }
@@ -734,6 +721,14 @@
         return;
       }
 
+      // Conjunto de destinatários selecionados (CC)
+      let selecionadosIds = new Set();
+      if (dadosIniciais.destinatario_id) {
+        selecionadosIds.add(+dadosIniciais.destinatario_id);
+      }
+
+      let anexosCarregados = (dadosIniciais.anexos && Array.isArray(dadosIniciais.anexos)) ? [...dadosIniciais.anexos] : [];
+
       const opcoesHtml = dests.map(d => {
         const funcao = d.funcao_nome ? ` — ${d.funcao_nome}` : '';
         const grupo = d.grupo_nome ? ` (${d.grupo_nome})` : ' (Global)';
@@ -741,16 +736,14 @@
         return `<option value="${d.id}">${esc(d.papel.toUpperCase())}${esc(grupo)}${esc(funcao)}${esc(pessoa)}</option>`;
       }).join('');
 
-      let anexosCarregados = (dadosIniciais.anexos && Array.isArray(dadosIniciais.anexos)) ? [...dadosIniciais.anexos] : [];
-
       const html = `
-        <div class="modal" style="max-width:680px;width:95%">
+        <div class="modal" style="max-width:760px;width:95%">
           <h3 style="margin-top:0;display:flex;align-items:center;gap:8px">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
             Compor Mensagem Institucional ou Despacho
           </h3>
 
-          <div class="campo" style="margin-bottom:14px">
+          <div class="campo" style="margin-bottom:12px">
             <label style="font-weight:700;display:flex;align-items:center;gap:6px">
               Tipo de Comunicação Institucional
             </label>
@@ -765,12 +758,29 @@
             </div>
           </div>
 
+          <!-- Destinatários & CC -->
           <div class="campo" style="margin-bottom:12px">
-            <label style="font-weight:700">Destinatário (Função / Cadeia de Comando)</label>
-            <select id="mDest" style="width:100%;height:38px">
-              <option value="">Selecione o destinatário…</option>
-              ${opcoesHtml}
-            </select>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:6px">
+              <label style="font-weight:700">Destinatários & Encaminhamento (CC):</label>
+              <div style="display:flex;gap:4px;flex-wrap:wrap">
+                <button type="button" class="acao-linha" id="btListGerentes" style="font-size:11px;padding:2px 6px">👥 Todos Gerentes</button>
+                <button type="button" class="acao-linha" id="btListOperadores" style="font-size:11px;padding:2px 6px">👷 Todos Operadores</button>
+                <button type="button" class="acao-linha" id="btListUnidade" style="font-size:11px;padding:2px 6px">🏢 Minha Unidade</button>
+                <button type="button" class="acao-linha" id="btListChefes" style="font-size:11px;padding:2px 6px">⭐ Chefes de Setor</button>
+                <button type="button" class="acao-linha" id="btLimparDests" style="font-size:11px;padding:2px 6px;color:var(--verm-txt)">Limpar</button>
+              </div>
+            </div>
+
+            <!-- Chips / Pills de Selecionados -->
+            <div id="mPillsDests" style="display:flex;flex-wrap:wrap;gap:6px;min-height:36px;padding:6px;background:var(--painel2);border:1px solid var(--borda2);border-radius:var(--raio);margin-bottom:6px"></div>
+
+            <div style="display:flex;gap:6px">
+              <select id="mSelectDest" style="flex:1;height:36px">
+                <option value="">+ Adicionar destinatário individual…</option>
+                ${opcoesHtml}
+              </select>
+              <button type="button" class="acao-linha" id="mBtnAddDest" style="padding:0 12px;font-size:12px">+ Incluir</button>
+            </div>
           </div>
 
           <div class="campo" style="margin-bottom:12px">
@@ -778,9 +788,10 @@
             <input type="text" id="mAssunto" value="${esc(dadosIniciais.assunto || '')}" placeholder="ex.: Diretriz, Convocação, Relatório…" style="width:100%">
           </div>
 
+          <!-- Barra de Ferramentas / Rich Text -->
           <div class="campo" style="margin-bottom:12px">
-            <label style="font-weight:700">Mensagem / Despacho</label>
-            <textarea id="mCorpo" rows="6" placeholder="Digite aqui o texto…" style="width:100%;resize:vertical">${esc(dadosIniciais.corpo || '')}</textarea>
+            <label style="font-weight:700;margin-bottom:4px;display:block">Mensagem / Despacho (Editor Formatado)</label>
+            <div id="mEditorContainer"></div>
           </div>
 
           <!-- Upload de Anexos -->
@@ -805,9 +816,80 @@
       const mModal = modal(html);
       const q = s => mModal.querySelector(s);
 
-      if (dadosIniciais.destinatario_id) {
-        q('#mDest').value = String(dadosIniciais.destinatario_id);
+      // Instancia Rich Editor
+      let editorInst = null;
+      if (typeof window.montarRichEditor === 'function') {
+        editorInst = window.montarRichEditor(q('#mEditorContainer'), 'Digite aqui o teor da mensagem institucional ou despacho…', dadosIniciais.corpo || '');
+      } else {
+        q('#mEditorContainer').innerHTML = `<textarea id="mCorpoFallback" rows="6" style="width:100%;resize:vertical">${esc(dadosIniciais.corpo || '')}</textarea>`;
       }
+
+      function renderDestsPills() {
+        const pCont = q('#mPillsDests');
+        if (selecionadosIds.size === 0) {
+          pCont.innerHTML = '<span style="font-size:12px;color:var(--tx3);line-height:24px">Nenhum destinatário selecionado ainda.</span>';
+          return;
+        }
+
+        pCont.innerHTML = Array.from(selecionadosIds).map(id => {
+          const d = dests.find(x => x.id === id);
+          if (!d) return '';
+          const funcao = d.funcao_nome ? ` · ${d.funcao_nome}` : '';
+          const pessoa = d.nome_guerra ? ` [${d.nome_guerra}]` : '';
+          return `
+            <span class="dest-pill">
+              <span><b>${esc(d.papel.toUpperCase())}</b>${esc(funcao)}${esc(pessoa)}</span>
+              <span class="dest-pill-remove" data-remdest="${id}" title="Remover">&times;</span>
+            </span>
+          `;
+        }).join('');
+
+        pCont.querySelectorAll('[data-remdest]').forEach(b => {
+          b.onclick = () => {
+            selecionadosIds.delete(+b.dataset.remdest);
+            renderDestsPills();
+          };
+        });
+      }
+      renderDestsPills();
+
+      q('#mBtnAddDest').onclick = () => {
+        const val = +q('#mSelectDest').value;
+        if (val) {
+          selecionadosIds.add(val);
+          renderDestsPills();
+        }
+      };
+      q('#mSelectDest').onchange = () => {
+        const val = +q('#mSelectDest').value;
+        if (val) {
+          selecionadosIds.add(val);
+          renderDestsPills();
+          q('#mSelectDest').value = '';
+        }
+      };
+
+      // Atalhos de Listas Predefinidas
+      q('#btListGerentes').onclick = () => {
+        dests.filter(d => d.papel === 'gerente').forEach(d => selecionadosIds.add(d.id));
+        renderDestsPills();
+      };
+      q('#btListOperadores').onclick = () => {
+        dests.filter(d => d.papel === 'operador').forEach(d => selecionadosIds.add(d.id));
+        renderDestsPills();
+      };
+      q('#btListUnidade').onclick = () => {
+        dests.filter(d => d.grupo_id && d.grupo_id === u.grupo_id).forEach(d => selecionadosIds.add(d.id));
+        renderDestsPills();
+      };
+      q('#btListChefes').onclick = () => {
+        dests.filter(d => d.funcao_nome && /chefe|comandante|diretor/i.test(d.funcao_nome)).forEach(d => selecionadosIds.add(d.id));
+        renderDestsPills();
+      };
+      q('#btLimparDests').onclick = () => {
+        selecionadosIds.clear();
+        renderDestsPills();
+      };
 
       function renderAnexosModal() {
         const contAnx = q('#mListaAnexos');
@@ -859,21 +941,21 @@
       q('#mBtnCancel').onclick = () => mModal.remove();
 
       q('#mBtnEnviar').onclick = async () => {
-        const destId = +q('#mDest').value;
+        const destArray = Array.from(selecionadosIds);
         const assunto = q('#mAssunto').value.trim();
-        const corpo = q('#mCorpo').value.trim();
+        const corpo = editorInst ? (typeof editorInst.getHTML === 'function' ? editorInst.getHTML().trim() : (typeof editorInst.getValue === 'function' ? editorInst.getValue().trim() : '')) : (q('#mCorpoFallback') ? q('#mCorpoFallback').value.trim() : '');
         const tipo = q('#mTipo').value;
 
-        if (!destId) { toast('Selecione o destinatário', 'erro'); return; }
+        if (destArray.length === 0) { toast('Selecione pelo menos um destinatário (ou CC)', 'erro'); return; }
         if (!assunto) { toast('Informe o assunto', 'erro'); return; }
-        if (!corpo) { toast('Escreva a mensagem', 'erro'); return; }
+        if (!corpo || corpo === '<p><br></p>') { toast('Escreva a mensagem', 'erro'); return; }
 
         q('#mBtnEnviar').disabled = true;
         try {
           await api('/api/mensagens', {
             method: 'POST',
             body: JSON.stringify({
-              destinatario_papel_ids: [destId],
+              destinatario_papel_ids: destArray,
               assunto: assunto,
               corpo: corpo,
               tipo: tipo,
@@ -891,291 +973,6 @@
       };
     }
 
-    // ---------- MURAL DE AVISOS & COMUNICADOS GERENCIAIS ----------
-
-    async function carregarAvisos() {
-      cont.innerHTML = '<div class="carregando">Carregando mural de avisos…</div>';
-      try {
-        const avisos = await api('/api/avisos');
-        renderListaAvisos(avisos);
-      } catch (e) {
-        cont.innerHTML = '<div class="vazio" style="padding:40px;text-align:center">Falha ao carregar mural de avisos.</div>';
-      }
-    }
-
-    function renderListaAvisos(avisos) {
-      if (!avisos || avisos.length === 0) {
-        cont.innerHTML = `
-          <div class="msg-vazio-card">
-            <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-            <p>Nenhum comunicado ou aviso ativo no mural.</p>
-          </div>
-        `;
-        return;
-      }
-
-      const ehGerente = (u.papel === 'gerente');
-
-      const html = avisos.map(a => {
-        const autor = a.autor || {};
-        const nomeAutor = formatarNomeRemetente(autor.nome_completo, autor.nome_guerra);
-        const grupoOrig = a.origem && a.origem.grupo_nome ? `<span class="badge-fixado" style="background:rgba(139,92,246,0.15);border-color:rgba(139,92,246,0.4);color:#a78bfa">📢 REPOSTADO DE: ${esc(a.origem.grupo_nome)}</span>` : '';
-        const badgeFixado = a.fixado ? `<span class="badge-fixado">📌 FIXADO</span>` : '';
-
-        // Botão de Ciente
-        let btnCiente = '';
-        if (a.meu_ciente) {
-          btnCiente = `<span class="badge-despacho-ok" style="padding:4px 10px">✓ Ciente Registrado</span>`;
-        } else {
-          btnCiente = `<button type="button" class="primario" data-darcliente="${a.id}" style="padding:4px 12px;font-size:12px">✋ Dar Ciente</button>`;
-        }
-
-        // Opção de Repostar (para gerentes subordinados caso o aviso venha de outro grupo)
-        let btnRepostar = '';
-        if (ehGerente && a.grupo_id !== u.grupo_id) {
-          btnRepostar = `<button type="button" class="acao-linha" data-repostar="${a.id}" style="font-size:12px;padding:3px 8px">🔄 Repostar p/ meu Grupo</button>`;
-        }
-
-        // Excluir (autor ou gerente do grupo)
-        let btnExcluir = '';
-        if ((autor.usuario_id === u.id) || (ehGerente && a.grupo_id === u.grupo_id)) {
-          btnExcluir = `<button type="button" class="acao-linha" data-delaviso="${a.id}" style="font-size:12px;color:var(--verm-txt);padding:3px 8px">Excluir</button>`;
-        }
-
-        return `
-          <div class="aviso-card ${a.fixado ? 'fixado' : ''}" id="avisoCard_${a.id}">
-            <div class="aviso-card-topo">
-              <div>
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
-                  ${badgeFixado}
-                  ${grupoOrig}
-                  <span style="font-size:12px;color:var(--tx3)">Publicado em <b>${esc(a.grupo_nome)}</b> · ${fmtData(a.criado_em)} ${fmtHora(a.criado_em)}</span>
-                </div>
-                <h4 class="aviso-card-titulo">${esc(a.titulo)}</h4>
-                <div style="font-size:12.5px;color:var(--tx2)">Por: ${nomeAutor} (${esc(autor.papel.toUpperCase())})</div>
-              </div>
-              <div style="display:flex;align-items:center;gap:6px">
-                ${btnRepostar}
-                ${btnExcluir}
-              </div>
-            </div>
-
-            <div class="aviso-card-corpo">${esc(a.conteudo)}</div>
-
-            <div class="aviso-card-rodape">
-              <div style="display:flex;align-items:center;gap:8px">
-                ${btnCiente}
-                <button type="button" class="acao-linha" data-vercientes="${a.id}" style="font-size:12px;padding:3px 8px">
-                  👥 Ver Cientes (${a.total_cientes || 0})
-                </button>
-              </div>
-
-              <div style="display:flex;align-items:center;gap:8px">
-                <button type="button" class="acao-linha" data-togglecomm="${a.id}" style="font-size:12px;padding:3px 8px">
-                  💬 Comentários (${a.total_comentarios || 0})
-                </button>
-              </div>
-            </div>
-
-            <div class="aviso-comentarios-box" id="boxComm_${a.id}" style="display:none">
-              <div class="carregando">Carregando comentários…</div>
-            </div>
-          </div>
-        `;
-      }).join('');
-
-      cont.innerHTML = `<div>${html}</div>`;
-
-      // Handlers do mural
-      cont.querySelectorAll('[data-darcliente]').forEach(b => {
-        b.onclick = async () => {
-          const id = +b.dataset.darcliente;
-          try {
-            await api(`/api/avisos/${id}/ciente`, { method: 'POST' });
-            toast('Ciente registrado com sucesso!');
-            carregarAvisos();
-            atualizarBadges();
-          } catch (e) {}
-        };
-      });
-
-      cont.querySelectorAll('[data-repostar]').forEach(b => {
-        b.onclick = async () => {
-          const id = +b.dataset.repostar;
-          if (!confirm('Deseja repostar este comunicado formalmente no mural do seu grupo?')) return;
-          try {
-            await api(`/api/avisos/${id}/repostar`, { method: 'POST' });
-            toast('Aviso repostado para sua equipe!');
-            carregarAvisos();
-          } catch (e) {}
-        };
-      });
-
-      cont.querySelectorAll('[data-delaviso]').forEach(b => {
-        b.onclick = async () => {
-          const id = +b.dataset.delaviso;
-          if (!confirm('Deseja remover este aviso do mural?')) return;
-          try {
-            await api(`/api/avisos/${id}`, { method: 'DELETE' });
-            toast('Aviso excluído.');
-            carregarAvisos();
-          } catch (e) {}
-        };
-      });
-
-      cont.querySelectorAll('[data-vercientes]').forEach(b => {
-        b.onclick = async () => {
-          const id = +b.dataset.vercientes;
-          try {
-            const det = await api(`/api/avisos/${id}/detalhes`);
-            abrirModalCientes(det.cientes || []);
-          } catch (e) {}
-        };
-      });
-
-      cont.querySelectorAll('[data-togglecomm]').forEach(b => {
-        b.onclick = async () => {
-          const id = +b.dataset.togglecomm;
-          const box = document.getElementById(`boxComm_${id}`);
-          if (!box) return;
-          if (box.style.display === 'block') {
-            box.style.display = 'none';
-            return;
-          }
-          box.style.display = 'block';
-          carregarComentariosAviso(id, box);
-        };
-      });
-    }
-
-    async function carregarComentariosAviso(avisoId, box) {
-      box.innerHTML = '<div class="carregando">Carregando…</div>';
-      try {
-        const det = await api(`/api/avisos/${avisoId}/detalhes`);
-        const lista = det.comentarios || [];
-
-        let commHtml = lista.map(c => `
-          <div class="aviso-comentario-item">
-            <div style="display:flex;justify-content:space-between;margin-bottom:2px">
-              <b>${esc(c.nome_guerra || c.login)} <small style="font-weight:normal;opacity:0.8">(${esc(c.papel)})</small></b>
-              <span style="font-size:11px;color:var(--tx3)">${fmtData(c.criado_em)} ${fmtHora(c.criado_em)}</span>
-            </div>
-            <div>${esc(c.comentario)}</div>
-          </div>
-        `).join('');
-
-        if (lista.length === 0) {
-          commHtml = '<div style="font-size:12px;color:var(--tx3);padding:6px 0">Nenhum comentário nesta thread ainda.</div>';
-        }
-
-        box.innerHTML = `
-          <div style="margin-bottom:10px">${commHtml}</div>
-          <div style="display:flex;gap:8px">
-            <input type="text" id="inComm_${avisoId}" placeholder="Escreva um comentário ou apontamento…" style="flex:1;height:34px;font-size:12.5px">
-            <button type="button" class="primario" id="btEnvComm_${avisoId}" style="padding:0 14px;font-size:12.5px">Enviar</button>
-          </div>
-        `;
-
-        box.querySelector(`#btEnvComm_${avisoId}`).onclick = async () => {
-          const input = box.querySelector(`#inComm_${avisoId}`);
-          const txt = input.value.trim();
-          if (!txt) return;
-          try {
-            await api(`/api/avisos/${avisoId}/comentar`, {
-              method: 'POST',
-              body: JSON.stringify({ comentario: txt })
-            });
-            input.value = '';
-            carregarComentariosAviso(avisoId, box);
-          } catch (e) {}
-        };
-      } catch (e) {
-        box.innerHTML = '<div class="vazio">Falha ao obter comentários.</div>';
-      }
-    }
-
-    function abrirModalCientes(cientes) {
-      const html = `
-        <div class="modal" style="max-width:520px;width:95%">
-          <h3 style="margin-top:0">Militares que deram Ciente</h3>
-          <p style="color:var(--tx2);font-size:12.5px;margin-bottom:12px">Auditoria e confirmação de leitura deste comunicado:</p>
-
-          <div style="max-height:360px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:6px 12px">
-            ${cientes.length === 0 ? '<div style="padding:20px;text-align:center;color:var(--tx3)">Nenhum ciente registrado até o momento.</div>' : ''}
-            ${cientes.map(c => `
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed var(--borda)">
-                <div>
-                  <b>${esc(c.nome_completo || c.nome_guerra || c.login)}</b>
-                  <div style="font-size:11.5px;color:var(--tx3)">Guerra: ${esc(c.nome_guerra || '—')} (${esc(c.papel)})</div>
-                </div>
-                <div style="font-size:12px;color:var(--verde-txt);text-align:right">
-                  ✓ ${fmtData(c.ciente_em)}<br><small>${fmtHora(c.ciente_em)}</small>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-
-          <div class="modal-acoes" style="justify-content:flex-end;margin-top:14px">
-            <button type="button" class="primario" id="btFecharCientes">Fechar</button>
-          </div>
-        </div>
-      `;
-      const m = modal(html);
-      m.querySelector('#btFecharCientes').onclick = () => m.remove();
-    }
-
-    function abrirModalNovoAviso() {
-      const html = `
-        <div class="modal" style="max-width:620px;width:95%">
-          <h3 style="margin-top:0">Publicar Novo Aviso no Mural</h3>
-          <p style="color:var(--tx2);font-size:12.5px;margin-bottom:14px">Comunicado formal visível para toda a equipe subordinada, com confirmação obrigatória de ciente.</p>
-
-          <div class="campo" style="margin-bottom:12px">
-            <label style="font-weight:700">Título do Comunicado *</label>
-            <input type="text" id="avTitulo" placeholder="ex.: Diretrizes para Operação Especial, Escalas de Serviço…" style="width:100%">
-          </div>
-
-          <div class="campo" style="margin-bottom:12px">
-            <label style="font-weight:700">Conteúdo do Aviso *</label>
-            <textarea id="avConteudo" rows="6" placeholder="Descreva os detalhes, determinações e prazos…" style="width:100%;resize:vertical"></textarea>
-          </div>
-
-          <div class="campo" style="margin-bottom:16px">
-            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-              <input type="checkbox" id="avFixado">
-              📌 <b>Fixar no topo do mural</b> (destaque contínuo)
-            </label>
-          </div>
-
-          <div class="modal-acoes" style="justify-content:flex-end;gap:8px">
-            <button type="button" class="acao-linha" id="avCancel">Cancelar</button>
-            <button type="button" class="primario" id="avPublicar" style="padding:8px 20px">Publicar no Mural</button>
-          </div>
-        </div>
-      `;
-      const m = modal(html);
-      m.querySelector('#avCancel').onclick = () => m.remove();
-      m.querySelector('#avPublicar').onclick = async () => {
-        const tit = m.querySelector('#avTitulo').value.trim();
-        const cont = m.querySelector('#avConteudo').value.trim();
-        const fix = m.querySelector('#avFixado').checked;
-
-        if (!tit || !cont) return toast('Preencha título e conteúdo', 'erro');
-
-        m.querySelector('#avPublicar').disabled = true;
-        try {
-          await api('/api/avisos', {
-            method: 'POST',
-            body: JSON.stringify({ titulo: tit, conteudo: cont, fixado: fix })
-          });
-          toast('Aviso publicado com sucesso no mural!');
-          m.remove();
-          alternarAba('avisos');
-        } catch (e) {
-          m.querySelector('#avPublicar').disabled = false;
-        }
-      };
-    }
 
     // Inicialização da tela
     await carregarPastas();

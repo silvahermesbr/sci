@@ -3243,13 +3243,44 @@ input[type="checkbox"] {
 .cal-filtros-bar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   background: var(--painel);
   border: 1px solid var(--borda);
   border-radius: var(--raio);
   padding: 8px 14px;
   margin-bottom: 14px;
   flex-wrap: wrap;
+}
+
+.cal-item-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--painel2);
+  border: 1px solid var(--borda2);
+  border-radius: 14px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--tx1);
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s ease;
+}
+
+.cal-item-pill:hover {
+  background: var(--painel3);
+  border-color: var(--primaria);
+}
+
+.cal-badge-forcado {
+  background: rgba(220, 38, 38, 0.15);
+  border: 1px solid rgba(220, 38, 38, 0.3);
+  color: var(--verm-txt);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
 }
 
 .cal-filtro-item {
@@ -3476,4 +3507,124 @@ input[type="checkbox"] {
   background: rgba(14, 165, 233, 0.15);
   border-color: rgba(14, 165, 233, 0.4);
   color: #38bdf8;
+}
+
+/* Rich Text Editor Toolbar (Estilo DOCX / Word) */
+.rich-editor-wrapper {
+  border: 1px solid var(--borda2);
+  border-radius: var(--raio);
+  background: var(--painel);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.rich-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  background: var(--painel2);
+  border-bottom: 1px solid var(--borda);
+  align-items: center;
+}
+.rich-btn-group {
+  display: inline-flex;
+  border: 1px solid var(--borda);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--painel);
+}
+.rich-btn {
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--borda);
+  color: var(--tx2);
+  padding: 3px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  transition: all 0.15s ease;
+}
+.rich-btn:last-child {
+  border-right: none;
+}
+.rich-btn:hover {
+  background: var(--painel3);
+  color: var(--tx);
+}
+.rich-btn:active {
+  background: var(--primario);
+  color: #fff;
+}
+.rich-content {
+  min-height: 140px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 12px;
+  outline: none;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--tx);
+  background: var(--fundo);
+}
+.rich-content:empty:before {
+  content: attr(data-placeholder);
+  color: var(--tx3);
+  pointer-events: none;
+}
+.rich-content h1, .rich-content h2, .rich-content h3 {
+  margin: 6px 0;
+  color: var(--tx);
+}
+.rich-content p {
+  margin: 4px 0;
+}
+.rich-content ul, .rich-content ol {
+  padding-left: 24px;
+  margin: 4px 0;
+}
+
+/* Multi-select Pills / CC */
+.dest-pills-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  background: var(--painel2);
+  min-height: 40px;
+  align-items: center;
+}
+.dest-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: var(--tx);
+  border-radius: 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.dest-pill-remove {
+  cursor: pointer;
+  color: var(--verm-txt);
+  font-weight: 700;
+  font-size: 13px;
+  margin-left: 2px;
+}
+.dest-pills-input {
+  border: none;
+  background: transparent;
+  color: var(--tx);
+  outline: none;
+  font-size: 12.5px;
+  flex: 1;
+  min-width: 140px;
 }

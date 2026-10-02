@@ -74,8 +74,12 @@
       </div>
 
       <!-- Barra de Navegação e Breadcrumbs -->
-      <div class="drive-bar-navegacao">
-        <div class="drive-breadcrumbs" id="driveBreadcrumbs">
+      <div class="drive-bar-navegacao" style="display:flex;align-items:center;gap:10px">
+        <button type="button" class="btn-acao-drive" id="btRetornarPastaDrive" style="display:none;align-items:center;gap:6px;padding:5px 12px;font-size:12.5px" title="Retornar à pasta anterior">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+          Retornar
+        </button>
+        <div class="drive-breadcrumbs" id="driveBreadcrumbs" style="flex:1">
           <span class="crumb-item ativo">Meu Drive</span>
         </div>
         <div class="drive-busca-box">
@@ -104,6 +108,21 @@
           url += '&compartilhados=1';
         }
         const res = await api(url);
+
+        // Botão Retornar à pasta anterior
+        const btnRetornar = document.getElementById('btRetornarPastaDrive');
+        if (btnRetornar) {
+          if (!visualizandoCompartilhados && res.breadcrumbs && res.breadcrumbs.length > 1) {
+            btnRetornar.style.display = 'inline-flex';
+            const pastaAnterior = res.breadcrumbs[res.breadcrumbs.length - 2];
+            btnRetornar.onclick = () => {
+              pastaAtualID = pastaAnterior.id;
+              carregarItens();
+            };
+          } else {
+            btnRetornar.style.display = 'none';
+          }
+        }
 
         // Renderizar Breadcrumbs
         const bcEl = document.getElementById('driveBreadcrumbs');

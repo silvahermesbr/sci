@@ -1,6 +1,6 @@
-/* SCI — Módulo de Calendário Operacional & Mesh Unificado (v1.2 Fase 3)
-   Visão em Grid Mensal consolidando Eventos da Unidade, Escalas de Serviço ativas
-   e Prazos de Despachos/Fórum com Compartilhamento Granular estilo Google Calendar. */
+/* SCI — Módulo de Calendário Operacional & Mesh Unificado (v1.3 Nextcloud/Google Style)
+   Múltiplos calendários dinâmicos (pessoais e compartilhados), com suporte a inscrição forçada
+   por gerentes, compartilhamento granular com grupos/usuários e integração com escalas/despachos. */
 (function () {
   'use strict';
 
@@ -14,6 +14,10 @@
   ];
 
   const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+  // Cache de calendários e seleções ativas
+  let colecoesCache = { meus: [], compartilhados: [] };
+  let calendariosAtivos = new Set(); // IDs de calendários visíveis
 
   window.ViewCalendario = async function (mesParam) {
     const u = quem();
@@ -36,7 +40,6 @@
       }
     }
 
-    let exibirEventos = true;
     let exibirEscalas = true;
     let exibirDespachos = true;
 
@@ -44,7 +47,7 @@
       <div class="cal-header-topo">
         <div class="cal-titulo-bloco">
           <h2 style="margin:0 0 4px">Calendário Operacional</h2>
-          <p style="color:var(--tx2);font-size:13px;margin:0">Visão unificada de eventos institucionais, escalas de serviço e prazos de despachos.</p>
+          <p style="color:var(--tx2);font-size:13px;margin:0">Visão unificada estilo Nextcloud/Google com calendários dinâmicos e inscrições institucionais.</p>
         </div>
         <div class="cal-acoes-topo">
           <div class="cal-nav-mes">
@@ -53,28 +56,36 @@
             <button type="button" class="btn-cal-nav" id="btMesProx" title="Próximo Mês">›</button>
             <span class="cal-mes-rotulo" id="lblMesAno">${NOMES_MESES[mesAtual - 1]} ${anoAtual}</span>
           </div>
-          <button type="button" class="primario" id="btNovoEvento" style="display:flex;align-items:center;gap:6px">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            Novo Evento
-          </button>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="acao-linha" id="btGerenciarCals" style="display:flex;align-items:center;gap:6px">
+              ⚙️ Gerenciar Calendários
+            </button>
+            <button type="button" class="primario" id="btNovoEvento" style="display:flex;align-items:center;gap:6px">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+              Novo Evento
+            </button>
+          </div>
         </div>
       </div>
 
-      <!-- Filtros Rápidos de Camadas (Estilo Google Calendar) -->
-      <div class="cal-filtros-bar">
-        <span style="font-size:12px;font-weight:600;color:var(--tx3);margin-right:8px">CAMADAS:</span>
-        <label class="cal-filtro-item">
-          <input type="checkbox" id="chkFiltrarEventos" checked>
-          <span class="cal-cor-dot" style="background:#2563eb"></span> Eventos da Unidade
-        </label>
-        <label class="cal-filtro-item">
-          <input type="checkbox" id="chkFiltrarEscalas" checked>
-          <span class="cal-cor-dot" style="background:#059669"></span> Escalas de Serviço
-        </label>
-        <label class="cal-filtro-item">
-          <input type="checkbox" id="chkFiltrarDespachos" checked>
-          <span class="cal-cor-dot" style="background:#d97706"></span> Prazos & Despachos
-        </label>
+      <!-- Barra de Calendários Dinâmicos (Nextcloud/Google Style) -->
+      <div class="cal-filtros-bar" id="barCalendariosDin">
+        <div style="display:flex;align-items:center;gap:8px;margin-right:8px">
+          <span style="font-size:12px;font-weight:700;color:var(--tx2)">📅 CALENDÁRIOS:</span>
+        </div>
+        <div id="listaChipsCalendarios" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--tx3)">Carregando seus calendários…</span>
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:12px">
+          <label class="cal-filtro-item" title="Alternar visualização de escalas de serviço">
+            <input type="checkbox" id="chkFiltrarEscalas" checked>
+            <span class="cal-cor-dot" style="background:#059669"></span> Escalas
+          </label>
+          <label class="cal-filtro-item" title="Alternar visualização de despachos com prazo">
+            <input type="checkbox" id="chkFiltrarDespachos" checked>
+            <span class="cal-cor-dot" style="background:#d97706"></span> Despachos
+          </label>
+        </div>
       </div>
 
       <!-- Grade do Calendário -->
@@ -87,6 +98,74 @@
         </div>
       </div>
     `;
+
+    // Carregar Lista de Calendários da API
+    const carregarColecoes = async () => {
+      try {
+        const res = await api('/api/calendarios');
+        colecoesCache = res;
+
+        // Se calendariosAtivos estiver vazio, inicializa com todos marcados
+        if (calendariosAtivos.size === 0) {
+          (res.meus || []).forEach(c => calendariosAtivos.add(c.id));
+          (res.compartilhados || []).forEach(c => calendariosAtivos.add(c.id));
+        }
+
+        renderChipsCalendarios();
+      } catch (e) {
+        console.error('Erro ao carregar calendários:', e);
+      }
+    };
+
+    const renderChipsCalendarios = () => {
+      const box = document.getElementById('listaChipsCalendarios');
+      if (!box) return;
+
+      const meus = colecoesCache.meus || [];
+      const comps = colecoesCache.compartilhados || [];
+
+      let html = '';
+
+      meus.forEach(c => {
+        const ativo = calendariosAtivos.has(c.id);
+        html += `
+          <label class="cal-item-pill ${ativo ? 'ativo' : ''}" style="border-left: 3px solid ${c.cor}">
+            <input type="checkbox" data-calid="${c.id}" ${ativo ? 'checked' : ''} style="display:none">
+            <span class="cal-cor-dot" style="background:${c.cor};opacity:${ativo ? '1' : '0.3'}"></span>
+            <span style="font-weight:${ativo ? '600' : 'normal'}">${esc(c.nome)}</span>
+          </label>
+        `;
+      });
+
+      comps.forEach(c => {
+        const ativo = calendariosAtivos.has(c.id);
+        const badgeForcado = c.inscricao_forcada ? '<span class="cal-badge-forcado" title="Calendário institucional atribuído pelo Gerente">🔒 Forçado</span>' : '';
+        html += `
+          <label class="cal-item-pill ${ativo ? 'ativo' : ''}" style="border-left: 3px solid ${c.cor}">
+            <input type="checkbox" data-calid="${c.id}" ${ativo ? 'checked' : ''} style="display:none">
+            <span class="cal-cor-dot" style="background:${c.cor};opacity:${ativo ? '1' : '0.3'}"></span>
+            <span style="font-weight:${ativo ? '600' : 'normal'}">${esc(c.nome)} (${esc(c.autor_nome)})</span>
+            ${badgeForcado}
+          </label>
+        `;
+      });
+
+      if (meus.length === 0 && comps.length === 0) {
+        html = '<span style="font-size:12px;color:var(--tx3)">Nenhum calendário ativo.</span>';
+      }
+
+      box.innerHTML = html;
+
+      box.querySelectorAll('input[data-calid]').forEach(chk => {
+        chk.onchange = () => {
+          const cid = +chk.dataset.calid;
+          if (chk.checked) calendariosAtivos.add(cid);
+          else calendariosAtivos.delete(cid);
+          renderChipsCalendarios();
+          carregarMes();
+        };
+      });
+    };
 
     const carregarMes = async () => {
       const grade = document.getElementById('calGradeCorpo');
@@ -109,9 +188,15 @@
       const grade = document.getElementById('calGradeCorpo');
       if (!grade) return;
 
-      const eventos = dados.eventos || [];
+      const todosEventos = dados.eventos || [];
       const escalas = dados.escalas || [];
       const despachos = dados.despachos || [];
+
+      // Filtra eventos de acordo com os calendários selecionados
+      const eventos = todosEventos.filter(ev => {
+        if (!ev.calendario_id) return true; // legados ou globais
+        return calendariosAtivos.has(ev.calendario_id);
+      });
 
       // Primeiro dia do mês e total de dias
       const primeiroDiaSemana = new Date(anoAtual, mesAtual - 1, 1).getDay(); // 0 a 6
@@ -134,11 +219,11 @@
         const ehHoje = (dataIso === hojeDataStr);
 
         // Filtrar itens do dia
-        const evsDia = exibirEventos ? eventos.filter(e => {
+        const evsDia = eventos.filter(e => {
           const dtIni = (e.data_inicio || '').substring(0, 10);
           const dtFim = e.data_fim ? e.data_fim.substring(0, 10) : dtIni;
           return dataIso >= dtIni && dataIso <= dtFim;
-        }) : [];
+        });
 
         const escDia = exibirEscalas ? escalas.filter(es => {
           const dtIni = (es.data_inicio || '').substring(0, 10);
@@ -191,7 +276,7 @@
         cel.onclick = (e) => {
           if (e.target.closest('.btn-cal-add-dia') || e.target.closest('.cal-chip-evento')) return;
           const dt = cel.dataset.data;
-          abrirModalAgendaDia(dt, dados, () => carregarMes());
+          abrirModalAgendaDia(dt, { eventos, escalas, despachos }, () => carregarMes());
         };
       });
 
@@ -234,11 +319,6 @@
       carregarMes();
     };
 
-    // Filtros de Camadas
-    document.getElementById('chkFiltrarEventos').onchange = (e) => {
-      exibirEventos = e.target.checked;
-      carregarMes();
-    };
     document.getElementById('chkFiltrarEscalas').onchange = (e) => {
       exibirEscalas = e.target.checked;
       carregarMes();
@@ -248,14 +328,304 @@
       carregarMes();
     };
 
+    // Botão Gerenciar Calendários
+    document.getElementById('btGerenciarCals').onclick = () => {
+      abrirModalGerenciarCalendarios(() => {
+        carregarColecoes().then(carregarMes);
+      });
+    };
+
     // Botão Novo Evento
     document.getElementById('btNovoEvento').onclick = () => {
       const dtHoje = `${anoAtual}-${String(mesAtual).padStart(2, '0')}-01`;
       abrirModalFormEvento(null, dtHoje, () => carregarMes());
     };
 
-    carregarMes();
+    await carregarColecoes();
+    await carregarMes();
   };
+
+  // Modal para Gerenciar Múltiplos Calendários (Adicionar, Compartilhar com Usuários/Grupos, Forçar se Gerente)
+  function abrirModalGerenciarCalendarios(aoAtualizar) {
+    const u = quem();
+    const ehGerente = (u.papel === 'gerente');
+
+    const html = `
+      <div class="cartao modal-conteudo-box" style="max-width:620px;margin:auto">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div>
+            <h3 style="margin:0 0 4px">Gerenciar Calendários</h3>
+            <span style="font-size:12px;color:var(--tx3)">Crie calendários temáticos, compartilhe ou defina inscrições para a equipe.</span>
+          </div>
+          <button type="button" class="btn-fechar-modal" id="btXGerCal">✕</button>
+        </div>
+
+        <!-- Criar Novo Calendário -->
+        <div style="background:var(--painel2);border:1px solid var(--borda2);border-radius:var(--raio);padding:12px;margin-bottom:16px">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px">➕ Criar Novo Calendário</div>
+          <div style="display:grid;grid-template-columns:1fr 80px 100px;gap:8px">
+            <input type="text" id="novoCalNome" placeholder="ex.: Operações Especiais, Treinamento..." style="height:34px">
+            <input type="color" id="novoCalCor" value="#2563eb" style="height:34px;padding:2px;cursor:pointer;width:100%" title="Cor do Calendário">
+            <button type="button" class="primario" id="btSalvarNovoCal" style="height:34px;padding:0">Adicionar</button>
+          </div>
+        </div>
+
+        <!-- Lista de Calendários Próprios -->
+        <div style="margin-bottom:16px">
+          <h4 style="margin:0 0 8px;font-size:13px;color:var(--tx1)">Meus Calendários</h4>
+          <div id="listaMeusCals" style="max-height:180px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:6px"></div>
+        </div>
+
+        <!-- Lista de Compartilhados / Institucionais -->
+        <div style="margin-bottom:16px">
+          <h4 style="margin:0 0 8px;font-size:13px;color:var(--tx1)">Compartilhados Comigo</h4>
+          <div id="listaCompsCals" style="max-height:160px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:6px"></div>
+        </div>
+
+        <div style="text-align:right">
+          <button type="button" class="primario" id="btFecharGerCal">Concluir</button>
+        </div>
+      </div>
+    `;
+
+    const m = abrirModal(html);
+    m.modal.querySelector('#btXGerCal').onclick = m.fechar;
+    m.modal.querySelector('#btFecharGerCal').onclick = m.fechar;
+
+    const renderListas = () => {
+      const meusBox = m.modal.querySelector('#listaMeusCals');
+      const compsBox = m.modal.querySelector('#listaCompsCals');
+
+      const meus = colecoesCache.meus || [];
+      const comps = colecoesCache.compartilhados || [];
+
+      if (meus.length === 0) {
+        meusBox.innerHTML = '<div style="font-size:12px;color:var(--tx3);padding:10px;text-align:center">Nenhum calendário pessoal criado.</div>';
+      } else {
+        meusBox.innerHTML = meus.map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border-bottom:1px solid var(--borda)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="cal-cor-dot" style="background:${c.cor};width:12px;height:12px"></span>
+              <strong>${esc(c.nome)}</strong>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button type="button" class="acao-linha" data-compcal="${c.id}" style="font-size:11px;padding:2px 8px">👥 Compartilhar</button>
+              ${meus.length > 1 ? `<button type="button" class="acao-linha perigo" data-delcal="${c.id}" style="font-size:11px;padding:2px 8px;color:var(--verm-txt)">Excluir</button>` : ''}
+            </div>
+          </div>
+        `).join('');
+      }
+
+      if (comps.length === 0) {
+        compsBox.innerHTML = '<div style="font-size:12px;color:var(--tx3);padding:10px;text-align:center">Nenhum calendário compartilhado.</div>';
+      } else {
+        compsBox.innerHTML = comps.map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border-bottom:1px solid var(--borda)">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="cal-cor-dot" style="background:${c.cor};width:12px;height:12px"></span>
+              <div>
+                <strong>${esc(c.nome)}</strong>
+                <div style="font-size:11px;color:var(--tx3)">Por: ${esc(c.autor_nome)}</div>
+              </div>
+            </div>
+            <div>
+              ${c.inscricao_forcada ? '<span class="cal-badge-forcado">🔒 Forçado pelo Gerente</span>' : '<span style="font-size:11.5px;color:var(--tx2)">Convidado</span>'}
+            </div>
+          </div>
+        `).join('');
+      }
+
+      meusBox.querySelectorAll('[data-compcal]').forEach(b => {
+        b.onclick = () => {
+          const cid = +b.dataset.compcal;
+          const cal = meus.find(x => x.id === cid);
+          if (cal) abrirModalCompartilharCalendarioColecao(cal);
+        };
+      });
+
+      meusBox.querySelectorAll('[data-delcal]').forEach(b => {
+        b.onclick = async () => {
+          const cid = +b.dataset.delcal;
+          if (!confirm('Deseja excluir este calendário e todos os seus eventos?')) return;
+          try {
+            await api(`/api/calendarios/${cid}`, { method: 'DELETE' });
+            toast('Calendário excluído!');
+            if (aoAtualizar) aoAtualizar();
+            m.fechar();
+          } catch (e) {
+            toast(e.message || 'Erro ao excluir calendário', 'erro');
+          }
+        };
+      });
+    };
+
+    renderListas();
+
+    m.modal.querySelector('#btSalvarNovoCal').onclick = async () => {
+      const nome = m.modal.querySelector('#novoCalNome').value.trim();
+      const cor = m.modal.querySelector('#novoCalCor').value;
+      if (!nome) return toast('Informe o nome do calendário', 'erro');
+
+      try {
+        await api('/api/calendarios', {
+          method: 'POST',
+          body: JSON.stringify({ nome, cor, descricao: '' })
+        });
+        toast('Calendário criado!');
+        if (aoAtualizar) aoAtualizar();
+        m.fechar();
+      } catch (e) {
+        toast(e.message || 'Erro ao criar calendário', 'erro');
+      }
+    };
+  }
+
+  // Modal para Compartilhar Calendário com Usuários ou Grupos (Forçar se Gerente)
+  async function abrirModalCompartilharCalendarioColecao(cal) {
+    const u = quem();
+    const ehGerente = (u.papel === 'gerente');
+
+    const html = `
+      <div class="cartao modal-conteudo-box" style="max-width:540px;margin:auto">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div>
+            <h3 style="margin:0">Compartilhar Calendário: ${esc(cal.nome)}</h3>
+            <span style="font-size:12px;color:var(--tx3)">Compartilhe este calendário dinâmico com colegas ou grupos inteiros.</span>
+          </div>
+          <button type="button" class="btn-fechar-modal" id="btXCompCalColecao">✕</button>
+        </div>
+
+        <div class="cal-form-compartilhar" style="margin-top:14px">
+          <div class="campo" style="margin-bottom:8px">
+            <label>Compartilhar com</label>
+            <select id="selColecaoTipo">
+              <option value="usuario">Militar / Usuário Específico</option>
+              ${ehGerente ? '<option value="grupo">Grupo / Unidade Completa (Subordinados)</option>' : ''}
+            </select>
+          </div>
+
+          <div class="campo" style="margin-bottom:8px">
+            <label id="lblColecaoAlvo">Selecione o Destinatário</label>
+            <select id="selColecaoAlvo"><option value="">Carregando…</option></select>
+          </div>
+
+          ${ehGerente ? `
+            <div class="campo" style="margin-bottom:12px" id="boxForcarInscricao">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="chkForcarInscricao">
+                🔒 <b>Forçar inscrição</b> (exibir compulsoriamente no calendário dos subordinados)
+              </label>
+            </div>
+          ` : ''}
+
+          <button type="button" class="primario" id="btAddPermissaoColecao" style="width:100%">Conceder Compartilhamento</button>
+        </div>
+
+        <div style="margin-top:18px">
+          <h4 style="margin:0 0 8px;font-size:13px;color:var(--tx2)">Compartilhamentos Ativos deste Calendário</h4>
+          <div id="listaCompColecaoAtivos" style="max-height:160px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:8px">
+            <div class="carregando" style="padding:10px">Carregando…</div>
+          </div>
+        </div>
+
+        <div style="text-align:right;margin-top:16px">
+          <button type="button" class="primario" id="btConcluirCompColecao">Concluído</button>
+        </div>
+      </div>
+    `;
+
+    const m = abrirModal(html);
+    m.modal.querySelector('#btXCompCalColecao').onclick = m.fechar;
+    m.modal.querySelector('#btConcluirCompColecao').onclick = m.fechar;
+
+    const selTipo = m.modal.querySelector('#selColecaoTipo');
+    const selAlvo = m.modal.querySelector('#selColecaoAlvo');
+    const lblAlvo = m.modal.querySelector('#lblColecaoAlvo');
+
+    let gruposCache = [], usuariosCache = [];
+    try {
+      const gRes = await api('/api/grupos').catch(() => []);
+      gruposCache = Array.isArray(gRes) ? gRes : (gRes.grupos || []);
+    } catch (e) {}
+    try {
+      const uRes = await api('/api/usuarios').catch(() => []);
+      usuariosCache = Array.isArray(uRes) ? uRes : (uRes.usuarios || []);
+    } catch (e) {}
+
+    const atualizarOpcoes = () => {
+      const t = selTipo.value;
+      if (t === 'grupo') {
+        lblAlvo.textContent = 'Selecione a Unidade Subordinada';
+        selAlvo.innerHTML = gruposCache.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
+      } else {
+        lblAlvo.textContent = 'Selecione o Usuário / Militar';
+        selAlvo.innerHTML = usuariosCache.map(usr => `<option value="${usr.id}">${esc(usr.nome_guerra || usr.login)}</option>`).join('');
+      }
+    };
+    selTipo.onchange = atualizarOpcoes;
+    atualizarOpcoes();
+
+    const carregarComps = async () => {
+      const cBox = m.modal.querySelector('#listaCompColecaoAtivos');
+      try {
+        const res = await api(`/api/calendarios/${cal.id}/compartilhamentos`);
+        const comps = res.compartilhamentos || [];
+        if (comps.length === 0) {
+          cBox.innerHTML = '<div style="font-size:12px;color:var(--tx3);text-align:center;padding:10px">Nenhum compartilhamento ativo para este calendário.</div>';
+          return;
+        }
+        cBox.innerHTML = comps.map(c => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 4px;border-bottom:1px solid var(--borda)">
+            <div>
+              <div style="font-weight:600;font-size:13px">
+                ${esc(c.alvo_nome)} <span class="badge-mini" style="font-size:10px">${esc(c.alvo_tipo)}</span>
+                ${c.inscricao_forcada ? '<span class="cal-badge-forcado" style="margin-left:4px">🔒 Forçado</span>' : ''}
+              </div>
+            </div>
+            <button type="button" class="btn-icone-mini btnRevogarCompColecao" data-cid="${c.id}" title="Remover" style="color:var(--verm-txt)">✕</button>
+          </div>
+        `).join('');
+
+        cBox.querySelectorAll('.btnRevogarCompColecao').forEach(b => {
+          b.onclick = async () => {
+            const cid = +b.dataset.cid;
+            try {
+              await api(`/api/calendario/compartilhamentos/${cid}`, { method: 'DELETE' });
+              toast('Compartilhamento revogado!');
+              carregarComps();
+            } catch (err) {
+              toast('Falha ao remover', 'erro');
+            }
+          };
+        });
+      } catch (e) {
+        cBox.innerHTML = '<div style="color:var(--verm-txt);font-size:12px">Erro ao carregar compartilhamentos.</div>';
+      }
+    };
+
+    carregarComps();
+
+    m.modal.querySelector('#btAddPermissaoColecao').onclick = async () => {
+      const alvoId = +selAlvo.value;
+      if (!alvoId) { toast('Selecione um alvo válido', 'erro'); return; }
+
+      const chkForcar = m.modal.querySelector('#chkForcarInscricao');
+      const payload = {
+        alvo_tipo: selTipo.value,
+        alvo_id: alvoId,
+        pode_editar: false,
+        forcar: chkForcar ? chkForcar.checked : false
+      };
+
+      try {
+        await api(`/api/calendarios/${cal.id}/compartilhar`, { method: 'POST', body: JSON.stringify(payload) });
+        toast('Calendário compartilhado com sucesso!');
+        carregarComps();
+      } catch (err) {
+        toast(err.message || 'Falha ao compartilhar', 'erro');
+      }
+    };
+  }
 
   // Modal com Agenda Completa do Dia
   function abrirModalAgendaDia(dataIso, dados, aoAtualizar) {
@@ -363,7 +733,7 @@
     };
   }
 
-  // Modal para Criar ou Editar Evento
+  // Modal para Criar ou Editar Evento (agora com seleção de Calendário)
   function abrirModalFormEvento(eventoExistente, dataPadrao, aoSalvar) {
     const ehEdicao = !!eventoExistente;
     const ev = eventoExistente || {
@@ -373,12 +743,31 @@
       cor: '#2563eb',
       data_inicio: dataPadrao || '',
       data_fim: dataPadrao || '',
-      dia_inteiro: true
+      dia_inteiro: true,
+      calendario_id: null
     };
 
+    const meus = colecoesCache.meus || [];
+    const comps = (colecoesCache.compartilhados || []).filter(c => c.pode_editar);
+    const todosDisponiveis = [...meus, ...comps];
+
+    const optsCal = todosDisponiveis.map(c => `
+      <option value="${c.id}" ${ev.calendario_id === c.id ? 'selected' : ''}>
+        📅 ${esc(c.nome)} ${c.eh_meu ? '' : ` (${esc(c.autor_nome)})`}
+      </option>
+    `).join('');
+
     const html = `
-      <div class="cartao modal-conteudo-box" style="max-width:480px;margin:auto">
+      <div class="cartao modal-conteudo-box" style="max-width:500px;margin:auto">
         <h3 style="margin:0 0 12px">${ehEdicao ? 'Editar Evento' : 'Novo Evento no Calendário'}</h3>
+
+        <div class="campo">
+          <label>Calendário de Destino</label>
+          <select id="evCalendario">
+            ${optsCal || '<option value="">Pessoal (Padrão)</option>'}
+          </select>
+        </div>
+
         <div class="campo">
           <label>Título do Evento</label>
           <input type="text" id="evTitulo" value="${esc(ev.titulo)}" placeholder="ex: Instrução de Tiro, Reunião de Oficiais..." autofocus required>
@@ -428,9 +817,11 @@
       const dtIni = m.modal.querySelector('#evDataInicio').value;
       if (!titulo || !dtIni) { toast('Título e Data de Início são obrigatórios', 'erro'); return; }
 
+      const calIdVal = +m.modal.querySelector('#evCalendario').value || null;
       const dtFim = m.modal.querySelector('#evDataFim').value;
       const payload = {
         id: ehEdicao ? (ev.id || ev.ID) : 0,
+        calendario_id: calIdVal,
         titulo: titulo,
         tipo: m.modal.querySelector('#evTipo').value,
         data_inicio: dtIni,
@@ -469,10 +860,6 @@
         </div>
 
         <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-          <button type="button" class="btn-acao-mini" id="btCompEvento">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
-            Compartilhar
-          </button>
           ${ev.pode_editar ? `
             <button type="button" class="btn-acao-mini" id="btEditarEv">Editar</button>
             <button type="button" class="btn-acao-mini perigo" id="btExcluirEv">Excluir</button>
@@ -483,11 +870,6 @@
     `;
     const m = abrirModal(html);
     m.modal.querySelector('#btFecharDetEv').onclick = m.fechar;
-
-    m.modal.querySelector('#btCompEvento').onclick = () => {
-      m.fechar();
-      abrirModalCompartilharEvento(id, ev.titulo);
-    };
 
     if (ev.pode_editar) {
       m.modal.querySelector('#btEditarEv').onclick = () => {
@@ -508,132 +890,6 @@
         }
       };
     }
-  }
-
-  // Modal de Compartilhamento Granular estilo Google Calendar
-  async function abrirModalCompartilharEvento(eventoID, titulo) {
-    const html = `
-      <div class="cartao modal-conteudo-box" style="max-width:520px;margin:auto">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <h3 style="margin:0">Compartilhar Evento</h3>
-          <button type="button" class="btn-fechar-modal" id="btXCompCal">✕</button>
-        </div>
-        <p style="color:var(--tx3);font-size:12px;margin:0 0 16px">Convide outras Unidades ou Militares para acompanhar "${esc(titulo)}".</p>
-
-        <div class="cal-form-compartilhar">
-          <div class="campo" style="margin-bottom:8px">
-            <label>Convidar / Compartilhar com</label>
-            <select id="selCalTipo">
-              <option value="grupo">Grupo / Unidade</option>
-              <option value="usuario">Militar / Usuário</option>
-            </select>
-          </div>
-          <div class="campo" style="margin-bottom:12px">
-            <label id="lblCalAlvo">Selecione</label>
-            <select id="selCalAlvo"><option value="">Carregando…</option></select>
-          </div>
-          <button type="button" class="primario" id="btCalAddPermissao" style="width:100%">Compartilhar Evento</button>
-        </div>
-
-        <div style="margin-top:20px">
-          <h4 style="margin:0 0 8px;font-size:13px;color:var(--tx2)">Compartilhamentos Ativos</h4>
-          <div id="listaCompCalAtivos" style="max-height:160px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:8px">
-            <div class="carregando" style="padding:10px">Carregando…</div>
-          </div>
-        </div>
-
-        <div style="text-align:right;margin-top:16px">
-          <button type="button" class="primario" id="btConcluirCompCal">Concluído</button>
-        </div>
-      </div>
-    `;
-    const m = abrirModal(html);
-    m.modal.querySelector('#btXCompCal').onclick = m.fechar;
-    m.modal.querySelector('#btConcluirCompCal').onclick = m.fechar;
-
-    const selTipo = m.modal.querySelector('#selCalTipo');
-    const selAlvo = m.modal.querySelector('#selCalAlvo');
-    const lblAlvo = m.modal.querySelector('#lblCalAlvo');
-
-    let gruposCache = [], usuariosCache = [];
-    try {
-      const gRes = await api('/api/grupos').catch(() => []);
-      gruposCache = Array.isArray(gRes) ? gRes : (gRes.grupos || []);
-    } catch (e) {}
-    try {
-      const uRes = await api('/api/usuarios').catch(() => []);
-      usuariosCache = Array.isArray(uRes) ? uRes : (uRes.usuarios || []);
-    } catch (e) {}
-
-    const atualizarOpcoes = () => {
-      const t = selTipo.value;
-      if (t === 'grupo') {
-        lblAlvo.textContent = 'Selecione a Unidade';
-        selAlvo.innerHTML = gruposCache.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
-      } else {
-        lblAlvo.textContent = 'Selecione o Usuário';
-        selAlvo.innerHTML = usuariosCache.map(u => `<option value="${u.id}">${esc(u.nome_guerra || u.login)}</option>`).join('');
-      }
-    };
-    selTipo.onchange = atualizarOpcoes;
-    atualizarOpcoes();
-
-    const carregarComps = async () => {
-      const cBox = m.modal.querySelector('#listaCompCalAtivos');
-      try {
-        const res = await api(`/api/calendario/compartilhamentos?evento_id=${eventoID}`);
-        const comps = res.compartilhamentos || [];
-        if (comps.length === 0) {
-          cBox.innerHTML = '<div style="font-size:12px;color:var(--tx3);text-align:center;padding:10px">Nenhum compartilhamento externo ativo.</div>';
-          return;
-        }
-        cBox.innerHTML = comps.map(c => `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 4px;border-bottom:1px solid var(--borda)">
-            <div>
-              <div style="font-weight:600;font-size:13px">${esc(c.alvo_nome)} <span class="badge-mini" style="font-size:10px">${esc(c.alvo_tipo)}</span></div>
-            </div>
-            <button type="button" class="btn-icone-mini btnRevogarCompCal" data-cid="${c.id}" title="Remover" style="color:var(--verm)">✕</button>
-          </div>
-        `).join('');
-
-        cBox.querySelectorAll('.btnRevogarCompCal').forEach(b => {
-          b.onclick = async () => {
-            const cid = +b.dataset.cid;
-            try {
-              await api(`/api/calendario/compartilhamentos/${cid}`, { method: 'DELETE' });
-              toast('Compartilhamento removido!');
-              carregarComps();
-            } catch (err) {
-              toast('Falha ao remover', 'erro');
-            }
-          };
-        });
-      } catch (e) {
-        cBox.innerHTML = '<div style="color:var(--verm);font-size:12px">Erro ao carregar permissões.</div>';
-      }
-    };
-
-    carregarComps();
-
-    m.modal.querySelector('#btCalAddPermissao').onclick = async () => {
-      const alvoId = +selAlvo.value;
-      if (!alvoId) { toast('Selecione um alvo válido', 'erro'); return; }
-
-      const payload = {
-        evento_id: eventoID,
-        alvo_tipo: selTipo.value,
-        alvo_id: alvoId,
-        pode_editar: false
-      };
-
-      try {
-        await api('/api/calendario/compartilhar', { method: 'POST', body: JSON.stringify(payload) });
-        toast('Evento compartilhado!');
-        carregarComps();
-      } catch (err) {
-        toast(err.message || 'Falha ao compartilhar', 'erro');
-      }
-    };
   }
 
 })();

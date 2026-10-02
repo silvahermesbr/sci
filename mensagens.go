@@ -120,6 +120,27 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Regra de funções: o usuário não precisa estar no banco de pessoal de um grupo inicialmente,
+	// mas para ser colocado em uma função militar daquele grupo, ele deve fazer parte do banco de pessoal do grupo.
+	if req.FuncaoID != nil && *req.FuncaoID > 0 {
+		if req.GrupoID == nil || *req.GrupoID <= 0 {
+			jsonErro(w, http.StatusBadRequest, "Para atribuição de função, é necessário vincular ao grupo correspondente")
+			return
+		}
+		var pID *int64
+		_ = a.st.db.QueryRow(`SELECT pessoa_id FROM usuarios WHERE id = ?`, usuarioID).Scan(&pID)
+		if pID == nil || *pID <= 0 {
+			jsonErro(w, http.StatusBadRequest, "Para ser colocado em uma função, o militar deve fazer parte do banco de pessoal deste grupo.")
+			return
+		}
+		var pGrupoID *int64
+		_ = a.st.db.QueryRow(`SELECT grupo_id FROM pessoas WHERE id = ?`, *pID).Scan(&pGrupoID)
+		if pGrupoID == nil || *pGrupoID != *req.GrupoID {
+			jsonErro(w, http.StatusBadRequest, "Para ser colocado em uma função neste grupo, o militar deve fazer parte do banco de pessoal deste grupo.")
+			return
+		}
+	}
+
 	res, err := a.st.db.Exec(`
 		INSERT INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id, nome_exibicao)
 		VALUES (?, ?, ?, ?, ?)`,

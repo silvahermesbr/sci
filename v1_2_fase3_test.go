@@ -452,3 +452,134 @@ func TestFase3StressDriveECalendario(t *testing.T) {
 		t.Fatalf("esperado 0 arquivos restantes no banco, obtido %d", arqsRestantes)
 	}
 }
+
+// TestFase3MultiCalendariosEInscricaoForcada valida a dinâmica estilo Nextcloud/Google:
+// 1. Criação de múltiplos calendários pessoais e verificação de calendário default auto-criado.
+// 2. Compartilhamento de calendário por Gerente com seu Grupo com 'forcar=true' (inscrição forçada).
+// 3. Verificação de que militar subordinado vê o calendário com flag 'inscricao_forcada=true'.
+// 4. Tentativa de usuário não-gerente compartilhar com grupo ou forçar inscrição retorna 403.
+// 5. Exclusão limpa de calendário cascateando eventos e compartilhamentos.
+func TestFase3MultiCalendariosEInscricaoForcada(t *testing.T) {
+	app, _, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	adminCookie := loginAs(t, app, "admin", "admin123")
+
+	// 1. Criar grupo e gerente
+	rr, res := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome":        "Btl Calendario Teste",
+		"login":       "ger_cal_next",
+		"senha":       "senha12345",
+		"nome_guerra": "GerNext",
+	}, adminCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao criar grupo: %v", res)
+	}
+	grupoID := int64(res["id"].(float64))
+
+	gerCookie := loginAs(t, app, "ger_cal_next", "senha12345")
+
+	// 2. Criar operador no mesmo grupo
+	rrOp, resOp := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
+		"login":       "op_cal_sub",
+		"senha":       "senha12345",
+		"papel":       "operador",
+		"grupo_id":    grupoID,
+		"nome_guerra": "SoldadoSub",
+	}, adminCookie)
+	if rrOp.Code != http.StatusOK {
+		t.Fatalf("falha ao criar operador: %v", resOp)
+	}
+	opCookie := loginAs(t, app, "op_cal_sub", "senha12345")
+
+	// 3. Listar calendários do gerente (deve auto-criar 'Pessoal')
+	rrList, resList := doJSONReq(app, "GET", "/api/calendarios", nil, gerCookie)
+	if rrList.Code != http.StatusOK {
+		t.Fatalf("falha ao listar calendários: %v", resList)
+	}
+	meus := resList["meus"].([]any)
+	if len(meus) == 0 {
+		t.Fatalf("esperado pelo menos 1 calendário auto-criado, obtido: %d", len(meus))
+	}
+
+	// 4. Criar calendário institucional temático como gerente
+	rrAdd, resAdd := doJSONReq(app, "POST", "/api/calendarios", map[string]any{
+		"nome":      "Escala Geral de Formaturas",
+		"cor":       "#ef4444",
+		"descricao": "Obrigatório para todo o batalhão",
+	}, gerCookie)
+	if rrAdd.Code != http.StatusOK {
+		t.Fatalf("falha ao criar calendário institucional: %v", resAdd)
+	}
+	calID := int64(resAdd["id"].(float64))
+
+	// 5. Criar evento nesse calendário
+	rrEv, resEv := doJSONReq(app, "POST", "/api/calendario/eventos", map[string]any{
+		"calendario_id": calID,
+		"titulo":        "Formatura Matinal Geral",
+		"tipo":          "formatura",
+		"cor":           "#ef4444",
+		"data_inicio":   "2026-11-05",
+		"dia_inteiro":   true,
+	}, gerCookie)
+	if rrEv.Code != http.StatusOK {
+		t.Fatalf("falha ao criar evento no novo calendário: %v", resEv)
+	}
+
+	// 6. Testar regra de segurança: operador tentando forçar inscrição deve receber 403
+	rrForcarOp, _ := doJSONReq(app, "POST", fmt.Sprintf("/api/calendarios/%d/compartilhar", calID), map[string]any{
+		"alvo_tipo": "grupo",
+		"alvo_id":   grupoID,
+		"forcar":    true,
+	}, opCookie)
+	if rrForcarOp.Code != http.StatusForbidden {
+		t.Fatalf("esperado 403 Forbidden para operador forçando inscrição, obtido: %d", rrForcarOp.Code)
+	}
+
+	// 7. Gerente compartilha com o grupo com FORÇAR=true
+	rrComp, resComp := doJSONReq(app, "POST", fmt.Sprintf("/api/calendarios/%d/compartilhar", calID), map[string]any{
+		"alvo_tipo": "grupo",
+		"alvo_id":   grupoID,
+		"forcar":    true,
+	}, gerCookie)
+	if rrComp.Code != http.StatusOK {
+		t.Fatalf("falha ao compartilhar com grupo forçado: %v", resComp)
+	}
+
+	// 8. Operador lista calendários: deve ver em 'compartilhados' com 'inscricao_forcada=true'
+	rrOpList, resOpList := doJSONReq(app, "GET", "/api/calendarios", nil, opCookie)
+	if rrOpList.Code != http.StatusOK {
+		t.Fatalf("operador falhou ao listar calendários: %v", resOpList)
+	}
+	comps := resOpList["compartilhados"].([]any)
+	if len(comps) == 0 {
+		t.Fatalf("esperado calendário compartilhado para operador, obtido 0")
+	}
+	calComp := comps[0].(map[string]any)
+	if calComp["inscricao_forcada"] != true {
+		t.Fatalf("esperado inscricao_forcada=true no calendário compartilhado")
+	}
+
+	// 9. Operador consulta visão do mês: deve ver o evento no calendário forçado
+	rrVis, resVis := doJSONReq(app, "GET", "/api/calendario/visao?mes=2026-11", nil, opCookie)
+	if rrVis.Code != http.StatusOK {
+		t.Fatalf("falha na visão do calendário: %v", resVis)
+	}
+	evsOp := resVis["eventos"].([]any)
+	if len(evsOp) == 0 {
+		t.Fatalf("operador deveria ver evento do calendário forçado no mês, obtido: 0")
+	}
+
+	// 10. Excluir o calendário e verificar limpeza
+	rrDel, resDel := doJSONReq(app, "DELETE", fmt.Sprintf("/api/calendarios/%d", calID), nil, gerCookie)
+	if rrDel.Code != http.StatusOK {
+		t.Fatalf("falha ao excluir calendário: %v", resDel)
+	}
+
+	var countEvRestantes int
+	_ = app.st.db.QueryRow(`SELECT COUNT(*) FROM calendario_eventos WHERE calendario_id = ?`, calID).Scan(&countEvRestantes)
+	if countEvRestantes != 0 {
+		t.Fatalf("esperado 0 eventos restantes do calendário excluído, obtido: %d", countEvRestantes)
+	}
+}
+

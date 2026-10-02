@@ -318,7 +318,7 @@
     ]);
     const funcoesLista = Array.isArray(funcoesRes) ? funcoesRes : (funcoesRes.funcoes || []);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
-    const optsGrupos = `<option value="">— selecione o grupo —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
+    const optsGrupos = `<option value="">— Sem grupo (Global / Atribuir depois) —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
 
     function formatarNomeUsuario(completo, guerra) {
       const c = (completo || '').trim();
@@ -765,8 +765,8 @@
           toast('Se preencher a senha, use no mínimo 8 caracteres. (Padrão: sci)', 'erro');
           return;
         }
-        if (papel !== 'admin' && !grupoId) {
-          toast('Selecione o grupo para esta conta', 'erro');
+        if (papel === 'gerente' && !grupoId) {
+          toast('Gerente deve obrigatoriamente estar vinculado a uma unidade', 'erro');
           return;
         }
 
@@ -1050,6 +1050,9 @@
             <button type="button" class="acao-linha" id="mEdSubgrupo" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
               ➕ <b style="margin-left:6px">Criar Subgrupo</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Novo subordinado</span>
             </button>
+            <button type="button" class="acao-linha" id="mEdSetores" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              🏢 <b style="margin-left:6px">Editar Setores da Unidade</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Setores/Seções</span>
+            </button>
             <button type="button" class="acao-linha" id="mEdAlocar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
               👥 <b style="margin-left:6px">Alocar Usuário</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Associar operador</span>
             </button>
@@ -1076,11 +1079,134 @@
       if (!div) return;
       div.querySelector('#mEdFechar').onclick = () => div.fechar && div.fechar();
       div.querySelector('#mEdSubgrupo').onclick = () => { div.fechar && div.fechar(); modalCriarGrupo(n.id, n.nome); };
+      div.querySelector('#mEdSetores').onclick = () => { div.fechar && div.fechar(); modalGerenciarSetoresGrupo(n.id, n.nome); };
       div.querySelector('#mEdAlocar').onclick = () => { div.fechar && div.fechar(); modalAlocarUsuariosGrupo(n.id, n.nome); };
       div.querySelector('#mEdGerente').onclick = () => { div.fechar && div.fechar(); modalTrocarGerente(n.id, n.nome); };
       div.querySelector('#mEdSubordinar').onclick = () => { div.fechar && div.fechar(); modalGerenciarSubordinacao(n.id, n.nome); };
       div.querySelector('#mEdAuditar').onclick = () => { div.fechar && div.fechar(); modalAuditarContas(n.id, n.nome); };
       div.querySelector('#mEdExcluir').onclick = () => { div.fechar && div.fechar(); modalExcluirGrupo(n.id, n.nome); };
+    }
+
+    async function modalGerenciarSetoresGrupo(grupoId, grupoNome) {
+      const html = `
+        <div class="modal" style="max-width:560px;width:95%">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <h3 style="margin:0">🏢 Setores da Unidade — ${esc(grupoNome)}</h3>
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
+          </div>
+          <p style="color:var(--tx2);font-size:12.5px;margin-bottom:14px">Cadastre e gerencie seções ou pelotões pertencentes exclusivamente a este grupo.</p>
+          
+          <div style="background:var(--painel2);border:1px solid var(--borda);border-radius:var(--raio);padding:12px;margin-bottom:14px">
+            <h4 style="margin:0 0 8px;font-size:13px">Novo Setor</h4>
+            <div class="form-linha" style="margin:0;gap:8px">
+              <div class="campo" style="flex:2;margin:0">
+                <label>Nome do Setor *</label>
+                <input id="nSetNome" placeholder="ex.: 1º Pelotão, Almoxarifado...">
+              </div>
+              <div class="campo" style="flex:1;margin:0">
+                <label>Sigla</label>
+                <input id="nSetSigla" placeholder="ex.: 1º PEL">
+              </div>
+              <div class="campo" style="align-self:flex-end;margin:0">
+                <button class="primario" id="btAddSetor" style="min-height:38px">Adicionar</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="listaSetoresGrupo" style="max-height:280px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:8px">
+            <div class="carregando">Carregando setores...</div>
+          </div>
+          <div class="modal-acoes" style="margin-top:14px">
+            <button class="fantasma" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+      const listaEl = m.querySelector('#listaSetoresGrupo');
+
+      async function carregarLista() {
+        try {
+          listaEl.innerHTML = '<div class="carregando">Atualizando...</div>';
+          const todosSetores = await api('/api/catalogo/setores');
+          const setoresGrupo = (todosSetores || []).filter(s => s.grupo_id === grupoId);
+          if (setoresGrupo.length === 0) {
+            listaEl.innerHTML = '<div class="vazio" style="padding:16px;text-align:center">Nenhum setor cadastrado neste grupo.</div>';
+            return;
+          }
+          listaEl.innerHTML = `
+            <table style="width:100%;font-size:12.5px">
+              <thead><tr><th>Nome</th><th>Sigla</th><th style="text-align:right">Ações</th></tr></thead>
+              <tbody>
+                ${setoresGrupo.map(s => `
+                  <tr>
+                    <td><b>${esc(s.nome)}</b></td>
+                    <td>${esc(s.sigla || '—')}</td>
+                    <td style="text-align:right">
+                      <button class="acao-linha" data-editset="${s.id}" data-nome="${esc(s.nome)}" data-sigla="${esc(s.sigla || '')}">Editar</button>
+                      <button class="acao-linha perigo" data-excset="${s.id}">Excluir</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+
+          listaEl.querySelectorAll('[data-editset]').forEach(bt => {
+            bt.onclick = async () => {
+              const sid = bt.dataset.editset;
+              const novoNome = prompt('Novo nome do setor:', bt.dataset.nome);
+              if (!novoNome || !novoNome.trim()) return;
+              const novaSigla = prompt('Sigla (opcional):', bt.dataset.sigla);
+              try {
+                await api(`/api/catalogo/setores/${sid}`, {
+                  method: 'PATCH',
+                  body: JSON.stringify({ nome: novoNome.trim(), sigla: (novaSigla || '').trim() })
+                });
+                toast('Setor atualizado!');
+                carregarLista();
+              } catch (e) {
+                toast(e.message || 'Falha ao atualizar', 'erro');
+              }
+            };
+          });
+
+          listaEl.querySelectorAll('[data-excset]').forEach(bt => {
+            bt.onclick = async () => {
+              const sid = bt.dataset.excset;
+              if (!confirm('Deseja excluir este setor?')) return;
+              try {
+                await api(`/api/catalogo/setores/${sid}`, { method: 'DELETE' });
+                toast('Setor excluído!');
+                carregarLista();
+              } catch (e) {
+                toast(e.message || 'Falha ao excluir setor', 'erro');
+              }
+            };
+          });
+        } catch (e) {
+          listaEl.innerHTML = '<div class="vazio">Erro ao carregar setores.</div>';
+        }
+      }
+
+      carregarLista();
+
+      m.querySelector('#btAddSetor').onclick = async () => {
+        const nome = m.querySelector('#nSetNome').value.trim();
+        const sigla = m.querySelector('#nSetSigla').value.trim();
+        if (!nome) { toast('Nome do setor obrigatório', 'erro'); return; }
+        try {
+          await api('/api/catalogo/setores', {
+            method: 'POST',
+            body: JSON.stringify({ nome, sigla, grupo_id: grupoId })
+          });
+          toast('Setor adicionado ao grupo!');
+          m.querySelector('#nSetNome').value = '';
+          m.querySelector('#nSetSigla').value = '';
+          carregarLista();
+        } catch (e) {
+          toast(e.message || 'Falha ao cadastrar setor', 'erro');
+        }
+      };
     }
 
     function modalCriarGrupo(superiorId, superiorNome) {
@@ -1436,11 +1562,11 @@
             <div id="txtRAMSub" style="font-size:11px; color:var(--tx3); margin-top:6px">Sys: -- MB · Heap: -- MB</div>
           </div>
 
-          <!-- Armazenamento DATA -->
+          <!-- Armazenamento DATA e Disco -->
           <div style="background:var(--painel3); border:1px solid var(--borda); border-radius:8px; padding:12px 14px">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
-              <span style="font-size:12px; color:var(--tx2); font-weight:600">📁 Armazenamento (DATA)</span>
-              <span id="txtDataVal" style="font-size:15px; font-weight:700; color:#fbbf24">-- MB</span>
+              <span style="font-size:12px; color:var(--tx2); font-weight:600">💾 Armazenamento / Disco</span>
+              <span id="txtDataVal" style="font-size:15px; font-weight:700; color:#fbbf24">-- %</span>
             </div>
             <div style="height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden">
               <div id="barDisco" style="height:100%; width:0%; background:#fbbf24; transition:width 0.4s ease"></div>
@@ -1595,30 +1721,33 @@
         const ramValEl = $('#txtRAMVal');
         const barRAMEl = $('#barRAM');
         const ramSubEl = $('#txtRAMSub');
-        if (ramValEl) ramValEl.textContent = ramMB + ' MB';
-        if (barRAMEl) {
-          const ramPct = Math.min(100, (m.ram_processo_mb / 200) * 100);
-          barRAMEl.style.width = Math.max(3, ramPct) + '%';
-        }
+        const sysTotal = Math.max(m.ram_sistema_mb || 0, m.ram_processo_mb || 0, 1);
+        const ramPct = Math.min(100, Math.max(1, ((m.ram_processo_mb || 0) / sysTotal) * 100));
+        if (ramValEl) ramValEl.textContent = `${ramMB} MB (${ramPct.toFixed(0)}%)`;
+        if (barRAMEl) barRAMEl.style.width = ramPct.toFixed(1) + '%';
         if (ramSubEl) ramSubEl.textContent = `Sys: ${ramSys} MB · Heap: ${(m.ram_heap_mb || 0).toFixed(1)} MB`;
 
-        // DATA Folder
+        // Armazenamento do Host / Disco e Pasta DATA
         let dataTxt = (m.dados_mb || 0).toFixed(2) + ' MB';
         if (m.dados_mb > 1024) dataTxt = (m.dados_mb / 1024).toFixed(2) + ' GB';
         const dataValEl = $('#txtDataVal');
         const barDiscoEl = $('#barDisco');
         const dataSubEl = $('#txtDataSub');
-        if (dataValEl) dataValEl.textContent = dataTxt;
-        if (barDiscoEl) barDiscoEl.style.width = Math.min(100, Math.max(5, m.disco_usado_pct || 15)) + '%';
-        if (dataSubEl) dataSubEl.textContent = `Livre: ${(m.disco_livre_gb || 0).toFixed(1)} GB de ${(m.disco_total_gb || 0).toFixed(1)} GB`;
+        const discoPct = Math.min(100, Math.max(0, m.disco_usado_pct || 0));
+        if (dataValEl) dataValEl.textContent = discoPct.toFixed(1) + '%';
+        if (barDiscoEl) barDiscoEl.style.width = Math.max(1, discoPct).toFixed(1) + '%';
+        if (dataSubEl) dataSubEl.textContent = `Livre: ${(m.disco_livre_gb || 0).toFixed(1)} GB de ${(m.disco_total_gb || 0).toFixed(1)} GB · DATA: ${dataTxt}`;
 
-        // Database
+        // Database SQLite sci.db
         let bancoTxt = (m.banco_mb || 0).toFixed(2) + ' MB';
         if (m.banco_mb > 1024) bancoTxt = (m.banco_mb / 1024).toFixed(2) + ' GB';
         const bancoValEl = $('#txtBancoVal');
         const barBancoEl = $('#barBanco');
-        if (bancoValEl) bancoValEl.textContent = bancoTxt;
-        if (barBancoEl) barBancoEl.style.width = Math.min(100, Math.max(5, (m.banco_mb / 20) * 100)) + '%';
+        const pctBanco = (m.dados_mb && m.dados_mb > 0) ? Math.min(100, ((m.banco_mb || 0) / m.dados_mb) * 100) : 100;
+        if (bancoValEl) bancoValEl.textContent = `${bancoTxt} (${pctBanco.toFixed(0)}%)`;
+        if (barBancoEl) barBancoEl.style.width = Math.min(100, Math.max(1, pctBanco)).toFixed(1) + '%';
+        const bancoSubEl = $('#txtBancoSub');
+        if (bancoSubEl) bancoSubEl.textContent = `sci.db: ${bancoTxt} de ${dataTxt} (DATA)`;
       } catch (e) {}
     };
 
@@ -1650,6 +1779,7 @@
     let optSetores = ativosDe(setores), optFuncoes = ativosDe(funcoes);
     setoresCat = setores; funcoesCat = funcoes; // cache p/ carregarCats (v9.16.9)
     const operadores = contas.filter(c => c.grupo_id === eu.grupo_id && c.papel === 'operador');
+    const meus = grupos.filter(g => g.id === eu.grupo_id);
 
     async function atualizarSelectsCatalogos() {
       try {

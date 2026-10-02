@@ -233,7 +233,12 @@ func (a *App) rotas() {
 	m.Handle("GET /api/drive/compartilhamentos", a.auth(false, a.hDriveCompartilhamentosList))
 	m.Handle("DELETE /api/drive/compartilhamentos/{id}", a.auth(false, a.hDriveCompartilhamentosDel))
 
-	// Módulo de Calendário Operacional & Mesh (v1.2 Fase 3)
+	// Módulo de Calendário Operacional & Mesh (v1.2 Fase 3 / Nextcloud dynamic calendars)
+	m.Handle("GET /api/calendarios", a.auth(false, a.hCalendariosList))
+	m.Handle("POST /api/calendarios", a.auth(false, a.hCalendariosAdd))
+	m.Handle("DELETE /api/calendarios/{id}", a.auth(false, a.hCalendariosDel))
+	m.Handle("POST /api/calendarios/{id}/compartilhar", a.auth(false, a.hCalendariosCompartilhar))
+	m.Handle("GET /api/calendarios/{id}/compartilhamentos", a.auth(false, a.hCalendariosCompartilhamentosList))
 	m.Handle("GET /api/calendario/visao", a.auth(false, a.hCalendarioVisao))
 	m.Handle("POST /api/calendario/eventos", a.auth(false, a.hCalendarioEventosSave))
 	m.Handle("DELETE /api/calendario/eventos/{id}", a.auth(false, a.hCalendarioEventosDel))
@@ -317,12 +322,13 @@ func (a *App) rotas() {
 	m.Handle("GET /api/admin/sistema/metricas", a.auth(true, a.hAdminSistemaMetricas))
 
 	// Módulos ESCALA e MATERIAL EM RESERVA (ordem Tenente 30/09): fora do frontend e
-	// APIs desativadas por flag MODO_RESERVA=1 em `configuracoes`. Código INTACTO —
-	// retorno no horizonte basta MODO_RESERVA=0 (não exposto na UI de configurações).
+	// Módulos de Escalas e Material desbloqueados para apreciação (respeita MODO_RESERVA=1 se configurado)
 	reservaAuth := func(next http.HandlerFunc) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if a.reservaAtivo() {
-				jsonErro(w, http.StatusLocked, "módulo em reserva (indisponível nesta instalação)")
+			var v string
+			_ = a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'MODO_RESERVA'`).Scan(&v)
+			if v == "1" {
+				jsonErro(w, http.StatusLocked, "módulo em reserva operacional")
 				return
 			}
 			a.authPapeis([]string{"gerente", "operador"}, next).ServeHTTP(w, r)
@@ -1781,8 +1787,8 @@ func (a *App) hCatalogoEditar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	if u == nil || u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
 	var req struct {
@@ -2991,24 +2997,25 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Nome  string `json:"nome"`
-		Sigla string `json:"sigla"`
-		Cor   string `json:"cor"`
+		Nome    string `json:"nome"`
+		Sigla   string `json:"sigla"`
+		Cor     string `json:"cor"`
+		GrupoID *int64 `json:"grupo_id"`
 	}
 	if err = decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
 		jsonErro(w, http.StatusBadRequest, "nome obrigatório")
 		return
 	}
 	nome := strings.TrimSpace(req.Nome)
-	// R4 (v9.3): gestão de catálogos é EXCLUSIVA do GERENTE (operador usa, não gerencia)
 	u := usuarioDoCtx(r)
-	if u == nil || u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
-	// catálogo dono: sempre o grupo do gerente (v9.3 — admin não gerencia catálogo)
 	var grupoID any
-	if u.GrupoID != nil {
+	if u.Papel == "admin" && req.GrupoID != nil {
+		grupoID = *req.GrupoID
+	} else if u.GrupoID != nil {
 		grupoID = *u.GrupoID
 	}
 	var q string
@@ -3049,9 +3056,8 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	// R4 (v9.3): gestão de catálogos é EXCLUSIVA do GERENTE
-	if u == nil || u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
 	if esc := escopoDoUsuario(u); esc > 0 {
@@ -4156,6 +4162,10 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	if papel == "admin" {
 		req.GrupoID = nil // admin é global
+	}
+	if papel == "gerente" && (req.GrupoID == nil || *req.GrupoID <= 0) {
+		jsonErro(w, http.StatusBadRequest, "gerente deve obrigatoriamente estar vinculado a uma unidade")
+		return
 	}
 	hash, err := hashSenha(req.Senha)
 	if err != nil {
