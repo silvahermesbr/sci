@@ -378,6 +378,14 @@ func (a *App) rotas() {
 	m.Handle("GET /api/material/anexos/{id}", reservaAuth(a.hMaterialAnexoGet))
 	m.Handle("DELETE /api/material/anexos/{id}", reservaAuth(a.hMaterialAnexoDel))
 
+	// Workflow Setorial (v1.5) — Sugestões e Aprovações por Chefe de Setor
+	m.Handle("GET /api/setores/sugestoes", a.auth(false, a.hSetorSugestoesList))
+	m.Handle("POST /api/setores/sugestoes", a.auth(false, a.hSetorSugestoesAdd))
+	m.Handle("POST /api/setores/sugestoes/{id}/avaliar", a.auth(false, a.hSetorSugestoesAvaliar))
+
+	// Consciência Situacional (v1.5) — Comando e Visão Geral Consolidada
+	m.Handle("GET /api/consciencia/resumo", a.auth(false, a.hConscienciaResumo))
+
 	// Módulo de Configurações e White-Label (v1.0)
 	m.HandleFunc("GET /api/configuracoes", a.hConfiguracoesGet)
 	m.Handle("POST /api/configuracoes", a.auth(true, a.hConfiguracoesSet))
@@ -6900,3 +6908,408 @@ func (a *App) verificarAtrasosSLA() {
 		_ = resp.Body.Close()
 	}
 }
+
+// =====================================================================
+// WORKFLOW SETORIAL E CONSCIÊNCIA SITUACIONAL (v1.5)
+// =====================================================================
+
+func (a *App) hSetorSugestoesList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	if escopo <= 0 && u.Papel != "admin" {
+		jsonErro(w, http.StatusForbidden, "usuário sem grupo definido")
+		return
+	}
+
+	setorFiltro := strings.TrimSpace(r.URL.Query().Get("setor"))
+	statusFiltro := strings.TrimSpace(r.URL.Query().Get("status"))
+
+	q := `SELECT s.id, s.grupo_id, COALESCE(g.nome, ''), s.setor_tipo, s.autor_id,
+	             COALESCE(u_aut.nome_guerra, u_aut.login), s.tipo_acao, s.dados_json,
+	             s.status, s.aprovado_por, COALESCE(u_apr.nome_guerra, u_apr.login, ''),
+	             COALESCE(s.aprovado_em, ''), COALESCE(s.justificativa, ''), s.criado_em
+	      FROM setor_sugestoes s
+	      JOIN grupos g ON g.id = s.grupo_id
+	      JOIN usuarios u_aut ON u_aut.id = s.autor_id
+	      LEFT JOIN usuarios u_apr ON u_apr.id = s.aprovado_por
+	      WHERE 1=1`
+	var args []any
+
+	if escopo > 0 {
+		q += ` AND s.grupo_id = ?`
+		args = append(args, escopo)
+	}
+	if setorFiltro != "" {
+		q += ` AND s.setor_tipo = ?`
+		args = append(args, setorFiltro)
+	}
+	if statusFiltro != "" {
+		q += ` AND s.status = ?`
+		args = append(args, statusFiltro)
+	}
+	q += ` ORDER BY s.id DESC LIMIT 100`
+
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var lista []map[string]any
+	for rows.Next() {
+		var id, gid, autorID int64
+		var gNome, sTipo, autorNome, tipoAcao, dadosJSON, status, aprovadorNome, aprovadoEm, just, criadoEm string
+		var aprovadorID *int64
+		if errScan := rows.Scan(&id, &gid, &gNome, &sTipo, &autorID, &autorNome, &tipoAcao,
+			&dadosJSON, &status, &aprovadorID, &aprovadorNome, &aprovadoEm, &just, &criadoEm); errScan == nil {
+			var dados map[string]any
+			_ = json.Unmarshal([]byte(dadosJSON), &dados)
+			lista = append(lista, map[string]any{
+				"id":             id,
+				"grupo_id":       gid,
+				"grupo_nome":     gNome,
+				"setor_tipo":     sTipo,
+				"autor_id":       autorID,
+				"autor_nome":     autorNome,
+				"tipo_acao":      tipoAcao,
+				"dados":          dados,
+				"dados_json":     dadosJSON,
+				"status":         status,
+				"aprovado_por":   aprovadorID,
+				"aprovador_nome": aprovadorNome,
+				"aprovado_em":    aprovadoEm,
+				"justificativa":  just,
+				"criado_em":      criadoEm,
+			})
+		}
+	}
+	if lista == nil {
+		lista = []map[string]any{}
+	}
+	jsonOK(w, map[string]any{"sugestoes": lista})
+}
+
+func (a *App) hSetorSugestoesAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	if escopo <= 0 {
+		jsonErro(w, http.StatusForbidden, "usuário sem grupo operacional")
+		return
+	}
+
+	var req struct {
+		SetorTipo string         `json:"setor_tipo"` // 'comando', 'pessoal', 'material'
+		TipoAcao  string         `json:"tipo_acao"`
+		Dados     map[string]any `json:"dados"`
+	}
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "corpo inválido")
+		return
+	}
+
+	req.SetorTipo = strings.ToLower(strings.TrimSpace(req.SetorTipo))
+	if req.SetorTipo != "comando" && req.SetorTipo != "pessoal" && req.SetorTipo != "material" {
+		jsonErro(w, http.StatusBadRequest, "setor_tipo inválido (deve ser 'comando', 'pessoal' ou 'material')")
+		return
+	}
+	if strings.TrimSpace(req.TipoAcao) == "" {
+		jsonErro(w, http.StatusBadRequest, "tipo_acao obrigatório")
+		return
+	}
+
+	dj, err := json.Marshal(req.Dados)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "falha ao serializar dados")
+		return
+	}
+
+	res, err := a.st.db.Exec(`
+		INSERT INTO setor_sugestoes (grupo_id, setor_tipo, autor_id, tipo_acao, dados_json, status)
+		VALUES (?, ?, ?, ?, ?, 'pendente')`,
+		escopo, req.SetorTipo, u.ID, req.TipoAcao, string(dj))
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao salvar sugestão: "+err.Error())
+		return
+	}
+
+	id, _ := res.LastInsertId()
+	a.st.Auditoria(&u.ID, "sugestao_criar", "setor_sugestoes", &id, fmt.Sprintf("setor=%s acao=%s", req.SetorTipo, req.TipoAcao), ipDe(r))
+
+	jsonOK(w, map[string]any{
+		"ok":         true,
+		"id":         id,
+		"mensagem":   "Sugestão encaminhada com sucesso para apreciação do Chefe de Setor",
+		"status":     "pendente",
+		"setor_tipo": req.SetorTipo,
+	})
+}
+
+func (a *App) hSetorSugestoesAvaliar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	// Apenas chefes (gerente, chefe_setor ou admin) podem avaliar sugestões
+	if u.Papel != "admin" && u.Papel != "gerente" && u.Papel != "chefe_setor" {
+		jsonErro(w, http.StatusForbidden, "Apenas o Chefe de Setor ou Gerente pode aprovar/rejeitar sugestões")
+		return
+	}
+
+	sugID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || sugID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID da sugestão inválido")
+		return
+	}
+
+	var req struct {
+		Acao          string `json:"acao"` // 'aprovar' ou 'rejeitar'
+		Justificativa string `json:"justificativa"`
+	}
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "corpo inválido")
+		return
+	}
+
+	req.Acao = strings.ToLower(strings.TrimSpace(req.Acao))
+	if req.Acao != "aprovar" && req.Acao != "rejeitar" {
+		jsonErro(w, http.StatusBadRequest, "ação inválida (deve ser 'aprovar' ou 'rejeitar')")
+		return
+	}
+
+	var gid int64
+	var statusAtual, sTipo, tipoAcao, dadosJSON string
+	err = a.st.db.QueryRow(`
+		SELECT grupo_id, status, setor_tipo, tipo_acao, dados_json
+		FROM setor_sugestoes WHERE id = ?`, sugID).Scan(&gid, &statusAtual, &sTipo, &tipoAcao, &dadosJSON)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "sugestão não encontrada")
+		return
+	}
+
+	if escopo > 0 && gid != escopo && u.Papel != "admin" {
+		jsonErro(w, http.StatusForbidden, "sugestão fora do seu grupo")
+		return
+	}
+	if statusAtual != "pendente" {
+		jsonErro(w, http.StatusConflict, "sugestão já foi avaliada anteriormente ("+statusAtual+")")
+		return
+	}
+
+	agora := time.Now().UTC().Format(time.RFC3339)
+	novoStatus := "rejeitado"
+	if req.Acao == "aprovar" {
+		novoStatus = "aprovado"
+	}
+
+	// Se aprovado, o resultado oficial fica em nome do Chefe de Setor que aprovou!
+	_, err = a.st.db.Exec(`
+		UPDATE setor_sugestoes
+		SET status = ?, aprovado_por = ?, aprovado_em = ?, justificativa = ?
+		WHERE id = ?`, novoStatus, u.ID, agora, req.Justificativa, sugID)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao atualizar status: "+err.Error())
+		return
+	}
+
+	// Se aprovado, aplicar a ação correspondente no banco com autoria do Chefe
+	if req.Acao == "aprovar" {
+		var dados map[string]any
+		_ = json.Unmarshal([]byte(dadosJSON), &dados)
+
+		switch tipoAcao {
+		case "alterar_status_militar":
+			if pIDRaw, ok := dados["pessoa_id"]; ok {
+				if novoStatusMilitar, ok2 := dados["novo_status"].(string); ok2 {
+					var pID int64
+					switch v := pIDRaw.(type) {
+					case float64:
+						pID = int64(v)
+					case int64:
+						pID = v
+					}
+					if pID > 0 {
+						_, _ = a.st.db.Exec(`UPDATE pessoas SET status = ? WHERE id = ?`, novoStatusMilitar, pID)
+					}
+				}
+			}
+		case "atualizar_item_material":
+			if itemIDRaw, ok := dados["item_id"]; ok {
+				if novoStatusMat, ok2 := dados["status"].(string); ok2 {
+					var itemID int64
+					switch v := itemIDRaw.(type) {
+					case float64:
+						itemID = int64(v)
+					case int64:
+						itemID = v
+					}
+					if itemID > 0 {
+						_, _ = a.st.db.Exec(`UPDATE material_itens SET status = ? WHERE id = ?`, novoStatusMat, itemID)
+					}
+				}
+			}
+		}
+	}
+
+	chefeNome := u.NomeGuerra
+	if chefeNome == "" {
+		chefeNome = u.NomeCompleto
+	}
+	if chefeNome == "" {
+		chefeNome = u.Login
+	}
+
+	a.st.Auditoria(&u.ID, "sugestao_"+novoStatus, "setor_sugestoes", &sugID,
+		fmt.Sprintf("avaliado por chefe=%s justificativa=%s", chefeNome, req.Justificativa), ipDe(r))
+
+	jsonOK(w, map[string]any{
+		"ok":             true,
+		"id":             sugID,
+		"status":         novoStatus,
+		"aprovador_id":   u.ID,
+		"aprovador_nome": chefeNome,
+		"aprovado_em":    agora,
+		"mensagem":       fmt.Sprintf("Sugestão %s com sucesso com chancela oficial de %s", novoStatus, chefeNome),
+	})
+}
+
+func (a *App) hConscienciaResumo(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	// Buscar dados do próprio grupo e subordinados imediatos/recursivos
+	var grupoPrincipalNome string
+	if escopo > 0 {
+		_ = a.st.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, escopo).Scan(&grupoPrincipalNome)
+	} else {
+		grupoPrincipalNome = "Comando Geral / Todas as Unidades"
+	}
+
+	hoje := time.Now().In(a.horaLocal).Format("2006-01-02")
+	ontem := time.Now().In(a.horaLocal).AddDate(0, 0, -1).Format("2006-01-02")
+
+	// Determinar grupos no escopo
+	var gruposIDs []int64
+	if escopo > 0 {
+		gruposIDs = append([]int64{escopo}, a.gruposSubordinadosAtivos(escopo)...)
+	} else {
+		rows, _ := a.st.db.Query(`SELECT id FROM grupos ORDER BY nome`)
+		if rows != nil {
+			defer rows.Close()
+			for rows.Next() {
+				var gid int64
+				if rows.Scan(&gid) == nil {
+					gruposIDs = append(gruposIDs, gid)
+				}
+			}
+		}
+	}
+
+	// Métricas agregadas
+	var totalEfetivo, totalPresentes, totalEscaladosHoje, totalMateriais, totalCautelasAbertas, totalConferenciasFechadas int
+
+	type SubordinadoResumo struct {
+		ID                   int64  `json:"id"`
+		Nome                 string `json:"nome"`
+		Efetivo              int    `json:"efetivo"`
+		PresentesHoje        int    `json:"presentes_hoje"`
+		FaltasHoje           int    `json:"faltas_hoje"`
+		StatusConferencia    string `json:"status_conferencia"` // 'fechada', 'aberta', 'pendente'
+		ConferenciaID        *int64 `json:"conferencia_id,omitempty"`
+		MateriaisAcautelados int    `json:"materiais_acautelados"`
+	}
+
+	var listaSub []SubordinadoResumo
+
+	for _, gid := range gruposIDs {
+		var gNome string
+		var ef int
+		_ = a.st.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, gid).Scan(&gNome)
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM pessoas WHERE grupo_id = ? AND status = 'ativo'`, gid).Scan(&ef)
+		totalEfetivo += ef
+
+		// Conferência de hoje do grupo
+		var confID int64
+		var confStatus string
+		var presentes, faltas int
+		errConf := a.st.db.QueryRow(`
+			SELECT id, status FROM conferencias
+			WHERE grupo_id = ? AND data = ?
+			ORDER BY id DESC LIMIT 1`, gid, hoje).Scan(&confID, &confStatus)
+
+		statusConf := "pendente"
+		var pConfID *int64
+		if errConf == nil {
+			statusConf = confStatus
+			pConfID = &confID
+			if confStatus == "fechada" {
+				totalConferenciasFechadas++
+			}
+			_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM presencas WHERE conferencia_id = ? AND situacao = 'presente'`, confID).Scan(&presentes)
+			_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM presencas WHERE conferencia_id = ? AND situacao IN ('falta', 'justificada')`, confID).Scan(&faltas)
+		}
+		totalPresentes += presentes
+
+		// Materiais acautelados no grupo
+		var acautelados int
+		_ = a.st.db.QueryRow(`
+			SELECT COUNT(*) FROM material_cautelas mc
+			JOIN material_itens mi ON mi.id = mc.item_id
+			WHERE mi.grupo_id = ? AND mc.status = 'ativa'`, gid).Scan(&acautelados)
+		totalCautelasAbertas += acautelados
+
+		var totalMatGrupo int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM material_itens WHERE grupo_id = ?`, gid).Scan(&totalMatGrupo)
+		totalMateriais += totalMatGrupo
+
+		listaSub = append(listaSub, SubordinadoResumo{
+			ID:                   gid,
+			Nome:                 gNome,
+			Efetivo:              ef,
+			PresentesHoje:        presentes,
+			FaltasHoje:           faltas,
+			StatusConferencia:    statusConf,
+			ConferenciaID:        pConfID,
+			MateriaisAcautelados: acautelados,
+		})
+	}
+
+	// Escalados de hoje em todas as unidades do escopo
+	if len(gruposIDs) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(gruposIDs)), ",")
+		args := make([]any, len(gruposIDs)+1)
+		for i, g := range gruposIDs {
+			args[i] = g
+		}
+		args[len(gruposIDs)] = hoje
+		_ = a.st.db.QueryRow(`
+			SELECT COUNT(DISTINCT ep.pessoa_id)
+			FROM escala_pessoas ep
+			JOIN escala_turnos et ON et.id = ep.turno_id
+			WHERE et.grupo_id IN (`+ph+`) AND substr(et.data_inicio, 1, 10) <= ? AND substr(et.data_fim, 1, 10) >= ?`,
+			append(args, hoje)...).Scan(&totalEscaladosHoje)
+	}
+
+	// Sugestões pendentes
+	var sugestoesPendentes int
+	if escopo > 0 {
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM setor_sugestoes WHERE grupo_id = ? AND status = 'pendente'`, escopo).Scan(&sugestoesPendentes)
+	} else {
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM setor_sugestoes WHERE status = 'pendente'`).Scan(&sugestoesPendentes)
+	}
+
+	jsonOK(w, map[string]any{
+		"grupo_id":                  escopo,
+		"grupo_nome":                grupoPrincipalNome,
+		"data_hoje":                 hoje,
+		"data_ontem":                ontem,
+		"total_efetivo":             totalEfetivo,
+		"total_presentes_hoje":      totalPresentes,
+		"total_escalados_hoje":      totalEscaladosHoje,
+		"total_materiais":           totalMateriais,
+		"total_cautelas_ativas":     totalCautelasAbertas,
+		"conferencias_fechadas":     totalConferenciasFechadas,
+		"sugestoes_pendentes":       sugestoesPendentes,
+		"subordinados":              listaSub,
+	})
+}
+
