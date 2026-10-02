@@ -23,6 +23,36 @@
   };
   const fecharModal = raiz => { if (raiz && raiz.remove) raiz.remove(); };
 
+  // Modal de filtros do Relatório PDF da conferência (ordem Tenente 02/10)
+  window.abrirModalPDFConferencia = function (confID) {
+    const presets = [
+      { k: 'todos', label: 'Selecionar todos', desc: 'conferência completa' },
+      { k: 'faltas', label: 'Somente os com falta', desc: 'apenas lançamentos de falta' },
+      { k: 'justificados', label: 'Somente os justificados', desc: 'apenas lançamentos justificados (com destino)' },
+    ];
+    const html = `
+      <h3 style="margin:0 0 4px">Relatório PDF da Conferência</h3>
+      <div style="font-size:12.5px;color:var(--tx2);margin-bottom:14px">Escolha o recorte antes de gerar:</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+        ${presets.map((p, i) => `
+          <label style="display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid var(--borda);border-radius:8px;cursor:pointer">
+            <input type="radio" name="pdfFiltro" value="${p.k}" ${i === 0 ? 'checked' : ''} style="margin-top:3px">
+            <span><b>${p.label}</b><br><span style="font-size:11.5px;color:var(--tx2)">${p.desc}</span></span>
+          </label>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" class="secundario" id="pdfCancelar">Cancelar</button>
+        <button type="button" class="primario" id="pdfGerar">Gerar PDF</button>
+      </div>`;
+    const m = window.abrirModal(html);
+    m.modal.querySelector('#pdfCancelar').onclick = () => m.fechar();
+    m.modal.querySelector('#pdfGerar').onclick = () => {
+      const f = m.modal.querySelector('input[name="pdfFiltro"]:checked').value;
+      m.fechar();
+      window.open(`/api/conferencia/${confID}/relatorio.pdf?filtro=${f}&t=${Date.now()}`, '_blank');
+    };
+  };
+
   /* ================================================================
      #/hoje — CONFERÊNCIA DE PESSOAL (gerente/operador)
      ================================================================ */
@@ -98,7 +128,7 @@
       <td>${modoTela === 'arquivo'
         ? `<button class="perigo" data-excluir-arq="${c.id}" style="min-height:36px;padding:8px 12px">Excluir</button>`
         : (c.status === 'fechada'
-          ? `<a href="/api/conferencia/${c.id}/relatorio.pdf?t=${Date.now()}" target="_blank"><button class="primario" style="min-height:36px;padding:8px 12px">Relatório PDF</button></a>
+          ? `<button class="primario" style="min-height:36px;padding:8px 12px" data-pdfconf="${c.id}">Relatório PDF</button>
              <button data-arquivar="${c.id}" style="min-height:36px;padding:8px 12px">Arquivar</button>`
           : `<button class="primario" data-abrir="${c.id}" style="min-height:36px;padding:8px 12px">Abrir</button>`)}</td></tr>`;
     const porData = (a, b) => String(b.data || '').localeCompare(String(a.data || '')) || b.id - a.id;
@@ -169,6 +199,9 @@
     };
     document.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
       location.hash = '#/conferencia?id=' + b.dataset.abrir;
+    });
+    document.querySelectorAll('[data-pdfconf]').forEach(b => {
+      b.onclick = () => window.abrirModalPDFConferencia(b.dataset.pdfconf);
     });
     document.querySelectorAll('[data-arquivar]').forEach(b => b.onclick = async () => {
       if (!(await confirmar(`Arquivar a conferência #${b.dataset.arquivar}? Ela sai desta listagem e vai para o ARQUIVO.`))) return;
@@ -794,11 +827,9 @@
               <td>${esc(c.criado_por || '—')}</td>
               <td style="white-space:nowrap">
                 <div style="display:flex; gap:6px">
-                  <a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank" title="Gerar e Baixar PDF">
-                    <button type="button" class="acao-linha" style="font-size:12px; padding:4px 8px">
-                      📄 PDF
-                    </button>
-                  </a>
+                  <button type="button" class="acao-linha" data-pdfconf="${c.id}" style="font-size:12px; padding:4px 8px" title="Gerar e Baixar PDF">
+                    📄 PDF
+                  </button>
                   <button type="button" class="acao-linha bt-detalhe-conf" data-cid="${c.id}" style="font-size:12px; padding:4px 8px" title="Ver lista de lançamentos">
                     🔍 Detalhes
                   </button>
@@ -844,6 +875,10 @@
 
         resEl.querySelectorAll('.bt-detalhe-conf').forEach(b => {
           b.onclick = () => abrirModalDetalhesConferencia(+b.dataset.cid);
+        });
+
+        resEl.querySelectorAll('[data-pdfconf]').forEach(b => {
+          b.onclick = () => window.abrirModalPDFConferencia(b.dataset.pdfconf);
         });
       };
 
@@ -918,9 +953,7 @@
                   Local: <b>${esc(c.local || 'Geral')}</b> · Grupo: <b>${esc(c.grupo_nome || '—')}</b> · Status: <b>${esc(c.status)}</b>
                 </p>
               </div>
-              <a href="/api/conferencia/${c.id}/relatorio.pdf" target="_blank">
-                <button type="button" class="primario" style="font-size:12.5px; padding:6px 14px">📄 Baixar PDF</button>
-              </a>
+              <button type="button" class="primario" data-pdfconf="${c.id}" style="font-size:12.5px; padding:6px 14px">📄 Baixar PDF</button>
             </div>
 
             <div class="rolagem" style="max-height:300px">
@@ -953,6 +986,9 @@
               pgPres = +b.dataset.pg;
               renderModalPres();
             };
+          });
+          inner.querySelectorAll('[data-pdfconf]').forEach(b => {
+            b.onclick = () => window.abrirModalPDFConferencia(b.dataset.pdfconf);
           });
         };
 
