@@ -159,6 +159,107 @@ function pill(situacao) {
 }
 window.pill = pill;
 
+/* ---------- Dropdown Estilizado Obsidian Glassmorphism (v1.5) ---------- */
+function criarDropdown(container, opcoes, config = {}) {
+  if (!container) return null;
+  const valorInicial = config.valorPadrao !== undefined ? config.valorPadrao : (opcoes[0] ? opcoes[0].valor : null);
+  let valorAtual = valorInicial;
+
+  container.innerHTML = '';
+  container.classList.add('sci-dropdown');
+
+  const trigger = document.createElement('button');
+  trigger.type = 'button';
+  trigger.className = 'sci-dropdown-trigger ' + (config.classeExtra || '');
+
+  const labelSpan = document.createElement('span');
+  labelSpan.className = 'sci-dropdown-label';
+
+  const chevron = document.createElement('span');
+  chevron.className = 'sci-dropdown-chevron';
+  chevron.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="6 9 12 15 18 9"/></svg>';
+
+  trigger.appendChild(labelSpan);
+  trigger.appendChild(chevron);
+
+  const menu = document.createElement('div');
+  menu.className = 'sci-dropdown-menu ' + (config.alinharDireita ? 'alinhar-direita' : '');
+  menu.style.display = 'none';
+
+  const atualizarLabel = () => {
+    const opt = opcoes.find(o => String(o.valor) === String(valorAtual)) || opcoes[0];
+    if (opt) {
+      labelSpan.innerHTML = (opt.icone ? `<span style="margin-right:6px">${opt.icone}</span>` : '') + esc(opt.rotulo || opt.nome || opt.valor);
+    } else {
+      labelSpan.textContent = config.placeholder || 'Selecione…';
+    }
+  };
+
+  const renderItens = () => {
+    menu.innerHTML = '';
+    opcoes.forEach(opt => {
+      const it = document.createElement('button');
+      it.type = 'button';
+      it.className = 'sci-dropdown-item' + (String(opt.valor) === String(valorAtual) ? ' ativo' : '');
+      it.innerHTML = (opt.icone ? `<span style="font-size:14px">${opt.icone}</span>` : '') + `<span>${esc(opt.rotulo || opt.nome || opt.valor)}</span>`;
+      it.onclick = (e) => {
+        e.stopPropagation();
+        valorAtual = opt.valor;
+        atualizarLabel();
+        fechar();
+        if (typeof config.onChange === 'function') config.onChange(opt.valor, opt);
+      };
+      menu.appendChild(it);
+    });
+  };
+
+  const abrir = () => {
+    // Fechar outros dropdowns abertos
+    document.querySelectorAll('.sci-dropdown-trigger.aberto').forEach(t => {
+      if (t !== trigger) {
+        t.classList.remove('aberto');
+        const m = t.nextElementSibling;
+        if (m) m.style.display = 'none';
+      }
+    });
+    renderItens();
+    menu.style.display = 'flex';
+    trigger.classList.add('aberto');
+  };
+
+  const fechar = () => {
+    menu.style.display = 'none';
+    trigger.classList.remove('aberto');
+  };
+
+  trigger.onclick = (e) => {
+    e.stopPropagation();
+    if (trigger.classList.contains('aberto')) fechar();
+    else abrir();
+  };
+
+  document.addEventListener('click', (e) => {
+    if (!container.contains(e.target)) fechar();
+  });
+
+  container.appendChild(trigger);
+  container.appendChild(menu);
+  atualizarLabel();
+
+  return {
+    getValor: () => valorAtual,
+    setValor: (v) => {
+      valorAtual = v;
+      atualizarLabel();
+    },
+    setOpcoes: (novasOpcoes) => {
+      opcoes = novasOpcoes;
+      atualizarLabel();
+    }
+  };
+}
+window.criarDropdown = criarDropdown;
+
 /* ---------- Paginação Global (Máx 10 itens por página) ---------- */
 function paginarArray(itens, pagina, porPagina) {
   const tamPag = porPagina || 10;
