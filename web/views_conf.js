@@ -361,47 +361,6 @@
       || (a.nome_guerra || '').localeCompare(b.nome_guerra || '', 'pt', { sensitivity: 'base' });
     for (const s of Object.keys(porSetor)) porSetor[s].sort(ordemCheck);
     let listas = '';
-    for (const setor of Object.keys(porSetor).sort()) {
-      const pessoasSetor = porSetor[setor];
-      const totalVerif = pessoasSetor.filter(x => C.verif.has(x.id)).length;
-      let jaInseriuDivisor = false;
-
-      const itensHTML = pessoasSetor.map((p, idx) => {
-        const sit = sitDe(p);
-        const ehVerif = C.verif.has(p.id);
-        const escHoje = (C.escalados || []).find(x => x.pessoa_id === p.id);
-        const escOntem = (C.escaladosOntem || []).find(x => x.pessoa_id === p.id);
-        let badgeEscala = '';
-        if (escHoje) {
-          badgeEscala = `<span style="display:inline-flex;align-items:center;margin-left:4px;cursor:help;font-size:13px" title="Escalado HOJE em: ${esc(escHoje.tipo_nome || 'Escala')}">📅🔴</span>`;
-        } else if (escOntem) {
-          badgeEscala = `<span style="display:inline-flex;align-items:center;margin-left:4px;cursor:help;font-size:13px" title="Escalado ONTEM (dia pós-escala) em: ${esc(escOntem.tipo_nome || 'Escala')}">📅🟡</span>`;
-        }
-        const selDest = sit === 'justificada'
-          ? `<select class="sel-destino" data-id="${p.id}"><option value="">destino…</option>` +
-            C.destinos.map(dx => `<option value="${dx.id}" ${C.dest[p.id] == dx.id ? 'selected' : ''}>${esc(dx.nome)}</option>`).join('') + '</select>'
-          : '';
-        const optSit = s => `<option value="${s}" ${sit === s ? 'selected' : ''}>${ROTULO[s]}</option>`;
-
-        let divisorHTML = '';
-        if (ehVerif && !jaInseriuDivisor) {
-          jaInseriuDivisor = true;
-          divisorHTML = `
-            <div class="divisor-verificados">
-              <span class="divisor-linha"></span>
-              <span class="divisor-rotulo">✓ Verificados (${totalVerif} de ${pessoasSetor.length})</span>
-              <span class="divisor-linha"></span>
-            </div>
-          `;
-        }
-
-        return divisorHTML + `<div class="pessoa ${ehVerif ? 'verificado' : ''}" data-id="${p.id}">
-          <input type="checkbox" class="chk" data-id="${p.id}" ${ehVerif ? 'checked' : ''} title="verifiquei esta pessoa">
-          <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
-          <select class="sel-situacao" data-id="${p.id}" title="situação">${sit === 'nao_verificado' ? '<option value="nao_verificado" disabled selected>NÃO VERIFICADO</option>' : ''}${SITUACOES.map(optSit).join('')}</select>
-          ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
-      }).join('');
-
     let dashboardSetoresHTML = '';
     if (!semC && C.setoresStatus && C.setoresStatus.length > 0) {
       const concCount = C.setoresStatus.filter(s => s.status === 'concluida').length;
