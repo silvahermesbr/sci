@@ -16,8 +16,8 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v1.3 = 26: + v26 re-sanitização XSS). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 26
+// (v1.5 = 27: + v27 Escalas 2.0, Setores, Fases, Delegação, Tags Material). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
+const versaoSchemaBinario = 27
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio

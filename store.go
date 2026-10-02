@@ -122,6 +122,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV26(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV27(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1756,3 +1759,114 @@ func (s *Store) migrarV26() error {
 
 	return s.marcarVersao(26)
 }
+
+// migrarV27 (v1.5): Evolução integrada — Modelos de Escala, Fases e Delegação inter-grupos,
+// Workflow setorial (sugestões/aprovações), Tags de Material (tipo/classe) e índice único anti-duplicação de calendário.
+func (s *Store) migrarV27() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 27`).Scan(&v)
+	if v == 27 {
+		return nil
+	}
+
+	ddl := []string{
+		// 1. Modelos de Escala
+		`CREATE TABLE IF NOT EXISTS escala_modelos (
+			id INTEGER PRIMARY KEY,
+			grupo_id INTEGER NOT NULL REFERENCES grupos(id),
+			nome TEXT NOT NULL,
+			descricao TEXT,
+			ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0,1)),
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE TABLE IF NOT EXISTS escala_modelo_postos (
+			id INTEGER PRIMARY KEY,
+			modelo_id INTEGER NOT NULL REFERENCES escala_modelos(id) ON DELETE CASCADE,
+			tipo_id INTEGER NOT NULL REFERENCES escala_tipos(id),
+			hora_inicio TEXT NOT NULL DEFAULT '07:00',
+			hora_fim TEXT NOT NULL DEFAULT '07:00',
+			quantidade INTEGER NOT NULL DEFAULT 1,
+			ordem INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS escala_modelo_aptos (
+			id INTEGER PRIMARY KEY,
+			modelo_id INTEGER NOT NULL REFERENCES escala_modelos(id) ON DELETE CASCADE,
+			pessoa_id INTEGER NOT NULL REFERENCES pessoas(id) ON DELETE CASCADE,
+			UNIQUE(modelo_id, pessoa_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_escala_modelo_postos_mod ON escala_modelo_postos(modelo_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_escala_modelo_aptos_mod ON escala_modelo_aptos(modelo_id)`,
+
+		// 2. Fila de Sugestões de Setor (Workflow Auxiliar -> Chefe de Setor)
+		`CREATE TABLE IF NOT EXISTS setor_sugestoes (
+			id INTEGER PRIMARY KEY,
+			grupo_id INTEGER NOT NULL REFERENCES grupos(id),
+			setor_tipo TEXT NOT NULL CHECK (setor_tipo IN ('comando', 'pessoal', 'material')),
+			autor_id INTEGER NOT NULL REFERENCES usuarios(id),
+			tipo_acao TEXT NOT NULL,
+			dados_json TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'aprovado', 'rejeitado')),
+			aprovado_por INTEGER REFERENCES usuarios(id),
+			aprovado_em TEXT,
+			justificativa TEXT,
+			criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_setor_sugestoes_status ON setor_sugestoes(grupo_id, setor_tipo, status)`,
+	}
+
+	for _, q := range ddl {
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migração v27 ddl: %w", err)
+		}
+	}
+
+	// 3. Colunas em escala_turnos (fase, modelo_id, grupo_delegado_id, status_delegacao)
+	colunasTurnos := map[string]string{
+		"fase":              "TEXT NOT NULL DEFAULT 'aberto'",
+		"modelo_id":         "INTEGER REFERENCES escala_modelos(id)",
+		"grupo_delegado_id": "INTEGER REFERENCES grupos(id)",
+		"status_delegacao":  "TEXT DEFAULT 'proprio'",
+	}
+	for col, tipo := range colunasTurnos {
+		var n int
+		_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('escala_turnos') WHERE name = ?`, col).Scan(&n)
+		if n == 0 {
+			if _, err := s.db.Exec(`ALTER TABLE escala_turnos ADD COLUMN ` + col + ` ` + tipo); err != nil {
+				return fmt.Errorf("migração v27 alter escala_turnos %s: %w", col, err)
+			}
+		}
+	}
+
+	// 4. Colunas de tipo e classe em material_itens
+	colunasMat := map[string]string{
+		"tipo_material":   "TEXT DEFAULT ''",
+		"classe_material": "TEXT DEFAULT ''",
+	}
+	for col, tipo := range colunasMat {
+		var n int
+		_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('material_itens') WHERE name = ?`, col).Scan(&n)
+		if n == 0 {
+			if _, err := s.db.Exec(`ALTER TABLE material_itens ADD COLUMN ` + col + ` ` + tipo); err != nil {
+				return fmt.Errorf("migração v27 alter material_itens %s: %w", col, err)
+			}
+		}
+	}
+
+	// 5. Índices únicos anti-duplicidade em calendario_compartilhamentos
+	_, _ = s.db.Exec(`DELETE FROM calendario_compartilhamentos
+		WHERE id NOT IN (
+			SELECT MIN(id) FROM calendario_compartilhamentos
+			GROUP BY calendario_id, COALESCE(alvo_usuario_id, 0), COALESCE(alvo_grupo_id, 0), COALESCE(alvo_papel_id, 0)
+		)`)
+
+	_, _ = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cal_comp_usr_unico 
+		ON calendario_compartilhamentos(calendario_id, alvo_usuario_id) 
+		WHERE alvo_usuario_id IS NOT NULL`)
+
+	_, _ = s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_cal_comp_grp_unico 
+		ON calendario_compartilhamentos(calendario_id, alvo_grupo_id) 
+		WHERE alvo_grupo_id IS NOT NULL`)
+
+	return s.marcarVersao(27)
+}
+
