@@ -106,6 +106,15 @@ func main() {
 
 func recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Fix de blindagem (recomendação da auditoria v1.3): CSP em TODA resposta.
+		// 'unsafe-inline' é necessário: o front usa onclick=/style= inline em massa
+		// (remover quebra todos os botões). Mesmo assim a CSP mata <script> remoto,
+		// object/embed e framing externo — eleva o custo de qualquer XSS residual.
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; "+
+				"base-uri 'self'; frame-ancestors 'none'")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		defer func() {
 			if err := recover(); err != nil {
 				log.Printf("PANIC RECOVERED: %v\n%s", err, debug.Stack())
