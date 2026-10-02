@@ -30,6 +30,7 @@ type ConferenciaPDF struct {
 	GeradoPor   string           `json:"gerado_por"`
 	Resumo      map[string]int   `json:"resumo"`
 	Lancamentos []map[string]any `json:"lancamentos"`
+	Filtro      string           `json:"filtro,omitempty"`
 }
 
 // cp1252Traduz converte UTF-8 PT-BR para bytes cp1252 (fontes core do fpdf).
@@ -537,7 +538,13 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 	if c.FechadaEm != nil {
 		sub += fmt.Sprintf(" · Fechada em %s", fmtDataBR(*c.FechadaEm))
 	}
-	pdf := a.novoPDF("P", fmt.Sprintf("CONFERÊNCIA DE PESSOAL Nº #%d", c.ID), sub, c.GeradoPor)
+	titulo := fmt.Sprintf("CONFERÊNCIA DE PESSOAL Nº #%d", c.ID)
+	if c.Filtro == "faltas" {
+		titulo += " (SÓ FALTAS)"
+	} else if c.Filtro == "justificados" {
+		titulo += " (SÓ JUSTIFICADOS)"
+	}
+	pdf := a.novoPDF("P", titulo, sub, c.GeradoPor)
 
 	presentes := c.Resumo["presentes"]
 	atrasos := c.Resumo["atrasos"]

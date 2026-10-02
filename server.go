@@ -1988,6 +1988,12 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 			case "justificada":
 				resumo["justificadas"]++
 			}
+			if filtro == "faltas" && sit != "falta" {
+				continue
+			}
+			if filtro == "justificados" && sit != "justificada" {
+				continue
+			}
 			ord++
 			lanc = append(lanc, map[string]any{
 				"ord": ord, "nome_guerra": ng, "funcao": funcao, "setor": setor, "situacao": sit,
@@ -2003,6 +2009,11 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	filtro := r.URL.Query().Get("filtro")
+	if filtro != "" && filtro != "todos" && filtro != "faltas" && filtro != "justificados" {
+		jsonErro(w, http.StatusBadRequest, "filtro inválido (todos|faltas|justificados)")
 		return
 	}
 	var (
@@ -2037,15 +2048,22 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	lanc, resumo, e := a.montarLancamentosPDFConferencia(id, "")
+	lanc, resumo, e := a.montarLancamentosPDFConferencia(id, filtro)
 	if e != nil {
 		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
 	}
 	u := usuarioDoCtx(r)
+	selo := ""
+	if filtro == "faltas" {
+		selo = "_SO_FALTAS"
+	} else if filtro == "justificados" {
+		selo = "_SO_JUSTIFICADOS"
+	}
 	cp := ConferenciaPDF{
 		ID: id, Data: data, Status: status, CriadaEm: criadaEm, FechadaEm: fechada,
 		CriadoPor: criadoPor, GeradoPor: u.Login, Resumo: resumo, Lancamentos: lanc,
+		Filtro: filtro,
 	}
 	pdf, err := a.gerarConferenciaPDF(cp)
 	if err != nil {
@@ -2057,7 +2075,7 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition",
-		fmt.Sprintf("inline; filename=SCI_conferencia_%s_%d.pdf", data, id))
+		fmt.Sprintf("inline; filename=SCI_conferencia_%s_%d%s.pdf", data, id, selo))
 	_, _ = w.Write(pdf)
 }
 

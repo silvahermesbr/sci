@@ -5,6 +5,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -152,4 +153,31 @@ func TestBundleNaoReportaDestinoOorfo(t *testing.T) {
 		}
 	}
 }
+
+func TestPDFConferenciaFiltroFaltas(t *testing.T) {
+	app, ger, confID, pesID, _ := setupConfDestino(t)
+	// cria 2ª pessoa para ter falta e presente na mesma conferência
+	resP2, errP2 := app.st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) SELECT 'PDEST2','Pessoa Dest 2', grupo_id, 'ativo' FROM pessoas WHERE id = ?`, pesID)
+	if errP2 != nil {
+		t.Fatalf("inserir pessoa 2: %v", errP2)
+	}
+	pes2, _ := resP2.LastInsertId()
+	marcar(app, ger, confID, pesID, "falta", nil)
+	marcar(app, ger, confID, pes2, "presente", nil)
+	if _, err := app.st.db.Exec(`UPDATE conferencias SET status='fechada', fechada_em=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?`, confID); err != nil {
+		t.Fatalf("fechar: %v", err)
+	}
+	// PDF filtrado: HTTP 200 e content-type PDF
+	rrPdf, _ := doRawReq(app, "GET", "/api/conferencia/"+int64ToStr(confID)+"/relatorio.pdf?filtro=faltas", nil, ger)
+	if rrPdf.Code != http.StatusOK {
+		t.Fatalf("pdf filtrado: %d", rrPdf.Code)
+	}
+	if ct := rrPdf.Header().Get("Content-Type"); !strings.Contains(ct, "application/pdf") {
+		t.Fatalf("content-type: %s", ct)
+	}
+	if !strings.Contains(rrPdf.Header().Get("Content-Disposition"), "_SO_FALTAS") {
+		t.Fatalf("selo de filtro ausente no filename: %s", rrPdf.Header().Get("Content-Disposition"))
+	}
+}
+
 
