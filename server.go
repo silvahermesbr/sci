@@ -17,6 +17,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -106,14 +107,14 @@ func (a *App) backupAgora() (arquivo, shaHex string, err error) {
 		return
 	}
 	defer fDB.Close()
-	
+
 	h := sha256.New()
 	tamanho, err := io.Copy(h, fDB)
 	if err != nil {
 		return
 	}
 	shaHex = hex.EncodeToString(h.Sum(nil))
-	
+
 	if err = os.WriteFile(alvo+".sha256", []byte(shaHex+"  "+nome+"\n"), 0o640); err != nil {
 		return
 	}
@@ -248,7 +249,9 @@ func (a *App) rotas() {
 
 	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria)
 	confAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
-	confMarcarAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador", "chefe_setor"}, h) }
+	confMarcarAuth := func(h http.HandlerFunc) http.Handler {
+		return a.authPapeis([]string{"gerente", "operador", "chefe_setor"}, h)
+	}
 
 	// Arquivo de conferências + filtro de período (ordem Tenente 30/09):
 	// FECHADAS × ARQUIVADAS; gerente arquiva, admin-only exclui arquivada.
@@ -285,7 +288,7 @@ func (a *App) rotas() {
 	m.Handle("DELETE /api/pessoas/{id}", a.auth(false, a.hPessoaExcluir)) // v9.7: admin/gerente excluem (com histórico → desativa)
 	m.Handle("GET /api/pessoas/{id}/qr", a.auth(false, a.hPessoaQRCode))
 	m.Handle("GET /api/pessoas/{id}/pdf", a.auth(false, a.hPessoaPDF))
-	m.Handle("DELETE /api/grupos/{id}", a.auth(true, a.hGrupoExcluir))    // v9.7: só admin, só grupo vazio
+	m.Handle("DELETE /api/grupos/{id}", a.auth(true, a.hGrupoExcluir)) // v9.7: só admin, só grupo vazio
 
 	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4)
 	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
@@ -419,7 +422,7 @@ func (a *App) hAuthSetup(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "a nova senha deve ter no mínimo 8 caracteres")
 		return
 	}
-	
+
 	hash, err := hashSenha(req.NovaSenha)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao processar senha")
@@ -1580,7 +1583,7 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 			rows, err = a.st.db.Query(q+` WHERE c.grupo_id = ? AND c.arquivada_em IS NOT NULL
 				ORDER BY c.data DESC, c.id DESC`, escopo)
 		} else {
-			rows, err = a.st.db.Query(q+` WHERE c.arquivada_em IS NOT NULL
+			rows, err = a.st.db.Query(q + ` WHERE c.arquivada_em IS NOT NULL
 				ORDER BY c.data DESC, c.id DESC`)
 		}
 	} else {
@@ -3687,9 +3690,9 @@ func (a *App) hPerfilGet(w http.ResponseWriter, r *http.Request) {
 		COALESCE(data_nascimento,''), COALESCE(tipo_sanguineo,''), COALESCE(telefone,''),
 		COALESCE(email,''), COALESCE(endereco,''), COALESCE(foto_base64,'')
 		FROM usuarios WHERE id = ?`, u.ID).Scan(
-			&u.NomeGuerra, &u.NomeCompleto,
-			&u.DataNascimento, &u.TipoSanguineo, &u.Telefone,
-			&u.Email, &u.Endereco, &u.FotoBase64)
+		&u.NomeGuerra, &u.NomeCompleto,
+		&u.DataNascimento, &u.TipoSanguineo, &u.Telefone,
+		&u.Email, &u.Endereco, &u.FotoBase64)
 
 	var grupo string
 	if u.GrupoID != nil {
@@ -4438,13 +4441,13 @@ func (a *App) hGrupoTrocarGerente(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Login = strings.ToLower(strings.TrimSpace(req.Login))
-	
+
 	removeGerente := req.Login == "__remove__"
-	
+
 	var uid int64
 	var papel string
 	var uGrupoID *int64
-	
+
 	if !removeGerente {
 		if err := a.st.db.QueryRow(`SELECT id, papel, grupo_id FROM usuarios WHERE login = ? AND ativo = 1`,
 			req.Login).Scan(&uid, &papel, &uGrupoID); err != nil {
@@ -4487,8 +4490,6 @@ func (a *App) hGrupoTrocarGerente(w http.ResponseWriter, r *http.Request) {
 			_, _ = tx.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'gerente')`, uid, gid)
 		}
 	}
-
-
 
 	if err = tx.Commit(); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -4930,7 +4931,11 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 	if u.GrupoID != nil {
 		grupoID = *u.GrupoID
 	}
-	if req.GrupoID != nil && *req.GrupoID > 0 {
+	// Fix P0/P1-2: grupo do CORPO só é honrado para ADMIN (gestão global). Para
+	// gerente/operador é SILENCIOSAMENTE IGNORADO — o front legitamente ecoa o
+	// grupo do item na edição (views_material.js), mas um corpo forjado apontando
+	// outro grupo nunca vira alvo; o escopo do UPDATE + RowsAffected protegem o resto.
+	if req.GrupoID != nil && *req.GrupoID > 0 && u.Papel == "admin" {
 		grupoID = *req.GrupoID
 	}
 	if grupoID <= 0 {
@@ -4956,13 +4961,19 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 
 	var turnoID = req.ID
 	if turnoID > 0 {
-		_, err = tx.Exec(`
+		resUpd, err := tx.Exec(`
 			UPDATE escala_turnos
 			SET tipo_id = ?, data_inicio = ?, data_fim = ?, observacao = ?
 			WHERE id = ? AND (? = 0 OR grupo_id = ?)`,
 			req.TipoID, req.DataInicio, req.DataFim, req.Observacao, turnoID, escopoDoUsuario(u), grupoID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Fix P0: UPDATE fora do escopo (outro grupo) não pode prosseguir para o
+		// DELETE/INSERT do efetivo — antes devolvia 200 e ZERAVA o turno alheio.
+		if n, _ := resUpd.RowsAffected(); n == 0 {
+			jsonErro(w, http.StatusNotFound, "turno não encontrado no seu escopo")
 			return
 		}
 		_, _ = tx.Exec(`DELETE FROM escala_pessoas WHERE turno_id = ?`, turnoID)
@@ -5179,13 +5190,13 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 			}
 			if cautID != nil {
 				item["cautela_ativa"] = map[string]any{
-					"id":                  *cautID,
-					"pessoa_id":           pesID,
-					"pessoa_nome_guerra":  pNomeGuerra,
+					"id":                   *cautID,
+					"pessoa_id":            pesID,
+					"pessoa_nome_guerra":   pNomeGuerra,
 					"pessoa_nome_completo": pNomeCompleto,
-					"data_saida":          dtSaida,
-					"obs_saida":           obsSaida,
-					"responsavel_entrega": opEntrega,
+					"data_saida":           dtSaida,
+					"obs_saida":            obsSaida,
+					"responsavel_entrega":  opEntrega,
 				}
 			}
 			lista = append(lista, item)
@@ -5219,7 +5230,11 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	if u.GrupoID != nil {
 		grupoID = *u.GrupoID
 	}
-	if req.GrupoID != nil && *req.GrupoID > 0 {
+	// Fix P0/P1-2: grupo do CORPO só é honrado para ADMIN (gestão global). Para
+	// gerente/operador é SILENCIOSAMENTE IGNORADO — o front legitamente ecoa o
+	// grupo do item na edição (views_material.js), mas um corpo forjado apontando
+	// outro grupo nunca vira alvo; o escopo do UPDATE + RowsAffected protegem o resto.
+	if req.GrupoID != nil && *req.GrupoID > 0 && u.Papel == "admin" {
 		grupoID = *req.GrupoID
 	}
 	if grupoID <= 0 {
@@ -5243,13 +5258,18 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ID > 0 {
-		_, err := a.st.db.Exec(`
+		resIt, err := a.st.db.Exec(`
 			UPDATE material_itens
 			SET categoria_id = ?, nome = ?, codigo_patrimonio = ?, numero_serie = ?, status = ?, observacao = ?, nivel_sensibilidade = ?
 			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
 			req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.ID, escopoDoUsuario(u), grupoID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Fix P1-2: 200 sem efeito escondia edição fora do escopo — agora 404 honesto.
+		if n, _ := resIt.RowsAffected(); n == 0 {
+			jsonErro(w, http.StatusNotFound, "item não encontrado no seu escopo")
 			return
 		}
 		a.st.Auditoria(&u.ID, "editar", "material_itens", &req.ID, req.Nome+" ("+req.CodigoPatrimonio+")", ipDe(r))
@@ -5392,6 +5412,16 @@ func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fix P1-1: cautelar exige item do PRÓPRIO escopo (o id do corpo era aceito cru).
+	// USA tx: o handler já segura a conexão única — query no pool aqui = deadlock.
+	if esc := escopoDoUsuario(u); esc > 0 {
+		var itemGrupo int64
+		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, req.ItemID).Scan(&itemGrupo); err != nil || itemGrupo != esc {
+			jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+			return
+		}
+	}
+
 	dataSaida := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	res, err := tx.Exec(`
 		INSERT INTO material_cautelas (item_id, pessoa_id, responsavel_entrega_id, data_saida, obs_saida, status)
@@ -5462,6 +5492,19 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "Cautela ativa não encontrada para este item")
 		return
+	}
+
+	// Fix P1-1: devolução por ID cru exigia escopo — a cautela precisa ser do grupo
+	// do próprio item, e o item do escopo do usuário. USA tx (conexão já presa:
+	// query no pool aqui = deadlock, pego pela suíte).
+	{
+		var itemGrupo int64
+		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err == nil {
+			if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+				jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+				return
+			}
+		}
 	}
 
 	dataDevolucao := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
@@ -5545,21 +5588,21 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&cid, &iid, &iNome, &iCod, &pid, &pGuerra, &pCompleto,
 			&respEnt, &loginEnt, &respRec, &loginRec, &dtSaida, &dtDev, &obsS, &obsD, &st); err == nil {
 			lista = append(lista, map[string]any{
-				"id":                       cid,
-				"item_id":                  iid,
-				"item_nome":                iNome,
-				"codigo_patrimonio":        iCod,
-				"pessoa_id":                pid,
-				"pessoa_nome_guerra":       pGuerra,
-				"pessoa_nome_completo":     pCompleto,
-				"responsavel_entrega_id":   respEnt,
-				"responsavel_entrega":      loginEnt,
-				"responsavel_recebimento":  loginRec,
-				"data_saida":               dtSaida,
-				"data_devolucao":           dtDev,
-				"obs_saida":                obsS,
-				"obs_devolucao":            obsD,
-				"status":                   st,
+				"id":                      cid,
+				"item_id":                 iid,
+				"item_nome":               iNome,
+				"codigo_patrimonio":       iCod,
+				"pessoa_id":               pid,
+				"pessoa_nome_guerra":      pGuerra,
+				"pessoa_nome_completo":    pCompleto,
+				"responsavel_entrega_id":  respEnt,
+				"responsavel_entrega":     loginEnt,
+				"responsavel_recebimento": loginRec,
+				"data_saida":              dtSaida,
+				"data_devolucao":          dtDev,
+				"obs_saida":               obsS,
+				"obs_devolucao":           obsD,
+				"status":                  st,
 			})
 		}
 	}
@@ -5672,6 +5715,25 @@ func (a *App) hMaterialAnexoAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.NomeArquivo) == "" || strings.TrimSpace(req.DadosBase64) == "" {
 		jsonErro(w, http.StatusBadRequest, "Nome do arquivo e dados em base64 são obrigatórios")
+		return
+	}
+	// Fix P1-1: anexar em cautela exige escopo do item cautelado.
+	{
+		var itemGrupo int64
+		if err := a.st.db.QueryRow(`SELECT COALESCE(mi.grupo_id,0)
+			FROM material_cautelas mc JOIN material_itens mi ON mi.id = mc.item_id
+			WHERE mc.id = ?`, cautelaID).Scan(&itemGrupo); err == nil {
+			if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+				jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
+				return
+			}
+		}
+	}
+	// Fix P1-3: teto REAL de anexo — o LimitReader de 1 MB corta o JSON inteiro;
+	// base64 cresce ~4/3, então o DECODED útil máximo aqui é ~600 KB.
+	const maxAnexoBase64 = 800 * 1024 // 800 KB de base64 ≈ 600 KB de arquivo
+	if len(req.DadosBase64) > maxAnexoBase64 {
+		jsonErro(w, http.StatusRequestEntityTooLarge, "anexo acima do teto (máx. ~600 KB)")
 		return
 	}
 	mime := req.TipoMIME
@@ -5955,7 +6017,14 @@ func (a *App) iniciarWatchdogSLA() {
 func (a *App) verificarAtrasosSLA() {
 	var webhookURL, cfgPrazo string
 	_ = a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'WEBHOOK_ATRASOS_URL'`).Scan(&webhookURL)
-	webhookURL = strings.TrimSpace(webhookURL)
+	// Fix P1-5: webhook é comando de SAÍDA — URL só http/https com host; falhas
+	// LOGADAS (antes engolidas: o alerta prometido nunca disparava sem pista).
+	if webhookURL != "" {
+		if u, err := url.Parse(webhookURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			log.Printf("SLA webhook: WEBHOOK_ATRASOS_URL inválida (%q) — alerta não disparado", webhookURL)
+			webhookURL = ""
+		}
+	}
 	if webhookURL == "" {
 		return
 	}
@@ -6018,13 +6087,20 @@ func (a *App) verificarAtrasosSLA() {
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	req, err := http.NewRequest("POST", webhookURL, bytes.NewReader(corpo))
-	if err == nil {
-		req.Header.Set("Content-Type", "application/json")
-		resp, errPost := client.Do(req)
-		if errPost == nil && resp != nil {
-			_ = resp.Body.Close()
+	if err != nil {
+		log.Printf("SLA webhook: falha ao montar requisição: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, errPost := client.Do(req)
+	if errPost != nil {
+		log.Printf("SLA webhook: POST falhou para %s: %v", webhookURL, errPost)
+		return
+	}
+	if resp != nil {
+		if resp.StatusCode >= 400 {
+			log.Printf("SLA webhook: alvo respondeu %d", resp.StatusCode)
 		}
+		_ = resp.Body.Close()
 	}
 }
-
-

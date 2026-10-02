@@ -272,7 +272,7 @@
           const nomes = (t.pessoas || []).map(p => esc(p.nome_guerra || p.nome_completo)).join(', ') || 'Sem efetivo';
 
           return `
-            <div class="gantt-bloco" data-turno="${t.id}" title="${esc(posto)}: ${nomes} (${(t.data_inicio||'').slice(11,16) || '00:00'} às ${(t.data_fim||'').slice(11,16) || '24:00'})"
+            <div class="gantt-bloco" data-turno="${t.id}" title="${esc(posto)}: ${esc(nomes)} (${(t.data_inicio||'').slice(11,16) || '00:00'} às ${(t.data_fim||'').slice(11,16) || '24:00'})"
                  style="position:absolute; left:${leftPct}%; width:${widthPct}%; top:6px; bottom:6px; background:linear-gradient(135deg, var(--verde), #065f46); color:#fff; border-radius:6px; padding:4px 8px; font-size:11.5px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.2); display:flex; align-items:center">
               <span>👤 ${nomes}</span>
             </div>

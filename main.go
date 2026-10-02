@@ -81,7 +81,7 @@ func main() {
 		Handler:           recoveryMiddleware(app.mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	
+
 	go func() {
 		log.Printf("SCI no ar — porta %s — dados em %s", porta, dataDir)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
