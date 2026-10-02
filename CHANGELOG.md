@@ -1,5 +1,41 @@
 # SCI — Changelog Oficial
 
+## [v1.5.0] — 2026-10-02
+
+### 🚀 Novidades & Módulos Principais
+- **Módulo de Escalas 2.0 (`/api/escalas/*`, `#/escalas`):**
+  - **Templates de Escala (`escala_modelos`, `escala_modelo_postos`, `escala_modelo_aptos`):** Criação e parametrização de modelos repetitivos de serviço contendo postos e lista de militares aptos via checkboxes.
+  - **Aplicação e Limpeza Diária:** Botões "Aplicar Escala" para clonar o template para a data selecionada e "Limpar Escala do Dia" com modal de confirmação.
+  - **Ciclo de Vida em 4 Fases:** `aberto` -> `preenchido` -> `aprovado` -> `publicado`.
+  - **Delegação Inter-Grupos:** Possibilidade de alocar membro do próprio grupo ou delegar o preenchimento do posto para subunidade subordinada com atualização em tempo real.
+  - **Relatório Diário Oficial em PDF (`/api/escalas/relatorio-dia.pdf`):** Documento formal com cabeçalho, fase, postos, militares alocados e campo de assinatura.
+  - **Aba "Minhas Escalas" (`/api/escalas/minhas`):** Visão dedicada do militar com escalas em que está apto, próximos serviços e histórico.
+
+- **Consciência Situacional do Grupo (`/api/consciencia/resumo`, `#/consciencia`):**
+  - Painel consolidado do Comando monitorando subunidades subordinadas (efetivo pronto, conferências abertas/fechadas, cautelas e escalas).
+  - Consulta rápida instantânea de militares no banco de pessoal com abertura direta de ficha e PDF.
+  - Fila de apreciação e sugestões setoriais integradas.
+
+- **Workflow Setorial de Sugestão & Aprovação (`/api/setores/sugestoes/*`):**
+  - Estruturação dos três setores operacionais: **Comando**, **Pessoal** e **Material**.
+  - Auxiliares operam sob workflow de sugestão; ao ser aprovada pelo Chefe de Setor/Gerente, a ação é executada e o resultado oficial é registrado em nome do Chefe.
+
+- **Etiquetas de Material em Lote (`/api/material/etiquetas-lote.pdf`):**
+  - Impressão otimizada de 10 etiquetas por folha A4 (grid 2x5) com QR Code individual, código de patrimônio e dados da subunidade.
+
+- **Módulo de Conferências & Calendário (Ajustes e Correções):**
+  - **Inspeção de Arquivo:** Visualização detalhada e filtros de registros de conferências fechadas e arquivadas.
+  - **Regra de Observação e Destino:** Reset automático de observação de carry-over caso a situação do militar se altere; destino zerado para presente, atraso e falta (preservado apenas para falta justificada).
+  - **Badges Visuais:** Sinalização de militar escalado hoje (`📅🔴`) e pós-escala (`📅🟡`).
+  - **PDF de Conferência:** Abreviação do nome do setor para evitar truncamentos e bloco de assinatura física centralizado.
+  - **Anti-Duplicidade de Calendário:** Índice único e atualização idempotente de permissões ao compartilhar calendário.
+
+### 🎨 Design System & Frontend
+- **Dropdown Estilizado Obsidian Glassmorphism (`window.criarDropdown`, `.sci-dropdown`):** Menu suspenso com fundo translúcido escuro, blur acrílico, chevron dinâmico e suporte a fechamento por clique externo/Escape.
+- **Viewport Mobile & Tablet Edge-to-Edge:** Barra `#mobileBar` e viewport tocando 100% das bordas da tela sem folgas ou margens flutuantes. Rolagem horizontal refinada nas abas (`.abas`) para evitar empilhamento em telas compactas.
+
+---
+
 ## [v1.0.0] — 2026-09-29
 
 ### 🚀 Novidades & Módulos Principais
