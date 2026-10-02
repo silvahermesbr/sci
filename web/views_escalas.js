@@ -101,6 +101,9 @@
             </div>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
+            <button class="primario" id="btNovoPostoAvulso" style="background:#10b981; border-color:#10b981">
+              ➕ Posto Avulso (Missão)
+            </button>
             <button class="primario" id="btAplicarModeloDia" style="background:#0284c7; border-color:#0284c7">
               ⚡ Aplicar Modelo no Dia
             </button>
@@ -148,6 +151,7 @@
       carregarGrade();
     };
 
+    $('#btNovoPostoAvulso').onclick = () => modalCriarPostoAvulso(diaSelecionado, () => carregarGrade());
     $('#btAplicarModeloDia').onclick = () => modalAplicarModeloDia(diaSelecionado, () => carregarGrade());
     $('#btLimparEscalaDia').onclick = () => acaoLimparEscalaDia(diaSelecionado, () => carregarGrade());
     $('#btRelatorioDiaPDF').onclick = () => window.open('/api/escalas/relatorio-dia.pdf?data=' + diaSelecionado + '&t=' + Date.now(), '_blank');
@@ -300,9 +304,19 @@
       const hIni = (t.data_inicio || '').slice(11, 16) || '07:00';
       const hFim = (t.data_fim || '').slice(11, 16) || '07:00';
 
+      let faixaTxt = '';
+      if (t.posto_grad_min_nome && t.posto_grad_max_nome) {
+        faixaTxt = `<br><span style="color:var(--tx3); font-size:11px">🎖️ ${esc(t.posto_grad_min_nome)} a ${esc(t.posto_grad_max_nome)}</span>`;
+      } else if (t.posto_grad_min_nome) {
+        faixaTxt = `<br><span style="color:var(--tx3); font-size:11px">🎖️ Mín: ${esc(t.posto_grad_min_nome)}</span>`;
+      } else if (t.posto_grad_max_nome) {
+        faixaTxt = `<br><span style="color:var(--tx3); font-size:11px">🎖️ Máx: ${esc(t.posto_grad_max_nome)}</span>`;
+      }
+      let obsTxt = t.observacao ? `<br><small style="color:var(--tx2); font-size:11px">📝 ${esc(t.observacao)}</small>` : '';
+
       return `
         <tr data-id="${t.id}">
-          <td><b>${esc(t.tipo_nome)}</b></td>
+          <td><b>${esc(t.tipo_nome)}</b>${faixaTxt}${obsTxt}</td>
           <td><code>${hIni} às ${hFim}</code></td>
           <td>${militarHTML}</td>
           <td>${badgeDelegado || '<span style="color:var(--tx3); font-size:12px">Próprio Grupo</span>'}</td>
@@ -354,15 +368,18 @@
     });
   }
 
-  /* Modal de Alocação de Militar vs Delegação para Grupo Subordinado */
+  /* Modal de Alocação de Militar vs Delegação para Grupo Subordinado (Checklist Style) */
   async function modalAlocarOuDelegarPosto(turno, aoConcluir) {
     const eu = quem();
-    const [pesRes, grpRes] = await Promise.all([
-      api('/api/pessoas'),
+    const [candRes, grpRes] = await Promise.all([
+      api('/api/escalas/turnos/' + turno.id + '/candidatos'),
       api('/api/grupos/arvore')
     ]);
 
-    const pessoas = pesRes.pessoas || [];
+    const todosCandidatos = (candRes && candRes.candidatos) || [];
+    // Requisito 2: Ao selecionar ESCALAR MILITAR DO GRUPO, deve ser utilizado apenas os aptos!
+    const candidatosAptos = todosCandidatos.filter(c => c.apto);
+
     const arvore = grpRes.arvore || [];
     const coletarSubordinados = (no, acc = []) => {
       if (!no) return acc;
@@ -373,44 +390,118 @@
     };
     const gruposSubordinados = coletarSubordinados(arvore);
 
-    const pessoaAtual = (turno.pessoas && turno.pessoas[0] && turno.pessoas[0].pessoa_id) || null;
-    const ehDelegado = turno.status_delegacao === 'delegado';
+    const pessoaAtualID = (turno.pessoas && turno.pessoas[0] && turno.pessoas[0].pessoa_id) || null;
+    let pessoaSelecionadaID = pessoaAtualID;
+    let modoAtual = (turno.status_delegacao === 'delegado') ? 'delegar' : 'proprio';
+
+    let faixaInfo = '';
+    if (turno.posto_grad_min_nome && turno.posto_grad_max_nome) {
+      faixaInfo = `🎖️ Requisito: ${esc(turno.posto_grad_min_nome)} a ${esc(turno.posto_grad_max_nome)}`;
+    } else if (turno.posto_grad_min_nome) {
+      faixaInfo = `🎖️ Requisito mínimo: ${esc(turno.posto_grad_min_nome)}`;
+    } else if (turno.posto_grad_max_nome) {
+      faixaInfo = `🎖️ Requisito máximo: ${esc(turno.posto_grad_max_nome)}`;
+    }
 
     const html = `
-      <div class="modal" style="max-width:540px">
-        <h3 style="margin-top:0">Preenchimento de Posto: ${esc(turno.tipo_nome)}</h3>
-        <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">
-          Escolha se deseja alocar um militar do seu próprio grupo ou delegar o preenchimento para uma unidade subordinada.
-        </p>
+      <div class="modal" style="max-width:580px; max-height:92vh; display:flex; flex-direction:column">
+        <div style="margin-bottom:12px">
+          <h3 style="margin:0 0 4px">Preenchimento de Posto: ${esc(turno.tipo_nome)}</h3>
+          <div style="font-size:12px; color:var(--tx2); display:flex; gap:12px; flex-wrap:wrap">
+            <span>⏰ <b>${(turno.data_inicio||'').slice(11,16)} às ${(turno.data_fim||'').slice(11,16)}</b></span>
+            ${faixaInfo ? `<span>${faixaInfo}</span>` : ''}
+          </div>
+        </div>
 
-        <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:8px; padding:12px; margin-bottom:14px">
-          <label style="display:flex; align-items:center; gap:8px; font-weight:700; cursor:pointer; margin-bottom:8px">
-            <input type="radio" name="modoPreenchimento" value="proprio" ${!ehDelegado ? 'checked' : ''}>
-            <span>1. Alocar Membro do Nosso Grupo</span>
-          </label>
-          <div id="wrapMembroProprio" style="padding-left:24px; ${ehDelegado ? 'display:none' : ''}">
-            <div class="campo" style="margin:0">
-              <label>Selecione o Militar</label>
-              <select id="selMilitarProprio">
-                <option value="">— Selecionar Militar —</option>
-                ${pessoas.map(p => `
-                  <option value="${p.id}" ${p.id === pessoaAtual ? 'selected' : ''}>
-                    ${esc(p.nome_guerra)} (${esc(p.nome_completo)}) ${p.setor ? '— ' + esc(p.setor) : ''}
-                  </option>
-                `).join('')}
-              </select>
+        <!-- Seletor de Modo (Estilo Cards Obsidian Glass) -->
+        <div style="display:flex; gap:10px; margin-bottom:14px">
+          <div id="btModoProprio" class="card-modo-alocar" style="flex:1; cursor:pointer; padding:10px 12px; border-radius:8px; border:2px solid ${modoAtual === 'proprio' ? 'var(--verde)' : 'var(--borda)'}; background:${modoAtual === 'proprio' ? 'rgba(16,185,129,0.12)' : 'var(--painel2)'}; display:flex; align-items:center; gap:10px; transition:all .2s ease">
+            <span style="font-size:22px">👤</span>
+            <div>
+              <div style="font-weight:700; font-size:13px; color:${modoAtual === 'proprio' ? 'var(--verde-claro)' : 'var(--tx1)'}">Membro do Grupo</div>
+              <small style="color:var(--tx3); font-size:11px">Efetivo apto do grupo</small>
+            </div>
+          </div>
+          <div id="btModoDelegar" class="card-modo-alocar" style="flex:1; cursor:pointer; padding:10px 12px; border-radius:8px; border:2px solid ${modoAtual === 'delegar' ? '#60a5fa' : 'var(--borda)'}; background:${modoAtual === 'delegar' ? 'rgba(59,130,246,0.12)' : 'var(--painel2)'}; display:flex; align-items:center; gap:10px; transition:all .2s ease">
+            <span style="font-size:22px">⚡</span>
+            <div>
+              <div style="font-weight:700; font-size:13px; color:${modoAtual === 'delegar' ? '#60a5fa' : 'var(--tx1)'}">Delegar para Subgrupo</div>
+              <small style="color:var(--tx3); font-size:11px">Fração subordinada preenche</small>
             </div>
           </div>
         </div>
 
-        <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:8px; padding:12px; margin-bottom:14px">
-          <label style="display:flex; align-items:center; gap:8px; font-weight:700; cursor:pointer; margin-bottom:8px">
-            <input type="radio" name="modoPreenchimento" value="delegar" ${ehDelegado ? 'checked' : ''}>
-            <span>2. Delegar para Grupo Subordinado</span>
-          </label>
-          <div id="wrapDelegar" style="padding-left:24px; ${!ehDelegado ? 'display:none' : ''}">
-            <div class="campo" style="margin:0">
-              <label>Grupo / Fração Destino</label>
+        <!-- Conteúdo 1: Lista de Militares Aptos (Estilo Checklist de Conferências) -->
+        <div id="wrapMembroProprio" style="flex:1; overflow-y:auto; padding-right:4px; ${modoAtual !== 'proprio' ? 'display:none' : ''}">
+          <div style="margin-bottom:8px">
+            <input id="fFiltroCand" placeholder="🔍 Filtrar militares aptos por nome, posto ou setor…" style="width:100%; font-size:12.5px; padding:7px 10px">
+          </div>
+
+          <div id="listaCandCards" style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:6px; padding-right:4px">
+            ${candidatosAptos.length === 0 ? `
+              <div style="text-align:center; padding:24px 10px; color:var(--tx3); font-size:13px">
+                Nenhum militar registrado como <b>apto</b> para concorrer nesta escala.
+                <br><small style="color:var(--tx2)">Acesse a edição do modelo para habilitar militares aptos.</small>
+              </div>
+            ` : candidatosAptos.map(c => {
+              const sel = c.id === pessoaSelecionadaID;
+              const conflito = c.descanso && c.descanso.conflito;
+              const nivel = c.descanso ? c.descanso.nivel : 'ok';
+              const folgaH = c.descanso ? c.descanso.horas_folga : 999;
+
+              let badgeDesc = '';
+              if (conflito) {
+                badgeDesc = `<span style="font-size:10.5px; font-weight:700; color:var(--verm); background:rgba(239,68,68,0.2); padding:2px 6px; border-radius:4px" title="${esc(c.descanso.mensagem)}">🔴 Conflito</span>`;
+              } else if (nivel === 'critico') {
+                badgeDesc = `<span style="font-size:10.5px; font-weight:700; color:var(--verm); background:rgba(239,68,68,0.2); padding:2px 6px; border-radius:4px" title="${esc(c.descanso.mensagem)}">🔴 Folga < 24h (${folgaH}h)</span>`;
+              } else if (nivel === 'alerta') {
+                badgeDesc = `<span style="font-size:10.5px; font-weight:700; color:#fb923c; background:rgba(249,115,22,0.2); padding:2px 6px; border-radius:4px" title="${esc(c.descanso.mensagem)}">🟠 Folga < 48h (${folgaH}h)</span>`;
+              } else if (nivel === 'atencao') {
+                badgeDesc = `<span style="font-size:10.5px; font-weight:700; color:var(--ambar-txt); background:rgba(245,158,11,0.2); padding:2px 6px; border-radius:4px" title="${esc(c.descanso.mensagem)}">🟡 Folga < 72h (${folgaH}h)</span>`;
+              } else {
+                badgeDesc = `<span style="font-size:10.5px; font-weight:700; color:var(--verde-claro); background:rgba(16,185,129,0.15); padding:2px 6px; border-radius:4px">🟢 Descanso OK</span>`;
+              }
+
+              let compatBadge = '';
+              if (!c.compativel_posto_grad) {
+                compatBadge = `<span style="font-size:10px; color:var(--ambar-txt); background:rgba(245,158,11,0.15); padding:2px 6px; border-radius:4px; margin-left:4px">⚠️ Fora da Faixa</span>`;
+              }
+
+              const cardBorder = sel ? 'var(--verde)' : (conflito ? 'rgba(239,68,68,0.4)' : 'var(--borda)');
+              const cardBg = sel ? 'rgba(16,185,129,0.14)' : (conflito ? 'rgba(239,68,68,0.05)' : 'var(--painel2)');
+              const opac = conflito ? 'opacity:0.7;' : '';
+
+              return `
+                <div class="card-cand-row ${sel ? 'selecionado' : ''} ${conflito ? 'com-conflito' : ''}"
+                     data-id="${c.id}"
+                     data-texto="${esc((c.nome_guerra + ' ' + c.nome_completo + ' ' + (c.funcao||'') + ' ' + (c.setor||'')).toLowerCase())}"
+                     data-conflito="${conflito ? '1' : '0'}"
+                     style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-radius:8px; border:1px solid ${cardBorder}; background:${cardBg}; cursor:${conflito ? 'not-allowed' : 'pointer'}; ${opac} transition:all .15s ease">
+                  <div style="flex:1; min-width:0; padding-right:8px">
+                    <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+                      <b style="font-size:13px; color:${sel ? 'var(--verde-claro)' : 'var(--tx1)'}">${esc(c.nome_guerra)}</b>
+                      <small style="color:var(--tx2); font-size:11.5px">(${esc(c.nome_completo)})</small>
+                      ${compatBadge}
+                    </div>
+                    <div style="font-size:11px; color:var(--tx3); margin-top:2px">
+                      🎖️ <b>${esc(c.funcao || 'Sem Posto/Grad.')}</b> · 🏛️ ${esc(c.setor || 'Sem Setor')}
+                    </div>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:8px; flex-shrink:0">
+                    ${badgeDesc}
+                    <span class="chk-indicador" style="font-size:16px">${sel ? '✅' : '⚪'}</span>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- Conteúdo 2: Delegação para Subgrupo -->
+        <div id="wrapDelegar" style="flex:1; ${modoAtual !== 'delegar' ? 'display:none' : ''}">
+          <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:8px; padding:14px">
+            <div class="campo" style="margin-bottom:8px">
+              <label style="font-weight:700">Selecione o Grupo Subordinado Destino</label>
               <select id="selGrupoDelegado">
                 <option value="">— Selecionar Grupo Subordinado —</option>
                 ${gruposSubordinados.map(g => `
@@ -420,13 +511,14 @@
                 `).join('')}
               </select>
             </div>
-            <p style="font-size:11.5px; color:var(--tx3); margin:6px 0 0">
-              O responsável pelo grupo subordinado receberá este posto e poderá preenchê-lo com militares da fração dele.
+            <p style="font-size:12px; color:var(--tx3); margin:8px 0 0; line-height:1.4">
+              Ao delegar o posto, a responsabilidade do preenchimento será transferida para o chefe de pessoal da fração subordinada. O nome alocado atualizará automaticamente nesta visão.
             </p>
           </div>
         </div>
 
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; border-top:1px solid var(--borda); padding-top:12px">
+        <!-- Ações do Modal -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; border-top:1px solid var(--borda); padding-top:12px">
           <button class="acao-linha perigo" id="btDesocuparPosto">Desocupar Posto</button>
           <div style="display:flex; gap:8px">
             <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
@@ -438,13 +530,73 @@
 
     const m = modal(html);
 
-    const radProprio = m.querySelector('input[value="proprio"]');
-    const radDelegar = m.querySelector('input[value="delegar"]');
+    const btModoP = m.querySelector('#btModoProprio');
+    const btModoD = m.querySelector('#btModoDelegar');
     const wrapP = m.querySelector('#wrapMembroProprio');
     const wrapD = m.querySelector('#wrapDelegar');
 
-    radProprio.onchange = () => { wrapP.style.display = 'block'; wrapD.style.display = 'none'; };
-    radDelegar.onchange = () => { wrapP.style.display = 'none'; wrapD.style.display = 'block'; };
+    const atualizarModoVisual = () => {
+      if (modoAtual === 'proprio') {
+        btModoP.style.borderColor = 'var(--verde)';
+        btModoP.style.background = 'rgba(16,185,129,0.12)';
+        btModoP.querySelector('div div').style.color = 'var(--verde-claro)';
+        btModoD.style.borderColor = 'var(--borda)';
+        btModoD.style.background = 'var(--painel2)';
+        btModoD.querySelector('div div').style.color = 'var(--tx1)';
+        wrapP.style.display = 'block';
+        wrapD.style.display = 'none';
+      } else {
+        btModoD.style.borderColor = '#60a5fa';
+        btModoD.style.background = 'rgba(59,130,246,0.12)';
+        btModoD.querySelector('div div').style.color = '#60a5fa';
+        btModoP.style.borderColor = 'var(--borda)';
+        btModoP.style.background = 'var(--painel2)';
+        btModoP.querySelector('div div').style.color = 'var(--tx1)';
+        wrapP.style.display = 'none';
+        wrapD.style.display = 'block';
+      }
+    };
+
+    btModoP.onclick = () => { modoAtual = 'proprio'; atualizarModoVisual(); };
+    btModoD.onclick = () => { modoAtual = 'delegar'; atualizarModoVisual(); };
+
+    // Filtro instantâneo de candidatos
+    const fBusca = m.querySelector('#fFiltroCand');
+    if (fBusca) {
+      fBusca.oninput = ev => {
+        const q = ev.target.value.trim().toLowerCase();
+        m.querySelectorAll('.card-cand-row').forEach(row => {
+          const txt = row.dataset.texto || '';
+          row.style.display = (!q || txt.includes(q)) ? 'flex' : 'none';
+        });
+      };
+    }
+
+    // Clique nos cards de candidatos (estilo checklist)
+    m.querySelectorAll('.card-cand-row').forEach(row => {
+      row.onclick = () => {
+        if (row.dataset.conflito === '1') {
+          toast('Este militar possui conflito de sobreposição de horário!', 'erro');
+          return;
+        }
+        const cid = +row.dataset.id;
+        if (pessoaSelecionadaID === cid) {
+          pessoaSelecionadaID = null; // desmarcar
+        } else {
+          pessoaSelecionadaID = cid;
+        }
+
+        m.querySelectorAll('.card-cand-row').forEach(r => {
+          const isThis = +r.dataset.id === pessoaSelecionadaID;
+          r.style.borderColor = isThis ? 'var(--verde)' : (r.dataset.conflito === '1' ? 'rgba(239,68,68,0.4)' : 'var(--borda)');
+          r.style.background = isThis ? 'rgba(16,185,129,0.14)' : (r.dataset.conflito === '1' ? 'rgba(239,68,68,0.05)' : 'var(--painel2)');
+          const chk = r.querySelector('.chk-indicador');
+          if (chk) chk.innerText = isThis ? '✅' : '⚪';
+          const titulo = r.querySelector('b');
+          if (titulo) titulo.style.color = isThis ? 'var(--verde-claro)' : 'var(--tx1)';
+        });
+      };
+    });
 
     m.querySelector('#btDesocuparPosto').onclick = async () => {
       try {
@@ -465,19 +617,25 @@
     };
 
     m.querySelector('#btSalvarAlocacao').onclick = async () => {
-      const modo = m.querySelector('input[name="modoPreenchimento"]:checked').value;
       try {
-        if (modo === 'proprio') {
-          const selP = +m.querySelector('#selMilitarProprio').value || null;
-          if (!selP) { alerta('Por favor, selecione um militar para assumir o posto.'); return; }
+        if (modoAtual === 'proprio') {
+          if (!pessoaSelecionadaID) {
+            alerta('Por favor, selecione um militar na lista para assumir o posto.');
+            return;
+          }
           // Revoga eventual delegação anterior
           await api('/api/escalas/turnos/' + turno.id + '/delegar', {
             method: 'POST', body: JSON.stringify({ grupo_delegado_id: null })
           });
-          await api('/api/escalas/turnos/' + turno.id + '/alocar', {
-            method: 'POST', body: JSON.stringify({ pessoa_id: selP, funcao_escala: turno.tipo_nome })
+          const resAloc = await api('/api/escalas/turnos/' + turno.id + '/alocar', {
+            method: 'POST', body: JSON.stringify({ pessoa_id: pessoaSelecionadaID, funcao_escala: turno.tipo_nome })
           });
-          toast('Militar alocado com sucesso!');
+
+          if (resAloc && resAloc.alerta_descanso && resAloc.alerta_descanso.nivel === 'critico') {
+            toast('Militar alocado! Atenção: ' + resAloc.alerta_descanso.mensagem, 'aviso');
+          } else {
+            toast('Militar alocado com sucesso!');
+          }
         } else {
           const selG = +m.querySelector('#selGrupoDelegado').value || null;
           if (!selG) { alerta('Por favor, selecione um grupo subordinado para delegar o posto.'); return; }
@@ -494,6 +652,107 @@
         if (aoConcluir) aoConcluir();
       } catch (err) {
         alerta('Erro ao salvar escala: ' + (err.message || err));
+      }
+    };
+  }
+
+  /* Modal de Posto Avulso / Missão */
+  async function modalCriarPostoAvulso(diaStr, aoConcluir) {
+    const [tiposRes, funcoesRes] = await Promise.all([
+      api('/api/escalas/tipos'),
+      api('/api/catalogo/funcoes')
+    ]);
+    const tipos = tiposRes.tipos || [];
+    const funcoes = (funcoesRes || []).filter(f => f.ativo);
+
+    const html = `
+      <div class="modal" style="max-width:520px">
+        <h3 style="margin-top:0">➕ Adicionar Posto Avulso / Missão</h3>
+        <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">
+          Cadastre um posto individual para o dia <b>${fmtData(diaStr)}</b> (ex.: missões especiais, representações ou reforço de guarda).
+        </p>
+
+        <div class="form-linha" style="margin-bottom:10px">
+          <div class="campo" style="flex:2">
+            <label>Tipo de Posto / Serviço *</label>
+            <select id="avTipoPosto">
+              ${tipos.map(t => `<option value="${t.id}">${esc(t.nome)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="campo" style="flex:1">
+            <label>Início</label>
+            <input type="time" id="avHoraIni" value="07:00">
+          </div>
+          <div class="campo" style="flex:1">
+            <label>Término</label>
+            <input type="time" id="avHoraFim" value="07:00">
+          </div>
+        </div>
+
+        <div class="campo" style="margin-bottom:10px">
+          <label>Observação / Descrição da Missão</label>
+          <input id="avObs" placeholder="ex.: Operação Especial / Escolta / Representação de Cerimonial">
+        </div>
+
+        <div class="form-linha" style="margin-bottom:14px">
+          <div class="campo">
+            <label>Posto / Graduação Mínimo</label>
+            <select id="avPgMin">
+              <option value="">— Qualquer Posto/Graduação —</option>
+              ${funcoes.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="campo">
+            <label>Posto / Graduação Máximo</label>
+            <select id="avPgMax">
+              <option value="">— Qualquer Posto/Graduação —</option>
+              ${funcoes.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--borda); padding-top:12px">
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+          <button class="primario" id="btSalvarPostoAvulso">Criar Posto</button>
+        </div>
+      </div>
+    `;
+
+    const m = modal(html);
+    m.querySelector('#btSalvarPostoAvulso').onclick = async () => {
+      const tipoID = +m.querySelector('#avTipoPosto').value;
+      const hi = m.querySelector('#avHoraIni').value || '07:00';
+      const hf = m.querySelector('#avHoraFim').value || '07:00';
+      const obs = m.querySelector('#avObs').value.trim();
+      const pgMin = +m.querySelector('#avPgMin').value || null;
+      const pgMax = +m.querySelector('#avPgMax').value || null;
+
+      if (!tipoID) { alerta('Selecione o tipo de posto.'); return; }
+
+      let dataFimDia = diaStr;
+      if (hf <= hi) {
+        const dFim = new Date(diaStr + 'T12:00:00');
+        dFim.setDate(dFim.getDate() + 1);
+        dataFimDia = dFim.toISOString().slice(0, 10);
+      }
+
+      try {
+        await api('/api/escalas/turnos', {
+          method: 'POST',
+          body: JSON.stringify({
+            tipo_id: tipoID,
+            data_inicio: diaStr + 'T' + hi + ':00',
+            data_fim: dataFimDia + 'T' + hf + ':00',
+            observacao: obs,
+            posto_grad_min_id: pgMin,
+            posto_grad_max_id: pgMax
+          })
+        });
+        toast('Posto avulso criado com sucesso!');
+        m.closest('.modal-mask').remove();
+        if (aoConcluir) aoConcluir();
+      } catch (err) {
+        alerta('Erro ao criar posto avulso: ' + (err.message || err));
       }
     };
   }
@@ -710,13 +969,15 @@
   }
 
   async function modalEditarModelo(modeloID, aoConcluir) {
-    const [tiposRes, pesRes] = await Promise.all([
+    const [tiposRes, pesRes, funcoesRes] = await Promise.all([
       api('/api/escalas/tipos'),
-      api('/api/pessoas')
+      api('/api/pessoas'),
+      api('/api/catalogo/funcoes')
     ]);
 
     const tipos = tiposRes.tipos || [];
     const pessoas = pesRes.pessoas || [];
+    const funcoes = (funcoesRes || []).filter(f => f.ativo);
 
     let dadosMod = { id: 0, nome: '', descricao: '', postos: [], aptos: [] };
     if (modeloID > 0) {
@@ -735,7 +996,7 @@
     const aptosSet = new Set(dadosMod.aptos.map(a => a.pessoa_id));
 
     const html = `
-      <div class="modal" style="max-width:760px; max-height:90vh; display:flex; flex-direction:column">
+      <div class="modal" style="max-width:840px; max-height:92vh; display:flex; flex-direction:column">
         <h3 style="margin-top:0">${modeloID > 0 ? 'Editar Modelo de Escala' : 'Novo Modelo de Escala'}</h3>
         
         <div style="overflow-y:auto; flex:1; padding-right:4px">
@@ -753,7 +1014,10 @@
           <!-- Seção 1: Postos do Modelo -->
           <div style="border-top:1px solid var(--borda); padding-top:12px; margin-top:12px">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-              <label style="font-weight:700; margin:0">1. Postos & Horários do Modelo</label>
+              <div>
+                <label style="font-weight:700; margin:0">1. Postos & Horários do Modelo</label>
+                <div style="font-size:11px; color:var(--tx3)">Defina os postos, horários e faixas mín./máx. de Posto/Graduação permitidas.</div>
+              </div>
               <button class="acao-linha" id="btAddPostoLinha" style="font-size:12px">+ Adicionar Posto</button>
             </div>
             <div id="listaPostosMod" style="display:flex; flex-direction:column; gap:6px; margin-bottom:12px"></div>
@@ -761,20 +1025,47 @@
 
           <!-- Seção 2: Efetivo Apto para Concorrer -->
           <div style="border-top:1px solid var(--borda); padding-top:12px; margin-top:12px">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
               <label style="font-weight:700; margin:0">2. Militares Aptos a Concorrer nesta Escala</label>
-              <input id="fBuscaAptos" placeholder="Filtrar por nome ou setor…" style="max-width:220px; font-size:12px; padding:4px 8px">
+              <input id="fBuscaAptos" placeholder="Filtrar por nome, setor ou posto…" style="max-width:240px; font-size:12px; padding:4px 8px">
             </div>
-            <div id="listaAptosMod" style="max-height:220px; overflow-y:auto; border:1px solid var(--borda); border-radius:8px; padding:6px; display:flex; flex-direction:column; gap:4px">
+
+            <!-- Botões de Seleção Rápida por Posto/Graduação -->
+            <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:6px; padding:8px 10px; margin-bottom:8px">
+              <div style="font-size:11px; font-weight:700; color:var(--tx2); margin-bottom:6px">
+                🎖️ Pré-seleção Rápida por Posto / Graduação:
+              </div>
+              <div style="display:flex; flex-wrap:wrap; gap:5px; align-items:center">
+                ${funcoes.map(f => `
+                  <button type="button" class="acao-linha btn-pg-toggle" data-fid="${f.id}" data-fnome="${esc(f.nome)}" style="font-size:11px; padding:2px 8px; border-radius:12px">
+                    + ${esc(f.nome)}
+                  </button>
+                `).join('')}
+                <span style="border-left:1px solid var(--borda); height:16px; margin:0 4px"></span>
+                <button type="button" class="acao-linha" id="btSelTodosAptos" style="font-size:11px; padding:2px 8px; border-radius:12px">Todos</button>
+                <button type="button" class="acao-linha" id="btDeselTodosAptos" style="font-size:11px; padding:2px 8px; border-radius:12px">Nenhum</button>
+              </div>
+            </div>
+
+            <div id="listaAptosMod" style="max-height:230px; overflow-y:auto; border:1px solid var(--borda); border-radius:8px; padding:6px; display:flex; flex-direction:column; gap:4px">
               ${pessoas.map(p => {
                 const checked = aptosSet.has(p.id);
                 return `
-                  <label class="item-apto-pes" data-texto="${esc((p.nome_guerra + ' ' + p.nome_completo + ' ' + (p.setor || '')).toLowerCase())}"
-                         style="display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; cursor:pointer; background:${checked ? 'rgba(59,130,246,.12)' : 'transparent'}">
+                  <label class="item-apto-pes" 
+                         data-id="${p.id}"
+                         data-fid="${p.funcao_id || ''}"
+                         data-fnome="${esc(p.funcao || '')}"
+                         data-texto="${esc((p.nome_guerra + ' ' + p.nome_completo + ' ' + (p.funcao || '') + ' ' + (p.setor || '')).toLowerCase())}"
+                         style="display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:6px; cursor:pointer; background:${checked ? 'rgba(59,130,246,.12)' : 'transparent'}; border:1px solid ${checked ? 'rgba(59,130,246,.3)' : 'transparent'}; transition:all .15s ease">
                     <input type="checkbox" class="chk-apto" value="${p.id}" ${checked ? 'checked' : ''} style="width:16px; height:16px">
-                    <div style="flex:1; min-width:0; font-size:12.5px">
-                      <b>${esc(p.nome_guerra)}</b> <small style="color:var(--tx2)">(${esc(p.nome_completo)})</small>
-                      ${p.setor ? `<code style="font-size:10.5px; margin-left:6px">${esc(p.setor)}</code>` : ''}
+                    <div style="flex:1; min-width:0; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap">
+                      <div>
+                        <b>${esc(p.nome_guerra)}</b> <small style="color:var(--tx2); font-size:11.5px">(${esc(p.nome_completo)})</small>
+                      </div>
+                      <div style="display:flex; align-items:center; gap:6px; font-size:11px; flex-shrink:0">
+                        <span style="background:var(--painel2); border:1px solid var(--borda); padding:1px 6px; border-radius:4px; color:var(--tx1)">🎖️ <b>${esc(p.funcao || 'Sem Posto/Grad.')}</b></span>
+                        ${p.setor ? `<span style="background:var(--painel2); border:1px solid var(--borda); padding:1px 6px; border-radius:4px; color:var(--tx2)">🏛️ ${esc(p.setor)}</span>` : ''}
+                      </div>
                     </div>
                   </label>
                 `;
@@ -799,27 +1090,43 @@
       const hi = (p && p.hora_inicio) || '07:00';
       const hf = (p && p.hora_fim) || '07:00';
       const qtd = (p && p.quantidade) || 1;
+      const pgMin = (p && p.posto_grad_min_id) || '';
+      const pgMax = (p && p.posto_grad_max_id) || '';
 
       const div = document.createElement('div');
       div.className = 'linha-posto-mod';
-      div.style.cssText = 'display:flex; gap:8px; align-items:center; background:var(--painel2); padding:8px 10px; border-radius:6px; border:1px solid var(--borda)';
+      div.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; align-items:center; background:var(--painel2); padding:8px 10px; border-radius:6px; border:1px solid var(--borda)';
       div.innerHTML = `
-        <select class="sel-tipo-posto" style="flex:2">
+        <select class="sel-tipo-posto" style="flex:2; min-width:140px">
           ${tipos.map(t => `<option value="${t.id}" ${t.id === tipoID ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}
         </select>
         <div style="display:flex; align-items:center; gap:4px">
           <label style="font-size:11px; color:var(--tx3)">De:</label>
-          <input type="time" class="inp-hi" value="${hi}" style="width:90px">
+          <input type="time" class="inp-hi" value="${hi}" style="width:85px">
         </div>
         <div style="display:flex; align-items:center; gap:4px">
           <label style="font-size:11px; color:var(--tx3)">Até:</label>
-          <input type="time" class="inp-hf" value="${hf}" style="width:90px">
+          <input type="time" class="inp-hf" value="${hf}" style="width:85px">
         </div>
         <div style="display:flex; align-items:center; gap:4px">
           <label style="font-size:11px; color:var(--tx3)">Qtd:</label>
-          <input type="number" class="inp-qtd" min="1" max="50" value="${qtd}" style="width:60px">
+          <input type="number" class="inp-qtd" min="1" max="50" value="${qtd}" style="width:55px">
         </div>
-        <button type="button" class="acao-linha perigo bt-del-posto" style="padding:4px 8px">✕</button>
+        <div style="display:flex; align-items:center; gap:4px; flex:1; min-width:130px">
+          <label style="font-size:11px; color:var(--tx3)">Mín:</label>
+          <select class="sel-pg-min" style="width:100%; font-size:11px">
+            <option value="">— Mínimo —</option>
+            ${funcoes.map(f => `<option value="${f.id}" ${f.id === pgMin ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div style="display:flex; align-items:center; gap:4px; flex:1; min-width:130px">
+          <label style="font-size:11px; color:var(--tx3)">Máx:</label>
+          <select class="sel-pg-max" style="width:100%; font-size:11px">
+            <option value="">— Máximo —</option>
+            ${funcoes.map(f => `<option value="${f.id}" ${f.id === pgMax ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <button type="button" class="acao-linha perigo bt-del-posto" style="padding:4px 8px" title="Remover Posto">✕</button>
       `;
       div.querySelector('.bt-del-posto').onclick = () => div.remove();
       containerPostos.appendChild(div);
@@ -842,9 +1149,58 @@
       });
     };
 
+    // Botões de Seleção Rápida por Posto/Graduação
+    m.querySelectorAll('.btn-pg-toggle').forEach(btn => {
+      btn.onclick = () => {
+        const fid = btn.dataset.fid;
+        const fnome = btn.dataset.fnome;
+        const matchingLabels = Array.from(m.querySelectorAll('.item-apto-pes')).filter(el => {
+          return (fid && el.dataset.fid === fid) || (fnome && el.dataset.fnome === fnome);
+        });
+        if (!matchingLabels.length) {
+          toast(`Nenhum militar com posto/graduação "${fnome}" encontrado.`, 'aviso');
+          return;
+        }
+        const allChecked = matchingLabels.every(l => l.querySelector('.chk-apto').checked);
+        const novoEstado = !allChecked;
+        matchingLabels.forEach(l => {
+          const chk = l.querySelector('.chk-apto');
+          chk.checked = novoEstado;
+          l.style.background = novoEstado ? 'rgba(59,130,246,.12)' : 'transparent';
+          l.style.borderColor = novoEstado ? 'rgba(59,130,246,.3)' : 'transparent';
+        });
+        toast(`${novoEstado ? 'Selecionados' : 'Desmarcados'} ${matchingLabels.length} militares (${fnome}).`);
+      };
+    });
+
+    const btTodos = m.querySelector('#btSelTodosAptos');
+    if (btTodos) {
+      btTodos.onclick = () => {
+        m.querySelectorAll('.item-apto-pes').forEach(l => {
+          const chk = l.querySelector('.chk-apto');
+          chk.checked = true;
+          l.style.background = 'rgba(59,130,246,.12)';
+          l.style.borderColor = 'rgba(59,130,246,.3)';
+        });
+      };
+    }
+    const btNenhum = m.querySelector('#btDeselTodosAptos');
+    if (btNenhum) {
+      btNenhum.onclick = () => {
+        m.querySelectorAll('.item-apto-pes').forEach(l => {
+          const chk = l.querySelector('.chk-apto');
+          chk.checked = false;
+          l.style.background = 'transparent';
+          l.style.borderColor = 'transparent';
+        });
+      };
+    }
+
     m.querySelectorAll('.chk-apto').forEach(chk => {
       chk.onchange = () => {
-        chk.closest('.item-apto-pes').style.background = chk.checked ? 'rgba(59,130,246,.12)' : 'transparent';
+        const pLabel = chk.closest('.item-apto-pes');
+        pLabel.style.background = chk.checked ? 'rgba(59,130,246,.12)' : 'transparent';
+        pLabel.style.borderColor = chk.checked ? 'rgba(59,130,246,.3)' : 'transparent';
       };
     });
 
@@ -860,6 +1216,8 @@
           hora_inicio: row.querySelector('.inp-hi').value || '07:00',
           hora_fim: row.querySelector('.inp-hf').value || '07:00',
           quantidade: +row.querySelector('.inp-qtd').value || 1,
+          posto_grad_min_id: +row.querySelector('.sel-pg-min').value || null,
+          posto_grad_max_id: +row.querySelector('.sel-pg-max').value || null,
           ordem: idx
         });
       });

@@ -222,7 +222,7 @@
             <span class="pill pill-${(p.status || 'ativo').toLowerCase()}">${esc(p.status || 'Ativo')}</span>
           </div>
           <div style="font-size:13px; color:var(--tx); margin-bottom:4px"><b>Nome Completo:</b> ${esc(p.nome_completo || '—')}</div>
-          <div style="font-size:13px; color:var(--tx2); margin-bottom:4px"><b>Setor:</b> ${esc(p.setor || '—')} · <b>Função:</b> ${esc(p.funcao || '—')}</div>
+          <div style="font-size:13px; color:var(--tx2); margin-bottom:4px"><b>Setor:</b> ${esc(p.setor || '—')} · <b>Posto/Grad.:</b> ${esc(p.funcao || '—')}</div>
           <div style="font-size:13px; color:var(--tx2)"><b>Grupo:</b> ${esc(p.grupo || '—')}</div>
         </div>
         <div style="display:flex; justify-content:flex-end; gap:8px">

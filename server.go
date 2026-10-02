@@ -16,6 +16,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -355,6 +356,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/escalas/limpar-dia", reservaAuth(a.hEscalasLimparDia))
 	m.Handle("POST /api/escalas/turnos/{id}/alocar", reservaAuth(a.hEscalasTurnoAlocar))
 	m.Handle("POST /api/escalas/turnos/{id}/delegar", reservaAuth(a.hEscalasTurnoDelegar))
+	m.Handle("GET /api/escalas/turnos/{id}/candidatos", reservaAuth(a.hEscalasTurnoCandidatos))
 	m.Handle("PATCH /api/escalas/fase", reservaAuth(a.hEscalasAlterarFase))
 	m.Handle("GET /api/escalas/relatorio-dia.pdf", a.auth(false, a.hEscalasRelatorioDiaPDF))
 	m.Handle("GET /api/escalas/minhas", a.auth(false, a.hEscalasMinhas))
@@ -4880,6 +4882,192 @@ func (a *App) hEscalasTiposDel(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"ok": true})
 }
 
+// --- Escalas 2.0: Helpers de Permanência, Descanso e Faixa de Posto/Graduação ---
+
+type InfoDescanso struct {
+	Nivel        string  `json:"nivel"` // "critico", "alerta", "atencao", "ok"
+	HorasFolga   float64 `json:"horas_folga"`
+	Mensagem     string  `json:"mensagem"`
+	Conflito     bool    `json:"conflito"`
+	ConflitoErro string  `json:"conflito_erro"`
+}
+
+func parseDataHoraTurno(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	formatos := []string{
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		time.RFC3339,
+	}
+	for _, f := range formatos {
+		if t, err := time.Parse(f, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("formato de data/hora inválido: %s", s)
+}
+
+func (a *App) validarDescansoEscala(pessoaID int64, turnoID int64, dataInicioStr, dataFimStr string) InfoDescanso {
+	info := InfoDescanso{Nivel: "ok", HorasFolga: 999, Mensagem: "Descanso adequado"}
+	tIni, err1 := parseDataHoraTurno(dataInicioStr)
+	tFim, err2 := parseDataHoraTurno(dataFimStr)
+	if err1 != nil || err2 != nil {
+		return info
+	}
+
+	rows, err := a.st.db.Query(`
+		SELECT et.id, etp.nome, et.data_inicio, et.data_fim
+		FROM escala_pessoas ep
+		JOIN escala_turnos et ON et.id = ep.turno_id
+		JOIN escala_tipos etp ON etp.id = et.tipo_id
+		WHERE ep.pessoa_id = ? AND et.id != ?
+	`, pessoaID, turnoID)
+	if err != nil {
+		return info
+	}
+	defer rows.Close()
+
+	minFolga := 999999.0
+	temOutro := false
+
+	for rows.Next() {
+		var oID int64
+		var oNome, oIniStr, oFimStr string
+		if rows.Scan(&oID, &oNome, &oIniStr, &oFimStr) == nil {
+			oIni, e1 := parseDataHoraTurno(oIniStr)
+			oFim, e2 := parseDataHoraTurno(oFimStr)
+			if e1 != nil || e2 != nil {
+				continue
+			}
+
+			// 1. Verificação estrita de sobreposição simultânea:
+			// Dois intervalos [A_ini, A_fim] e [B_ini, B_fim] colidem se A_ini < B_fim E A_fim > B_ini
+			if tIni.Before(oFim) && tFim.After(oIni) {
+				info.Conflito = true
+				info.ConflitoErro = fmt.Sprintf("Militar já escalado simultaneamente no posto '%s' (%s às %s)",
+					oNome, oIni.Format("15:04"), oFim.Format("15:04"))
+				info.Nivel = "conflito"
+				info.HorasFolga = 0
+				info.Mensagem = info.ConflitoErro
+				return info
+			}
+
+			// 2. Cálculo do descanso (intervalo de folga entre escalas):
+			var gap float64 = -1
+			if !tIni.Before(oFim) { // este turno é após o outro
+				gap = tIni.Sub(oFim).Hours()
+			} else if !oIni.Before(tFim) { // este turno é antes do outro
+				gap = oIni.Sub(tFim).Hours()
+			}
+
+			if gap >= 0 {
+				temOutro = true
+				if gap < minFolga {
+					minFolga = gap
+				}
+			}
+		}
+	}
+
+	if !temOutro {
+		info.Nivel = "ok"
+		info.HorasFolga = 999
+		info.Mensagem = "Sem outros serviços próximos registrados"
+		return info
+	}
+
+	info.HorasFolga = math.Round(minFolga*10) / 10
+	if minFolga < 24.0 {
+		info.Nivel = "critico"
+		info.Mensagem = fmt.Sprintf("🔴 Alerta Crítico: Folga de apenas %.1fh (< 24h) em relação a outro serviço", info.HorasFolga)
+	} else if minFolga < 48.0 {
+		info.Nivel = "alerta"
+		info.Mensagem = fmt.Sprintf("🟠 Alerta: Folga de %.1fh (< 48h) em relação a outro serviço", info.HorasFolga)
+	} else if minFolga < 72.0 {
+		info.Nivel = "atencao"
+		info.Mensagem = fmt.Sprintf("🟡 Atenção: Folga de %.1fh (< 72h) em relação a outro serviço", info.HorasFolga)
+	} else {
+		info.Nivel = "ok"
+		info.Mensagem = fmt.Sprintf("🟢 Descanso adequado (%.1fh)", info.HorasFolga)
+	}
+
+	return info
+}
+
+func (a *App) obterFuncoesOrdenadas(grupoID int64) []int64 {
+	rows, err := a.st.db.Query(`
+		SELECT id FROM funcoes 
+		WHERE ativo = 1 AND (grupo_id IS NULL OR grupo_id = ?)
+		ORDER BY antiguidade ASC, id ASC`, grupoID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func (a *App) verificarFaixaPostoGrad(funcaoID *int64, minID *int64, maxID *int64, funcoesOrdenadas []int64) bool {
+	if (minID == nil || *minID <= 0) && (maxID == nil || *maxID <= 0) {
+		return true
+	}
+	if funcaoID == nil || *funcaoID <= 0 {
+		return false
+	}
+	fID := *funcaoID
+
+	posMap := make(map[int64]int)
+	for i, id := range funcoesOrdenadas {
+		posMap[id] = i
+	}
+
+	pPos, okP := posMap[fID]
+	if !okP {
+		return false
+	}
+
+	hasMin := minID != nil && *minID > 0
+	hasMax := maxID != nil && *maxID > 0
+
+	if hasMin && hasMax {
+		minPos, okMin := posMap[*minID]
+		maxPos, okMax := posMap[*maxID]
+		if okMin && okMax {
+			startPos := minPos
+			endPos := maxPos
+			if minPos > maxPos {
+				startPos = maxPos
+				endPos = minPos
+			}
+			return pPos >= startPos && pPos <= endPos
+		}
+	}
+
+	if hasMin {
+		minPos, okMin := posMap[*minID]
+		if okMin && pPos < minPos {
+			return false
+		}
+	}
+
+	if hasMax {
+		maxPos, okMax := posMap[*maxID]
+		if okMax && pPos > maxPos {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
@@ -4888,17 +5076,35 @@ func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
 	mes := r.URL.Query().Get("mes")
 	dataQ := r.URL.Query().Get("data")
 
-	q := `SELECT et.id, et.grupo_id, et.tipo_id, etp.nome, et.data_inicio, et.data_fim, COALESCE(et.observacao,''),
+	var condEscopo string
+	var args []any
+	if escopo <= 0 {
+		condEscopo = "1=1"
+	} else {
+		// Subordinados também enxergam escalas dos grupos superiores (v1.5)
+		superiores := a.gruposSuperioresAtivos(escopo)
+		gids := append([]int64{escopo}, superiores...)
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(gids)), ",")
+		condEscopo = fmt.Sprintf("(et.grupo_id IN (%s) OR et.grupo_delegado_id = ?)", ph)
+		for _, gid := range gids {
+			args = append(args, gid)
+		}
+		args = append(args, escopo)
+	}
+
+	q := fmt.Sprintf(`SELECT et.id, et.grupo_id, et.tipo_id, etp.nome, et.data_inicio, et.data_fim, COALESCE(et.observacao,''),
 	             COALESCE(u.login,''), et.criado_em, COALESCE(g.nome, ''),
 	             COALESCE(et.fase, 'aberto'), et.modelo_id, et.grupo_delegado_id, COALESCE(et.status_delegacao, 'proprio'),
-	             COALESCE(gd.nome, '')
+	             COALESCE(gd.nome, ''), et.posto_grad_min_id, et.posto_grad_max_id,
+	             COALESCE(fgmin.nome, ''), COALESCE(fgmax.nome, '')
 	      FROM escala_turnos et
 	      JOIN escala_tipos etp ON etp.id = et.tipo_id
 	      LEFT JOIN usuarios u ON u.id = et.criado_por
 	      LEFT JOIN grupos g ON g.id = et.grupo_id
 	      LEFT JOIN grupos gd ON gd.id = et.grupo_delegado_id
-	      WHERE (? <= 0 OR et.grupo_id = ? OR et.grupo_delegado_id = ?)`
-	var args = []any{escopo, escopo, escopo}
+	      LEFT JOIN funcoes fgmin ON fgmin.id = et.posto_grad_min_id
+	      LEFT JOIN funcoes fgmax ON fgmax.id = et.posto_grad_max_id
+	      WHERE %s`, condEscopo)
 
 	if mes != "" {
 		q += ` AND (et.data_inicio LIKE ? OR et.data_fim LIKE ?)`
@@ -4920,29 +5126,34 @@ func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type TurnoItem struct {
-		ID                 int64            `json:"id"`
-		GrupoID            int64            `json:"grupo_id"`
-		GrupoNome          string           `json:"grupo_nome"`
-		TipoID             int64            `json:"tipo_id"`
-		TipoNome           string           `json:"tipo_nome"`
-		DataInicio         string           `json:"data_inicio"`
-		DataFim            string           `json:"data_fim"`
-		Observacao         string           `json:"observacao"`
-		CriadoPor          string           `json:"criado_por"`
-		CriadoEm           string           `json:"criado_em"`
-		Fase               string           `json:"fase"`
-		ModeloID           *int64           `json:"modelo_id"`
-		GrupoDelegadoID    *int64           `json:"grupo_delegado_id"`
-		StatusDelegacao    string           `json:"status_delegacao"`
-		GrupoDelegadoNome  string           `json:"grupo_delegado_nome"`
-		Pessoas            []map[string]any `json:"pessoas"`
+		ID                int64            `json:"id"`
+		GrupoID           int64            `json:"grupo_id"`
+		GrupoNome         string           `json:"grupo_nome"`
+		TipoID            int64            `json:"tipo_id"`
+		TipoNome          string           `json:"tipo_nome"`
+		DataInicio        string           `json:"data_inicio"`
+		DataFim           string           `json:"data_fim"`
+		Observacao        string           `json:"observacao"`
+		CriadoPor         string           `json:"criado_por"`
+		CriadoEm          string           `json:"criado_em"`
+		Fase              string           `json:"fase"`
+		ModeloID          *int64           `json:"modelo_id"`
+		GrupoDelegadoID   *int64           `json:"grupo_delegado_id"`
+		StatusDelegacao   string           `json:"status_delegacao"`
+		GrupoDelegadoNome string           `json:"grupo_delegado_nome"`
+		PostoGradMinID    *int64           `json:"posto_grad_min_id"`
+		PostoGradMaxID    *int64           `json:"posto_grad_max_id"`
+		PostoGradMinNome  string           `json:"posto_grad_min_nome"`
+		PostoGradMaxNome  string           `json:"posto_grad_max_nome"`
+		Pessoas           []map[string]any `json:"pessoas"`
 	}
 	turnos := []TurnoItem{}
 	var turnoIDs []any
 	for rows.Next() {
 		var t TurnoItem
 		if rows.Scan(&t.ID, &t.GrupoID, &t.TipoID, &t.TipoNome, &t.DataInicio, &t.DataFim, &t.Observacao, &t.CriadoPor, &t.CriadoEm, &t.GrupoNome,
-			&t.Fase, &t.ModeloID, &t.GrupoDelegadoID, &t.StatusDelegacao, &t.GrupoDelegadoNome) == nil {
+			&t.Fase, &t.ModeloID, &t.GrupoDelegadoID, &t.StatusDelegacao, &t.GrupoDelegadoNome,
+			&t.PostoGradMinID, &t.PostoGradMaxID, &t.PostoGradMinNome, &t.PostoGradMaxNome) == nil {
 			t.Pessoas = []map[string]any{}
 			turnos = append(turnos, t)
 			turnoIDs = append(turnoIDs, t.ID)
@@ -4996,13 +5207,15 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ID         int64  `json:"id"`
-		GrupoID    *int64 `json:"grupo_id"`
-		TipoID     int64  `json:"tipo_id"`
-		DataInicio string `json:"data_inicio"`
-		DataFim    string `json:"data_fim"`
-		Observacao string `json:"observacao"`
-		Pessoas    []struct {
+		ID             int64  `json:"id"`
+		GrupoID        *int64 `json:"grupo_id"`
+		TipoID         int64  `json:"tipo_id"`
+		DataInicio     string `json:"data_inicio"`
+		DataFim        string `json:"data_fim"`
+		Observacao     string `json:"observacao"`
+		PostoGradMinID *int64 `json:"posto_grad_min_id"`
+		PostoGradMaxID *int64 `json:"posto_grad_max_id"`
+		Pessoas        []struct {
 			PessoaID     int64  `json:"pessoa_id"`
 			FuncaoEscala string `json:"funcao_escala"`
 		} `json:"pessoas"`
@@ -5015,10 +5228,6 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 	if u.GrupoID != nil {
 		grupoID = *u.GrupoID
 	}
-	// Fix P0/P1-2: grupo do CORPO só é honrado para ADMIN (gestão global). Para
-	// gerente/operador é SILENCIOSAMENTE IGNORADO — o front legitamente ecoa o
-	// grupo do item na edição (views_material.js), mas um corpo forjado apontando
-	// outro grupo nunca vira alvo; o escopo do UPDATE + RowsAffected protegem o resto.
 	if req.GrupoID != nil && *req.GrupoID > 0 && u.Papel == "admin" {
 		grupoID = *req.GrupoID
 	}
@@ -5036,6 +5245,17 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validação de sobreposição para pessoas alocadas
+	for _, p := range req.Pessoas {
+		if p.PessoaID > 0 {
+			desc := a.validarDescansoEscala(p.PessoaID, req.ID, req.DataInicio, req.DataFim)
+			if desc.Conflito {
+				jsonErro(w, http.StatusBadRequest, desc.ConflitoErro)
+				return
+			}
+		}
+	}
+
 	tx, err := a.st.db.Begin()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -5047,15 +5267,14 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 	if turnoID > 0 {
 		resUpd, err := tx.Exec(`
 			UPDATE escala_turnos
-			SET tipo_id = ?, data_inicio = ?, data_fim = ?, observacao = ?
+			SET tipo_id = ?, data_inicio = ?, data_fim = ?, observacao = ?, posto_grad_min_id = ?, posto_grad_max_id = ?
 			WHERE id = ? AND (? = 0 OR grupo_id = ?)`,
-			req.TipoID, req.DataInicio, req.DataFim, req.Observacao, turnoID, escopoDoUsuario(u), grupoID)
+			req.TipoID, req.DataInicio, req.DataFim, req.Observacao, req.PostoGradMinID, req.PostoGradMaxID,
+			turnoID, escopoDoUsuario(u), grupoID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		// Fix P0: UPDATE fora do escopo (outro grupo) não pode prosseguir para o
-		// DELETE/INSERT do efetivo — antes devolvia 200 e ZERAVA o turno alheio.
 		if n, _ := resUpd.RowsAffected(); n == 0 {
 			jsonErro(w, http.StatusNotFound, "turno não encontrado no seu escopo")
 			return
@@ -5063,9 +5282,9 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 		_, _ = tx.Exec(`DELETE FROM escala_pessoas WHERE turno_id = ?`, turnoID)
 	} else {
 		res, err := tx.Exec(`
-			INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim, observacao, criado_por)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			grupoID, req.TipoID, req.DataInicio, req.DataFim, req.Observacao, u.ID)
+			INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim, observacao, criado_por, posto_grad_min_id, posto_grad_max_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			grupoID, req.TipoID, req.DataInicio, req.DataFim, req.Observacao, u.ID, req.PostoGradMinID, req.PostoGradMaxID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
@@ -5184,9 +5403,13 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 
 	// Postos
 	pRows, _ := a.st.db.Query(`
-		SELECT emp.id, emp.tipo_id, etp.nome, emp.hora_inicio, emp.hora_fim, emp.quantidade, emp.ordem
+		SELECT emp.id, emp.tipo_id, etp.nome, emp.hora_inicio, emp.hora_fim, emp.quantidade, emp.ordem,
+		       emp.posto_grad_min_id, emp.posto_grad_max_id,
+		       COALESCE(fgmin.nome, ''), COALESCE(fgmax.nome, '')
 		FROM escala_modelo_postos emp
 		JOIN escala_tipos etp ON etp.id = emp.tipo_id
+		LEFT JOIN funcoes fgmin ON fgmin.id = emp.posto_grad_min_id
+		LEFT JOIN funcoes fgmax ON fgmax.id = emp.posto_grad_max_id
 		WHERE emp.modelo_id = ?
 		ORDER BY emp.ordem ASC, emp.id ASC`, id)
 	var postos []map[string]any
@@ -5196,15 +5419,21 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 			var pid, tid int64
 			var tnome, hi, hf string
 			var qtd, ord int
-			if pRows.Scan(&pid, &tid, &tnome, &hi, &hf, &qtd, &ord) == nil {
+			var pgMinID, pgMaxID *int64
+			var pgMinNome, pgMaxNome string
+			if pRows.Scan(&pid, &tid, &tnome, &hi, &hf, &qtd, &ord, &pgMinID, &pgMaxID, &pgMinNome, &pgMaxNome) == nil {
 				postos = append(postos, map[string]any{
-					"id":          pid,
-					"tipo_id":     tid,
-					"tipo_nome":   tnome,
-					"hora_inicio": hi,
-					"hora_fim":    hf,
-					"quantidade":  qtd,
-					"ordem":       ord,
+					"id":                  pid,
+					"tipo_id":             tid,
+					"tipo_nome":           tnome,
+					"hora_inicio":         hi,
+					"hora_fim":            hf,
+					"quantidade":          qtd,
+					"ordem":               ord,
+					"posto_grad_min_id":   pgMinID,
+					"posto_grad_max_id":   pgMaxID,
+					"posto_grad_min_nome": pgMinNome,
+					"posto_grad_max_nome": pgMaxNome,
 				})
 			}
 		}
@@ -5212,10 +5441,11 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 
 	// Aptos
 	aRows, _ := a.st.db.Query(`
-		SELECT ema.pessoa_id, p.nome_guerra, p.nome_completo, COALESCE(s.nome,'')
+		SELECT ema.pessoa_id, p.nome_guerra, p.nome_completo, COALESCE(s.nome,''), COALESCE(fu.nome, '')
 		FROM escala_modelo_aptos ema
 		JOIN pessoas p ON p.id = ema.pessoa_id
 		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
 		WHERE ema.modelo_id = ?
 		ORDER BY p.nome_guerra ASC`, id)
 	var aptos []map[string]any
@@ -5223,13 +5453,14 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 		defer aRows.Close()
 		for aRows.Next() {
 			var pid int64
-			var ng, nc, setor string
-			if aRows.Scan(&pid, &ng, &nc, &setor) == nil {
+			var ng, nc, setor, funcao string
+			if aRows.Scan(&pid, &ng, &nc, &setor, &funcao) == nil {
 				aptos = append(aptos, map[string]any{
 					"pessoa_id":     pid,
 					"nome_guerra":   ng,
 					"nome_completo": nc,
 					"setor":         setor,
+					"funcao":        funcao,
 				})
 			}
 		}
@@ -5254,11 +5485,13 @@ func (a *App) hEscalasModelosSave(w http.ResponseWriter, r *http.Request) {
 		Nome      string `json:"nome"`
 		Descricao string `json:"descricao"`
 		Postos    []struct {
-			TipoID     int64  `json:"tipo_id"`
-			HoraInicio string `json:"hora_inicio"`
-			HoraFim    string `json:"hora_fim"`
-			Quantidade int    `json:"quantidade"`
-			Ordem      int    `json:"ordem"`
+			TipoID         int64  `json:"tipo_id"`
+			HoraInicio     string `json:"hora_inicio"`
+			HoraFim        string `json:"hora_fim"`
+			Quantidade     int    `json:"quantidade"`
+			Ordem          int    `json:"ordem"`
+			PostoGradMinID *int64 `json:"posto_grad_min_id"`
+			PostoGradMaxID *int64 `json:"posto_grad_max_id"`
 		} `json:"postos"`
 		AptosIDs []int64 `json:"aptos_ids"`
 	}
@@ -5308,9 +5541,9 @@ func (a *App) hEscalasModelosSave(w http.ResponseWriter, r *http.Request) {
 			hf = "07:00"
 		}
 		_, err = tx.Exec(`
-			INSERT INTO escala_modelo_postos (modelo_id, tipo_id, hora_inicio, hora_fim, quantidade, ordem)
-			VALUES (?, ?, ?, ?, ?, ?)`,
-			modeloID, p.TipoID, hi, hf, qtd, p.Ordem)
+			INSERT INTO escala_modelo_postos (modelo_id, tipo_id, hora_inicio, hora_fim, quantidade, ordem, posto_grad_min_id, posto_grad_max_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			modeloID, p.TipoID, hi, hf, qtd, p.Ordem, p.PostoGradMinID, p.PostoGradMaxID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
@@ -5362,9 +5595,9 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Buscar postos do modelo
+	// Buscar postos do modelo com faixas de posto/graduação
 	pRows, err := a.st.db.Query(`
-		SELECT tipo_id, hora_inicio, hora_fim, quantidade
+		SELECT tipo_id, hora_inicio, hora_fim, quantidade, posto_grad_min_id, posto_grad_max_id
 		FROM escala_modelo_postos
 		WHERE modelo_id = ?
 		ORDER BY ordem ASC, id ASC`, req.ModeloID)
@@ -5375,14 +5608,16 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 	defer pRows.Close()
 
 	type postoDef struct {
-		tipoID int64
-		hi, hf string
-		qtd    int
+		tipoID   int64
+		hi, hf   string
+		qtd      int
+		pgMinID  *int64
+		pgMaxID  *int64
 	}
 	var postos []postoDef
 	for pRows.Next() {
 		var p postoDef
-		if pRows.Scan(&p.tipoID, &p.hi, &p.hf, &p.qtd) == nil {
+		if pRows.Scan(&p.tipoID, &p.hi, &p.hf, &p.qtd, &p.pgMinID, &p.pgMaxID) == nil {
 			postos = append(postos, p)
 		}
 	}
@@ -5417,9 +5652,9 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 
 		for q := 0; q < p.qtd; q++ {
 			_, err = tx.Exec(`
-				INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim, modelo_id, fase, status_delegacao, criado_por)
-				VALUES (?, ?, ?, ?, ?, 'aberto', 'proprio', ?)`,
-				escopo, p.tipoID, dataIni, dataFim, req.ModeloID, u.ID)
+				INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim, modelo_id, fase, status_delegacao, criado_por, posto_grad_min_id, posto_grad_max_id)
+				VALUES (?, ?, ?, ?, ?, 'aberto', 'proprio', ?, ?, ?)`,
+				escopo, p.tipoID, dataIni, dataFim, req.ModeloID, u.ID, p.pgMinID, p.pgMaxID)
 			if err != nil {
 				jsonErro(w, http.StatusInternalServerError, err.Error())
 				return
@@ -5474,6 +5709,86 @@ func (a *App) hEscalasTurnoAlocar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	var turno struct {
+		ID              int64
+		GrupoID         int64
+		TipoID          int64
+		DataInicio      string
+		DataFim         string
+		ModeloID        *int64
+		GrupoDelegadoID *int64
+		PostoGradMinID  *int64
+		PostoGradMaxID  *int64
+	}
+	err = a.st.db.QueryRow(`
+		SELECT id, grupo_id, tipo_id, data_inicio, data_fim, modelo_id, grupo_delegado_id, posto_grad_min_id, posto_grad_max_id
+		FROM escala_turnos WHERE id = ?`, turnoID).
+		Scan(&turno.ID, &turno.GrupoID, &turno.TipoID, &turno.DataInicio, &turno.DataFim,
+			&turno.ModeloID, &turno.GrupoDelegadoID, &turno.PostoGradMinID, &turno.PostoGradMaxID)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Turno não encontrado")
+		return
+	}
+
+	// Permissão: admin, próprio grupo dono do turno, grupo delegado, ou grupo subordinado visualizando escala superior
+	podeAlocar := false
+	if u.Papel == "admin" || turno.GrupoID == escopo {
+		podeAlocar = true
+	} else if turno.GrupoDelegadoID != nil && *turno.GrupoDelegadoID == escopo {
+		podeAlocar = true
+	} else {
+		superiores := a.gruposSuperioresAtivos(escopo)
+		if int64Contem(superiores, turno.GrupoID) {
+			podeAlocar = true
+		}
+	}
+	if !podeAlocar {
+		jsonErro(w, http.StatusForbidden, "Você não tem permissão para gerenciar este posto")
+		return
+	}
+
+	var alertaDescanso InfoDescanso
+	if req.PessoaID != nil && *req.PessoaID > 0 {
+		pid := *req.PessoaID
+
+		// 1. Aptos enforcement se turno oriundo de modelo com aptos definidos
+		// Nota: Se o posto for delegado para um subgrupo, o subgrupo escala membros da sua própria fração
+		ehDelegadoParaSub := turno.GrupoDelegadoID != nil && *turno.GrupoDelegadoID != turno.GrupoID
+		if !ehDelegadoParaSub && turno.ModeloID != nil && *turno.ModeloID > 0 {
+			var countAptos int
+			_ = a.st.db.QueryRow(`SELECT count(*) FROM escala_modelo_aptos WHERE modelo_id = ?`, *turno.ModeloID).Scan(&countAptos)
+			if countAptos > 0 {
+				var estaApto int
+				_ = a.st.db.QueryRow(`SELECT count(*) FROM escala_modelo_aptos WHERE modelo_id = ? AND pessoa_id = ?`, *turno.ModeloID, pid).Scan(&estaApto)
+				if estaApto == 0 {
+					jsonErro(w, http.StatusBadRequest, "O militar selecionado não está na lista de habilitados/aptos desta escala")
+					return
+				}
+			}
+		}
+
+		// 2. Faixa de Posto/Graduação (mínima e máxima)
+		if turno.PostoGradMinID != nil || turno.PostoGradMaxID != nil {
+			var pFuncaoID *int64
+			_ = a.st.db.QueryRow(`SELECT funcao_id FROM pessoas WHERE id = ?`, pid).Scan(&pFuncaoID)
+			ord := a.obterFuncoesOrdenadas(turno.GrupoID)
+			if !a.verificarFaixaPostoGrad(pFuncaoID, turno.PostoGradMinID, turno.PostoGradMaxID, ord) {
+				jsonErro(w, http.StatusBadRequest, "O militar não atende à faixa de Posto/Graduação definida para este posto")
+				return
+			}
+		}
+
+		// 3. Algoritmo de conferência de permanência: sobreposição simultânea e descanso
+		alertaDescanso = a.validarDescansoEscala(pid, turno.ID, turno.DataInicio, turno.DataFim)
+		if alertaDescanso.Conflito {
+			jsonErro(w, http.StatusBadRequest, alertaDescanso.ConflitoErro)
+			return
+		}
+	}
+
 	tx, err := a.st.db.Begin()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -5500,7 +5815,10 @@ func (a *App) hEscalasTurnoAlocar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonOK(w, map[string]any{"ok": true})
+	jsonOK(w, map[string]any{
+		"ok":              true,
+		"alerta_descanso": alertaDescanso,
+	})
 }
 
 func (a *App) hEscalasTurnoDelegar(w http.ResponseWriter, r *http.Request) {
@@ -5545,6 +5863,135 @@ func (a *App) hEscalasTurnoDelegar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w, map[string]any{"ok": true})
+}
+
+func (a *App) hEscalasTurnoCandidatos(w http.ResponseWriter, r *http.Request) {
+	turnoID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || turnoID <= 0 {
+		jsonErro(w, http.StatusBadRequest, "ID do turno inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+
+	var turno struct {
+		ID              int64  `json:"id"`
+		GrupoID         int64  `json:"grupo_id"`
+		TipoID          int64  `json:"tipo_id"`
+		TipoNome        string `json:"tipo_nome"`
+		DataInicio      string `json:"data_inicio"`
+		DataFim         string `json:"data_fim"`
+		ModeloID        *int64 `json:"modelo_id"`
+		GrupoDelegadoID *int64 `json:"grupo_delegado_id"`
+		PostoGradMinID  *int64 `json:"posto_grad_min_id"`
+		PostoGradMaxID  *int64 `json:"posto_grad_max_id"`
+	}
+	err = a.st.db.QueryRow(`
+		SELECT et.id, et.grupo_id, et.tipo_id, etp.nome, et.data_inicio, et.data_fim,
+		       et.modelo_id, et.grupo_delegado_id, et.posto_grad_min_id, et.posto_grad_max_id
+		FROM escala_turnos et
+		JOIN escala_tipos etp ON etp.id = et.tipo_id
+		WHERE et.id = ?`, turnoID).
+		Scan(&turno.ID, &turno.GrupoID, &turno.TipoID, &turno.TipoNome, &turno.DataInicio, &turno.DataFim,
+			&turno.ModeloID, &turno.GrupoDelegadoID, &turno.PostoGradMinID, &turno.PostoGradMaxID)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Turno não encontrado")
+		return
+	}
+
+	// Permissão
+	podeVer := false
+	if u.Papel == "admin" || turno.GrupoID == escopo {
+		podeVer = true
+	} else if turno.GrupoDelegadoID != nil && *turno.GrupoDelegadoID == escopo {
+		podeVer = true
+	} else {
+		superiores := a.gruposSuperioresAtivos(escopo)
+		if int64Contem(superiores, turno.GrupoID) {
+			podeVer = true
+		}
+	}
+	if !podeVer {
+		jsonErro(w, http.StatusForbidden, "Acesso não autorizado a este turno")
+		return
+	}
+
+	// Grupo do qual os militares serão alocados:
+	grupoMilitares := escopo
+	if grupoMilitares <= 0 {
+		grupoMilitares = turno.GrupoID
+	}
+
+	// Carregar aptos do modelo (se houver e não for delegado a subgrupo)
+	aptosSet := make(map[int64]bool)
+	temFiltroAptos := false
+	ehDelegadoParaSub := turno.GrupoDelegadoID != nil && *turno.GrupoDelegadoID != turno.GrupoID
+	if !ehDelegadoParaSub && turno.ModeloID != nil && *turno.ModeloID > 0 {
+		aRows, aErr := a.st.db.Query(`SELECT pessoa_id FROM escala_modelo_aptos WHERE modelo_id = ?`, *turno.ModeloID)
+		if aErr == nil {
+			for aRows.Next() {
+				var pid int64
+				if aRows.Scan(&pid) == nil {
+					aptosSet[pid] = true
+					temFiltroAptos = true
+				}
+			}
+			aRows.Close()
+		}
+	}
+
+	// Carregar funcoes ordenadas para validação de faixa
+	funcoesOrd := a.obterFuncoesOrdenadas(grupoMilitares)
+
+	// Consultar militares ativos do grupo
+	pRows, err := a.st.db.Query(`
+		SELECT p.id, p.nome_guerra, p.nome_completo, p.funcao_id, COALESCE(fu.nome, ''), COALESCE(s.nome, '')
+		FROM pessoas p
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN setores s ON s.id = p.setor_id
+		WHERE p.status = 'ativo' AND (? <= 0 OR p.grupo_id = ?)
+		ORDER BY fu.antiguidade ASC, p.nome_guerra ASC`, grupoMilitares, grupoMilitares)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer pRows.Close()
+
+	type CandidatoItem struct {
+		ID                  int64        `json:"id"`
+		NomeGuerra          string       `json:"nome_guerra"`
+		NomeCompleto        string       `json:"nome_completo"`
+		FuncaoID            *int64       `json:"funcao_id"`
+		Funcao              string       `json:"funcao"`
+		Setor               string       `json:"setor"`
+		Apto                bool         `json:"apto"`
+		CompativelPostoGrad bool         `json:"compativel_posto_grad"`
+		Descanso            InfoDescanso `json:"descanso"`
+	}
+
+	var candidatos []CandidatoItem
+	for pRows.Next() {
+		var c CandidatoItem
+		if pRows.Scan(&c.ID, &c.NomeGuerra, &c.NomeCompleto, &c.FuncaoID, &c.Funcao, &c.Setor) == nil {
+			if temFiltroAptos {
+				c.Apto = aptosSet[c.ID]
+			} else {
+				c.Apto = true
+			}
+			c.CompativelPostoGrad = a.verificarFaixaPostoGrad(c.FuncaoID, turno.PostoGradMinID, turno.PostoGradMaxID, funcoesOrd)
+			candidatos = append(candidatos, c)
+		}
+	}
+	pRows.Close()
+
+	for i := range candidatos {
+		candidatos[i].Descanso = a.validarDescansoEscala(candidatos[i].ID, turno.ID, turno.DataInicio, turno.DataFim)
+	}
+
+	jsonOK(w, map[string]any{
+		"turno":      turno,
+		"candidatos": candidatos,
+	})
 }
 
 func (a *App) hEscalasAlterarFase(w http.ResponseWriter, r *http.Request) {

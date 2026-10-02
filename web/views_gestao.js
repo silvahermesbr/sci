@@ -1809,11 +1809,11 @@
         <div class="form-linha"><div class="campo"><label>Nome de guerra</label><input id="pNg"></div>
         <div class="campo"><label>Nome completo</label><input id="pNc"></div></div>
         <div class="form-linha"><div class="campo"><label>Setor</label><select id="pSetor"><option value="">—</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-        <div class="campo"><label>Função</label><select id="pFuncao"><option value="">—</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+        <div class="campo"><label>Posto / Graduação</label><select id="pFuncao"><option value="">—</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
         <div class="campo"><label>Status</label><select id="pStatus"><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
         <button class="primario" id="pSalvar">Salvar</button>
         <h3 style="margin-top:16px">Adição em lote — cole as linhas e importe</h3>
-        <p style="color:var(--tx2);font-size:12px;margin:4px 0">Formato (1 por linha, separado por ponto-e-vírgula): <code>nome de guerra ; nome completo ; setor ; função</code> — setor e função são opcionais e devem já existir no catálogo.</p>
+        <p style="color:var(--tx2);font-size:12px;margin:4px 0">Formato (1 por linha, separado por ponto-e-vírgula): <code>nome de guerra ; nome completo ; setor ; posto/graduação</code> — setor e posto/graduação são opcionais e devem já existir no catálogo.</p>
         <textarea id="csv" rows="5" placeholder="SILVA;José da Silva;Comando;Motorista&#10;SOUSA;Maria de Sousa;Serviços&#10;PERES;Bruno Peres"></textarea>
         <button class="acao-linha" id="csvGo" style="margin-top:8px">Importar linhas</button></div>`;
 
@@ -1845,7 +1845,7 @@
             <button class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
             <button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>
             <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span></div>
-          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Ativo</th><th></th></tr></thead>
+          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Posto / Graduação</th><th>Ativo</th><th></th></tr></thead>
           <tbody id="tabP">${linhasP || '<tr><td colspan="8"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
       </div>
       <div id="gerTags" class="${abaGer === 'tags' ? '' : 'oculto'}">
@@ -1853,7 +1853,7 @@
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px">
             <div>
               <h3 style="margin:0 0 4px">Catálogos & TAGS Organizacionais</h3>
-              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Tags, Setores, Funções e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
+              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Tags, Setores, Postos/Graduações e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
             </div>
           </div>
 
@@ -1868,7 +1868,7 @@
                 <select id="cgT">
                   <optgroup label="Tags de Pessoal">
                     <option value="destinos">📍 Destinos (Faltas Justificadas)</option>
-                    <option value="funcoes">💼 Funções / Cargos</option>
+                    <option value="funcoes">🎖️ Postos / Graduações</option>
                   </optgroup>
                   <optgroup label="Tags de Material">
                     <option value="tags">🏷️ Situação do Material (Disponível, etc.)</option>
@@ -2034,7 +2034,7 @@
         <p style="color:var(--tx2);font-size:12px;margin:4px 0">Campos em <b>(manter)</b> não são alterados. Aplica a todos os selecionados.</p>
         <div class="form-linha">
           <div class="campo"><label>Setor</label><select id="lSetor"><option value="">(manter)</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-          <div class="campo"><label>Função</label><select id="lFuncao"><option value="">(manter)</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+          <div class="campo"><label>Posto / Graduação</label><select id="lFuncao"><option value="">(manter)</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
           <div class="campo"><label>Status</label><select id="lStatus"><option value="">(manter)</option><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
         <div class="modal-acoes"><button class="fantasma" id="lX">Cancelar</button>
         <button class="primario" id="lGo">Aplicar a ${sel.length}</button></div></div>`);
@@ -2091,7 +2091,7 @@
     /* --- aba TAGS: Catálogos divididos em Pessoal e Material (v1.5) --- */
     const rotCat = {
       destinos: '📍 Destinos (Pessoal)',
-      funcoes: '💼 Funções / Cargos (Pessoal)',
+      funcoes: '🎖️ Postos / Graduações (Pessoal)',
       tags: '🏷️ Situação do Material (Material)',
       material_tipos: '📦 Tipos de Material (Material)',
       material_classes: '🎖️ Classes de Material (Material)',
@@ -2139,7 +2139,7 @@
       
       let html = `
         <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:8px;padding:12px;margin-bottom:18px;font-size:12.5px;color:var(--tx2)">
-          💡 <b>Doutrina de Organização v1.5:</b> As tags estão divididas em <b>Pessoal</b> (Situação/Destino/Funções) e <b>Material</b> (Situação/Tipo/Classe). A tag de setor do militar é preenchida automaticamente pelo Setor ao qual ele está alocado.
+          💡 <b>Doutrina de Organização v1.5:</b> As tags estão divididas em <b>Pessoal</b> (Situação/Destino/Postos e Graduações) e <b>Material</b> (Situação/Tipo/Classe). A tag de setor do militar é preenchida automaticamente pelo Setor ao qual ele está alocado.
         </div>`;
 
       for (const [t, lista] of resultados) {

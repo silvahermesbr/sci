@@ -125,6 +125,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV27(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV28(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1887,5 +1890,41 @@ func (s *Store) migrarV27() error {
 		WHERE alvo_grupo_id IS NOT NULL`)
 
 	return s.marcarVersao(27)
+}
+
+// migrarV28: Suporte a faixas de Posto/Graduação (mínima e máxima) em postos de escala e turnos.
+func (s *Store) migrarV28() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 28`).Scan(&v)
+	if v == 28 {
+		return nil
+	}
+
+	colunas := map[string][]string{
+		"escala_modelo_postos": {
+			"posto_grad_min_id INTEGER REFERENCES funcoes(id)",
+			"posto_grad_max_id INTEGER REFERENCES funcoes(id)",
+		},
+		"escala_turnos": {
+			"posto_grad_min_id INTEGER REFERENCES funcoes(id)",
+			"posto_grad_max_id INTEGER REFERENCES funcoes(id)",
+		},
+	}
+
+	for tab, cols := range colunas {
+		for _, def := range cols {
+			partes := strings.Fields(def)
+			nomeCol := partes[0]
+			var n int
+			_ = s.db.QueryRow(fmt.Sprintf(`SELECT count(*) FROM pragma_table_info('%s') WHERE name = ?`, tab), nomeCol).Scan(&n)
+			if n == 0 {
+				if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s`, tab, def)); err != nil {
+					return fmt.Errorf("migração v28 alter %s %s: %w", tab, nomeCol, err)
+				}
+			}
+		}
+	}
+
+	return s.marcarVersao(28)
 }
 

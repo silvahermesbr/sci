@@ -994,7 +994,7 @@ function renderRelatorio(b, titulo) {
           '<tbody>' + linhasConf + '</tbody></table></div>'
         : '') +
       '<div class="rolagem"><table>' +
-        '<thead><tr><th class="num">Antig.</th><th>Nome</th><th>Função</th><th>Setor</th><th>Grupo</th>' +
+        '<thead><tr><th class="num">Antig.</th><th>Nome</th><th>Posto / Graduação</th><th>Setor</th><th>Grupo</th>' +
         '<th class="num">Pres.</th><th class="num">Atraso</th><th class="num">Falta</th><th class="num">Just.</th></tr></thead>' +
         '<tbody>' + (linhasPessoas || '<tr><td colspan="9"><span class="vazio">sem efetivo no período</span></td></tr>') + '</tbody>' +
       '</table></div>' +

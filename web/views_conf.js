@@ -87,7 +87,7 @@
             <div class="caixa"><b style="color:#60a5fa">${res.justificadas || 0}</b><span>Justificadas</span></div>
           </div>
           <div class="campo" style="margin-bottom:10px">
-            <input id="fModalLanc" placeholder="Filtrar por nome de guerra, setor, função ou observação…">
+            <input id="fModalLanc" placeholder="Filtrar por nome de guerra, setor, posto/graduação ou observação…">
           </div>
           <div class="rolagem" style="max-height:55vh">
             <table id="tabModalLanc">
@@ -650,7 +650,7 @@
          <td class="num">${esc(p.atrasos)}</td><td class="num">${esc(p.faltas)}</td><td class="num">${esc(p.justificadas)}</td><td class="num">${esc(p.nao_verificados || 0)}</td></tr>`).join('');
 
       container.innerHTML = `
-        <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Função</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
+        <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Posto / Graduação</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
         <th class="num">Falta</th><th class="num">Just.</th><th class="num">N.V.</th></tr></thead>
         <tbody>${linhas || '<tr><td colspan="10"><span class="vazio">nenhum militar encontrado</span></td></tr>'}</tbody></table></div>
         ${renderPaginadorHTML(pag, 'pagConsolidado')}
@@ -1048,7 +1048,7 @@
                 <thead>
                   <tr>
                     <th>Militar</th>
-                    <th>Função</th>
+                    <th>Posto / Graduação</th>
                     <th>Setor</th>
                     <th>Situação</th>
                     <th>Destino</th>
@@ -1119,9 +1119,9 @@
               </select>
             </div>
             <div class="campo" style="margin:0; width:180px">
-              <label>Função</label>
+              <label>Posto / Graduação</label>
               <select id="biFuncao">
-                <option value="">— Todas as Funções —</option>
+                <option value="">— Todos os Postos/Grad. —</option>
                 ${optFuncoes.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
               </select>
             </div>
@@ -1161,7 +1161,7 @@
         const div = modal(`
           <div class="modal-inner" style="max-width:640px">
             <h3>${esc(ficha.nome_guerra || '')} <small style="color:var(--tx2);font-weight:400">${esc(ficha.nome_completo || '')}</small></h3>
-            <p style="color:var(--tx2);font-size:13px;margin:4px 0">Setor: <b>${esc(ficha.setor || 'INDEFINIDO')}</b> · Função: <b>${esc(ficha.funcao || 'INDEFINIDO')}</b> · Grupo: <b>${esc(ficha.grupo || '—')}</b> · Status: <b>${esc(ficha.status || '')}</b></p>
+            <p style="color:var(--tx2);font-size:13px;margin:4px 0">Setor: <b>${esc(ficha.setor || 'INDEFINIDO')}</b> · Posto/Grad.: <b>${esc(ficha.funcao || 'INDEFINIDO')}</b> · Grupo: <b>${esc(ficha.grupo || '—')}</b> · Status: <b>${esc(ficha.status || '')}</b></p>
             <div class="rolagem" style="max-height:220px;margin:8px 0">
               <table>
                 <thead><tr><th>Data</th><th>Conf.</th><th>Situação</th><th>Destino</th><th>Tag</th></tr></thead>
@@ -1282,7 +1282,7 @@
         const sid = $('#biSetor') ? $('#biSetor').value : '';
         const fid = $('#biFuncao') ? $('#biFuncao').value : '';
 
-        if (!q && !sid && !fid) { toast('Informe o nome, setor ou função para buscar', 'erro'); return; }
+        if (!q && !sid && !fid) { toast('Informe o nome, setor ou posto/graduação para buscar', 'erro'); return; }
         $('#biRes').innerHTML = '<div class="carregando">Buscando…</div>';
         try {
           const ps = await api('/api/pessoas');

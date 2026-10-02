@@ -246,11 +246,16 @@
                 </div>
               `).join('')}
 
-              ${escDia.map(es => `
-                <div class="cal-chip cal-chip-escala" data-turnoid="${es.turno_id}" title="Escala: ${esc(es.tipo_nome)} (${es.total_efetivo} militares)">
-                  <span class="chip-txt">🛡️ ${esc(es.tipo_nome)} (${es.total_efetivo})</span>
-                </div>
-              `).join('')}
+              ${escDia.map(es => {
+                const nomesMil = (es.militares || []).map(m => m.nome_guerra).filter(Boolean).join(', ');
+                const labelTxt = nomesMil ? `🛡️ ${esc(es.tipo_nome)}: ${esc(nomesMil)}` : `🛡️ ${esc(es.tipo_nome)} (${es.total_efetivo})`;
+                const tituloHover = `Escala: ${es.tipo_nome}${nomesMil ? ' — ' + nomesMil : ''}`;
+                return `
+                  <div class="cal-chip cal-chip-escala" data-turnoid="${es.turno_id}" title="${esc(tituloHover)}">
+                    <span class="chip-txt">${labelTxt}</span>
+                  </div>
+                `;
+              }).join('')}
 
               ${despDia.map(d => `
                 <div class="cal-chip cal-chip-despacho" data-despid="${d.id}" title="Despacho: ${esc(d.assunto)}">
