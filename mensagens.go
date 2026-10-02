@@ -452,8 +452,9 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fix P0 XSS: sanitiza na ESCRITA (mesma allowlist do editor rich text).
 	req.Assunto = strings.TrimSpace(req.Assunto)
-	req.Corpo = strings.TrimSpace(req.Corpo)
+	req.Corpo = strings.TrimSpace(sanitizaRichText(req.Corpo))
 	if req.Assunto == "" || req.Corpo == "" {
 		jsonErro(w, http.StatusBadRequest, "assunto e mensagem são obrigatórios")
 		return
@@ -1039,6 +1040,8 @@ func (a *App) hMensagensResponderThread(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusBadRequest, "o texto da resposta é obrigatório")
 		return
 	}
+	// Fix P0 XSS: sanitiza na ESCRITA (respostas de despacho também renderizam cru).
+	req.Corpo = strings.TrimSpace(sanitizaRichText(req.Corpo))
 
 	// 1. Validar se a mensagem raiz existe e se o usuário tem acesso (é remetente ou destinatário)
 	var remPapelID int64
@@ -1302,8 +1305,9 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fix P0 XSS: sanitiza na ESCRITA (allowlist do editor rich text); render cru no front fica seguro.
 	req.Titulo = strings.TrimSpace(req.Titulo)
-	req.Conteudo = strings.TrimSpace(req.Conteudo)
+	req.Conteudo = strings.TrimSpace(sanitizaRichText(req.Conteudo))
 	if req.Titulo == "" || req.Conteudo == "" {
 		jsonErro(w, http.StatusBadRequest, "título e conteúdo são obrigatórios")
 		return
@@ -1414,9 +1418,20 @@ func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
+		// Fix contrato: o front (views_avisos.js) envia {texto}; aceitar AMBOS os campos.
+		Texto      string `json:"texto"`
 		Comentario string `json:"comentario"`
 	}
-	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Comentario) == "" {
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "dados inválidos")
+		return
+	}
+	comentario := req.Comentario
+	if strings.TrimSpace(comentario) == "" {
+		comentario = req.Texto
+	}
+	comentario = strings.TrimSpace(sanitizaRichText(comentario))
+	if comentario == "" {
 		jsonErro(w, http.StatusBadRequest, "comentário não pode estar vazio")
 		return
 	}
@@ -1424,7 +1439,7 @@ func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
 	res, err := a.st.db.Exec(`
 		INSERT INTO aviso_comentarios (aviso_id, usuario_id, papel_id, comentario)
 		VALUES (?, ?, ?, ?)`,
-		id, u.ID, u.PapelAtivoID, strings.TrimSpace(req.Comentario))
+		id, u.ID, u.PapelAtivoID, comentario)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao inserir comentário: "+err.Error())
 		return
@@ -1465,6 +1480,7 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 				comentarios = append(comentarios, map[string]any{
 					"id":            cid,
 					"comentario":    com,
+					"text":          com, // alias consumido pelo render do front (views_avisos.js lê c.texto)
 					"criado_em":     dts,
 					"usuario_id":    uid,
 					"login":         login,
@@ -1478,14 +1494,18 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 		cRows.Close()
 	}
 
-	// Cientes
+	// Cientes — Fix P1: o front consome registrado_em/funcao_nome/grupo_nome;
+	// a query antiga não trazia função nem grupo e o modal exibia "—".
 	ciRows, _ := a.st.db.Query(`
 		SELECT ac.id, ac.ciente_em,
 		       u.id, u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
-		       COALESCE(up.papel,''), COALESCE(up.nome_exibicao,'')
+		       COALESCE(up.papel,''), COALESCE(up.nome_exibicao,''),
+		       COALESCE(f.nome,''), COALESCE(g.nome,'')
 		FROM aviso_cientes ac
 		JOIN usuarios u ON u.id = ac.usuario_id
 		LEFT JOIN usuario_papeis up ON up.id = ac.papel_id
+		LEFT JOIN funcoes f ON f.id = up.funcao_id
+		LEFT JOIN grupos g ON g.id = up.grupo_id
 		WHERE ac.aviso_id = ? ORDER BY ac.ciente_em ASC`, id)
 
 	cientes := []map[string]any{}
@@ -1493,16 +1513,28 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 		for ciRows.Next() {
 			var cid, uid int64
 			var dts, login, guerra, completo, papel, exibicao string
-			if ciRows.Scan(&cid, &dts, &uid, &login, &guerra, &completo, &papel, &exibicao) == nil {
+			var funcao, grupo *string
+			if ciRows.Scan(&cid, &dts, &uid, &login, &guerra, &completo, &papel, &exibicao, &funcao, &grupo) == nil {
+				fn := ""
+				if funcao != nil {
+					fn = *funcao
+				}
+				gn := ""
+				if grupo != nil {
+					gn = *grupo
+				}
 				cientes = append(cientes, map[string]any{
 					"id":            cid,
 					"ciente_em":     dts,
+					"registrado_em": dts, // alias consumido pelo front (views_avisos.js)
 					"usuario_id":    uid,
 					"login":         login,
 					"nome_guerra":   guerra,
 					"nome_completo": completo,
 					"papel":         papel,
 					"nome_exibicao": exibicao,
+					"funcao_nome":   fn,
+					"grupo_nome":    gn,
 				})
 			}
 		}
@@ -1542,6 +1574,22 @@ func (a *App) hAvisosRepostar(w http.ResponseWriter, r *http.Request) {
 
 	if grupoOrigID == *u.GrupoID {
 		jsonErro(w, http.StatusBadRequest, "aviso já pertence ao seu próprio grupo")
+		return
+	}
+
+	// Fix P1 IDOR: o aviso de origem tem que estar no ESCOPO do reposter
+	// (grupo da origem = próprio/subordinado/superior). Sem isso, gerente de
+	// grupo sem relação com a origem extrai e clona conteúdo entre unidades.
+	escopo := escopoDoUsuario(u)
+	relacionado := escopo == 0
+	if !relacionado {
+		if grupoOrigID == escopo || int64Contem(a.gruposSubordinadosAtivos(escopo), grupoOrigID) ||
+			int64Contem(a.gruposSuperioresAtivos(escopo), grupoOrigID) {
+			relacionado = true
+		}
+	}
+	if !relacionado {
+		jsonErro(w, http.StatusForbidden, "aviso fora do seu escopo: não é possível repostar")
 		return
 	}
 

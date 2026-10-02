@@ -400,6 +400,12 @@ func (a *App) hCalendarioEventosSave(w http.ResponseWriter, r *http.Request) {
 	if req.Cor == "" {
 		req.Cor = "#2563eb"
 	}
+	// Fix P2: cor em allowlist estrita (#rgb/#rrggbb/#rrggbbaa) — protege os sinks
+	// style="${c.cor}" do front contra injeção via quebra de atributo/valor CSS.
+	if !corValida(req.Cor) {
+		jsonErro(w, http.StatusBadRequest, "cor inválida (use formato #rgb, #rrggbb ou #rrggbbaa)")
+		return
+	}
 	diaIntVal := 0
 	if req.DiaInteiro {
 		diaIntVal = 1
@@ -408,6 +414,32 @@ func (a *App) hCalendarioEventosSave(w http.ResponseWriter, r *http.Request) {
 	var grupoID *int64
 	if u.GrupoID != nil {
 		grupoID = u.GrupoID
+	}
+
+	// Fix P2-1: gravar em COLEÇÃO exige que ela exista e que o usuário tenha
+	// permissão de EDIÇÃO sobre ela (própria OU compartilhada com pode_editar=1).
+	// Antes qualquer operador gravava em coleção alheia só sabendo o id.
+	// CalendarioID == nil é o caderno PESSOAL (padrão) — sem checagem de coleção.
+	if req.CalendarioID != nil {
+		var calAutorID int64
+		var calGrupo *int64
+		if err := a.st.db.QueryRow(`SELECT autor_usuario_id, grupo_id FROM calendarios WHERE id = ?`, *req.CalendarioID).Scan(&calAutorID, &calGrupo); err != nil {
+			jsonErro(w, http.StatusNotFound, "calendário (coleção) não encontrado")
+			return
+		}
+		podeEditar := calAutorID == u.ID
+		if !podeEditar {
+			var n int
+			_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM calendario_compartilhamentos WHERE calendario_id = ? AND (
+				(alvo_usuario_id IS NOT NULL AND alvo_usuario_id = ? AND pode_editar = 1) OR
+				(alvo_grupo_id IS NOT NULL AND ? AND alvo_grupo_id = ? AND pode_editar = 1))`,
+				*req.CalendarioID, u.ID, u.GrupoID != nil, u.GrupoID).Scan(&n)
+			podeEditar = n > 0
+		}
+		if !podeEditar {
+			jsonErro(w, http.StatusForbidden, "sem permissão de edição nesta coleção de calendário")
+			return
+		}
 	}
 
 	if req.ID > 0 {
@@ -611,16 +643,41 @@ func (a *App) hCalendarioCompartilhamentosDel(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var evID int64
-	err = a.st.db.QueryRow(`SELECT evento_id FROM calendario_compartilhamentos WHERE id = ?`, id).Scan(&evID)
+	var evID, calID *int64
+	err = a.st.db.QueryRow(`SELECT evento_id, calendario_id FROM calendario_compartilhamentos WHERE id = ?`, id).Scan(&evID, &calID)
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "compartilhamento não encontrado")
 		return
 	}
 
-	ok, _, errE := a.checarAcessoEvento(u, evID, true)
-	if errE != nil || !ok {
-		jsonErro(w, http.StatusForbidden, "sem permissão para revogar compartilhamento deste evento")
+	// Fix P1: compartilhamento de COLEÇÃO (v1.3) tem evento_id NULL — a leitura
+	// antiga só de evento_id devolvia 404 SEMPRE para a classe nova, tornando o
+	// compartilhamento irrevogável pela UI. Coleção: revogam o AUTOR do calendário
+	// ou o GERENTE do grupo-dono (mesma régua do hCalendariosCompartilhar).
+	switch {
+	case evID != nil:
+		ok, _, errE := a.checarAcessoEvento(u, *evID, true)
+		if errE != nil || !ok {
+			jsonErro(w, http.StatusForbidden, "sem permissão para revogar compartilhamento deste evento")
+			return
+		}
+	case calID != nil:
+		var autorID int64
+		var calGrupo *int64
+		if err := a.st.db.QueryRow(`SELECT autor_usuario_id, grupo_id FROM calendarios WHERE id = ?`, *calID).Scan(&autorID, &calGrupo); err != nil {
+			jsonErro(w, http.StatusNotFound, "calendário não encontrado")
+			return
+		}
+		pode := u.ID == autorID
+		if !pode && u.Papel == "gerente" && calGrupo != nil && u.GrupoID != nil && *calGrupo == *u.GrupoID {
+			pode = true
+		}
+		if !pode {
+			jsonErro(w, http.StatusForbidden, "sem permissão para revogar compartilhamento deste calendário")
+			return
+		}
+	default:
+		jsonErro(w, http.StatusNotFound, "compartilhamento sem origem válida")
 		return
 	}
 
@@ -775,6 +832,12 @@ func (a *App) hCalendariosAdd(w http.ResponseWriter, r *http.Request) {
 	if req.Cor == "" {
 		req.Cor = "#2563eb"
 	}
+	// Fix P2: cor em allowlist estrita (#rgb/#rrggbb/#rrggbbaa) — protege os sinks
+	// style="${c.cor}" do front contra injeção via quebra de atributo/valor CSS.
+	if !corValida(req.Cor) {
+		jsonErro(w, http.StatusBadRequest, "cor inválida (use formato #rgb, #rrggbb ou #rrggbbaa)")
+		return
+	}
 
 	res, err := a.st.db.Exec(`
 		INSERT INTO calendarios (nome, cor, descricao, autor_usuario_id, grupo_id)
@@ -815,13 +878,26 @@ func (a *App) hCalendariosDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Exclui eventos e compartilhamentos associados
-	_, _ = a.st.db.Exec(`DELETE FROM calendario_eventos WHERE calendario_id = ?`, id)
-	_, _ = a.st.db.Exec(`DELETE FROM calendario_compartilhamentos WHERE calendario_id = ?`, id)
-
-	_, err = a.st.db.Exec(`DELETE FROM calendarios WHERE id = ?`, id)
+	// Fix P1: os 3 DELETEs agora em TRANSAÇÃO — falha no meio não deixa calendário
+	// morto com compartilhamentos órfãos ainda resolvendo na visão.
+	tx, err := a.st.db.Begin()
 	if err != nil {
-		jsonErro(w, http.StatusInternalServerError, "falha ao excluir calendário: "+err.Error())
+		jsonErro(w, http.StatusInternalServerError, "falha ao iniciar transação: "+err.Error())
+		return
+	}
+	for _, q := range []string{
+		`DELETE FROM calendario_eventos WHERE calendario_id = ?`,
+		`DELETE FROM calendario_compartilhamentos WHERE calendario_id = ?`,
+		`DELETE FROM calendarios WHERE id = ?`,
+	} {
+		if _, err := tx.Exec(q, id); err != nil {
+			tx.Rollback()
+			jsonErro(w, http.StatusInternalServerError, "falha ao excluir calendário: "+err.Error())
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao concluir exclusão: "+err.Error())
 		return
 	}
 
@@ -849,8 +925,15 @@ func (a *App) hCalendariosCompartilhar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "calendário não encontrado")
 		return
 	}
-	if u.ID != autorID && u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "apenas o autor ou gerente pode gerenciar o compartilhamento deste calendário")
+	// Fix P1: a régua anterior deixava QUALQUER gerente gerenciar/forçar o
+	// compartilhamento de calendário de TERCEIROS. Agora: autor, ou gerente do
+	// GRUPO-DONO do calendário (mesma régua da revogação).
+	podeGerenciar := u.ID == autorID
+	if !podeGerenciar && u.Papel == "gerente" && calGrupoID != nil && u.GrupoID != nil && *calGrupoID == *u.GrupoID {
+		podeGerenciar = true
+	}
+	if !podeGerenciar {
+		jsonErro(w, http.StatusForbidden, "apenas o autor ou o gerente do grupo-dono pode gerenciar o compartilhamento deste calendário")
 		return
 	}
 

@@ -323,11 +323,10 @@ func (a *App) rotas() {
 
 	// Módulos ESCALA e MATERIAL EM RESERVA (ordem Tenente 30/09): fora do frontend e
 	// Módulos de Escalas e Material desbloqueados para apreciação (respeita MODO_RESERVA=1 se configurado)
+	// Fix P1 (fail-closed): erro de banco => módulo em reserva (423), JAMais liberado; delega ao helper único.
 	reservaAuth := func(next http.HandlerFunc) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var v string
-			_ = a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'MODO_RESERVA'`).Scan(&v)
-			if v == "1" {
+			if a.reservaAtivo() {
 				jsonErro(w, http.StatusLocked, "módulo em reserva operacional")
 				return
 			}
@@ -3014,6 +3013,17 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	var grupoID any
 	if u.Papel == "admin" && req.GrupoID != nil {
+		// Fix P2: admin só cria catálogo em grupo EXISTENTE (antes gravava FK cru
+		// de grupo inexistente e quebrava herança de catálogos em silêncio).
+		if *req.GrupoID <= 0 {
+			jsonErro(w, http.StatusBadRequest, "grupo_id inválido")
+			return
+		}
+		var n int
+		if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM grupos WHERE id = ?`, *req.GrupoID).Scan(&n); err != nil || n == 0 {
+			jsonErro(w, http.StatusBadRequest, "grupo inexistente")
+			return
+		}
 		grupoID = *req.GrupoID
 	} else if u.GrupoID != nil {
 		grupoID = *u.GrupoID
@@ -5591,7 +5601,12 @@ func (a *App) hConfiguracoesGet(w http.ResponseWriter, _ *http.Request) {
 // entra pela API de escrita (chave interna de ativação dos módulos em reserva).
 func (a *App) reservaAtivo() bool {
 	var v string
-	_ = a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'MODO_RESERVA'`).Scan(&v)
+	// Fix P1: erro REAL de banco => fail-closed (em reserva). Flag AUSENTE
+	// (sql.ErrNoRows) é estado válido por desenho — banco zerado nasce com
+	// módulos ativos (contrato provado pela suíte: admin leva 403, não 423).
+	if err := a.st.db.QueryRow(`SELECT valor FROM configuracoes WHERE chave = 'MODO_RESERVA'`).Scan(&v); err != nil && err != sql.ErrNoRows {
+		return true
+	}
 	return v == "1"
 }
 

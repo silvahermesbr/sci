@@ -819,6 +819,11 @@ function rotear() {
   } // admin não tem grupo: restrito em dados operacionais de grupo, mas possui caixa de mensagens própria
   if (h === '#/escalas') { chamarView('ViewEscalas'); return; }
   if (h === '#/material') { chamarView('ViewMaterial'); return; }
+  // Fix P0: a onda apagou os cases de #/hoje e #/mensagens do router — gerente e
+  // operador caíam no fallback (app em branco). Re-ligados (ViewMensagens aceita sub-aba).
+  if (h === '#/hoje') { chamarView('ViewHoje'); return; }
+  if (h === '#/mensagens') { chamarView('ViewMensagens'); return; }
+  if (h === '#/despachos') { chamarView('ViewMensagens', 'despachos'); return; }
   if (h === '#/avisos') { chamarView('ViewAvisos'); return; }
   if (h === '#/conferencia') { chamarView('ViewConferencia'); return; } // edição da conf aberta (v9.14)
   if (h === '#/calendario') { chamarView('ViewCalendario'); return; }

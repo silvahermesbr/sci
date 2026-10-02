@@ -42,6 +42,14 @@
   --cinza: #94a3b8;
   --cinza-txt: #cbd5e1;
 
+  /* Aliases de compatibilidade (views v1.3 usam estes nomes) — Fix P2 CSS */
+  --bg2: var(--painel2);
+  --bg3: var(--painel3);
+  --tx1: var(--tx);
+  --verde-txt: var(--verde-claro);
+  --primaria: var(--verde);
+  --primario: var(--verde);
+
   /* Geometria e Sombras */
   --alvo: 42px;
   --raio-p: 6px;
@@ -3270,6 +3278,13 @@ input[type="checkbox"] {
 .cal-item-pill:hover {
   background: var(--painel3);
   border-color: var(--primaria);
+}
+
+/* Fix P2: estado ativo do seletor de coleções (classe aplicada pelo views_calendario.js) */
+.cal-item-pill.ativo {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: var(--verde);
+  color: var(--verde-claro);
 }
 
 .cal-badge-forcado {

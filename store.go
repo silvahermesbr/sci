@@ -119,6 +119,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV25(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV26(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -791,17 +794,17 @@ func (s *Store) migrarV15() error {
 		}
 	}
 	defaults := map[string]string{
-		"NOME_SISTEMA":          "SCI",
-		"SUBTITULO_SISTEMA":     "Controle Interno",
-		"TITULO_ORGANIZACAO":    "Organização",
-		"ROTULO_GRUPO":          "Companhia / Subunidade",
-		"ROTULO_SETOR":          "Pelotão / Seção",
-		"ROTULO_FUNCAO":         "Função",
-		"ROTULO_PESSOA":         "Militar",
-		"ROTULO_IDENTIFICADOR":  "Nome de Guerra",
-		"COR_PRIMARIA":          "#10b981",
-		"COR_PRIMARIA_CLARO":    "#34d399",
-		"COR_PRIMARIA_ESCURO":   "#065f46",
+		"NOME_SISTEMA":         "SCI",
+		"SUBTITULO_SISTEMA":    "Controle Interno",
+		"TITULO_ORGANIZACAO":   "Organização",
+		"ROTULO_GRUPO":         "Companhia / Subunidade",
+		"ROTULO_SETOR":         "Pelotão / Seção",
+		"ROTULO_FUNCAO":        "Função",
+		"ROTULO_PESSOA":        "Militar",
+		"ROTULO_IDENTIFICADOR": "Nome de Guerra",
+		"COR_PRIMARIA":         "#10b981",
+		"COR_PRIMARIA_CLARO":   "#34d399",
+		"COR_PRIMARIA_ESCURO":  "#065f46",
 	}
 	for k, v := range defaults {
 		_, _ = s.db.Exec(`INSERT INTO configuracoes (chave, valor)
@@ -1704,3 +1707,52 @@ func (s *Store) migrarV25() error {
 	return s.marcarVersao(25)
 }
 
+// migrarV26: re-sanitização de rich text já gravado (fix P0 XSS da onda v1.3).
+// Payload de <script>/<img onerror> etc. já no banco é neutralizado na CARGA do
+// binário novo — borda de defesa server-side para dados criados antes do
+// sanitizador existir. Idempotente: sanitizaRichText é estável sobre saída dele.
+func (s *Store) migrarV26() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 26`).Scan(&v)
+	if v == 26 {
+		return nil
+	}
+
+	tabelas := []struct {
+		tab   string
+		camp  string
+		chave string
+	}{
+		{"avisos", "conteudo", "id"},
+		{"aviso_comentarios", "comentario", "id"},
+		{"mensagens", "corpo", "id"},
+		{"mensagem_respostas", "corpo", "id"},
+	}
+	for _, t := range tabelas {
+		rows, err := s.db.Query("SELECT " + t.chave + ", " + t.camp + " FROM " + t.tab)
+		if err != nil {
+			return fmt.Errorf("migração v26 leitura %s: %w", t.tab, err)
+		}
+		type par struct {
+			id int64
+			tx string
+		}
+		var pares []par
+		for rows.Next() {
+			var p par
+			if err := rows.Scan(&p.id, &p.tx); err == nil {
+				pares = append(pares, p)
+			}
+		}
+		rows.Close()
+		for _, p := range pares {
+			if limpo := sanitizaRichText(p.tx); limpo != p.tx {
+				if _, err := s.db.Exec("UPDATE "+t.tab+" SET "+t.camp+" = ? WHERE "+t.chave+" = ?", limpo, p.id); err != nil {
+					return fmt.Errorf("migração v26 update %s id=%d: %w", t.tab, p.id, err)
+				}
+			}
+		}
+	}
+
+	return s.marcarVersao(26)
+}
