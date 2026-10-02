@@ -865,6 +865,13 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "justificada exige destino")
 		return
 	}
+	// Fix destino órfão (ordem Tenente 02/10): destino só existe em justificada
+	// (obrigatório) e atraso (carry "saindo de serviço"). Presente/falta/não
+	// verificado NUNCA gravam destino — o corpo do front pode reenviá-lo ao trocar
+	// a situação e o resíduo aparecia no PDF.
+	if req.Situacao != "justificada" && req.Situacao != "atraso" {
+		req.DestinoID = nil
+	}
 	// v9.16.4: ✅ de verificação persiste separado (carry over inicia zerado)
 	verificadoFlag := 0
 	if req.Verificado != nil && *req.Verificado {
@@ -1929,6 +1936,68 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, res)
 }
 
+func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[string]any, map[string]int, error) {
+	rows, e := a.st.db.Query(`
+		WITH RECURSIVE cam_setor(id, caminho) AS (
+		  SELECT id, nome FROM setores WHERE pai_id IS NULL
+		  UNION ALL
+		  SELECT f.id, cs.caminho || ' > ' || f.nome FROM setores f JOIN cam_setor cs ON f.pai_id = cs.id
+		),
+		cam_funcao(id, caminho) AS (
+		  SELECT id, nome FROM funcoes WHERE pai_id IS NULL
+		  UNION ALL
+		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
+		)
+		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
+		       CASE WHEN pr.situacao IN ('justificada','atraso') THEN COALESCE(d.nome,'') ELSE '' END AS destino, COALESCE(pr.observacao,''), u.login,
+		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), '—'))),
+		       COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor')
+		FROM presencas pr
+		JOIN pessoas p ON p.id = pr.pessoa_id
+		LEFT JOIN setores s ON s.id = p.setor_id
+		LEFT JOIN cam_setor cs2 ON cs2.id = s.id
+		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
+		LEFT JOIN cam_funcao cf2 ON cf2.id = fu.id
+		LEFT JOIN usuarios u2 ON u2.pessoa_id = p.id
+		LEFT JOIN funcoes fu_u ON fu_u.id = u2.funcao_id
+		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
+		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
+		LEFT JOIN destinos d ON d.id = pr.destino_id
+		JOIN usuarios u ON u.id = pr.marcado_por
+		WHERE pr.conferencia_id = ?
+		ORDER BY COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor'), p.nome_guerra COLLATE NOCASE`, id)
+	if e != nil {
+		return nil, nil, e
+	}
+	defer rows.Close()
+	lanc := []map[string]any{}
+	resumo := map[string]int{"presentes": 0, "atrasos": 0, "faltas": 0, "justificadas": 0, "nao_verificados": 0}
+	ord := 0
+	for rows.Next() {
+		var ng, setor, sit, destino, obs, por, funcao, camF, camS string
+		if rows.Scan(&ng, &setor, &sit, &destino, &obs, &por, &funcao, &camF, &camS) == nil {
+			switch sit {
+			case "presente":
+				resumo["presentes"]++
+			case "atraso":
+				resumo["atrasos"]++
+			case "falta":
+				resumo["faltas"]++
+			case "nao_verificado":
+				resumo["nao_verificados"]++
+			case "justificada":
+				resumo["justificadas"]++
+			}
+			ord++
+			lanc = append(lanc, map[string]any{
+				"ord": ord, "nome_guerra": ng, "funcao": funcao, "setor": setor, "situacao": sit,
+				"destino": destino, "observacao": obs,
+			})
+		}
+	}
+	return lanc, resumo, nil
+}
+
 // hConferenciaPDF: relatório próprio — SOMENTE de conferência fechada (ordem Tenente 28/09).
 func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -1968,64 +2037,10 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	rows, e := a.st.db.Query(`
-		WITH RECURSIVE cam_setor(id, caminho) AS (
-		  SELECT id, nome FROM setores WHERE pai_id IS NULL
-		  UNION ALL
-		  SELECT f.id, cs.caminho || ' > ' || f.nome FROM setores f JOIN cam_setor cs ON f.pai_id = cs.id
-		),
-		cam_funcao(id, caminho) AS (
-		  SELECT id, nome FROM funcoes WHERE pai_id IS NULL
-		  UNION ALL
-		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
-		)
-		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
-		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), u.login,
-		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), '—'))),
-		       COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor')
-		FROM presencas pr
-		JOIN pessoas p ON p.id = pr.pessoa_id
-		LEFT JOIN setores s ON s.id = p.setor_id
-		LEFT JOIN cam_setor cs2 ON cs2.id = s.id
-		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
-		LEFT JOIN cam_funcao cf2 ON cf2.id = fu.id
-		LEFT JOIN usuarios u2 ON u2.pessoa_id = p.id
-		LEFT JOIN funcoes fu_u ON fu_u.id = u2.funcao_id
-		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
-		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
-		LEFT JOIN destinos d ON d.id = pr.destino_id
-		JOIN usuarios u ON u.id = pr.marcado_por
-		WHERE pr.conferencia_id = ?
-		ORDER BY COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor'), p.nome_guerra COLLATE NOCASE`, id)
+	lanc, resumo, e := a.montarLancamentosPDFConferencia(id, "")
 	if e != nil {
 		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
-	}
-	defer rows.Close()
-	lanc := []map[string]any{}
-	resumo := map[string]int{"presentes": 0, "atrasos": 0, "faltas": 0, "justificadas": 0, "nao_verificados": 0}
-	ord := 0
-	for rows.Next() {
-		var ng, setor, sit, destino, obs, por, funcao, camF, camS string
-		if rows.Scan(&ng, &setor, &sit, &destino, &obs, &por, &funcao, &camF, &camS) == nil {
-			ord++
-			lanc = append(lanc, map[string]any{
-				"ord": ord, "nome_guerra": ng, "funcao": funcao, "setor": setor, "situacao": sit,
-				"destino": destino, "observacao": obs,
-			})
-			switch sit {
-			case "presente":
-				resumo["presentes"]++
-			case "atraso":
-				resumo["atrasos"]++
-			case "falta":
-				resumo["faltas"]++
-			case "nao_verificado":
-				resumo["nao_verificados"]++
-			case "justificada":
-				resumo["justificadas"]++
-			}
-		}
 	}
 	u := usuarioDoCtx(r)
 	cp := ConferenciaPDF{
