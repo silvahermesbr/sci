@@ -331,7 +331,7 @@
         pessoasLista = pessoasLista.filter(p => p.setor_id === meuSetorId);
       }
     }
-    C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados, escaladosOntem };
+    C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados, escaladosOntem, setoresStatus: d.setores_status || [] };
     confRender();
     $('#btVoltar').onclick = () => { location.hash = '#/hoje'; };
     const btDesc = $('#btDescartar');
@@ -402,7 +402,107 @@
           ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
       }).join('');
 
-      listas += `<div class="grupo-setor"><h4>${esc(setor)} · ${pessoasSetor.length}</h4><div class="lista-pessoa">${itensHTML}</div></div>`;
+    let dashboardSetoresHTML = '';
+    if (!semC && C.setoresStatus && C.setoresStatus.length > 0) {
+      const concCount = C.setoresStatus.filter(s => s.status === 'concluida').length;
+      const andamCount = C.setoresStatus.filter(s => s.status === 'em_andamento').length;
+      const naoIniCount = C.setoresStatus.filter(s => s.status === 'nao_iniciada').length;
+      
+      const cards = C.setoresStatus.map(s => {
+        const isMeuSetor = ehChefe && window.ME.setor_id === s.setor_id;
+        const podeGerenciar = !ehChefe || isMeuSetor;
+        
+        let statusBadge = '';
+        let bordaCor = 'var(--borda)';
+        let bgCor = 'rgba(255,255,255,0.02)';
+        
+        if (s.status === 'concluida') {
+          bordaCor = 'rgba(16, 185, 129, 0.4)';
+          bgCor = 'rgba(16, 185, 129, 0.06)';
+          statusBadge = `<span style="display:inline-flex;align-items:center;gap:4px;color:#10b981;font-weight:600;font-size:11.5px">
+            <span style="font-size:14px">🟢</span> Concluída
+          </span>`;
+        } else if (s.status === 'em_andamento') {
+          bordaCor = 'rgba(245, 158, 11, 0.4)';
+          bgCor = 'rgba(245, 158, 11, 0.06)';
+          statusBadge = `<span style="display:inline-flex;align-items:center;gap:4px;color:#f59e0b;font-weight:600;font-size:11.5px">
+            <span style="font-size:14px">⏳</span> Em andamento
+          </span>`;
+        } else {
+          bordaCor = 'rgba(239, 68, 68, 0.4)';
+          bgCor = 'rgba(239, 68, 68, 0.06)';
+          statusBadge = `<span style="display:inline-flex;align-items:center;gap:4px;color:#ef4444;font-weight:600;font-size:11.5px">
+            <span style="font-size:14px">🔴</span> Não iniciada
+          </span>`;
+        }
+
+        let acaoBtn = '';
+        if (podeGerenciar) {
+          if (s.status === 'concluida') {
+            acaoBtn = `<button type="button" class="fantasma bt-setor-acao" data-acao="reabrir" data-sid="${s.setor_id}" style="min-height:28px;padding:2px 8px;font-size:11px">↺ Reabrir</button>`;
+          } else {
+            acaoBtn = `<button type="button" class="primario bt-setor-acao" data-acao="concluir" data-sid="${s.setor_id}" style="min-height:28px;padding:2px 8px;font-size:11px;background:#10b981;border-color:#10b981">✓ Concluir</button>`;
+          }
+        }
+
+        return `
+          <div style="border:1px solid ${bordaCor};background:${bgCor};border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;justify-content:space-between;gap:8px">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
+                <span style="font-weight:700;font-size:13.5px">${esc(s.setor_sigla || s.setor_nome)}</span>
+                ${statusBadge}
+              </div>
+              <div style="font-size:11.5px;color:var(--tx2);margin-top:2px">${esc(s.setor_nome)}</div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06)">
+              <span style="font-size:11.5px;color:var(--tx2)"><b>${s.verificados}</b> de ${s.total_pessoas} verif.</span>
+              ${acaoBtn}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      dashboardSetoresHTML = `
+        <div class="cartao" style="margin-bottom:14px;padding:12px 14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:16px">📋</span>
+              <b style="font-size:13px;letter-spacing:0.5px;text-transform:uppercase">Conferência por Setores</b>
+            </div>
+            <div style="display:flex;gap:12px;font-size:12px">
+              <span style="color:#10b981">🟢 ${concCount} concluídos</span>
+              <span style="color:#f59e0b">⏳ ${andamCount} em andamento</span>
+              <span style="color:#ef4444">🔴 ${naoIniCount} não iniciados</span>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px">
+            ${cards}
+          </div>
+        </div>
+      `;
+    }
+
+    for (const setor of Object.keys(porSetor).sort()) {
+      const pessoasSetor = porSetor[setor];
+      const sObj = (C.setoresStatus || []).find(x => (x.setor_nome || '').toLowerCase() === setor.toLowerCase() || (x.setor_sigla || '').toLowerCase() === setor.toLowerCase() || (pessoasSetor[0] && x.setor_id === pessoasSetor[0].setor_id));
+      let setorBadgeHeader = '';
+      if (sObj) {
+        if (sObj.status === 'concluida') {
+          setorBadgeHeader = `<span style="font-size:11.5px;color:#10b981;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3)">🟢 Concluída</span>`;
+        } else if (sObj.status === 'em_andamento') {
+          setorBadgeHeader = `<span style="font-size:11.5px;color:#f59e0b;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3)">⏳ Em andamento</span>`;
+        } else {
+          setorBadgeHeader = `<span style="font-size:11.5px;color:#ef4444;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3)">🔴 Não iniciada</span>`;
+        }
+      }
+
+      listas += `<div class="grupo-setor">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h4 style="margin:0">${esc(setor)} · ${pessoasSetor.length}</h4>
+          ${setorBadgeHeader}
+        </div>
+        <div class="lista-pessoa">${itensHTML}</div>
+      </div>`;
     }
     const banner = semC
       ? `<div class="cartao"><p style="color:var(--tx2)">Nenhuma conferência aberta. Ao iniciar, a data e o horário de Brasília são registrados automaticamente.</p>
@@ -412,6 +512,7 @@
          <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span></div>`;
     $('#app').innerHTML = `<div style="margin-bottom:10px"><button class="fantasma" id="btVoltar" style="min-height:38px">← Retornar</button></div>
       <h2 style="margin-top:0">Conferência de pessoal</h2>${banner}
+      ${dashboardSetoresHTML}
       <div class="barra-fixa">
         <input id="busca" placeholder="buscar nome…">
         ${!ehChefe ? `<button class="primario" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>` : `<span style="font-size:12px;color:var(--tx2);font-weight:600">Área do Chefe de Setor</span>`}
@@ -491,6 +592,25 @@
       marcarParcial(id, C.est[id] || 'presente', novo, C.obs[id] ?? null, C.verif.has(id));
     });
     document.querySelectorAll('.bt-coment').forEach(b => b.onclick = ev => { ev.stopPropagation(); confModalComentarios(+b.dataset.id); });
+    document.querySelectorAll('.bt-setor-acao').forEach(btn => {
+      btn.onclick = async ev => {
+        ev.stopPropagation();
+        const sid = +btn.dataset.sid;
+        const acao = btn.dataset.acao;
+        try {
+          if (acao === 'concluir') {
+            await api(`/api/conferencia/${C.c.id}/setor/${sid}/concluir`, { method: 'POST' });
+            toast('Conferência do setor concluída com sucesso!');
+          } else {
+            await api(`/api/conferencia/${C.c.id}/setor/${sid}/reabrir`, { method: 'POST' });
+            toast('Conferência do setor reaberta!');
+          }
+          await window.ViewConferencia();
+        } catch (e) {
+          toast('Erro: ' + (e.message || e), 'erro');
+        }
+      };
+    });
     atualizar(); // contador de verificados acompanha o re-render (v9.15.2)
     ligarBarra(); // v9.16.5b: barra é recriada no innerHTML — religar FECHAR e busca
   }
@@ -582,6 +702,11 @@
     if (semDest.length) { toast('Justificada exige destino: ' + semDest.map(p => p.nome_guerra).join(', '), 'erro'); return; }
     const naoVerif = C.pessoas.filter(p => !C.verif.has(p.id)).map(p => p.nome_guerra);
     let msg = `Fecha a conferência e grava ${C.pessoas.length} lançamentos?`;
+    const setoresPendentes = (C.setoresStatus || []).filter(s => s.status !== 'concluida');
+    if (setoresPendentes.length > 0) {
+      const nomes = setoresPendentes.map(s => `${s.setor_sigla || s.setor_nome} (${s.status === 'nao_iniciada' ? 'Não iniciada' : 'Em andamento'})`).join(', ');
+      msg = `ATENÇÃO: Os setores [${nomes}] ainda não concluíram a conferência setorial.\n\n` + msg;
+    }
     if (naoVerif.length) msg = `ATENÇÃO: ${naoVerif.length} sem verificação (${naoVerif.join(', ')}).\n\n` + msg;
     if (!(await confirmar(msg))) return;
     const lanc = C.pessoas.map(p => ({

@@ -228,58 +228,168 @@
     });
   }
 
+  const EXPANDED_CONTROLADOS = window.__EXPANDED_CONTROLADOS || (window.__EXPANDED_CONTROLADOS = new Set());
+
   /* ---------- Aba 2: Inventário Completo ---------- */
   async function renderInventario() {
     const cont = $('#matConteudo');
     const [catsRes] = await Promise.all([api('/api/material/categorias')]);
     const cats = catsRes.categorias || [];
 
-    const linhas = ITENS_CACHE.map(it => {
-      const stColor = it.status === 'disponivel' ? 'var(--verde-claro)' : it.status === 'acautelado' ? 'var(--ambar-txt)' : it.status === 'manutencao' ? '#60a5fa' : 'var(--tx3)';
-      const stNome = it.status === 'disponivel' ? 'Disponível' : it.status === 'acautelado' ? 'Acautelado' : it.status === 'manutencao' ? 'Manutenção' : 'Baixado';
-      
-      let acoesHtml = '';
+    // Separar itens controlados (agrupados por modelo/nome) e convencionais
+    const ctrlGrupos = {};
+    const convencionais = [];
+
+    ITENS_CACHE.forEach(it => {
+      const ehCtrl = it.sensibilidade === 'controlado' || it.nivel_sensibilidade === 'restrito' || it.nivel_sensibilidade === 'sensivel';
+      if (ehCtrl) {
+        const gk = (it.nome || '').trim().toLowerCase() + '::' + (it.categoria_id || 0);
+        if (!ctrlGrupos[gk]) {
+          ctrlGrupos[gk] = {
+            key: gk,
+            nome: it.nome,
+            categoria_nome: it.categoria_nome,
+            categoria_id: it.categoria_id,
+            itens: []
+          };
+        }
+        ctrlGrupos[gk].itens.push(it);
+      } else {
+        convencionais.push(it);
+      }
+    });
+
+    const getAcoesHtml = (it, isChild = false) => {
       if (it.status === 'baixado') {
-        acoesHtml = `
+        return `
           <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-reativar="${it.id}">♻️ Reativar</button>
           <button class="acao-linha perigo" style="font-size:12px; padding:4px 8px" data-delitem="${it.id}">🗑️ Excluir Definitivo</button>
         `;
-      } else {
-        const btAcaoCautela = it.status === 'disponivel'
-          ? `<button class="primario" style="font-size:12px; padding:4px 8px; margin-right:4px" data-cautelar="${it.id}">⚡ Cautelar</button>`
-          : (it.status === 'acautelado' && it.cautela_ativa
-              ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-devolver="${it.cautela_ativa.id}" data-itemnome="${esc(it.nome)}">📥 Devolver</button>`
-              : '');
-        
-        acoesHtml = `
-          ${btAcaoCautela}
-          <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-qritem="${it.id}" title="Gerar e imprimir etiqueta com QR Code">🖨️ QR</button>
-          <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-edititem="${it.id}">✏️ Editar</button>
-          <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-baixaritem="${it.id}" title="Dar baixa no patrimônio (mantém histórico)">📦 Baixar</button>
-          <button class="acao-linha perigo" style="font-size:12px; padding:4px 8px" data-delitem="${it.id}" title="Excluir item definitivamente">🗑️ Excluir</button>
-        `;
       }
-
+      const btAcaoCautela = (it.status === 'disponivel' || (it.quantidade_disponivel !== undefined && it.quantidade_disponivel > 0))
+        ? `<button class="primario" style="font-size:12px; padding:4px 8px; margin-right:4px" data-cautelar="${it.id}">⚡ Cautelar</button>`
+        : (it.status === 'acautelado' && it.cautela_ativa
+            ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-devolver="${it.cautela_ativa.id}" data-itemnome="${esc(it.nome)}">📥 Devolver</button>`
+            : '');
+      
       return `
-        <tr data-id="${it.id}" data-status="${esc(it.status)}" data-texto="${esc((it.nome + ' ' + it.codigo_patrimonio + ' ' + (it.categoria_nome || '') + ' ' + (it.numero_serie || '') + ' ' + (it.nivel_sensibilidade || '')).toLowerCase())}">
+        ${btAcaoCautela}
+        <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-duplicar="${it.id}" title="Duplicar este item">📋 Duplicar</button>
+        <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-qritem="${it.id}" title="Gerar e imprimir etiqueta com QR Code">🖨️ QR</button>
+        <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-edititem="${it.id}">✏️ Editar</button>
+        <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-baixaritem="${it.id}" title="Dar baixa no patrimônio">📦 Baixar</button>
+        <button class="acao-linha perigo" style="font-size:12px; padding:4px 8px" data-delitem="${it.id}" title="Excluir item definitivamente">🗑️ Excluir</button>
+      `;
+    };
+
+    let linhas = '';
+
+    // 1. Grupos Controlados (Sanfona / Accordion)
+    Object.values(ctrlGrupos).forEach(g => {
+      const isExp = EXPANDED_CONTROLADOS.has(g.key);
+      const dispCount = g.itens.filter(x => x.status === 'disponivel').length;
+      const acautCount = g.itens.filter(x => x.status === 'acautelado').length;
+      const manutCount = g.itens.filter(x => x.status === 'manutencao' || x.status === 'baixado').length;
+      const primeiroId = g.itens[0]?.id;
+
+      const textoPesquisaGrupo = (g.nome + ' ' + (g.categoria_nome || '') + ' controlado ' + g.itens.map(x => x.codigo_patrimonio + ' ' + (x.numero_serie || '')).join(' ')).toLowerCase();
+
+      // Linha Pai (Accordion Header)
+      linhas += `
+        <tr class="tr-grupo-ctrl" data-gkey="${esc(g.key)}" data-status="${dispCount > 0 ? 'disponivel' : 'acautelado'}" data-texto="${esc(textoPesquisaGrupo)}" style="background:rgba(239,68,68,0.04); border-top:1px solid rgba(239,68,68,0.2)">
+          <td style="width:36px; text-align:center">
+            <input type="checkbox" class="chk-inv-grupo" data-gkey="${esc(g.key)}">
+          </td>
+          <td>
+            <button type="button" class="fantasma bt-sanfona" data-gkey="${esc(g.key)}" style="min-height:26px; padding:2px 8px; font-weight:700; font-size:13px; color:var(--tx)">
+              ${isExp ? '▼' : '▶'} <span style="font-size:11.5px; color:var(--tx2)">(${g.itens.length} un.)</span>
+            </button>
+          </td>
+          <td>
+            <b>${esc(g.nome)}</b>
+            <div style="font-size:11px; color:var(--tx2)">Item Controlado (Gestão Individual Sanfonada)</div>
+          </td>
+          <td>${esc(g.categoria_nome || '—')}</td>
+          <td>
+            <span style="font-size:10.5px; font-weight:700; text-transform:uppercase; padding:2px 6px; border-radius:3px; background:rgba(239,68,68,0.2); color:var(--verm)">
+              Controlado
+            </span>
+          </td>
+          <td><b>${g.itens.length} un.</b></td>
+          <td>
+            <span style="color:var(--verde-claro); font-weight:700">${dispCount} disp.</span> /
+            <span style="color:var(--ambar-txt); font-weight:700">${acautCount} acaut.</span>
+          </td>
+          <td style="font-size:12px; color:var(--tx2)">Clique no toggle ▶ para expandir os ${g.itens.length} itens individuais</td>
+          <td style="text-align:right; white-space:nowrap">
+            <button class="acao-linha" style="font-size:12px; padding:4px 8px" data-duplicar="${primeiroId}" title="Cadastrar nova unidade deste mesmo item controlado">
+              📋 Duplicar (+1)
+            </button>
+          </td>
+        </tr>
+      `;
+
+      // Linhas Filhas (Itens Individuais)
+      g.itens.forEach(it => {
+        const stColor = it.status === 'disponivel' ? 'var(--verde-claro)' : it.status === 'acautelado' ? 'var(--ambar-txt)' : it.status === 'manutencao' ? '#60a5fa' : 'var(--tx3)';
+        const stNome = it.status === 'disponivel' ? 'Disponível' : it.status === 'acautelado' ? 'Acautelado' : it.status === 'manutencao' ? 'Manutenção' : 'Baixado';
+        const displayEstilo = isExp ? '' : 'display:none;';
+
+        linhas += `
+          <tr class="tr-filho-ctrl" data-gkey="${esc(g.key)}" data-id="${it.id}" data-status="${esc(it.status)}" data-texto="${esc((it.nome + ' ' + it.codigo_patrimonio + ' ' + (it.categoria_nome || '') + ' ' + (it.numero_serie || '') + ' controlado').toLowerCase())}" style="${displayEstilo} background:rgba(255,255,255,0.015); border-left:3px solid var(--verm)">
+            <td style="width:36px; text-align:center">
+              <input type="checkbox" class="chk-inv-item" data-id="${it.id}" data-gkey="${esc(g.key)}">
+            </td>
+            <td>
+              <span style="color:var(--tx3); margin-right:4px">↳</span>
+              <b>#${esc(it.codigo_patrimonio)}</b>
+            </td>
+            <td>
+              <span style="color:var(--tx2); padding-left:8px">${esc(it.nome)}</span>
+            </td>
+            <td>${esc(it.categoria_nome || '—')}</td>
+            <td><span style="font-size:10px; color:var(--verm)">Controlado</span></td>
+            <td>Série: <b>${esc(it.numero_serie || 's/n')}</b></td>
+            <td><span style="color:${stColor}; font-weight:700">${stNome}</span></td>
+            <td style="font-size:12px; color:var(--tx2)">${esc(it.observacao || '—')}</td>
+            <td style="text-align:right; white-space:nowrap">
+              ${getAcoesHtml(it, true)}
+            </td>
+          </tr>
+        `;
+      });
+    });
+
+    // 2. Itens Convencionais
+    convencionais.forEach(it => {
+      const stColor = it.status === 'disponivel' ? 'var(--verde-claro)' : it.status === 'acautelado' ? 'var(--ambar-txt)' : it.status === 'manutencao' ? '#60a5fa' : 'var(--tx3)';
+      const stNome = it.status === 'disponivel' ? 'Disponível' : it.status === 'acautelado' ? 'Acautelado' : it.status === 'manutencao' ? 'Manutenção' : 'Baixado';
+      const dispQtd = it.quantidade_disponivel !== undefined ? it.quantidade_disponivel : it.quantidade;
+      const acautQtd = it.quantidade_acautelada !== undefined ? it.quantidade_acautelada : 0;
+
+      linhas += `
+        <tr data-id="${it.id}" data-status="${esc(it.status)}" data-texto="${esc((it.nome + ' ' + it.codigo_patrimonio + ' ' + (it.categoria_nome || '') + ' ' + (it.numero_serie || '') + ' convencional').toLowerCase())}">
           <td style="width:36px; text-align:center"><input type="checkbox" class="chk-inv-item" data-id="${it.id}"></td>
           <td><b>#${esc(it.codigo_patrimonio)}</b></td>
           <td><b>${esc(it.nome)}</b></td>
           <td>${esc(it.categoria_nome || '—')}</td>
           <td>
-            <span style="font-size:10.5px; font-weight:700; text-transform:uppercase; padding:2px 6px; border-radius:3px; ${it.nivel_sensibilidade === 'restrito' ? 'background:rgba(239,68,68,0.2); color:var(--verm)' : it.nivel_sensibilidade === 'sensivel' ? 'background:rgba(245,158,11,0.2); color:var(--ambar-txt)' : 'background:rgba(100,116,139,0.2); color:var(--tx2)'}">
-              ${esc(it.nivel_sensibilidade || 'padrao')}
+            <span style="font-size:10.5px; font-weight:700; text-transform:uppercase; padding:2px 6px; border-radius:3px; background:rgba(100,116,139,0.2); color:var(--tx2)">
+              Convencional
             </span>
           </td>
-          <td>${esc(it.numero_serie || '—')}</td>
+          <td>
+            <b>${dispQtd} / ${it.quantidade || 1} un.</b>
+            ${acautQtd > 0 ? `<div style="font-size:11px; color:var(--ambar-txt)">(${acautQtd} acauteladas)</div>` : ''}
+          </td>
           <td><span style="color:${stColor}; font-weight:700">${stNome}</span></td>
           <td style="font-size:12px; color:var(--tx2)">${esc(it.observacao || '—')}</td>
           <td style="text-align:right; white-space:nowrap">
-            ${acoesHtml}
+            ${getAcoesHtml(it, false)}
           </td>
         </tr>
       `;
-    }).join('');
+    });
 
     cont.innerHTML = `
       <div class="cartao">
@@ -322,7 +432,7 @@
                 <th>Descrição do Item</th>
                 <th>Categoria</th>
                 <th>Sensibilidade</th>
-                <th>Nº Série</th>
+                <th>Qtd / Série</th>
                 <th>Status</th>
                 <th>Observações</th>
                 <th style="text-align:right">Ações</th>
@@ -419,6 +529,43 @@
         const id = +b.dataset.edititem;
         const item = ITENS_CACHE.find(x => x.id === id);
         if (item) modalNovoItem(item, () => window.ViewMaterial());
+      };
+    });
+
+    cont.querySelectorAll('button[data-duplicar]').forEach(b => {
+      b.onclick = () => {
+        const id = +b.dataset.duplicar;
+        const item = ITENS_CACHE.find(x => x.id === id);
+        if (item) modalNovoItem(null, () => window.ViewMaterial(), item);
+      };
+    });
+
+    cont.querySelectorAll('.bt-sanfona').forEach(b => {
+      b.onclick = () => {
+        const gk = b.dataset.gkey;
+        if (EXPANDED_CONTROLADOS.has(gk)) {
+          EXPANDED_CONTROLADOS.delete(gk);
+        } else {
+          EXPANDED_CONTROLADOS.add(gk);
+        }
+        const isExp = EXPANDED_CONTROLADOS.has(gk);
+        const subSpans = b.querySelectorAll('span');
+        const contTxt = subSpans.length ? subSpans[0].outerHTML : '';
+        b.innerHTML = `${isExp ? '▼' : '▶'} ${contTxt}`;
+        cont.querySelectorAll(`.tr-filho-ctrl[data-gkey="${gk}"]`).forEach(tr => {
+          tr.style.display = isExp ? '' : 'none';
+        });
+      };
+    });
+
+    cont.querySelectorAll('.chk-inv-grupo').forEach(chk => {
+      chk.onchange = () => {
+        const gk = chk.dataset.gkey;
+        const est = chk.checked;
+        cont.querySelectorAll(`.chk-inv-item[data-gkey="${gk}"]`).forEach(c => {
+          c.checked = est;
+        });
+        atualizarBotoesLote();
       };
     });
 
@@ -614,6 +761,12 @@
             </select>
           </div>
 
+          <div class="campo" id="mCampoQtdCautela" style="display:none; margin-bottom:10px">
+            <label>Quantidade a Acautelar *</label>
+            <input type="number" id="mInputQtdCautela" min="1" value="1" style="max-width:140px">
+            <div id="mDicaQtdCautela" style="font-size:11.5px; color:var(--tx2); margin-top:2px"></div>
+          </div>
+
           <div class="campo" style="margin-bottom:10px">
             <label>Militar Responsável pela Retirada *</label>
             <select id="mPesCautela">
@@ -647,6 +800,29 @@
 
     const m = modal(html);
     const anexosBuffer = [];
+
+    const selItem = m.querySelector('#mItemCautelaSelect');
+    const campoQtd = m.querySelector('#mCampoQtdCautela');
+    const inputQtd = m.querySelector('#mInputQtdCautela');
+    const dicaQtd = m.querySelector('#mDicaQtdCautela');
+
+    const atualizarVisibilidadeQtd = () => {
+      const itId = +selItem.value;
+      const it = itensDisponiveis.find(x => x.id === itId);
+      if (it && (it.sensibilidade === 'convencional' || (it.quantidade && it.quantidade > 1))) {
+        const disp = it.quantidade_disponivel !== undefined ? it.quantidade_disponivel : it.quantidade;
+        campoQtd.style.display = 'block';
+        inputQtd.max = disp;
+        inputQtd.value = 1;
+        dicaQtd.innerText = `Disponível na reserva: ${disp} un.`;
+      } else {
+        campoQtd.style.display = 'none';
+        inputQtd.value = 1;
+      }
+    };
+
+    selItem.onchange = atualizarVisibilidadeQtd;
+    atualizarVisibilidadeQtd();
 
     const fileInput = m.querySelector('#mInputArquivos');
     const previewList = m.querySelector('#mListaArquivosPre');
@@ -694,6 +870,16 @@
       const itemId = +m.querySelector('#mItemCautelaSelect').value;
       const pid = +m.querySelector('#mPesCautela').value;
       const obs = m.querySelector('#mObsCautela').value.trim();
+      const it = itensDisponiveis.find(x => x.id === itemId);
+      let qtd = 1;
+      if (campoQtd.style.display !== 'none') {
+        qtd = parseInt(inputQtd.value, 10) || 1;
+        const dispMax = it && (it.quantidade_disponivel !== undefined ? it.quantidade_disponivel : it.quantidade);
+        if (dispMax && qtd > dispMax) {
+          toast(`Quantidade solicitada (${qtd}) excede o disponível na reserva (${dispMax})`, 'erro');
+          return;
+        }
+      }
 
       if (!itemId) {
         toast('Selecione o item a ser acautelado', 'erro');
@@ -710,6 +896,7 @@
           body: JSON.stringify({
             item_id: itemId,
             pessoa_id: pid,
+            quantidade: qtd,
             obs_saida: obs,
             anexos: anexosBuffer
           })
@@ -838,22 +1025,32 @@
     };
   }
 
-  async function modalNovoItem(itemEdicao, onConcluido) {
+  async function modalNovoItem(itemEdicao, onConcluido, itemDuplicar = null) {
     const catsRes = await api('/api/material/categorias');
     const cats = (catsRes.categorias || []).filter(c => c.ativo);
 
+    const base = itemEdicao || itemDuplicar || {};
+    const ehDuplicacao = !!itemDuplicar;
+    const sensPadrao = base.sensibilidade || (base.nivel_sensibilidade === 'restrito' || base.nivel_sensibilidade === 'sensivel' ? 'controlado' : 'convencional');
+    const qtdPadrao = sensPadrao === 'controlado' ? 1 : (base.quantidade || 1);
+
+    const tituloModal = itemEdicao ? 'Editar Item do Inventário' : (ehDuplicacao ? 'Duplicar Item (Novo Registro)' : 'Cadastrar Novo Item');
+
     const html = `
       <div class="modal" style="max-width:540px">
-        <h3 style="margin-top:0">${itemEdicao ? 'Editar Item do Inventário' : 'Cadastrar Novo Item'}</h3>
+        <h3 style="margin-top:0">${tituloModal}</h3>
 
         <div class="form-linha" style="margin-bottom:8px">
           <div class="campo" style="flex:1">
             <label>Nome / Descrição do Item *</label>
-            <input id="mItemNome" value="${esc((itemEdicao && itemEdicao.nome) || '')}" placeholder="ex.: Fuzil 7,62mm FAL">
+            <input id="mItemNome" value="${esc(base.nome || '')}" placeholder="ex.: Fuzil 7,62mm FAL ou Cobertor de Lã">
           </div>
-          <div class="campo" style="max-width:160px">
-            <label>Cód. Patrimônio *</label>
-            <input id="mItemCod" value="${esc((itemEdicao && itemEdicao.codigo_patrimonio) || '')}" placeholder="ex.: ARM-042">
+          <div class="campo" style="max-width:200px">
+            <label>Sensibilidade *</label>
+            <select id="mItemSensibilidade">
+              <option value="convencional" ${sensPadrao === 'convencional' ? 'selected' : ''}>Convencional (Quantitativo)</option>
+              <option value="controlado" ${sensPadrao === 'controlado' ? 'selected' : ''}>Controlado (Individual)</option>
+            </select>
           </div>
         </div>
 
@@ -862,12 +1059,23 @@
             <label>Categoria *</label>
             <select id="mItemCat">
               <option value="">— Selecione —</option>
-              ${cats.map(c => `<option value="${c.id}" ${itemEdicao && itemEdicao.categoria_id === c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}
+              ${cats.map(c => `<option value="${c.id}" ${base.categoria_id === c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}
             </select>
           </div>
-          <div class="campo" style="max-width:180px">
-            <label>Nº de Série</label>
-            <input id="mItemSerie" value="${esc((itemEdicao && itemEdicao.numero_serie) || '')}" placeholder="ex.: 481920">
+          <div class="campo" id="cQtd" style="max-width:140px; display:${sensPadrao === 'convencional' ? 'block' : 'none'}">
+            <label>Quantidade *</label>
+            <input id="mItemQtd" type="number" min="1" value="${qtdPadrao}">
+          </div>
+        </div>
+
+        <div class="form-linha" style="margin-bottom:8px">
+          <div class="campo" style="flex:1">
+            <label id="lblPatrimonio">${sensPadrao === 'controlado' ? 'Cód. Patrimônio *' : 'Cód. Patrimônio (opcional)'}</label>
+            <input id="mItemCod" value="${esc(ehDuplicacao ? '' : (base.codigo_patrimonio || ''))}" placeholder="${sensPadrao === 'controlado' ? 'ex.: ARM-042' : 'ex.: MAT-LOTE (vazio = auto)'}">
+          </div>
+          <div class="campo" style="flex:1">
+            <label id="lblSerie">${sensPadrao === 'controlado' ? 'Nº de Série' : 'Nº de Série (opcional)'}</label>
+            <input id="mItemSerie" value="${esc(ehDuplicacao ? '' : (base.numero_serie || ''))}" placeholder="ex.: 481920">
           </div>
         </div>
 
@@ -875,35 +1083,47 @@
           <div class="campo" style="flex:1">
             <label>Status</label>
             <select id="mItemStatus">
-              <option value="disponivel" ${itemEdicao && itemEdicao.status === 'disponivel' ? 'selected' : ''}>Disponível na Reserva</option>
-              <option value="manutencao" ${itemEdicao && itemEdicao.status === 'manutencao' ? 'selected' : ''}>Em Manutenção</option>
-              <option value="acautelado" ${itemEdicao && itemEdicao.status === 'acautelado' ? 'selected' : ''}>Acautelado</option>
-              <option value="baixado" ${itemEdicao && itemEdicao.status === 'baixado' ? 'selected' : ''}>Baixado / Inativo</option>
-            </select>
-          </div>
-          <div class="campo" style="max-width:200px">
-            <label>Sensibilidade Logística</label>
-            <select id="mItemSensibilidade">
-              <option value="padrao" ${itemEdicao && itemEdicao.nivel_sensibilidade === 'padrao' ? 'selected' : ''}>Padrão (Uso Geral)</option>
-              <option value="sensivel" ${itemEdicao && itemEdicao.nivel_sensibilidade === 'sensivel' ? 'selected' : ''}>Sensível (TI / Rádio)</option>
-              <option value="restrito" ${itemEdicao && itemEdicao.nivel_sensibilidade === 'restrito' ? 'selected' : ''}>Restrito (Armamento)</option>
+              <option value="disponivel" ${base.status === 'disponivel' || !base.status ? 'selected' : ''}>Disponível na Reserva</option>
+              <option value="manutencao" ${base.status === 'manutencao' ? 'selected' : ''}>Em Manutenção</option>
+              <option value="acautelado" ${base.status === 'acautelado' ? 'selected' : ''}>Acautelado</option>
+              <option value="baixado" ${base.status === 'baixado' ? 'selected' : ''}>Baixado / Inativo</option>
             </select>
           </div>
         </div>
 
         <div class="campo" style="margin-bottom:14px">
           <label>Observações Adicionais</label>
-          <input id="mItemObs" value="${esc((itemEdicao && itemEdicao.observacao) || '')}" placeholder="ex.: Carregador extra incluído, sem coronha dobrável.">
+          <input id="mItemObs" value="${esc(base.observacao || '')}" placeholder="ex.: Detalhes, acessórios inclusos, lote, etc.">
         </div>
 
         <div style="display:flex; justify-content:flex-end; gap:8px">
           <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-          <button class="primario" id="mBtnSalvarItem">Salvar Item</button>
+          <button class="primario" id="mBtnSalvarItem">${itemEdicao ? 'Salvar Alterações' : 'Cadastrar Item'}</button>
         </div>
       </div>
     `;
 
     const m = modal(html);
+    const selSens = m.querySelector('#mItemSensibilidade');
+    const cQtd = m.querySelector('#cQtd');
+    const lblPatrimonio = m.querySelector('#lblPatrimonio');
+    const lblSerie = m.querySelector('#lblSerie');
+    const inpCod = m.querySelector('#mItemCod');
+
+    selSens.onchange = () => {
+      const v = selSens.value;
+      if (v === 'controlado') {
+        cQtd.style.display = 'none';
+        lblPatrimonio.innerText = 'Cód. Patrimônio *';
+        lblSerie.innerText = 'Nº de Série';
+        inpCod.placeholder = 'ex.: ARM-042';
+      } else {
+        cQtd.style.display = 'block';
+        lblPatrimonio.innerText = 'Cód. Patrimônio (opcional)';
+        lblSerie.innerText = 'Nº de Série (opcional)';
+        inpCod.placeholder = 'ex.: MAT-LOTE (vazio = auto)';
+      }
+    };
 
     m.querySelector('#mBtnSalvarItem').onclick = async () => {
       const nome = m.querySelector('#mItemNome').value.trim();
@@ -911,11 +1131,16 @@
       const catId = +m.querySelector('#mItemCat').value || null;
       const serie = m.querySelector('#mItemSerie').value.trim();
       const status = m.querySelector('#mItemStatus').value;
-      const sens = m.querySelector('#mItemSensibilidade').value;
+      const sens = selSens.value;
+      const qtd = sens === 'controlado' ? 1 : Math.max(1, parseInt(m.querySelector('#mItemQtd').value, 10) || 1);
       const obs = m.querySelector('#mItemObs').value.trim();
 
-      if (!nome || !cod) {
-        toast('Nome e Código de Patrimônio são obrigatórios', 'erro');
+      if (!nome) {
+        toast('Nome do item é obrigatório', 'erro');
+        return;
+      }
+      if (sens === 'controlado' && !cod) {
+        toast('Código de Patrimônio é obrigatório para material controlado', 'erro');
         return;
       }
 
@@ -930,7 +1155,8 @@
             codigo_patrimonio: cod,
             numero_serie: serie,
             status: status,
-            nivel_sensibilidade: sens,
+            sensibilidade: sens,
+            quantidade: qtd,
             observacao: obs
           })
         });

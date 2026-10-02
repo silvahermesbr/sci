@@ -128,6 +128,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV28(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV29(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1926,5 +1929,67 @@ func (s *Store) migrarV28() error {
 	}
 
 	return s.marcarVersao(28)
+}
+
+// migrarV29: Conferência por Setor (conferencia_setores) e Módulo de Material v1.5 (sensibilidade convencional/controlado, quantidades).
+func (s *Store) migrarV29() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 29`).Scan(&v)
+	if v == 29 {
+		return nil
+	}
+
+	// 1. Tabela conferencia_setores
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS conferencia_setores (
+		id INTEGER PRIMARY KEY,
+		conferencia_id INTEGER NOT NULL REFERENCES conferencias(id) ON DELETE CASCADE,
+		setor_id INTEGER NOT NULL REFERENCES setores(id),
+		status TEXT NOT NULL DEFAULT 'nao_iniciada' CHECK (status IN ('nao_iniciada', 'em_andamento', 'concluida')),
+		concluido_por INTEGER REFERENCES usuarios(id),
+		concluido_em TEXT,
+		observacao TEXT,
+		UNIQUE (conferencia_id, setor_id)
+	)`); err != nil {
+		return fmt.Errorf("migração v29 tabela conferencia_setores: %w", err)
+	}
+
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_conf_setores_conf ON conferencia_setores(conferencia_id)`); err != nil {
+		return fmt.Errorf("migração v29 index conferencia_setores conf: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_conf_setores_setor ON conferencia_setores(setor_id)`); err != nil {
+		return fmt.Errorf("migração v29 index conferencia_setores setor: %w", err)
+	}
+
+	// 2. Colunas em material_itens: sensibilidade e quantidade
+	var nSens int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('material_itens') WHERE name = 'sensibilidade'`).Scan(&nSens)
+	if nSens == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE material_itens ADD COLUMN sensibilidade TEXT NOT NULL DEFAULT 'convencional'`); err != nil {
+			return fmt.Errorf("migração v29 alter material_itens sensibilidade: %w", err)
+		}
+	}
+
+	var nQtd int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('material_itens') WHERE name = 'quantidade'`).Scan(&nQtd)
+	if nQtd == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE material_itens ADD COLUMN quantidade INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return fmt.Errorf("migração v29 alter material_itens quantidade: %w", err)
+		}
+	}
+
+	// 3. Coluna quantidade em material_cautelas
+	var nCautQtd int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('material_cautelas') WHERE name = 'quantidade'`).Scan(&nCautQtd)
+	if nCautQtd == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE material_cautelas ADD COLUMN quantidade INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return fmt.Errorf("migração v29 alter material_cautelas quantidade: %w", err)
+		}
+	}
+
+	// 4. Migração e normalização de dados legados de sensibilidade
+	_, _ = s.db.Exec(`UPDATE material_itens SET sensibilidade = 'controlado' WHERE nivel_sensibilidade IN ('sensivel', 'restrito')`)
+	_, _ = s.db.Exec(`UPDATE material_itens SET sensibilidade = 'convencional' WHERE sensibilidade IS NULL OR sensibilidade = '' OR nivel_sensibilidade NOT IN ('sensivel', 'restrito')`)
+
+	return s.marcarVersao(29)
 }
 

@@ -14,8 +14,8 @@ func TestMigracaoV27ValidaSchema(t *testing.T) {
 	if err := st.db.QueryRow(`SELECT MAX(versao) FROM schema_migrations`).Scan(&v); err != nil {
 		t.Fatalf("ler schema_migrations: %v", err)
 	}
-	if v < 28 {
-		t.Fatalf("esperava schema versão >= 28, obteve %d", v)
+	if v < 29 {
+		t.Fatalf("esperava schema versão >= 29, obteve %d", v)
 	}
 
 	// 2. Verificar tabelas de modelos de escala
