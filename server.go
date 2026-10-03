@@ -6144,22 +6144,35 @@ func (a *App) hEscalasTurnoDelegar(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusForbidden, "o grupo destino não é subordinado direto ou ativo do seu grupo")
 			return
 		}
-		_, err = a.st.db.Exec(`
+		ra, err := a.st.db.Exec(`
 			UPDATE escala_turnos
 			SET grupo_delegado_id = ?, status_delegacao = 'delegado'
 			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
 			*req.GrupoDelegadoID, turnoID, escopo, escopo)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		// Fix P1 (rodada 04/10): 200 fantasma — UPDATE com WHERE escopo TEM que checar
+		// RowsAffected==0 → 404 (lição bd6a7af: 200-sem-efeito esconde falha silenciosa)
+		if n, _ := ra.RowsAffected(); n == 0 {
+			jsonErro(w, http.StatusNotFound, "turno não encontrado no seu escopo")
+			return
+		}
 	} else {
-		_, err = a.st.db.Exec(`
+		ra, err := a.st.db.Exec(`
 			UPDATE escala_turnos
 			SET grupo_delegado_id = NULL, status_delegacao = 'proprio'
 			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
 			turnoID, escopo, escopo)
-	}
-
-	if err != nil {
-		jsonErro(w, http.StatusInternalServerError, err.Error())
-		return
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if n, _ := ra.RowsAffected(); n == 0 {
+			jsonErro(w, http.StatusNotFound, "turno não encontrado no seu escopo")
+			return
+		}
 	}
 
 	jsonOK(w, map[string]any{"ok": true})
@@ -7339,22 +7352,52 @@ func (a *App) hMaterialAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusRequestEntityTooLarge, "anexo acima do teto (máx. ~600 KB)")
 		return
 	}
-	mime := req.TipoMIME
-	if mime == "" {
-		mime = "application/octet-stream"
+	// Fix P1-1 (rodada 04/10): allowlist de MIME na entrada — anexo com tipo livre
+	// (text/html, image/svg+xml…) servido pela origem é stored XSS (CSP não salva:
+	// tem unsafe-inline). Fora da allowlist → 400.
+	mime := strings.ToLower(strings.TrimSpace(req.TipoMIME))
+	switch mime {
+	case "application/pdf", "image/png", "image/jpeg", "image/webp":
+		// permitido
+	default:
+		jsonErro(w, http.StatusBadRequest, "tipo não permitido (use PDF, PNG, JPEG ou WEBP)")
+		return
+	}
+	nome := sanitizarNomeArquivo(req.NomeArquivo)
+	if nome == "" {
+		jsonErro(w, http.StatusBadRequest, "nome de arquivo inválido")
+		return
 	}
 	res, err := a.st.db.Exec(`
 		INSERT INTO material_cautela_anexos (cautela_id, nome_arquivo, tipo_mime, tamanho, dados_base64)
 		VALUES (?, ?, ?, ?, ?)`,
-		cautelaID, req.NomeArquivo, mime, req.Tamanho, req.DadosBase64)
+		cautelaID, nome, mime, req.Tamanho, req.DadosBase64)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	newID, _ := res.LastInsertId()
 	a.st.Auditoria(&u.ID, "anexar_documento", "material_cautela_anexos", &newID,
-		fmt.Sprintf("cautela=%d arquivo=%s", cautelaID, req.NomeArquivo), ipDe(r))
-	jsonOK(w, map[string]any{"ok": true, "id": newID, "nome_arquivo": req.NomeArquivo})
+		fmt.Sprintf("cautela=%d arquivo=%s", cautelaID, nome), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": newID, "nome_arquivo": nome})
+}
+
+// sanitizarNomeArquivo (Fix P1-1): basename (barras normalizadas), sem aspas nem
+// caracteres de controle (Content-DispositionInjection), teto de 120 chars.
+func sanitizarNomeArquivo(nome string) string {
+	nome = strings.ReplaceAll(nome, "\\", "/")
+	nome = filepath.Base(nome)
+	nome = strings.Map(func(r rune) rune {
+		if r == '"' || r == '\'' || r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, nome)
+	nome = strings.TrimSpace(nome)
+	if len(nome) > 120 {
+		nome = nome[:120]
+	}
+	return nome
 }
 
 func (a *App) hMaterialAnexoList(w http.ResponseWriter, r *http.Request) {
@@ -7422,8 +7465,19 @@ func (a *App) hMaterialAnexoGet(w http.ResponseWriter, r *http.Request) {
 	if mime == "" {
 		mime = "application/octet-stream"
 	}
+	// Fix P1-1 defesa em profundidade (rodada 04/10): o download é superfície própria —
+	// o banco pode ter sido poblado por outro caminho com mime hostil (legado). Só
+	// servimos mime da allowlist; fora dela (ou vazio), octet-stream + attachment
+	// NUNCA inline — stored XSS na própria origem morre aqui independente do upload.
+	switch mime {
+	case "application/pdf", "image/png", "image/jpeg", "image/webp":
+		// mime confiável
+	default:
+		mime = "application/octet-stream"
+	}
 	w.Header().Set("Content-Type", mime)
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, nome))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", sanitizarNomeArquivo(nome)))
 	w.Header().Set("Content-Length", strconv.Itoa(len(dados)))
 	_, _ = w.Write(dados)
 }
@@ -7888,6 +7942,14 @@ func (a *App) hSetorSugestoesAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "tipo_acao obrigatório")
 		return
 	}
+	// Fix P1-2 (rodada 04/10): allowlist de tipo_acao na ENTRADA — a sugestão guarda
+	// dados_json autoral que vira escrita no banco na aprovação; só os dois tipos
+	// conhecidos por aplicarEfeitoSugestao podem entrar na fila.
+	req.TipoAcao = strings.ToLower(strings.TrimSpace(req.TipoAcao))
+	if req.TipoAcao != "alterar_status_militar" && req.TipoAcao != "atualizar_item_material" {
+		jsonErro(w, http.StatusBadRequest, "tipo_acao não permitido (deve ser 'alterar_status_militar' ou 'atualizar_item_material')")
+		return
+	}
 
 	dj, err := json.Marshal(req.Dados)
 	if err != nil {
@@ -7914,6 +7976,99 @@ func (a *App) hSetorSugestoesAdd(w http.ResponseWriter, r *http.Request) {
 		"status":     "pendente",
 		"setor_tipo": req.SetorTipo,
 	})
+}
+
+// idDeJSON converte id vindo de dados_json (float64/int64/string) para int64; 0 = inválido.
+func idDeJSON(v any) int64 {
+	switch n := v.(type) {
+	case float64:
+		return int64(n)
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case json.Number:
+		i, _ := n.Int64()
+		return i
+	case string:
+		i, err := strconv.ParseInt(strings.TrimSpace(n), 10, 64)
+		if err != nil {
+			return 0
+		}
+		return i
+	}
+	return 0
+}
+
+// executorSQL cobre *sql.DB e *sql.Tx (mesma superfície Exec/QueryRow).
+// Lição bd6a7af: dentro de transação, consulta no pool (`a.st.db`) com SQLite de
+// conexão única = DEADLOCK — o efeito da sugestão lê e escreve pela PRÓPRIA tx.
+type executorSQL interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// hSetorSugestoesAvaliar aplica a chancela do chefe sobre uma sugestão de setor.
+// FIX P1 (rodada 04/10): a aplicação de efeitos REVALIDA o escopo do alvo (o grupo
+// da sugestão tem que conter a pessoa/item) e usa ALLOWLIST de status — antes,
+// dados_json autoral virava UPDATE sem escopo em pessoas/material_itens (escrita
+// cross-group) e qualquer string virava "novo status".
+func (a *App) aplicarEfeitoSugestao(tipoAcao string, dados map[string]any, escopo int64) (int64, string, error) {
+	return aplicarEfeitoSugestaoTx(a.st.db, tipoAcao, dados, escopo)
+}
+
+func aplicarEfeitoSugestaoTx(ex executorSQL, tipoAcao string, dados map[string]any, escopo int64) (int64, string, error) {
+	if tipoAcao == "alterar_status_militar" {
+		pID := idDeJSON(dados["pessoa_id"])
+		novoStatus, _ := dados["novo_status"].(string)
+		novoStatus = strings.ToLower(strings.TrimSpace(novoStatus))
+		if pID <= 0 || novoStatus == "" {
+			return 0, "", fmt.Errorf("dados incompletos (pessoa_id/novo_status)")
+		}
+		if novoStatus != "ativo" && novoStatus != "inativo" {
+			return 0, "", fmt.Errorf("status de militar não permitido: %q", novoStatus)
+		}
+		var gid int64
+		if err := ex.QueryRow(`SELECT COALESCE(grupo_id,0) FROM pessoas WHERE id = ?`, pID).Scan(&gid); err != nil {
+			return 0, "", fmt.Errorf("militar %d não encontrado", pID)
+		}
+		if escopo > 0 && gid != escopo {
+			return 0, "", fmt.Errorf("militar %d fora do grupo da sugestão", pID)
+		}
+		if escopo <= 0 {
+			return 0, "", fmt.Errorf("sem grupo operacional para aplicar alteração de militar")
+		}
+		if _, err := ex.Exec(`UPDATE pessoas SET status = ? WHERE id = ?`, novoStatus, pID); err != nil {
+			return 0, "", err
+		}
+		return pID, "militar", nil
+	}
+	if tipoAcao == "atualizar_item_material" {
+		itemID := idDeJSON(dados["item_id"])
+		novoStatus, _ := dados["status"].(string)
+		novoStatus = strings.ToLower(strings.TrimSpace(novoStatus))
+		if itemID <= 0 || novoStatus == "" {
+			return 0, "", fmt.Errorf("dados incompletos (item_id/status)")
+		}
+		if novoStatus != "disponivel" && novoStatus != "acautelado" && novoStatus != "manutencao" && novoStatus != "baixado" {
+			return 0, "", fmt.Errorf("status de item não permitido: %q", novoStatus)
+		}
+		var gid int64
+		if err := ex.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&gid); err != nil {
+			return 0, "", fmt.Errorf("item %d não encontrado", itemID)
+		}
+		if escopo > 0 && gid != escopo {
+			return 0, "", fmt.Errorf("item %d fora do grupo da sugestão", itemID)
+		}
+		if escopo <= 0 {
+			return 0, "", fmt.Errorf("sem grupo operacional para aplicar alteração de item")
+		}
+		if _, err := ex.Exec(`UPDATE material_itens SET status = ? WHERE id = ?`, novoStatus, itemID); err != nil {
+			return 0, "", err
+		}
+		return itemID, "item", nil
+	}
+	return 0, "", fmt.Errorf("tipo de ação desconhecido: %q", tipoAcao)
 }
 
 func (a *App) hSetorSugestoesAvaliar(w http.ResponseWriter, r *http.Request) {
@@ -7972,53 +8127,46 @@ func (a *App) hSetorSugestoesAvaliar(w http.ResponseWriter, r *http.Request) {
 		novoStatus = "aprovado"
 	}
 
+	// Fix P1-2 (rodada 04/10): transação única — efeito + chancela nascem e morrem juntos.
+	// Em erro de efeito a sugestão NÃO vira 'aprovada' (fica pendente) e o motivo volta
+	// ao chefe (409). Guard TOCTOU: WHERE status='pendente' + RowsAffected==0 → 409
+	// 'já avaliada' (avaliação concorrente não reaplica efeito nem sobrescreve chancela).
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
 	// Se aprovado, o resultado oficial fica em nome do Chefe de Setor que aprovou!
-	_, err = a.st.db.Exec(`
+	// WHERE status='pendente' mata o TOCTOU: se avaliada concorrentemente, RowsAffected=0.
+	ra, err := tx.Exec(`
 		UPDATE setor_sugestoes
 		SET status = ?, aprovado_por = ?, aprovado_em = ?, justificativa = ?
-		WHERE id = ?`, novoStatus, u.ID, agora, req.Justificativa, sugID)
+		WHERE id = ? AND status = 'pendente'`, novoStatus, u.ID, agora, req.Justificativa, sugID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao atualizar status: "+err.Error())
 		return
 	}
+	if n, _ := ra.RowsAffected(); n == 0 {
+		jsonErro(w, http.StatusConflict, "sugestão já avaliada")
+		return
+	}
 
-	// Se aprovado, aplicar a ação correspondente no banco com autoria do Chefe
+	// Se aprovado, aplicar a ação correspondente no banco com autoria do Chefe.
+	// Escopo do alvo + allowlist revalidados AQUI (momento da aplicação) — não confiar
+	// no checkpoint da criação. Falha de efeito → rollback: sugestão segue pendente.
 	if req.Acao == "aprovar" {
 		var dados map[string]any
 		_ = json.Unmarshal([]byte(dadosJSON), &dados)
-
-		switch tipoAcao {
-		case "alterar_status_militar":
-			if pIDRaw, ok := dados["pessoa_id"]; ok {
-				if novoStatusMilitar, ok2 := dados["novo_status"].(string); ok2 {
-					var pID int64
-					switch v := pIDRaw.(type) {
-					case float64:
-						pID = int64(v)
-					case int64:
-						pID = v
-					}
-					if pID > 0 {
-						_, _ = a.st.db.Exec(`UPDATE pessoas SET status = ? WHERE id = ?`, novoStatusMilitar, pID)
-					}
-				}
-			}
-		case "atualizar_item_material":
-			if itemIDRaw, ok := dados["item_id"]; ok {
-				if novoStatusMat, ok2 := dados["status"].(string); ok2 {
-					var itemID int64
-					switch v := itemIDRaw.(type) {
-					case float64:
-						itemID = int64(v)
-					case int64:
-						itemID = v
-					}
-					if itemID > 0 {
-						_, _ = a.st.db.Exec(`UPDATE material_itens SET status = ? WHERE id = ?`, novoStatusMat, itemID)
-					}
-				}
-			}
+		if _, _, err := aplicarEfeitoSugestaoTx(tx, tipoAcao, dados, escopo); err != nil {
+			jsonErro(w, http.StatusConflict, "falha ao aplicar efeito da sugestão: "+err.Error())
+			return
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao concluir avaliação: "+err.Error())
+		return
 	}
 
 	chefeNome := u.NomeGuerra
