@@ -379,7 +379,7 @@
           bordaCor = 'rgba(16, 185, 129, 0.4)';
           bgCor = 'rgba(16, 185, 129, 0.06)';
           statusBadge = `<span style="display:inline-flex;align-items:center;gap:4px;color:#10b981;font-weight:600;font-size:11.5px">
-            <span style="font-size:14px">🟢</span> Concluída
+            <span style="font-size:14px">✅</span> Concluída
           </span>`;
         } else if (s.status === 'em_andamento') {
           bordaCor = 'rgba(245, 158, 11, 0.4)';
@@ -391,7 +391,7 @@
           bordaCor = 'rgba(239, 68, 68, 0.4)';
           bgCor = 'rgba(239, 68, 68, 0.06)';
           statusBadge = `<span style="display:inline-flex;align-items:center;gap:4px;color:#ef4444;font-weight:600;font-size:11.5px">
-            <span style="font-size:14px">🔴</span> Não iniciada
+            <span style="font-size:14px">❌</span> Não iniciada
           </span>`;
         }
 
@@ -404,6 +404,9 @@
           }
         }
 
+        const vTot = s.total_verificados ?? s.verificados ?? 0;
+        const eTot = s.total_efetivo ?? s.total_pessoas ?? 0;
+
         return `
           <div style="border:1px solid ${bordaCor};background:${bgCor};border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;justify-content:space-between;gap:8px">
             <div>
@@ -414,7 +417,7 @@
               <div style="font-size:11.5px;color:var(--tx2);margin-top:2px">${esc(s.setor_nome)}</div>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;padding-top:6px;border-top:1px solid rgba(255,255,255,0.06)">
-              <span style="font-size:11.5px;color:var(--tx2)"><b>${s.verificados}</b> de ${s.total_pessoas} verif.</span>
+              <span style="font-size:11.5px;color:var(--tx2)"><b>${vTot}</b> de ${eTot} verif.</span>
               ${acaoBtn}
             </div>
           </div>
@@ -429,9 +432,9 @@
               <b style="font-size:13px;letter-spacing:0.5px;text-transform:uppercase">Conferência por Setores</b>
             </div>
             <div style="display:flex;gap:12px;font-size:12px">
-              <span style="color:#10b981">🟢 ${concCount} concluídos</span>
+              <span style="color:#10b981">✅ ${concCount} concluídos</span>
               <span style="color:#f59e0b">⏳ ${andamCount} em andamento</span>
-              <span style="color:#ef4444">🔴 ${naoIniCount} não iniciados</span>
+              <span style="color:#ef4444">❌ ${naoIniCount} não iniciados</span>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px">
@@ -447,11 +450,11 @@
       let setorBadgeHeader = '';
       if (sObj) {
         if (sObj.status === 'concluida') {
-          setorBadgeHeader = `<span style="font-size:11.5px;color:#10b981;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3)">🟢 Concluída</span>`;
+          setorBadgeHeader = `<span style="font-size:11.5px;color:#10b981;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3)">✅ Concluída</span>`;
         } else if (sObj.status === 'em_andamento') {
           setorBadgeHeader = `<span style="font-size:11.5px;color:#f59e0b;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.3)">⏳ Em andamento</span>`;
         } else {
-          setorBadgeHeader = `<span style="font-size:11.5px;color:#ef4444;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3)">🔴 Não iniciada</span>`;
+          setorBadgeHeader = `<span style="font-size:11.5px;color:#ef4444;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3)">❌ Não iniciada</span>`;
         }
       }
 
@@ -556,6 +559,17 @@
         ev.stopPropagation();
         const sid = +btn.dataset.sid;
         const acao = btn.dataset.acao;
+        if (acao === 'concluir') {
+          const sObj = (C.setoresStatus || []).find(x => x.setor_id === sid);
+          const vTot = sObj ? (sObj.total_verificados ?? sObj.verificados ?? 0) : 0;
+          const eTot = sObj ? (sObj.total_efetivo ?? sObj.total_pessoas ?? 0) : 0;
+          if (vTot < eTot) {
+            const pendentes = eTot - vTot;
+            if (!confirm(`Atenção: Existem ${pendentes} militares deste setor ainda não verificados.\nDeseja realmente concluir a conferência deste setor?`)) {
+              return;
+            }
+          }
+        }
         try {
           if (acao === 'concluir') {
             await api(`/api/conferencia/${C.c.id}/setor/${sid}/concluir`, { method: 'POST' });

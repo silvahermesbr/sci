@@ -180,8 +180,13 @@ func TestV15_ConferenciaPorSetor(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resHoje)
 	for _, s := range resHoje.SetoresStatus {
 		sid := int64(s["setor_id"].(float64))
-		if sid == s1ID && s["status"] != "em_andamento" {
-			t.Fatalf("esperava status em_andamento após reabertura, obteve %v", s["status"])
+		if sid == s1ID {
+			if s["status"] != "em_andamento" {
+				t.Fatalf("esperava status em_andamento após reabertura, obteve %v", s["status"])
+			}
+			if s["total_pessoas"] == nil || s["verificados"] == nil {
+				t.Fatalf("esperava aliases total_pessoas e verificados no payload do setor: %v", s)
+			}
 		}
 	}
 }
