@@ -6998,6 +6998,7 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 		CautelaID    *int64 `json:"cautela_id"`
 		ItemID       *int64 `json:"item_id"`
 		ObsDevolucao string `json:"obs_devolucao"`
+		Quantidade   int    `json:"quantidade"`
 	}
 	if err := decodificar(r, &req); err != nil || (req.CautelaID == nil && req.ItemID == nil) {
 		jsonErro(w, http.StatusBadRequest, "Informe cautela_id ou item_id para devolução")
@@ -7013,12 +7014,23 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 
 	var cautelaID int64
 	var itemID int64
+	var cautelaQtd int
+	var cautelaPessoa int64
+	var cautelaRespEnt int64
+	var cautelaDataSaida string
+	var cautelaObsSaida string
 	if req.CautelaID != nil && *req.CautelaID > 0 {
 		cautelaID = *req.CautelaID
-		err = tx.QueryRow(`SELECT item_id FROM material_cautelas WHERE id = ? AND status = 'ativa'`, cautelaID).Scan(&itemID)
+		err = tx.QueryRow(`
+			SELECT item_id, pessoa_id, responsavel_entrega_id, data_saida, COALESCE(obs_saida,''), COALESCE(quantidade, 1)
+			FROM material_cautelas WHERE id = ? AND status = 'ativa'`, cautelaID).
+			Scan(&itemID, &cautelaPessoa, &cautelaRespEnt, &cautelaDataSaida, &cautelaObsSaida, &cautelaQtd)
 	} else if req.ItemID != nil && *req.ItemID > 0 {
 		itemID = *req.ItemID
-		err = tx.QueryRow(`SELECT id FROM material_cautelas WHERE item_id = ? AND status = 'ativa' ORDER BY id DESC LIMIT 1`, itemID).Scan(&cautelaID)
+		err = tx.QueryRow(`
+			SELECT id, pessoa_id, responsavel_entrega_id, data_saida, COALESCE(obs_saida,''), COALESCE(quantidade, 1)
+			FROM material_cautelas WHERE item_id = ? AND status = 'ativa' ORDER BY id DESC LIMIT 1`, itemID).
+			Scan(&cautelaID, &cautelaPessoa, &cautelaRespEnt, &cautelaDataSaida, &cautelaObsSaida, &cautelaQtd)
 	}
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "Cautela ativa não encontrada para este item")
@@ -7039,14 +7051,32 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 	}
 
 	dataDevolucao := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	_, err = tx.Exec(`
-		UPDATE material_cautelas
-		SET status = 'devolvida', data_devolucao = ?, responsavel_recebimento_id = ?, obs_devolucao = ?
-		WHERE id = ?`,
-		dataDevolucao, u.ID, req.ObsDevolucao, cautelaID)
-	if err != nil {
-		jsonErro(w, http.StatusInternalServerError, err.Error())
-		return
+	if req.Quantidade <= 0 || req.Quantidade >= cautelaQtd {
+		// Devolução integral
+		_, err = tx.Exec(`
+			UPDATE material_cautelas
+			SET status = 'devolvida', data_devolucao = ?, responsavel_recebimento_id = ?, obs_devolucao = ?
+			WHERE id = ?`,
+			dataDevolucao, u.ID, req.ObsDevolucao, cautelaID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		// Devolução parcial (ex.: devolvendo 3 de 10)
+		_, err = tx.Exec(`UPDATE material_cautelas SET quantidade = quantidade - ? WHERE id = ?`, req.Quantidade, cautelaID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		_, err = tx.Exec(`
+			INSERT INTO material_cautelas (item_id, pessoa_id, responsavel_entrega_id, responsavel_recebimento_id, data_saida, data_devolucao, obs_saida, obs_devolucao, status, quantidade)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'devolvida', ?)`,
+			itemID, cautelaPessoa, cautelaRespEnt, u.ID, cautelaDataSaida, dataDevolucao, cautelaObsSaida, req.ObsDevolucao, req.Quantidade)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	var itemSensibilidade string
@@ -7067,7 +7097,7 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.st.Auditoria(&u.ID, "devolver", "material_cautelas", &cautelaID,
-		fmt.Sprintf("item_id=%d obs=%s", itemID, req.ObsDevolucao), ipDe(r))
+		fmt.Sprintf("item_id=%d qtd=%d obs=%s", itemID, req.Quantidade, req.ObsDevolucao), ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "cautela_id": cautelaID})
 }
 
@@ -7085,7 +7115,7 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(mc.responsavel_recebimento_id, 0), COALESCE(ur.login, ''),
 		       mc.data_saida, COALESCE(mc.data_devolucao, ''),
 		       COALESCE(mc.obs_saida, ''), COALESCE(mc.obs_devolucao, ''),
-		       mc.status
+		       mc.status, COALESCE(mc.quantidade, 1), COALESCE(mi.sensibilidade, 'convencional')
 		FROM material_cautelas mc
 		JOIN material_itens mi ON mi.id = mc.item_id
 		JOIN pessoas p ON p.id = mc.pessoa_id
@@ -7122,9 +7152,10 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 	var lista []map[string]any
 	for rows.Next() {
 		var cid, iid, pid, respEnt, respRec int64
-		var iNome, iCod, pGuerra, pCompleto, loginEnt, loginRec, dtSaida, dtDev, obsS, obsD, st string
+		var iNome, iCod, pGuerra, pCompleto, loginEnt, loginRec, dtSaida, dtDev, obsS, obsD, st, sens string
+		var mcQtd int
 		if err := rows.Scan(&cid, &iid, &iNome, &iCod, &pid, &pGuerra, &pCompleto,
-			&respEnt, &loginEnt, &respRec, &loginRec, &dtSaida, &dtDev, &obsS, &obsD, &st); err == nil {
+			&respEnt, &loginEnt, &respRec, &loginRec, &dtSaida, &dtDev, &obsS, &obsD, &st, &mcQtd, &sens); err == nil {
 			lista = append(lista, map[string]any{
 				"id":                      cid,
 				"item_id":                 iid,
@@ -7141,6 +7172,8 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 				"obs_saida":               obsS,
 				"obs_devolucao":           obsD,
 				"status":                  st,
+				"quantidade":              mcQtd,
+				"sensibilidade":           sens,
 			})
 		}
 	}

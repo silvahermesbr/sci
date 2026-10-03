@@ -248,3 +248,116 @@ func TestEscalaEdicaoPostoEDescansoNullSafe(t *testing.T) {
 		t.Fatalf("militar alocado foi indevidamente removido ao atualizar propriedades do turno: count=%d, err=%v", countPes, errQ)
 	}
 }
+
+func TestMaterialDevolucaoParcialEQuantitativo(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	admin := loginAs(t, app, "admin", "admin123")
+
+	_, resG := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "Pelotão Apoio", "login": "ten_apoio", "senha": "apoio_password", "nome_guerra": "Ten Apoio",
+	}, admin)
+	gid := int64(resG["id"].(float64))
+	ger := loginAs(t, app, "ten_apoio", "apoio_password")
+
+	resPes, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('Pereira', 'João Pereira', ?, 'ativo')`, gid)
+	pesID, _ := resPes.LastInsertId()
+
+	// 1. Cadastrar material convencional com quantitativo = 20 (ex.: Cobertores)
+	recItem, resItem := doJSONReq(app, "POST", "/api/material/itens", map[string]any{
+		"nome":              "Cobertor de Campanha",
+		"codigo_patrimonio": "COB-2026",
+		"sensibilidade":     "convencional",
+		"quantidade":        20,
+		"categoria_id":      1,
+		"status":            "disponivel",
+	}, ger)
+	if recItem.Code != http.StatusOK {
+		t.Fatalf("erro ao criar item convencional: %d (%v)", recItem.Code, resItem)
+	}
+	itemID := int64(resItem["id"].(float64))
+
+	// 2. Cautelar 8 cobertores
+	recC1, resC1 := doJSONReq(app, "POST", "/api/material/cautelar", map[string]any{
+		"item_id":    itemID,
+		"pessoa_id":  pesID,
+		"quantidade": 8,
+		"obs_saida":  "8 Cobertores para instrução de campo",
+	}, ger)
+	if recC1.Code != http.StatusOK {
+		t.Fatalf("erro ao cautelar 8 itens: %d (%v)", recC1.Code, resC1)
+	}
+	c1ID := int64(resC1["cautela_id"].(float64))
+
+	// Item ainda deve estar 'disponivel' (8 de 20 utilizados)
+	var stItem string
+	_ = st.db.QueryRow(`SELECT status FROM material_itens WHERE id = ?`, itemID).Scan(&stItem)
+	if stItem != "disponivel" {
+		t.Fatalf("esperava item disponivel apos cautela parcial, obteve: %s", stItem)
+	}
+
+	// 3. Cautelar os 12 restantes -> item deve virar 'acautelado'
+	recC2, _ := doJSONReq(app, "POST", "/api/material/cautelar", map[string]any{
+		"item_id":    itemID,
+		"pessoa_id":  pesID,
+		"quantidade": 12,
+		"obs_saida":  "12 Cobertores para alojamento",
+	}, ger)
+	if recC2.Code != http.StatusOK {
+		t.Fatalf("erro ao cautelar 12 itens: %d", recC2.Code)
+	}
+	_ = st.db.QueryRow(`SELECT status FROM material_itens WHERE id = ?`, itemID).Scan(&stItem)
+	if stItem != "acautelado" {
+		t.Fatalf("esperava item acautelado com saldo 0, obteve: %s", stItem)
+	}
+
+	// 4. Devolução PARCIAL da Cautela 1: devolver 3 de 8
+	recDevParcial, resDevParcial := doJSONReq(app, "POST", "/api/material/devolver", map[string]any{
+		"cautela_id":    c1ID,
+		"quantidade":    3,
+		"obs_devolucao": "Devolvidos 3 cobertores limpos",
+	}, ger)
+	if recDevParcial.Code != http.StatusOK {
+		t.Fatalf("erro ao fazer devolucao parcial: %d (%v)", recDevParcial.Code, resDevParcial)
+	}
+
+	// Cautela 1 original deve continuar ativa com quantidade = 5
+	var c1QtdRestante int
+	var c1Status string
+	_ = st.db.QueryRow(`SELECT quantidade, status FROM material_cautelas WHERE id = ?`, c1ID).Scan(&c1QtdRestante, &c1Status)
+	if c1Status != "ativa" || c1QtdRestante != 5 {
+		t.Fatalf("esperava cautela 1 ativa com 5 itens, obteve status=%s qtd=%d", c1Status, c1QtdRestante)
+	}
+
+	// Item agora tem 5 + 12 = 17 acautelados de 20 -> status deve voltar a 'disponivel'
+	_ = st.db.QueryRow(`SELECT status FROM material_itens WHERE id = ?`, itemID).Scan(&stItem)
+	if stItem != "disponivel" {
+		t.Fatalf("esperava item voltar para disponivel apos devolucao parcial, obteve: %s", stItem)
+	}
+
+	// 5. Validar lista de cautelas retornando quantidade e sensibilidade
+	recList, resList := doJSONReq(app, "GET", fmt.Sprintf("/api/material/cautelas?item_id=%d", itemID), nil, ger)
+	if recList.Code != http.StatusOK {
+		t.Fatalf("erro ao listar cautelas: %d", recList.Code)
+	}
+	cautelas := resList["cautelas"].([]any)
+	if len(cautelas) < 3 { // C1 ativa (5), C2 ativa (12), C1 devolvida parcial (3)
+		t.Fatalf("esperava pelo menos 3 registros de cautela, obteve %d", len(cautelas))
+	}
+
+	achouQtdSens := false
+	for _, cObj := range cautelas {
+		cMap := cObj.(map[string]any)
+		if cMap["quantidade"] != nil && cMap["sensibilidade"] != nil {
+			achouQtdSens = true
+			if cMap["sensibilidade"].(string) != "convencional" {
+				t.Fatalf("esperava sensibilidade convencional, obteve %v", cMap["sensibilidade"])
+			}
+		}
+	}
+	if !achouQtdSens {
+		t.Fatalf("resposta de /api/material/cautelas nao incluiu quantidade ou sensibilidade")
+	}
+}
+

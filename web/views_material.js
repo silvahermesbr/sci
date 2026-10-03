@@ -142,7 +142,7 @@
                     <button class="acao-linha" style="font-size:12px; padding:4px 8px" data-recibo="${c.id}" title="Imprimir Recibo / Ticket formal de cautela">
                       📄 Recibo
                     </button>
-                    <button class="primario" style="flex:1; font-size:13px; padding:6px 0; min-width:80px" data-devolver="${c.id || it.id}" data-itemnome="${esc(it.nome)}">
+                    <button class="primario" style="flex:1; font-size:13px; padding:6px 0; min-width:80px" data-devolver="${c.id || it.id}" data-itemnome="${esc(it.nome)}" data-qtd="${c.quantidade || it.quantidade || 1}" data-sens="${sens}">
                       📥 Devolver
                     </button>
                   </div>
@@ -206,7 +206,9 @@
       b.onclick = () => {
         const cid = +b.dataset.devolver;
         const nome = b.dataset.itemnome;
-        modalDevolverItem(cid, nome, () => window.ViewMaterial());
+        const qtd = +b.dataset.qtd || 1;
+        const sens = b.dataset.sens || 'convencional';
+        modalDevolverItem(cid, nome, () => window.ViewMaterial(), qtd, sens);
       };
     });
 
@@ -269,7 +271,7 @@
       const btAcaoCautela = (it.status === 'disponivel' || (it.quantidade_disponivel !== undefined && it.quantidade_disponivel > 0))
         ? `<button class="primario" style="font-size:12px; padding:4px 8px; margin-right:4px" data-cautelar="${it.id}">⚡ Cautelar</button>`
         : (it.status === 'acautelado' && it.cautela_ativa
-            ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-devolver="${it.cautela_ativa.id}" data-itemnome="${esc(it.nome)}">📥 Devolver</button>`
+            ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-devolver="${it.cautela_ativa.id}" data-itemnome="${esc(it.nome)}" data-qtd="${it.cautela_ativa.quantidade || it.quantidade || 1}" data-sens="${it.sensibilidade || 'convencional'}">📥 Devolver</button>`
             : '');
       
       return `
@@ -520,7 +522,9 @@
       b.onclick = () => {
         const cid = +b.dataset.devolver;
         const nome = b.dataset.itemnome;
-        modalDevolverItem(cid, nome, () => window.ViewMaterial());
+        const qtd = +b.dataset.qtd || 1;
+        const sens = b.dataset.sens || 'convencional';
+        modalDevolverItem(cid, nome, () => window.ViewMaterial(), qtd, sens);
       };
     });
 
@@ -991,11 +995,20 @@
     });
   }
 
-  function modalDevolverItem(cautelaId, itemNome, onConcluido) {
+  function modalDevolverItem(cautelaId, itemNome, onConcluido, cautelaQtd = 1, sensibilidade = 'convencional') {
+    const ehConvencionalComQtd = sensibilidade === 'convencional' && cautelaQtd > 1;
     const html = `
       <div class="modal" style="max-width:480px">
         <h3 style="margin-top:0">📥 Receber Material: ${esc(itemNome)}</h3>
         <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">Confirme o retorno do item para a reserva de material.</p>
+
+        ${ehConvencionalComQtd ? `
+          <div class="campo" style="margin-bottom:12px">
+            <label>Quantidade a Devolver (Saldo nesta Cautela: <b>${cautelaQtd}</b>)</label>
+            <input type="number" id="mQtdDevolucao" min="1" max="${cautelaQtd}" value="${cautelaQtd}">
+            <small style="color:var(--tx3); font-size:11px">Você pode devolver parcialmente (ex.: 2 de 5) ou integralmente.</small>
+          </div>
+        ` : ''}
 
         <div class="campo" style="margin-bottom:14px">
           <label>Condições de Devolução / Observação</label>
@@ -1013,15 +1026,23 @@
 
     m.querySelector('#mBtnConfirmarDevolucao').onclick = async () => {
       const obs = m.querySelector('#mObsDevolucao').value.trim();
+      const campoQtd = m.querySelector('#mQtdDevolucao');
+      const qtd = campoQtd ? (+campoQtd.value || cautelaQtd) : cautelaQtd;
+      if (ehConvencionalComQtd && (qtd <= 0 || qtd > cautelaQtd)) {
+        alerta(`Quantidade inválida. Deve ser entre 1 e ${cautelaQtd}.`);
+        return;
+      }
       try {
         await api('/api/material/devolver', {
           method: 'POST',
-          body: JSON.stringify({ cautela_id: cautelaId, obs_devolucao: obs })
+          body: JSON.stringify({ cautela_id: cautelaId, obs_devolucao: obs, quantidade: qtd })
         });
-        toast('Material devolvido à reserva com sucesso!');
-        m.remove();
+        toast(qtd < cautelaQtd ? `Devolução parcial (${qtd} itens) registrada com sucesso!` : 'Material devolvido à reserva com sucesso!');
+        m.closest('.modal-mask').remove();
         if (onConcluido) onConcluido();
-      } catch (e) {}
+      } catch (e) {
+        alerta('Erro ao devolver: ' + (e.message || e));
+      }
     };
   }
 
