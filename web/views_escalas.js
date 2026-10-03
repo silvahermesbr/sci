@@ -321,6 +321,7 @@
           <td>${militarHTML}</td>
           <td>${badgeDelegado || '<span style="color:var(--tx3); font-size:12px">Próprio Grupo</span>'}</td>
           <td style="text-align:right; white-space:nowrap">
+            <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-editposto="${t.id}" title="Editar Posto, Horários e Posto/Graduação">⚙️ Posto</button>
             <button class="primario" style="font-size:12px; padding:4px 10px; margin-right:4px" data-preencher="${t.id}">
               ${p ? '✏️ Alterar Militar' : '👤 Escalar / Delegar'}
             </button>
@@ -346,6 +347,14 @@
         </table>
       </div>
     `;
+
+    cont.querySelectorAll('button[data-editposto]').forEach(b => {
+      b.onclick = () => {
+        const tid = +b.dataset.editposto;
+        const turno = TURNOS_CACHE.find(x => x.id === tid);
+        if (turno) modalEditarPostoTurno(turno, () => carregarGrade());
+      };
+    });
 
     cont.querySelectorAll('button[data-preencher]').forEach(b => {
       b.onclick = () => {
@@ -656,8 +665,12 @@
     };
   }
 
-  /* Modal de Posto Avulso / Missão */
-  async function modalCriarPostoAvulso(diaStr, aoConcluir) {
+  /* Modal de Posto Avulso / Edição de Posto */
+  async function modalEditarPostoTurno(alvo, aoConcluir) {
+    const ehEdicao = alvo && typeof alvo === 'object';
+    const turno = ehEdicao ? alvo : null;
+    const diaStr = ehEdicao ? ((turno.data_inicio || '').slice(0, 10) || diaSelecionado) : alvo;
+
     const [tiposRes, funcoesRes] = await Promise.all([
       api('/api/escalas/tipos'),
       api('/api/catalogo/funcoes')
@@ -665,33 +678,40 @@
     const tipos = tiposRes.tipos || [];
     const funcoes = (funcoesRes || []).filter(f => f.ativo);
 
+    const valTipo = ehEdicao ? turno.tipo_id : (tipos[0] ? tipos[0].id : 0);
+    const valHi = ehEdicao ? ((turno.data_inicio || '').slice(11, 16) || '07:00') : '07:00';
+    const valHf = ehEdicao ? ((turno.data_fim || '').slice(11, 16) || '07:00') : '07:00';
+    const valObs = ehEdicao ? (turno.observacao || '') : '';
+    const valPgMin = ehEdicao ? (turno.posto_grad_min_id || '') : '';
+    const valPgMax = ehEdicao ? (turno.posto_grad_max_id || '') : '';
+
     const html = `
       <div class="modal" style="max-width:520px">
-        <h3 style="margin-top:0">➕ Adicionar Posto Avulso / Missão</h3>
+        <h3 style="margin-top:0">${ehEdicao ? '⚙️ Editar Posto de Serviço' : '➕ Adicionar Posto Avulso / Missão'}</h3>
         <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">
-          Cadastre um posto individual para o dia <b>${fmtData(diaStr)}</b> (ex.: missões especiais, representações ou reforço de guarda).
+          ${ehEdicao ? `Edite os horários, tipo e restrições de Posto/Graduação para este posto no dia <b>${fmtData(diaStr)}</b>.` : `Cadastre um posto individual para o dia <b>${fmtData(diaStr)}</b> (ex.: missões especiais, representações ou reforço de guarda).`}
         </p>
 
         <div class="form-linha" style="margin-bottom:10px">
           <div class="campo" style="flex:2">
             <label>Tipo de Posto / Serviço *</label>
             <select id="avTipoPosto">
-              ${tipos.map(t => `<option value="${t.id}">${esc(t.nome)}</option>`).join('')}
+              ${tipos.map(t => `<option value="${t.id}" ${t.id === valTipo ? 'selected' : ''}>${esc(t.nome)}</option>`).join('')}
             </select>
           </div>
           <div class="campo" style="flex:1">
             <label>Início</label>
-            <input type="time" id="avHoraIni" value="07:00">
+            <input type="time" id="avHoraIni" value="${esc(valHi)}">
           </div>
           <div class="campo" style="flex:1">
             <label>Término</label>
-            <input type="time" id="avHoraFim" value="07:00">
+            <input type="time" id="avHoraFim" value="${esc(valHf)}">
           </div>
         </div>
 
         <div class="campo" style="margin-bottom:10px">
           <label>Observação / Descrição da Missão</label>
-          <input id="avObs" placeholder="ex.: Operação Especial / Escolta / Representação de Cerimonial">
+          <input id="avObs" value="${esc(valObs)}" placeholder="ex.: Operação Especial / Escolta / Representação de Cerimonial">
         </div>
 
         <div class="form-linha" style="margin-bottom:14px">
@@ -699,21 +719,21 @@
             <label>Posto / Graduação Mínimo</label>
             <select id="avPgMin">
               <option value="">— Qualquer Posto/Graduação —</option>
-              ${funcoes.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+              ${funcoes.map(f => `<option value="${f.id}" ${f.id === valPgMin ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}
             </select>
           </div>
           <div class="campo">
             <label>Posto / Graduação Máximo</label>
             <select id="avPgMax">
               <option value="">— Qualquer Posto/Graduação —</option>
-              ${funcoes.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+              ${funcoes.map(f => `<option value="${f.id}" ${f.id === valPgMax ? 'selected' : ''}>${esc(f.nome)}</option>`).join('')}
             </select>
           </div>
         </div>
 
         <div style="display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--borda); padding-top:12px">
           <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-          <button class="primario" id="btSalvarPostoAvulso">Criar Posto</button>
+          <button class="primario" id="btSalvarPostoAvulso">${ehEdicao ? 'Salvar Alterações' : 'Criar Posto'}</button>
         </div>
       </div>
     `;
@@ -736,26 +756,30 @@
         dataFimDia = dFim.toISOString().slice(0, 10);
       }
 
+      const payload = {
+        tipo_id: tipoID,
+        data_inicio: diaStr + 'T' + hi + ':00',
+        data_fim: dataFimDia + 'T' + hf + ':00',
+        observacao: obs,
+        posto_grad_min_id: pgMin,
+        posto_grad_max_id: pgMax
+      };
+      if (ehEdicao) payload.id = turno.id;
+
       try {
         await api('/api/escalas/turnos', {
           method: 'POST',
-          body: JSON.stringify({
-            tipo_id: tipoID,
-            data_inicio: diaStr + 'T' + hi + ':00',
-            data_fim: dataFimDia + 'T' + hf + ':00',
-            observacao: obs,
-            posto_grad_min_id: pgMin,
-            posto_grad_max_id: pgMax
-          })
+          body: JSON.stringify(payload)
         });
-        toast('Posto avulso criado com sucesso!');
+        toast(ehEdicao ? 'Posto atualizado com sucesso!' : 'Posto avulso criado com sucesso!');
         m.closest('.modal-mask').remove();
         if (aoConcluir) aoConcluir();
       } catch (err) {
-        alerta('Erro ao criar posto avulso: ' + (err.message || err));
+        alerta((ehEdicao ? 'Erro ao atualizar posto: ' : 'Erro ao criar posto avulso: ') + (err.message || err));
       }
     };
   }
+  const modalCriarPostoAvulso = (dia, cb) => modalEditarPostoTurno(dia, cb);
 
   /* Modal de Aplicação de Modelo */
   async function modalAplicarModeloDia(dataStr, aoConcluir) {

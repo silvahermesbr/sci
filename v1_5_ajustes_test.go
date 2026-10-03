@@ -175,3 +175,76 @@ func TestAjustesEscalas(t *testing.T) {
 
 	_ = strconv.Itoa
 }
+
+func TestEscalaEdicaoPostoEDescansoNullSafe(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	admin := loginAs(t, app, "admin", "admin123")
+
+	_, resG := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "Companhia Alpha", "login": "cap_alpha", "senha": "alpha_password", "nome_guerra": "Cap Alpha",
+	}, admin)
+	gid := int64(resG["id"].(float64))
+	ger := loginAs(t, app, "cap_alpha", "alpha_password")
+
+	resTipo, _ := st.db.Exec(`INSERT INTO escala_tipos (nome, grupo_id) VALUES ('Oficial de Dia', ?)`, gid)
+	tipoID, _ := resTipo.LastInsertId()
+
+	resPes, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('Moura', 'Lucas Moura', ?, 'ativo')`, gid)
+	pesID, _ := resPes.LastInsertId()
+
+	// 1. Inserir turno com data_fim vazia para testar robustez de descanso
+	resT1, errT1 := st.db.Exec(`INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim) VALUES (?, ?, '2026-10-20T07:00:00', '')`, gid, tipoID)
+	if errT1 != nil {
+		t.Fatalf("erro ao inserir turno 1: %v", errT1)
+	}
+	t1ID, _ := resT1.LastInsertId()
+	_, _ = st.db.Exec(`INSERT INTO escala_pessoas (turno_id, pessoa_id) VALUES (?, ?)`, t1ID, pesID)
+
+	desc := app.validarDescansoEscala(pesID, 99999, "2026-10-20T10:00:00", "2026-10-20T18:00:00")
+	// Turno 1 vai das 07:00 até 07:00 (vazia). O novo é 10:00. Deve calcular folga de 3 horas (< 24h = critico)
+	if desc.Nivel != "critico" {
+		t.Fatalf("esperava nível critico para intervalo de 3h, obteve %s (msg: %s)", desc.Nivel, desc.Mensagem)
+	}
+
+	// 2. Testar escaladosNaData com formato ISO completo (YYYY-MM-DDTHH:MM:SS)
+	escalados := app.escaladosNaData(gid, "2026-10-20")
+	if len(escalados) == 0 {
+		t.Fatalf("esperava encontrar militar escalado em 2026-10-20 via escaladosNaData")
+	}
+
+	// 3. Testar criação e edição de posto avulso com preservação de pessoas alocadas
+	recCria, resCria := doJSONReq(app, "POST", "/api/escalas/turnos", map[string]any{
+		"tipo_id":     tipoID,
+		"data_inicio": "2026-10-25T07:00:00",
+		"data_fim":    "2026-10-26T07:00:00",
+		"observacao":  "Posto Inicial",
+		"pessoas": []map[string]any{
+			{"pessoa_id": pesID, "funcao_escala": "Comandante da Guarda"},
+		},
+	}, ger)
+	if recCria.Code != http.StatusOK {
+		t.Fatalf("falha ao criar turno: %d", recCria.Code)
+	}
+	turnoAvulsoID := int64(resCria["id"].(float64))
+
+	// Editar o posto (horários e observação) sem passar o campo "pessoas"
+	recEdit, resEdit := doJSONReq(app, "POST", "/api/escalas/turnos", map[string]any{
+		"id":          turnoAvulsoID,
+		"tipo_id":     tipoID,
+		"data_inicio": "2026-10-25T08:00:00",
+		"data_fim":    "2026-10-26T08:00:00",
+		"observacao":  "Horário alterado para 08h",
+	}, ger)
+	if recEdit.Code != http.StatusOK {
+		t.Fatalf("falha ao atualizar turno: %d (%v)", recEdit.Code, resEdit)
+	}
+
+	// Verificar se a pessoa continua alocada ao turno
+	var countPes int
+	errQ := st.db.QueryRow(`SELECT COUNT(*) FROM escala_pessoas WHERE turno_id = ? AND pessoa_id = ?`, turnoAvulsoID, pesID).Scan(&countPes)
+	if errQ != nil || countPes != 1 {
+		t.Fatalf("militar alocado foi indevidamente removido ao atualizar propriedades do turno: count=%d, err=%v", countPes, errQ)
+	}
+}

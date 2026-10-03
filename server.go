@@ -1189,7 +1189,7 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 			JOIN escala_turnos et ON et.id = ep.turno_id
 			JOIN escala_tipos etp ON etp.id = et.tipo_id
 			JOIN pessoas pes ON pes.id = ep.pessoa_id AND pes.status = 'ativo' AND pes.grupo_id = ?
-			WHERE et.data_inicio <= ? AND et.data_fim >= ?
+			WHERE substr(et.data_inicio, 1, 10) <= ? AND substr(COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), 1, 10) >= ?
 			ON CONFLICT(conferencia_id, pessoa_id) DO UPDATE SET
 			  situacao = 'justificada',
 			  destino_id = excluded.destino_id,
@@ -5030,7 +5030,7 @@ func (a *App) escaladosNaData(grupoID int64, data string) []map[string]any {
 	      LEFT JOIN setores s ON s.id = p.setor_id
 	      LEFT JOIN funcoes f ON f.id = p.funcao_id
 	      WHERE (? <= 0 OR et.grupo_id = ?)
-	        AND et.data_inicio <= ? AND et.data_fim >= ?
+	        AND substr(et.data_inicio, 1, 10) <= ? AND substr(COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), 1, 10) >= ?
 	      ORDER BY et.id, p.nome_guerra`
 	rows, err := a.st.db.Query(q, grupoID, grupoID, data, data)
 	if err != nil {
@@ -5187,7 +5187,7 @@ func (a *App) validarDescansoEscala(pessoaID int64, turnoID int64, dataInicioStr
 	}
 
 	rows, err := a.st.db.Query(`
-		SELECT et.id, etp.nome, et.data_inicio, et.data_fim
+		SELECT et.id, etp.nome, et.data_inicio, COALESCE(NULLIF(et.data_fim, ''), et.data_inicio)
 		FROM escala_pessoas ep
 		JOIN escala_turnos et ON et.id = ep.turno_id
 		JOIN escala_tipos etp ON etp.id = et.tipo_id
@@ -5484,7 +5484,7 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 		Observacao     string `json:"observacao"`
 		PostoGradMinID *int64 `json:"posto_grad_min_id"`
 		PostoGradMaxID *int64 `json:"posto_grad_max_id"`
-		Pessoas        []struct {
+		Pessoas        *[]struct {
 			PessoaID     int64  `json:"pessoa_id"`
 			FuncaoEscala string `json:"funcao_escala"`
 		} `json:"pessoas"`
@@ -5515,12 +5515,14 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validação de sobreposição para pessoas alocadas
-	for _, p := range req.Pessoas {
-		if p.PessoaID > 0 {
-			desc := a.validarDescansoEscala(p.PessoaID, req.ID, req.DataInicio, req.DataFim)
-			if desc.Conflito {
-				jsonErro(w, http.StatusBadRequest, desc.ConflitoErro)
-				return
+	if req.Pessoas != nil {
+		for _, p := range *req.Pessoas {
+			if p.PessoaID > 0 {
+				desc := a.validarDescansoEscala(p.PessoaID, req.ID, req.DataInicio, req.DataFim)
+				if desc.Conflito {
+					jsonErro(w, http.StatusBadRequest, desc.ConflitoErro)
+					return
+				}
 			}
 		}
 	}
@@ -5548,7 +5550,9 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusNotFound, "turno não encontrado no seu escopo")
 			return
 		}
-		_, _ = tx.Exec(`DELETE FROM escala_pessoas WHERE turno_id = ?`, turnoID)
+		if req.Pessoas != nil {
+			_, _ = tx.Exec(`DELETE FROM escala_pessoas WHERE turno_id = ?`, turnoID)
+		}
 	} else {
 		res, err := tx.Exec(`
 			INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim, observacao, criado_por, posto_grad_min_id, posto_grad_max_id)
@@ -5561,11 +5565,13 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 		turnoID, _ = res.LastInsertId()
 	}
 
-	for _, p := range req.Pessoas {
-		if p.PessoaID > 0 {
-			_, _ = tx.Exec(`
-				INSERT INTO escala_pessoas (turno_id, pessoa_id, funcao_escala)
-				VALUES (?, ?, ?)`, turnoID, p.PessoaID, p.FuncaoEscala)
+	if req.Pessoas != nil {
+		for _, p := range *req.Pessoas {
+			if p.PessoaID > 0 {
+				_, _ = tx.Exec(`
+					INSERT INTO escala_pessoas (turno_id, pessoa_id, funcao_escala)
+					VALUES (?, ?, ?)`, turnoID, p.PessoaID, p.FuncaoEscala)
+			}
 		}
 	}
 
@@ -5573,8 +5579,12 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	nPessoas := 0
+	if req.Pessoas != nil {
+		nPessoas = len(*req.Pessoas)
+	}
 	a.st.Auditoria(&u.ID, "salvar_turno", "escala_turnos", &turnoID,
-		fmt.Sprintf("tipo=%d de=%s ate=%s pessoas=%d", req.TipoID, req.DataInicio, req.DataFim, len(req.Pessoas)), ipDe(r))
+		fmt.Sprintf("tipo=%d de=%s ate=%s pessoas=%d", req.TipoID, req.DataInicio, req.DataFim, nPessoas), ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "id": turnoID})
 }
 
