@@ -169,3 +169,109 @@ func TestCriacaoGrupoSimplificadaEAtribuicaoGerente(t *testing.T) {
 		t.Errorf("militar.alpha2 deveria ser gerente, mas está com papel: %s", papel2)
 	}
 }
+
+func TestGrupoEdicaoENomeSigla(t *testing.T) {
+	app, _, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	adminCookie := loginAs(t, app, "admin", "admin123")
+
+	// 1. Criar dois grupos: Grupo Pai e Grupo Filho
+	_, respG1 := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "1ª Companhia Teste",
+	}, adminCookie)
+	gid1 := int64(respG1["id"].(float64))
+
+	_, respG2 := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "1º Pelotão Subordinado",
+	}, adminCookie)
+	gid2 := int64(respG2["id"].(float64))
+
+	// Subordina G2 a G1
+	_, respVinc := doJSONReq(app, "POST", "/api/admin/grupos/vinculo", map[string]any{
+		"superior_id":    gid1,
+		"subordinado_id": gid2,
+	}, adminCookie)
+	if respVinc["ok"] != true {
+		t.Fatalf("falha ao criar vínculo: %v", respVinc)
+	}
+
+	// Criar Gerente para G1
+	rrU1, respU1 := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
+		"login":    "gerente.cia",
+		"senha":    "password123",
+		"papel":    "gerente",
+		"grupo_id": gid1,
+	}, adminCookie)
+	if rrU1.Code != http.StatusOK {
+		t.Fatalf("falha ao criar gerente: code %d resp %v", rrU1.Code, respU1)
+	}
+	uid1 := int64(respU1["id"].(float64))
+	_ = uid1
+	_, _ = doJSONReq(app, "POST", fmt.Sprintf("/api/grupos/%d/trocar-gerente", gid1), map[string]string{
+		"login": "gerente.cia",
+	}, adminCookie)
+
+	// Criar Operador avulso em outro grupo
+	_, respG3 := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "Outro Grupo Isolado",
+	}, adminCookie)
+	gid3 := int64(respG3["id"].(float64))
+
+	rrOp, respOp := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
+		"login":    "operador.isolado",
+		"senha":    "password123",
+		"papel":    "operador",
+		"grupo_id": gid3,
+	}, adminCookie)
+	if rrOp.Code != http.StatusOK {
+		t.Fatalf("falha ao criar operador: code %d resp %v", rrOp.Code, respOp)
+	}
+	_ = int64(respOp["id"].(float64))
+
+	gerenteCookie := loginAs(t, app, "gerente.cia", "password123")
+	operadorCookie := loginAs(t, app, "operador.isolado", "password123")
+
+	// 2. Gerente edita o próprio grupo (Nome e Sigla)
+	rr1, resp1 := doJSONReq(app, "PATCH", fmt.Sprintf("/api/grupos/%d", gid1), map[string]any{
+		"nome":   "1ª Cia de Fuzileiros",
+		"codigo": "1CIA",
+	}, gerenteCookie)
+	if rr1.Code != http.StatusOK || resp1["ok"] != true || resp1["nome"] != "1ª Cia de Fuzileiros" || resp1["codigo"] != "1CIA" {
+		t.Fatalf("gerente falhou ao editar próprio grupo: code %d resp %v", rr1.Code, resp1)
+	}
+
+	// 3. Gerente edita grupo subordinado
+	rr2, resp2 := doJSONReq(app, "PATCH", fmt.Sprintf("/api/grupos/%d", gid2), map[string]any{
+		"nome":   "1º Pelotão de Fuzileiros",
+		"codigo": "1PEL",
+	}, gerenteCookie)
+	if rr2.Code != http.StatusOK || resp2["ok"] != true || resp2["nome"] != "1º Pelotão de Fuzileiros" {
+		t.Fatalf("gerente falhou ao editar subordinado: code %d resp %v", rr2.Code, resp2)
+	}
+
+	// 4. Gerente tenta editar grupo isolado (não subordinado) -> 403
+	rr3, _ := doJSONReq(app, "PATCH", fmt.Sprintf("/api/grupos/%d", gid3), map[string]any{
+		"nome": "Invasão de Grupo",
+	}, gerenteCookie)
+	if rr3.Code != http.StatusForbidden {
+		t.Fatalf("esperado 403 Forbidden para gerente editando grupo fora de sua árvore, obtido %d", rr3.Code)
+	}
+
+	// 5. Operador tenta editar grupo -> 403
+	rr4, _ := doJSONReq(app, "PATCH", fmt.Sprintf("/api/grupos/%d", gid1), map[string]any{
+		"nome": "Operador Mudando Nome",
+	}, operadorCookie)
+	if rr4.Code != http.StatusForbidden {
+		t.Fatalf("esperado 403 Forbidden para operador, obtido %d", rr4.Code)
+	}
+
+	// 6. Admin edita qualquer grupo
+	rr5, resp5 := doJSONReq(app, "PATCH", fmt.Sprintf("/api/grupos/%d", gid3), map[string]any{
+		"nome":   "Grupo Isolado Atualizado",
+		"codigo": "ISOL",
+	}, adminCookie)
+	if rr5.Code != http.StatusOK || resp5["ok"] != true {
+		t.Fatalf("admin deveria poder editar qualquer grupo: code %d resp %v", rr5.Code, resp5)
+	}
+}

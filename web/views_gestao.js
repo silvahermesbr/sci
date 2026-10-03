@@ -935,6 +935,571 @@
     }
   }
 
+  /* --- GESTÃO DE GRUPOS & UNIDADES (Modais Compartilhados Admin & Gerente) --- */
+  async function modalGerenciarSetoresGrupo(grupoId, grupoNome) {
+    const html = `
+      <div class="modal" style="max-width:560px;width:95%">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <h3 style="margin:0">🏢 Setores da Unidade — ${esc(grupoNome)}</h3>
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
+        </div>
+        <p style="color:var(--tx2);font-size:12.5px;margin-bottom:14px">Cadastre e gerencie seções ou pelotões pertencentes exclusivamente a este grupo.</p>
+        
+        <div style="background:var(--painel2);border:1px solid var(--borda);border-radius:var(--raio);padding:12px;margin-bottom:14px">
+          <h4 style="margin:0 0 8px;font-size:13px">Novo Setor</h4>
+          <div class="form-linha" style="margin:0;gap:8px">
+            <div class="campo" style="flex:2;margin:0">
+              <label>Nome do Setor *</label>
+              <input id="nSetNome" placeholder="ex.: 1º Pelotão, Almoxarifado...">
+            </div>
+            <div class="campo" style="flex:1;margin:0">
+              <label>Sigla</label>
+              <input id="nSetSigla" placeholder="ex.: 1º PEL">
+            </div>
+            <div class="campo" style="align-self:flex-end;margin:0">
+              <button class="primario" id="btAddSetor" style="min-height:38px">Adicionar</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="listaSetoresGrupo" style="max-height:280px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:8px">
+          <div class="carregando">Carregando setores...</div>
+        </div>
+        <div class="modal-acoes" style="margin-top:14px">
+          <button class="fantasma" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+        </div>
+      </div>
+    `;
+    const m = modal(html);
+    const listaEl = m.querySelector('#listaSetoresGrupo');
+
+    async function carregarLista() {
+      try {
+        listaEl.innerHTML = '<div class="carregando">Atualizando...</div>';
+        const todosSetores = await api('/api/catalogo/setores');
+        const setoresGrupo = (todosSetores || []).filter(s => s.grupo_id === grupoId);
+        if (setoresGrupo.length === 0) {
+          listaEl.innerHTML = '<div class="vazio" style="padding:16px;text-align:center">Nenhum setor cadastrado neste grupo.</div>';
+          return;
+        }
+        listaEl.innerHTML = `
+          <table style="width:100%;font-size:12.5px">
+            <thead><tr><th>Nome</th><th>Sigla</th><th style="text-align:right">Ações</th></tr></thead>
+            <tbody>
+              ${setoresGrupo.map(s => `
+                <tr>
+                  <td><b>${esc(s.nome)}</b></td>
+                  <td>${esc(s.sigla || '—')}</td>
+                  <td style="text-align:right">
+                    <button class="acao-linha" data-editset="${s.id}" data-nome="${esc(s.nome)}" data-sigla="${esc(s.sigla || '')}">Editar</button>
+                    <button class="acao-linha perigo" data-excset="${s.id}">Excluir</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+
+        listaEl.querySelectorAll('[data-editset]').forEach(bt => {
+          bt.onclick = async () => {
+            const sid = bt.dataset.editset;
+            const novoNome = prompt('Novo nome do setor:', bt.dataset.nome);
+            if (!novoNome || !novoNome.trim()) return;
+            const novaSigla = prompt('Sigla (opcional):', bt.dataset.sigla);
+            try {
+              await api(`/api/catalogo/setores/${sid}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ nome: novoNome.trim(), sigla: (novaSigla || '').trim() })
+              });
+              toast('Setor atualizado!');
+              carregarLista();
+            } catch (e) {
+              toast(e.message || 'Falha ao atualizar', 'erro');
+            }
+          };
+        });
+
+        listaEl.querySelectorAll('[data-excset]').forEach(bt => {
+          bt.onclick = async () => {
+            const sid = bt.dataset.excset;
+            if (!confirm('Deseja excluir este setor?')) return;
+            try {
+              await api(`/api/catalogo/setores/${sid}`, { method: 'DELETE' });
+              toast('Setor excluído!');
+              carregarLista();
+            } catch (e) {
+              toast(e.message || 'Falha ao excluir setor', 'erro');
+            }
+          };
+        });
+      } catch (e) {
+        listaEl.innerHTML = '<div class="vazio">Erro ao carregar setores.</div>';
+      }
+    }
+
+    carregarLista();
+
+    m.querySelector('#btAddSetor').onclick = async () => {
+      const nome = m.querySelector('#nSetNome').value.trim();
+      const sigla = m.querySelector('#nSetSigla').value.trim();
+      if (!nome) { toast('Nome do setor obrigatório', 'erro'); return; }
+      try {
+        await api('/api/catalogo/setores', {
+          method: 'POST',
+          body: JSON.stringify({ nome, sigla, grupo_id: grupoId })
+        });
+        toast('Setor adicionado ao grupo!');
+        m.querySelector('#nSetNome').value = '';
+        m.querySelector('#nSetSigla').value = '';
+        carregarLista();
+      } catch (e) {
+        toast(e.message || 'Falha ao cadastrar setor', 'erro');
+      }
+    };
+  }
+
+  function modalCriarGrupo(superiorId, superiorNome, aoFim) {
+    const html = `
+      <div class="modal" style="max-width:480px">
+        <h3 style="margin-top:0">${superiorId ? `Criar Subgrupo subordinado a "${esc(superiorNome)}"` : 'Criar Nova Unidade / Grupo'}</h3>
+        <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">A criação de unidade requer apenas o nome. Em seguida, o administrador pode alocar usuários e definir o gerente da unidade.</p>
+        
+        <div class="campo" style="margin-bottom:16px">
+          <label>Nome da Unidade / Subgrupo *</label>
+          <input id="gNome" placeholder="ex.: 1ª Companhia de Fuzileiros" autofocus>
+        </div>
+
+        <div style="display:flex; gap:8px; justify-content:flex-end">
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+          <button class="primario" id="gGo">Criar Unidade</button>
+        </div>
+      </div>
+    `;
+    const m = modal(html);
+    m.querySelector('#gGo').onclick = async () => {
+      const nome = m.querySelector('#gNome').value.trim();
+      if (!nome) {
+        toast('Informe o nome da unidade', 'erro');
+        return;
+      }
+      try {
+        const r = await api('/api/grupos', {
+          method: 'POST',
+          body: JSON.stringify({ nome })
+        });
+        const novoId = r.id;
+        if (superiorId && novoId) {
+          await api('/api/admin/grupos/vinculo', {
+            method: 'POST',
+            body: JSON.stringify({ superior_id: superiorId, subordinado_id: novoId })
+          });
+        }
+        toast(`Unidade "${nome}" criada com sucesso! (Código ${r.codigo})`);
+        m.remove();
+        if (aoFim) aoFim();
+        else if (window.ViewAdmin) window.ViewAdmin();
+      } catch (e) {}
+    };
+  }
+
+  async function modalAlocarUsuariosGrupo(gid, gnome, contas, aoFim) {
+    let cList = contas;
+    if (!cList || !cList.length) {
+      try { cList = await api('/api/usuarios'); } catch (e) { cList = []; }
+    }
+    const outrasContas = (cList || []).filter(c => c.papel !== 'admin' && c.ativo && c.grupo_id !== gid);
+    const html = `
+      <div class="modal" style="max-width:500px">
+        <h3 style="margin-top:0">👥 Alocar Usuário — ${esc(gnome)}</h3>
+        <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">Mover um usuário existente para integrar este grupo.</p>
+        
+        <div class="campo" style="margin-bottom:16px">
+          <label>Selecione o usuário</label>
+          <select id="mSelAlocarConta">
+            <option value="">— Selecione um usuário cadastrado —</option>
+            ${outrasContas.map(c => `<option value="${c.id}">${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)} [${c.grupo_id ? 'Grupo #' + c.grupo_id : 'Sem grupo'}]</option>`).join('')}
+          </select>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px">
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+          <button class="primario" id="mBtnAlocarGo">Alocar no Grupo</button>
+        </div>
+      </div>
+    `;
+    const m = modal(html);
+    m.querySelector('#mBtnAlocarGo').onclick = async () => {
+      const uid = m.querySelector('#mSelAlocarConta').value;
+      if (!uid) { toast('Selecione um usuário', 'erro'); return; }
+      try {
+        await api(`/api/usuarios/${uid}/mover`, {
+          method: 'PATCH',
+          body: JSON.stringify({ grupo_id: gid })
+        });
+        toast('Usuário alocado na unidade com sucesso!');
+        m.remove();
+        if (aoFim) aoFim();
+        else if (window.ViewAdmin) window.ViewAdmin();
+      } catch (e) {}
+    };
+  }
+
+  async function modalTrocarGerente(gid, gnome, contas, aoFim) {
+    let cList = contas;
+    if (!cList || !cList.length) {
+      try { cList = await api('/api/usuarios'); } catch (e) { cList = []; }
+    }
+    const contasGrupo = (cList || []).filter(c => c.grupo_id === gid && c.papel !== 'admin' && c.ativo);
+    const temGerente = contasGrupo.some(c => c.papel === 'gerente');
+    const html = `
+      <div class="modal" style="max-width:500px">
+        <h3 style="margin-top:0">👤 ${temGerente ? 'Trocar Gerente' : 'Definir Gerente'} — ${esc(gnome)}</h3>
+        <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">
+          ${temGerente 
+            ? 'Selecione um usuário deste grupo para assumir a titularidade. O gerente atual passará a operador.' 
+            : 'Selecione um dos usuários alocados a este grupo para herdar a função de Gerente titular.'}
+        </p>
+        
+        ${contasGrupo.length === 0 ? `
+          <div class="vazio" style="padding:20px; text-align:center; margin-bottom:14px">
+            Nenhum usuário alocado nesta unidade.<br>
+            <small style="color:var(--tx3)">Use o botão <b>Alocar Usuário</b> para vincular militares ao grupo antes de definir o gerente.</small>
+          </div>
+        ` : `
+          <div class="campo" style="margin-bottom:14px">
+            <label>Conta a assumir a gerência</label>
+            <select id="mSelNovaConta">
+              <option value="">— Selecione uma conta do grupo —</option>
+              ${contasGrupo.map(c => `<option value="${esc(c.login)}" ${c.papel === 'gerente' ? 'disabled' : ''}>${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)} ${c.papel === 'gerente' ? '★ Atual Gerente' : ''}</option>`).join('')}
+            </select>
+          </div>
+        `}
+
+        <div style="display:flex; justify-content:space-between; align-items:center">
+          ${temGerente ? `<button type="button" class="perigo acao-linha" id="mBtnRemoverGer" style="padding:4px 8px">Remover Gerente</button>` : `<div></div>`}
+          <div style="display:flex; gap:8px">
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+            ${contasGrupo.length > 0 ? `<button class="primario" id="mBtnTrocarGer">Promover a Gerente</button>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+    const m = modal(html);
+    const btnRem = m.querySelector('#mBtnRemoverGer');
+    if (btnRem) {
+      btnRem.onclick = async () => {
+        try {
+          await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login: "__REMOVE__" }) });
+          toast('Gerência vaga com sucesso.');
+          m.remove();
+          if (aoFim) aoFim();
+          else if (window.ViewAdmin) window.ViewAdmin();
+        } catch (e) {}
+      };
+    }
+    const btn = m.querySelector('#mBtnTrocarGer');
+    if (btn) {
+      btn.onclick = async () => {
+        const login = m.querySelector('#mSelNovaConta').value;
+        if (!login) { toast('Selecione a conta para promover', 'erro'); return; }
+        try {
+          await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login }) });
+          toast('Gerente atribuído com sucesso! Função herdada.');
+          m.remove();
+          if (aoFim) aoFim();
+          else if (window.ViewAdmin) window.ViewAdmin();
+        } catch (e) {}
+      };
+    }
+  }
+
+  async function modalGerenciarSubordinacao(gid, gnome, grupos, aoFim) {
+    let gList = grupos;
+    if (!gList || !gList.length) {
+      try { gList = await api('/api/grupos'); } catch (e) { gList = []; }
+    }
+    const gAtual = (gList || []).find(x => x.id === gid);
+    const sups = (gAtual && gAtual.superiores_ids) || [];
+    const supAtualId = sups[0] || null;
+
+    const html = `
+      <div class="modal" style="max-width:500px">
+        <h3 style="margin-top:0">⛓️ Subordinação — ${esc(gnome)}</h3>
+        <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">Defina a qual unidade superior este grupo reporta na cadeia de comando.</p>
+
+        <div class="campo" style="margin-bottom:14px">
+          <label>Unidade Superior (Comando Direto)</label>
+          <select id="mSelSuperior">
+            <option value="">— Sem Superior (Nível Raiz) —</option>
+            ${(gList || []).filter(x => x.id !== gid).map(x => `<option value="${x.id}" ${x.id === supAtualId ? 'selected' : ''}>${esc(x.nome)} (#${x.codigo})</option>`).join('')}
+          </select>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px">
+          ${supAtualId ? `<button type="button" class="perigo" id="mBtnRemoverSub">Desvincular Superior</button>` : '<div></div>'}
+          <div style="display:flex; gap:8px">
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+            <button class="primario" id="mBtnSalvarSub">Salvar Subordinação</button>
+          </div>
+        </div>
+      </div>
+    `;
+    const m = modal(html);
+
+    m.querySelector('#mBtnSalvarSub').onclick = async () => {
+      const novoSupId = +m.querySelector('#mSelSuperior').value;
+      try {
+        if (supAtualId && supAtualId !== novoSupId) {
+          await api(`/api/admin/grupos/vinculo?superior_id=${supAtualId}&subordinado_id=${gid}`, { method: 'DELETE', body: '{}' });
+        }
+        if (novoSupId > 0) {
+          await api('/api/admin/grupos/vinculo', { method: 'POST', body: JSON.stringify({ superior_id: novoSupId, subordinado_id: gid }) });
+        }
+        toast('Subordinação atualizada');
+        m.remove();
+        if (aoFim) aoFim();
+        else if (window.ViewAdmin) window.ViewAdmin();
+      } catch (e) {}
+    };
+
+    if (m.querySelector('#mBtnRemoverSub')) {
+      m.querySelector('#mBtnRemoverSub').onclick = async () => {
+        try {
+          await api(`/api/admin/grupos/vinculo?superior_id=${supAtualId}&subordinado_id=${gid}`, { method: 'DELETE', body: '{}' });
+          toast('Subordinação removida');
+          m.remove();
+          if (aoFim) aoFim();
+          else if (window.ViewAdmin) window.ViewAdmin();
+        } catch (e) {}
+      };
+    }
+  }
+
+  async function modalAuditarContas(gid, nome, contas) {
+    let cList = contas;
+    if (!cList || !cList.length) {
+      try { cList = await api('/api/usuarios'); } catch (e) { cList = []; }
+    }
+    const cGrupo = (cList || []).filter(c => c.grupo_id === gid);
+    const html = `
+      <div class="modal" style="max-width:800px; max-height:85vh; display:flex; flex-direction:column">
+        <h3 style="margin-top:0">📊 Contas & Usuários: ${esc(nome)}</h3>
+        <div style="overflow-y:auto; flex:1">
+          <table style="width:100%; margin-top:8px">
+            <thead><tr><th>ID</th><th>Login</th><th>Nome de Guerra</th><th>Papel</th><th>Status</th></tr></thead>
+            <tbody>
+              ${cGrupo.length ? cGrupo.map(c => `
+                <tr>
+                  <td>#${c.id}</td>
+                  <td><b>${esc(c.login)}</b></td>
+                  <td>${esc(c.nome_guerra || '—')}</td>
+                  <td>${rotuloPapel(c.papel)}</td>
+                  <td><span style="color:${c.ativo ? 'var(--verde-claro)' : 'var(--tx3)'}; font-weight:700">${c.ativo ? 'Ativa' : 'Desativada'}</span></td>
+                </tr>
+              `).join('') : '<tr><td colspan="5"><span class="vazio">Nenhuma conta cadastrada neste grupo.</span></td></tr>'}
+            </tbody>
+          </table>
+        </div>
+        <div style="margin-top:16px; text-align:right; border-top:1px solid var(--borda); padding-top:10px">
+          <button class="primario" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+        </div>
+      </div>
+    `;
+    modal(html);
+  }
+
+  function modalNukeFinal(gid, gnome, divAnterior, aoFim) {
+    const div = modal(`
+      <div class="modal-inner">
+        <h3 style="color:var(--verm)">TEM CERTEZA?</h3>
+        <p style="color:var(--tx2);font-size:13px;margin:6px 0">Última confirmação: <b>${esc(gnome)}</b> será APAGADO com todo o histórico, para sempre. Digite sua senha de admin para autorizar.</p>
+        <div class="campo"><label>Senha de admin</label><input type="password" id="fSenhaNuke" autocomplete="off"></div>
+        <div class="modal-acoes">
+          <button class="fantasma" id="mNX">Cancelar</button>
+          <button class="perigo" id="mNGo">☢️ APAGAR TUDO AGORA</button>
+        </div>
+      </div>
+    `);
+    if (!div) return;
+    div.querySelector('#mNX').onclick = () => div.fechar && div.fechar();
+    div.querySelector('#mNGo').onclick = async () => {
+      const senha = div.querySelector('#fSenhaNuke').value;
+      if (!senha) { toast('Digite a senha de admin', 'erro'); return; }
+      try {
+        const r = await api(`/api/grupos/${gid}?nuke=1`, { method: 'DELETE', body: JSON.stringify({ senha }) });
+        toast(`☢️ Grupo apagado (NUKE) — ${r.contas_removidas} conta(s), ${r.pessoas_removidas} pessoa(s), ${r.conferencias_removidas} conferência(s)`);
+        if (divAnterior && divAnterior.fechar) divAnterior.fechar();
+        div.fechar && div.fechar();
+        if (aoFim) aoFim();
+        else if (window.ViewAdmin) window.ViewAdmin();
+      } catch (e) {}
+    };
+    const inp = div.querySelector('#fSenhaNuke');
+    if (inp) inp.focus();
+  }
+
+  function modalExcluirGrupo(gid, gnome, aoFim) {
+    const div = modal(`
+      <div class="modal-inner">
+        <h3>Excluir grupo — ${esc(gnome)}</h3>
+        <p style="color:var(--tx2);font-size:13px;margin:6px 0">Exclusão normal: só é permitida se o grupo estiver vazio.</p>
+        <div class="modal-acoes">
+          <button class="fantasma" id="mX">Cancelar</button>
+          <button class="perigo" id="mGo">Tentar exclusão normal</button>
+        </div>
+        <div style="border-top:1px solid var(--borda);margin-top:12px;padding-top:10px">
+          <p style="color:var(--verm);font-size:13px;margin:4px 0"><b>Exclusão FORÇADA</b> — remove o grupo INTEIRO mesmo com contas e pessoal (tudo é apagado). Grupos com histórico de conferências NUNCA são excluídos. Requer sua senha de admin.</p>
+          <div class="campo"><label>Senha de admin</label><input type="password" id="fSenha"></div>
+          <div class="modal-acoes"><button class="perigo" id="mForce">Excluir forçadamente</button></div>
+        </div>
+        <div style="border-top:1px solid var(--verm);margin-top:12px;padding-top:10px">
+          <p style="color:var(--verm);font-size:13px;margin:4px 0"><b>☢️ MODO NUKE</b> — exclusão TOTAL e IRREVERSÍVEL: apaga o grupo, contas, pessoal, catálogos e <b>TODO o histórico de conferências</b> (presenças e comentários). Sem backup de seleção — restaure pelo backup do sistema se algo der errado.</p>
+          <div class="modal-acoes"><button class="perigo" id="mNuke">☢️ NUKE — apagar TUDO</button></div>
+        </div>
+      </div>
+    `);
+    if (!div) return;
+    div.querySelector('#mX').onclick = () => div.fechar && div.fechar();
+    div.querySelector('#mGo').onclick = async () => {
+      try {
+        await api(`/api/grupos/${gid}`, { method: 'DELETE' });
+        toast('Grupo excluído');
+        div.fechar && div.fechar();
+        if (aoFim) aoFim();
+        else if (window.ViewAdmin) window.ViewAdmin();
+      } catch (e) {}
+    };
+    div.querySelector('#mForce').onclick = async () => {
+      const senha = div.querySelector('#fSenha').value;
+      if (!senha) { toast('Digite a senha de admin', 'erro'); return; }
+      try {
+        const r = await api(`/api/grupos/${gid}?forcar=1`, { method: 'DELETE', body: JSON.stringify({ senha }) });
+        toast(`Grupo excluído forçadamente — ${r.contas_removidas} conta(s), ${r.pessoas_removidas} pessoa(s) removidas`);
+        div.fechar && div.fechar();
+        if (aoFim) aoFim();
+        else if (window.ViewAdmin) window.ViewAdmin();
+      } catch (e) {}
+    };
+    div.querySelector('#mNuke').onclick = async () => {
+      if (!(await confirmar(`☢️ Quer fazer isso mesmo? Isto APAGA "${gnome}" — contas, pessoal, catálogos e TODO o histórico de conferências. Não tem volta.`))) return;
+      modalNukeFinal(gid, gnome, div, aoFim);
+    };
+  }
+
+  function modalEditarGrupo(n, aoFim, ctx) {
+    const eu = quem() || {};
+    const isAdmin = eu.papel === 'admin';
+    const temGer = !!n.gerente;
+    const html = `
+      <div class="modal" style="max-width:520px; width:95%">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+          <h3 style="margin:0; font-size:16px">⚙️ Gerenciar Unidade</h3>
+          <span>${codigoChip(n.codigo)}</span>
+        </div>
+        
+        <!-- Resumo da Unidade -->
+        <div style="background:var(--painel3); padding:10px 14px; border-radius:8px; border:1px solid var(--borda); margin-bottom:14px; font-size:12.5px; line-height:1.6">
+          <div style="font-size:14px; font-weight:700; color:var(--tx); margin-bottom:4px">${esc(n.nome)} <small style="color:var(--tx3); font-family:monospace">#${n.id}</small></div>
+          <div style="color:var(--tx2)">
+            👤 Gerente: <b>${esc(n.gerente || 'Sem gerente definido')}</b><br>
+            👥 Efetivo: <b>${n.efetivo_total || n.efetivo || 0}</b> · 🔑 Contas: <b>${n.contas_total || n.contas || 0}</b> · 🌲 Subgrupos: <b>${n.subgrupos_total !== undefined ? n.subgrupos_total : (n.filhos ? n.filhos.length : 0)}</b>
+          </div>
+        </div>
+
+        <!-- Formulário de Edição Direta (Nome e Sigla/Código) -->
+        <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:12px; margin-bottom:14px">
+          <h4 style="margin:0 0 10px; font-size:13px">✏️ Editar Dados da Unidade</h4>
+          <div class="form-linha" style="margin:0; gap:8px">
+            <div class="campo" style="flex:2; margin:0">
+              <label>Nome da Unidade *</label>
+              <input id="mEdNome" value="${esc(n.nome)}">
+            </div>
+            <div class="campo" style="flex:1; margin:0">
+              <label>Sigla / Código</label>
+              <input id="mEdCodigo" value="${esc(n.codigo || '')}" placeholder="ex.: 1CIA" style="text-transform:uppercase">
+            </div>
+            <div class="campo" style="align-self:flex-end; margin:0">
+              <button class="primario" id="mEdSalvarDados" style="min-height:38px">Salvar</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Botões de Ações Adicionais -->
+        <div style="display:flex; flex-direction:column; gap:8px">
+          <button type="button" class="acao-linha" id="mEdSetores" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+            🏢 <b style="margin-left:6px">Editar Setores da Unidade</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Setores/Seções</span>
+          </button>
+          <button type="button" class="acao-linha" id="mEdAuditar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+            📊 <b style="margin-left:6px">Auditar Contas & Efetivo</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Auditoria</span>
+          </button>
+          ${isAdmin ? `
+            <button type="button" class="acao-linha" id="mEdSubgrupo" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              ➕ <b style="margin-left:6px">Criar Subgrupo</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Novo subordinado</span>
+            </button>
+            <button type="button" class="acao-linha" id="mEdAlocar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              👥 <b style="margin-left:6px">Alocar Usuário</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Associar operador</span>
+            </button>
+            <button type="button" class="acao-linha" id="mEdGerente" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              👤 <b style="margin-left:6px">${temGer ? 'Trocar Gerente' : 'Definir Gerente'}</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Liderança</span>
+            </button>
+            <button type="button" class="acao-linha" id="mEdSubordinar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              ⛓️ <b style="margin-left:6px">Subordinação Hierárquica</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Vínculo superior</span>
+            </button>
+            <button type="button" class="acao-linha perigo" id="mEdExcluir" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
+              🗑️ <b style="margin-left:6px">Excluir Unidade</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Remoção segura</span>
+            </button>
+          ` : ''}
+        </div>
+
+        <div class="modal-acoes" style="margin-top:16px">
+          <button type="button" class="fantasma" id="mEdFechar">Fechar</button>
+        </div>
+      </div>
+    `;
+    const div = modal(html);
+    if (!div) return;
+    div.querySelector('#mEdFechar').onclick = () => div.fechar && div.fechar();
+
+    div.querySelector('#mEdSalvarDados').onclick = async () => {
+      const novoNome = div.querySelector('#mEdNome').value.trim();
+      const novoCod = div.querySelector('#mEdCodigo').value.trim().toUpperCase();
+      if (!novoNome) {
+        toast('Nome da unidade é obrigatório', 'erro');
+        return;
+      }
+      try {
+        const r = await api(`/api/grupos/${n.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ nome: novoNome, codigo: novoCod })
+        });
+        n.nome = r.nome || novoNome;
+        n.codigo = r.codigo || novoCod;
+        toast(`Unidade "${novoNome}" atualizada com sucesso!`);
+        div.fechar && div.fechar();
+        if (aoFim) aoFim();
+        else if (window.ViewAdmin) window.ViewAdmin();
+      } catch (e) {
+        toast(e.message || 'Falha ao atualizar unidade', 'erro');
+      }
+    };
+
+    div.querySelector('#mEdSetores').onclick = () => { div.fechar && div.fechar(); modalGerenciarSetoresGrupo(n.id, n.nome); };
+    div.querySelector('#mEdAuditar').onclick = () => { div.fechar && div.fechar(); modalAuditarContas(n.id, n.nome, ctx && ctx.contas); };
+
+    if (isAdmin) {
+      const bSub = div.querySelector('#mEdSubgrupo');
+      if (bSub) bSub.onclick = () => { div.fechar && div.fechar(); modalCriarGrupo(n.id, n.nome, aoFim); };
+      const bAlo = div.querySelector('#mEdAlocar');
+      if (bAlo) bAlo.onclick = () => { div.fechar && div.fechar(); modalAlocarUsuariosGrupo(n.id, n.nome, ctx && ctx.contas, aoFim); };
+      const bGer = div.querySelector('#mEdGerente');
+      if (bGer) bGer.onclick = () => { div.fechar && div.fechar(); modalTrocarGerente(n.id, n.nome, ctx && ctx.contas, aoFim); };
+      const bSubord = div.querySelector('#mEdSubordinar');
+      if (bSubord) bSubord.onclick = () => { div.fechar && div.fechar(); modalGerenciarSubordinacao(n.id, n.nome, ctx && ctx.grupos, aoFim); };
+      const bExc = div.querySelector('#mEdExcluir');
+      if (bExc) bExc.onclick = () => { div.fechar && div.fechar(); modalExcluirGrupo(n.id, n.nome, aoFim); };
+    }
+  }
+
   /* --- ADMIN › grupos: árvore nested colapsável + foco recursivo + ações completas --- */
   async function admGrupos() {
     const [grupos, contas, arvore] = await Promise.all([api('/api/grupos'), api('/api/usuarios'), api('/api/grupos/arvore')]);
@@ -996,7 +1561,7 @@
       }
 
       // Botão de Novo Grupo Raiz
-      $('#btNovoGrupoRaiz').onclick = () => modalCriarGrupo(null);
+      $('#btNovoGrupoRaiz').onclick = () => modalCriarGrupo(null, null, () => window.ViewAdmin());
 
       // Botão Consolidado "Editar" (abre modal de gestão da unidade)
       $('#arvoreAdm').querySelectorAll('[data-editargrupo]').forEach(b => {
@@ -1004,7 +1569,7 @@
           e.stopPropagation();
           const gid = +b.dataset.editargrupo;
           const no = buscarNoPorId(arvore, gid);
-          if (no) modalEditarGrupo(no);
+          if (no) modalEditarGrupo(no, () => window.ViewAdmin(), { grupos, contas });
         };
       });
 
@@ -1029,490 +1594,6 @@
         ligarEventosArvore();
       };
     };
-
-    function modalEditarGrupo(n) {
-      const temGer = !!n.gerente;
-      const html = `
-        <div class="modal" style="max-width:500px">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-            <h3 style="margin:0; font-size:16px">⚙️ Gerenciar Unidade</h3>
-            <span>${codigoChip(n.codigo)}</span>
-          </div>
-          <div style="background:var(--painel3); padding:10px 14px; border-radius:8px; border:1px solid var(--borda); margin-bottom:16px; font-size:12.5px; line-height:1.6">
-            <div style="font-size:14px; font-weight:700; color:var(--tx); margin-bottom:4px">${esc(n.nome)} <small style="color:var(--tx3); font-family:monospace">#${n.id}</small></div>
-            <div style="color:var(--tx2)">
-              👤 Gerente: <b>${esc(n.gerente || 'Sem gerente definido')}</b><br>
-              👥 Efetivo: <b>${n.efetivo_total || n.efetivo}</b> · 🔑 Contas: <b>${n.contas_total || n.contas || 0}</b> · 🌲 Subgrupos: <b>${n.subgrupos_total !== undefined ? n.subgrupos_total : (n.filhos ? n.filhos.length : 0)}</b>
-            </div>
-          </div>
-
-          <div style="display:flex; flex-direction:column; gap:8px">
-            <button type="button" class="acao-linha" id="mEdSubgrupo" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
-              ➕ <b style="margin-left:6px">Criar Subgrupo</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Novo subordinado</span>
-            </button>
-            <button type="button" class="acao-linha" id="mEdSetores" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
-              🏢 <b style="margin-left:6px">Editar Setores da Unidade</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Setores/Seções</span>
-            </button>
-            <button type="button" class="acao-linha" id="mEdAlocar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
-              👥 <b style="margin-left:6px">Alocar Usuário</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Associar operador</span>
-            </button>
-            <button type="button" class="acao-linha" id="mEdGerente" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
-              👤 <b style="margin-left:6px">${temGer ? 'Trocar Gerente' : 'Definir Gerente'}</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Liderança</span>
-            </button>
-            <button type="button" class="acao-linha" id="mEdSubordinar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
-              ⛓️ <b style="margin-left:6px">Subordinação Hierárquica</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Vínculo superior</span>
-            </button>
-            <button type="button" class="acao-linha" id="mEdAuditar" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
-              📊 <b style="margin-left:6px">Auditar Contas & Efetivo</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Auditoria</span>
-            </button>
-            <button type="button" class="acao-linha perigo" id="mEdExcluir" style="justify-content:flex-start; padding:10px 14px; font-size:13px">
-              🗑️ <b style="margin-left:6px">Excluir Unidade</b> <span style="margin-left:auto; font-size:11px; color:var(--tx3)">Remoção segura</span>
-            </button>
-          </div>
-
-          <div class="modal-acoes" style="margin-top:16px">
-            <button type="button" class="fantasma" id="mEdFechar">Fechar</button>
-          </div>
-        </div>
-      `;
-      const div = modal(html);
-      if (!div) return;
-      div.querySelector('#mEdFechar').onclick = () => div.fechar && div.fechar();
-      div.querySelector('#mEdSubgrupo').onclick = () => { div.fechar && div.fechar(); modalCriarGrupo(n.id, n.nome); };
-      div.querySelector('#mEdSetores').onclick = () => { div.fechar && div.fechar(); modalGerenciarSetoresGrupo(n.id, n.nome); };
-      div.querySelector('#mEdAlocar').onclick = () => { div.fechar && div.fechar(); modalAlocarUsuariosGrupo(n.id, n.nome); };
-      div.querySelector('#mEdGerente').onclick = () => { div.fechar && div.fechar(); modalTrocarGerente(n.id, n.nome); };
-      div.querySelector('#mEdSubordinar').onclick = () => { div.fechar && div.fechar(); modalGerenciarSubordinacao(n.id, n.nome); };
-      div.querySelector('#mEdAuditar').onclick = () => { div.fechar && div.fechar(); modalAuditarContas(n.id, n.nome); };
-      div.querySelector('#mEdExcluir').onclick = () => { div.fechar && div.fechar(); modalExcluirGrupo(n.id, n.nome); };
-    }
-
-    async function modalGerenciarSetoresGrupo(grupoId, grupoNome) {
-      const html = `
-        <div class="modal" style="max-width:560px;width:95%">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <h3 style="margin:0">🏢 Setores da Unidade — ${esc(grupoNome)}</h3>
-            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
-          </div>
-          <p style="color:var(--tx2);font-size:12.5px;margin-bottom:14px">Cadastre e gerencie seções ou pelotões pertencentes exclusivamente a este grupo.</p>
-          
-          <div style="background:var(--painel2);border:1px solid var(--borda);border-radius:var(--raio);padding:12px;margin-bottom:14px">
-            <h4 style="margin:0 0 8px;font-size:13px">Novo Setor</h4>
-            <div class="form-linha" style="margin:0;gap:8px">
-              <div class="campo" style="flex:2;margin:0">
-                <label>Nome do Setor *</label>
-                <input id="nSetNome" placeholder="ex.: 1º Pelotão, Almoxarifado...">
-              </div>
-              <div class="campo" style="flex:1;margin:0">
-                <label>Sigla</label>
-                <input id="nSetSigla" placeholder="ex.: 1º PEL">
-              </div>
-              <div class="campo" style="align-self:flex-end;margin:0">
-                <button class="primario" id="btAddSetor" style="min-height:38px">Adicionar</button>
-              </div>
-            </div>
-          </div>
-
-          <div id="listaSetoresGrupo" style="max-height:280px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:8px">
-            <div class="carregando">Carregando setores...</div>
-          </div>
-          <div class="modal-acoes" style="margin-top:14px">
-            <button class="fantasma" onclick="this.closest('.modal-mask').remove()">Fechar</button>
-          </div>
-        </div>
-      `;
-      const m = modal(html);
-      const listaEl = m.querySelector('#listaSetoresGrupo');
-
-      async function carregarLista() {
-        try {
-          listaEl.innerHTML = '<div class="carregando">Atualizando...</div>';
-          const todosSetores = await api('/api/catalogo/setores');
-          const setoresGrupo = (todosSetores || []).filter(s => s.grupo_id === grupoId);
-          if (setoresGrupo.length === 0) {
-            listaEl.innerHTML = '<div class="vazio" style="padding:16px;text-align:center">Nenhum setor cadastrado neste grupo.</div>';
-            return;
-          }
-          listaEl.innerHTML = `
-            <table style="width:100%;font-size:12.5px">
-              <thead><tr><th>Nome</th><th>Sigla</th><th style="text-align:right">Ações</th></tr></thead>
-              <tbody>
-                ${setoresGrupo.map(s => `
-                  <tr>
-                    <td><b>${esc(s.nome)}</b></td>
-                    <td>${esc(s.sigla || '—')}</td>
-                    <td style="text-align:right">
-                      <button class="acao-linha" data-editset="${s.id}" data-nome="${esc(s.nome)}" data-sigla="${esc(s.sigla || '')}">Editar</button>
-                      <button class="acao-linha perigo" data-excset="${s.id}">Excluir</button>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          `;
-
-          listaEl.querySelectorAll('[data-editset]').forEach(bt => {
-            bt.onclick = async () => {
-              const sid = bt.dataset.editset;
-              const novoNome = prompt('Novo nome do setor:', bt.dataset.nome);
-              if (!novoNome || !novoNome.trim()) return;
-              const novaSigla = prompt('Sigla (opcional):', bt.dataset.sigla);
-              try {
-                await api(`/api/catalogo/setores/${sid}`, {
-                  method: 'PATCH',
-                  body: JSON.stringify({ nome: novoNome.trim(), sigla: (novaSigla || '').trim() })
-                });
-                toast('Setor atualizado!');
-                carregarLista();
-              } catch (e) {
-                toast(e.message || 'Falha ao atualizar', 'erro');
-              }
-            };
-          });
-
-          listaEl.querySelectorAll('[data-excset]').forEach(bt => {
-            bt.onclick = async () => {
-              const sid = bt.dataset.excset;
-              if (!confirm('Deseja excluir este setor?')) return;
-              try {
-                await api(`/api/catalogo/setores/${sid}`, { method: 'DELETE' });
-                toast('Setor excluído!');
-                carregarLista();
-              } catch (e) {
-                toast(e.message || 'Falha ao excluir setor', 'erro');
-              }
-            };
-          });
-        } catch (e) {
-          listaEl.innerHTML = '<div class="vazio">Erro ao carregar setores.</div>';
-        }
-      }
-
-      carregarLista();
-
-      m.querySelector('#btAddSetor').onclick = async () => {
-        const nome = m.querySelector('#nSetNome').value.trim();
-        const sigla = m.querySelector('#nSetSigla').value.trim();
-        if (!nome) { toast('Nome do setor obrigatório', 'erro'); return; }
-        try {
-          await api('/api/catalogo/setores', {
-            method: 'POST',
-            body: JSON.stringify({ nome, sigla, grupo_id: grupoId })
-          });
-          toast('Setor adicionado ao grupo!');
-          m.querySelector('#nSetNome').value = '';
-          m.querySelector('#nSetSigla').value = '';
-          carregarLista();
-        } catch (e) {
-          toast(e.message || 'Falha ao cadastrar setor', 'erro');
-        }
-      };
-    }
-
-    function modalCriarGrupo(superiorId, superiorNome) {
-      const html = `
-        <div class="modal" style="max-width:480px">
-          <h3 style="margin-top:0">${superiorId ? `Criar Subgrupo subordinado a "${esc(superiorNome)}"` : 'Criar Nova Unidade / Grupo'}</h3>
-          <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">A criação de unidade requer apenas o nome. Em seguida, o administrador pode alocar usuários e definir o gerente da unidade.</p>
-          
-          <div class="campo" style="margin-bottom:16px">
-            <label>Nome da Unidade / Subgrupo *</label>
-            <input id="gNome" placeholder="ex.: 1ª Companhia de Fuzileiros" autofocus>
-          </div>
-
-          <div style="display:flex; gap:8px; justify-content:flex-end">
-            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-            <button class="primario" id="gGo">Criar Unidade</button>
-          </div>
-        </div>
-      `;
-      const m = modal(html);
-      m.querySelector('#gGo').onclick = async () => {
-        const nome = m.querySelector('#gNome').value.trim();
-        if (!nome) {
-          toast('Informe o nome da unidade', 'erro');
-          return;
-        }
-        try {
-          const r = await api('/api/grupos', {
-            method: 'POST',
-            body: JSON.stringify({ nome })
-          });
-          const novoId = r.id;
-          if (superiorId && novoId) {
-            await api('/api/admin/grupos/vinculo', {
-              method: 'POST',
-              body: JSON.stringify({ superior_id: superiorId, subordinado_id: novoId })
-            });
-          }
-          toast(`Unidade "${nome}" criada com sucesso! (Código ${r.codigo})`);
-          m.remove();
-          window.ViewAdmin();
-        } catch (e) {}
-      };
-    }
-
-    function modalAlocarUsuariosGrupo(gid, gnome) {
-      const outrasContas = contas.filter(c => c.papel !== 'admin' && c.ativo && c.grupo_id !== gid);
-      const html = `
-        <div class="modal" style="max-width:500px">
-          <h3 style="margin-top:0">👥 Alocar Usuário — ${esc(gnome)}</h3>
-          <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">Mover um usuário existente para integrar este grupo.</p>
-          
-          <div class="campo" style="margin-bottom:16px">
-            <label>Selecione o usuário</label>
-            <select id="mSelAlocarConta">
-              <option value="">— Selecione um usuário cadastrado —</option>
-              ${outrasContas.map(c => `<option value="${c.id}">${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)} [${c.grupo_id ? 'Grupo #' + c.grupo_id : 'Sem grupo'}]</option>`).join('')}
-            </select>
-          </div>
-
-          <div style="display:flex; justify-content:flex-end; gap:8px">
-            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-            <button class="primario" id="mBtnAlocarGo">Alocar no Grupo</button>
-          </div>
-        </div>
-      `;
-      const m = modal(html);
-      m.querySelector('#mBtnAlocarGo').onclick = async () => {
-        const uid = m.querySelector('#mSelAlocarConta').value;
-        if (!uid) { toast('Selecione um usuário', 'erro'); return; }
-        try {
-          await api(`/api/usuarios/${uid}/mover`, {
-            method: 'PATCH',
-            body: JSON.stringify({ grupo_id: gid })
-          });
-          toast('Usuário alocado na unidade com sucesso!');
-          m.remove();
-          window.ViewAdmin();
-        } catch (e) {}
-      };
-    }
-
-    function modalTrocarGerente(gid, gnome) {
-      const contasGrupo = contas.filter(c => c.grupo_id === gid && c.papel !== 'admin' && c.ativo);
-      const temGerente = contasGrupo.some(c => c.papel === 'gerente');
-      const html = `
-        <div class="modal" style="max-width:500px">
-          <h3 style="margin-top:0">👤 ${temGerente ? 'Trocar Gerente' : 'Definir Gerente'} — ${esc(gnome)}</h3>
-          <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">
-            ${temGerente 
-              ? 'Selecione um usuário deste grupo para assumir a titularidade. O gerente atual passará a operador.' 
-              : 'Selecione um dos usuários alocados a este grupo para herdar a função de Gerente titular.'}
-          </p>
-          
-          ${contasGrupo.length === 0 ? `
-            <div class="vazio" style="padding:20px; text-align:center; margin-bottom:14px">
-              Nenhum usuário alocado nesta unidade.<br>
-              <small style="color:var(--tx3)">Use o botão <b>Alocar Usuário</b> para vincular militares ao grupo antes de definir o gerente.</small>
-            </div>
-          ` : `
-            <div class="campo" style="margin-bottom:14px">
-              <label>Conta a assumir a gerência</label>
-              <select id="mSelNovaConta">
-                <option value="">— Selecione uma conta do grupo —</option>
-                ${contasGrupo.map(c => `<option value="${esc(c.login)}" ${c.papel === 'gerente' ? 'disabled' : ''}>${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)} ${c.papel === 'gerente' ? '★ Atual Gerente' : ''}</option>`).join('')}
-              </select>
-            </div>
-          `}
-
-          <div style="display:flex; justify-content:space-between; align-items:center">
-            ${temGerente ? `<button type="button" class="perigo acao-linha" id="mBtnRemoverGer" style="padding:4px 8px">Remover Gerente</button>` : `<div></div>`}
-            <div style="display:flex; gap:8px">
-              <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-              ${contasGrupo.length > 0 ? `<button class="primario" id="mBtnTrocarGer">Promover a Gerente</button>` : ''}
-            </div>
-          </div>
-        </div>
-      `;
-      const m = modal(html);
-      const btnRem = m.querySelector('#mBtnRemoverGer');
-      if (btnRem) {
-        btnRem.onclick = async () => {
-          try {
-            await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login: "__REMOVE__" }) });
-            toast('Gerência vaga com sucesso.');
-            m.remove();
-            window.ViewAdmin();
-          } catch (e) {}
-        };
-      }
-      const btn = m.querySelector('#mBtnTrocarGer');
-      if (btn) {
-        btn.onclick = async () => {
-          const login = m.querySelector('#mSelNovaConta').value;
-          if (!login) { toast('Selecione a conta para promover', 'erro'); return; }
-          try {
-            await api(`/api/grupos/${gid}/trocar-gerente`, { method: 'POST', body: JSON.stringify({ login }) });
-            toast('Gerente atribuído com sucesso! Função herdada.');
-            m.remove();
-            window.ViewAdmin();
-          } catch (e) {}
-        };
-      }
-    }
-
-    function modalGerenciarSubordinacao(gid, gnome) {
-      const gAtual = grupos.find(x => x.id === gid);
-      const sups = (gAtual && gAtual.superiores_ids) || [];
-      const supAtualId = sups[0] || null;
-
-      const html = `
-        <div class="modal" style="max-width:500px">
-          <h3 style="margin-top:0">⛓️ Subordinação — ${esc(gnome)}</h3>
-          <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">Defina a qual unidade superior este grupo reporta na cadeia de comando.</p>
-
-          <div class="campo" style="margin-bottom:14px">
-            <label>Unidade Superior (Comando Direto)</label>
-            <select id="mSelSuperior">
-              <option value="">— Sem Superior (Nível Raiz) —</option>
-              ${grupos.filter(x => x.id !== gid).map(x => `<option value="${x.id}" ${x.id === supAtualId ? 'selected' : ''}>${esc(x.nome)} (#${x.codigo})</option>`).join('')}
-            </select>
-          </div>
-
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px">
-            ${supAtualId ? `<button type="button" class="perigo" id="mBtnRemoverSub">Desvincular Superior</button>` : '<div></div>'}
-            <div style="display:flex; gap:8px">
-              <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-              <button class="primario" id="mBtnSalvarSub">Salvar Subordinação</button>
-            </div>
-          </div>
-        </div>
-      `;
-      const m = modal(html);
-
-      m.querySelector('#mBtnSalvarSub').onclick = async () => {
-        const novoSupId = +m.querySelector('#mSelSuperior').value;
-        try {
-          if (supAtualId && supAtualId !== novoSupId) {
-            await api(`/api/admin/grupos/vinculo?superior_id=${supAtualId}&subordinado_id=${gid}`, { method: 'DELETE', body: '{}' });
-          }
-          if (novoSupId > 0) {
-            await api('/api/admin/grupos/vinculo', { method: 'POST', body: JSON.stringify({ superior_id: novoSupId, subordinado_id: gid }) });
-          }
-          toast('Subordinação atualizada');
-          m.remove();
-          window.ViewAdmin();
-        } catch (e) {}
-      };
-
-      if (m.querySelector('#mBtnRemoverSub')) {
-        m.querySelector('#mBtnRemoverSub').onclick = async () => {
-          try {
-            await api(`/api/admin/grupos/vinculo?superior_id=${supAtualId}&subordinado_id=${gid}`, { method: 'DELETE', body: '{}' });
-            toast('Subordinação removida');
-            m.remove();
-            window.ViewAdmin();
-          } catch (e) {}
-        };
-      }
-    }
-
-    function modalAuditarContas(gid, nome) {
-      const cGrupo = contas.filter(c => c.grupo_id === gid);
-      const html = `
-        <div class="modal" style="max-width:800px; max-height:85vh; display:flex; flex-direction:column">
-          <h3 style="margin-top:0">📊 Contas & Usuários: ${esc(nome)}</h3>
-          <div style="overflow-y:auto; flex:1">
-            <table style="width:100%; margin-top:8px">
-              <thead><tr><th>ID</th><th>Login</th><th>Nome de Guerra</th><th>Papel</th><th>Status</th></tr></thead>
-              <tbody>
-                ${cGrupo.length ? cGrupo.map(c => `
-                  <tr>
-                    <td>#${c.id}</td>
-                    <td><b>${esc(c.login)}</b></td>
-                    <td>${esc(c.nome_guerra || '—')}</td>
-                    <td>${rotuloPapel(c.papel)}</td>
-                    <td><span style="color:${c.ativo ? 'var(--verde-claro)' : 'var(--tx3)'}; font-weight:700">${c.ativo ? 'Ativa' : 'Desativada'}</span></td>
-                  </tr>
-                `).join('') : '<tr><td colspan="5"><span class="vazio">Nenhuma conta cadastrada neste grupo.</span></td></tr>'}
-              </tbody>
-            </table>
-          </div>
-          <div style="margin-top:16px; text-align:right; border-top:1px solid var(--borda); padding-top:10px">
-            <button class="primario" onclick="this.closest('.modal-mask').remove()">Fechar</button>
-          </div>
-        </div>
-      `;
-      modal(html);
-    }
-
-    function modalExcluirGrupo(gid, gnome) {
-      const div = modal(`
-        <div class="modal-inner">
-          <h3>Excluir grupo — ${esc(gnome)}</h3>
-          <p style="color:var(--tx2);font-size:13px;margin:6px 0">Exclusão normal: só é permitida se o grupo estiver vazio.</p>
-          <div class="modal-acoes">
-            <button class="fantasma" id="mX">Cancelar</button>
-            <button class="perigo" id="mGo">Tentar exclusão normal</button>
-          </div>
-          <div style="border-top:1px solid var(--borda);margin-top:12px;padding-top:10px">
-            <p style="color:var(--verm);font-size:13px;margin:4px 0"><b>Exclusão FORÇADA</b> — remove o grupo INTEIRO mesmo com contas e pessoal (tudo é apagado). Grupos com histórico de conferências NUNCA são excluídos. Requer sua senha de admin.</p>
-            <div class="campo"><label>Senha de admin</label><input type="password" id="fSenha"></div>
-            <div class="modal-acoes"><button class="perigo" id="mForce">Excluir forçadamente</button></div>
-          </div>
-          <div style="border-top:1px solid var(--verm);margin-top:12px;padding-top:10px">
-            <p style="color:var(--verm);font-size:13px;margin:4px 0"><b>☢️ MODO NUKE</b> — exclusão TOTAL e IRREVERSÍVEL: apaga o grupo, contas, pessoal, catálogos e <b>TODO o histórico de conferências</b> (presenças e comentários). Sem backup de seleção — restaure pelo backup do sistema se algo der errado.</p>
-            <div class="modal-acoes"><button class="perigo" id="mNuke">☢️ NUKE — apagar TUDO</button></div>
-          </div>
-        </div>
-      `);
-      if (!div) return;
-      div.querySelector('#mX').onclick = () => div.fechar && div.fechar();
-      div.querySelector('#mGo').onclick = async () => {
-        try {
-          await api(`/api/grupos/${gid}`, { method: 'DELETE' });
-          toast('Grupo excluído');
-          div.fechar && div.fechar();
-          window.ViewAdmin();
-        } catch (e) {}
-      };
-      div.querySelector('#mForce').onclick = async () => {
-        const senha = div.querySelector('#fSenha').value;
-        if (!senha) { toast('Digite a senha de admin', 'erro'); return; }
-        try {
-          const r = await api(`/api/grupos/${gid}?forcar=1`, { method: 'DELETE', body: JSON.stringify({ senha }) });
-          toast(`Grupo excluído forçadamente — ${r.contas_removidas} conta(s), ${r.pessoas_removidas} pessoa(s) removidas`);
-          div.fechar && div.fechar();
-          window.ViewAdmin();
-        } catch (e) {}
-      };
-      // ordem Tenente 30/09: NUKE = DUPLO modal de verificação antes do pedido
-      div.querySelector('#mNuke').onclick = async () => {
-        if (!(await confirmar(`☢️ Quer fazer isso mesmo? Isto APAGA "${gnome}" — contas, pessoal, catálogos e TODO o histórico de conferências. Não tem volta.`))) return;
-        modalNukeFinal(gid, gnome, div);
-      };
-    }
-
-    /* 2º modal do NUKE (ordem Tenente 30/09): "TEM CERTEZA?" + senha de admin */
-    function modalNukeFinal(gid, gnome, divAnterior) {
-      const div = modal(`
-        <div class="modal-inner">
-          <h3 style="color:var(--verm)">TEM CERTEZA?</h3>
-          <p style="color:var(--tx2);font-size:13px;margin:6px 0">Última confirmação: <b>${esc(gnome)}</b> será APAGADO com todo o histórico, para sempre. Digite sua senha de admin para autorizar.</p>
-          <div class="campo"><label>Senha de admin</label><input type="password" id="fSenhaNuke" autocomplete="off"></div>
-          <div class="modal-acoes">
-            <button class="fantasma" id="mNX">Cancelar</button>
-            <button class="perigo" id="mNGo">☢️ APAGAR TUDO AGORA</button>
-          </div>
-        </div>
-      `);
-      if (!div) return;
-      div.querySelector('#mNX').onclick = () => div.fechar && div.fechar();
-      div.querySelector('#mNGo').onclick = async () => {
-        const senha = div.querySelector('#fSenhaNuke').value;
-        if (!senha) { toast('Digite a senha de admin', 'erro'); return; }
-        try {
-          const r = await api(`/api/grupos/${gid}?nuke=1`, { method: 'DELETE', body: JSON.stringify({ senha }) });
-          toast(`☢️ Grupo apagado (NUKE) — ${r.contas_removidas} conta(s), ${r.pessoas_removidas} pessoa(s), ${r.conferencias_removidas} conferência(s)`);
-          if (divAnterior && divAnterior.fechar) divAnterior.fechar();
-          div.fechar && div.fechar();
-          window.ViewAdmin();
-        } catch (e) {}
-      };
-      const inp = div.querySelector('#fSenhaNuke');
-      if (inp) inp.focus();
-    }
 
     renderConteudo();
   }
@@ -1780,6 +1861,9 @@
     setoresCat = setores; funcoesCat = funcoes; // cache p/ carregarCats (v9.16.9)
     const operadores = contas.filter(c => c.grupo_id === eu.grupo_id && c.papel === 'operador');
     const meus = grupos.filter(g => g.id === eu.grupo_id);
+    const gerenteDe = {};
+    contas.filter(c => c.papel === 'gerente' && c.ativo && c.grupo_id).forEach(c => { gerenteDe[c.grupo_id] = c.login; });
+    marcarGerente(arvore, gerenteDe);
 
     async function atualizarSelectsCatalogos() {
       try {
@@ -1905,8 +1989,8 @@
         <div class="cartao"><h3 style="margin-top:0">MEU GRUPO</h3>` +
         (meus.map(g => `<div style="margin-bottom:8px">• <b>${esc(g.nome)}</b> ${codigoChip(g.codigo)} — ${g.efetivo} no efetivo · ${g.contas} conta(s)</div>`).join('')
           || '<span class="vazio">nenhum grupo</span>') + `</div>
-        <div class="cartao"><h3 style="margin-top:0">Subordinação — árvore do meu grupo (leitura; organização definida pela Administração)</h3>
-          <div id="arvore2">${arvoreHTML(arvore, false)}</div></div>
+        <div class="cartao"><h3 style="margin-top:0">Subordinação — Estrutura e Hierarquia da Unidade</h3>
+          <div id="arvore2">${arvoreHTML(arvore, true)}</div></div>
       </div>
       <div id="gerOperadores" class="${abaGer === 'operadores' ? '' : 'oculto'}">
         <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
@@ -1935,6 +2019,28 @@
       if (abaGer === 'pessoal') atualizarSelectsCatalogos();
     });
     ligarToggles($('#app'));
+
+    // Eventos da Árvore de Grupos para Gerente (#arvore2)
+    const arv2 = $('#arvore2');
+    if (arv2) {
+      ligarToggles(arv2);
+      arv2.querySelectorAll('[data-focargrupo]').forEach(b => {
+        b.onclick = (e) => {
+          e.stopPropagation();
+          const gid = +b.dataset.focargrupo;
+          FOCO_GRUPO_ID = gid > 0 ? gid : null;
+          window.ViewGrupos();
+        };
+      });
+      arv2.querySelectorAll('[data-editargrupo]').forEach(b => {
+        b.onclick = (e) => {
+          e.stopPropagation();
+          const gid = +b.dataset.editargrupo;
+          const no = buscarNoPorId(arvore, gid);
+          if (no) modalEditarGrupo(no, () => window.ViewGrupos(), { grupos, contas });
+        };
+      });
+    }
 
     /* --- salvar militar (criar/editar) --- */
     $('#pSalvar').onclick = async () => {

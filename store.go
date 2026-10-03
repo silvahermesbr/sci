@@ -1993,3 +1993,35 @@ func (s *Store) migrarV29() error {
 	return s.marcarVersao(29)
 }
 
+// EhSubordinado verifica se subordinadoID é igual ou subordinado (transitivo) a superiorID na árvore de grupos.
+func (s *Store) EhSubordinado(superiorID, subordinadoID int64) bool {
+	if superiorID == subordinadoID {
+		return true
+	}
+	visitados := map[int64]bool{superiorID: true}
+	fila := []int64{superiorID}
+	for len(fila) > 0 {
+		curr := fila[0]
+		fila = fila[1:]
+		rows, err := s.db.Query(`SELECT subordinado_id FROM grupo_vinculos WHERE superior_id = ? AND criado_por_superior = 1 AND criado_por_subordinado = 1`, curr)
+		if err != nil {
+			return false
+		}
+		for rows.Next() {
+			var sub int64
+			if err := rows.Scan(&sub); err == nil {
+				if sub == subordinadoID {
+					rows.Close()
+					return true
+				}
+				if !visitados[sub] {
+					visitados[sub] = true
+					fila = append(fila, sub)
+				}
+			}
+		}
+		rows.Close()
+	}
+	return false
+}
+

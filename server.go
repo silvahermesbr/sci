@@ -305,6 +305,7 @@ func (a *App) rotas() {
 	m.Handle("POST /api/grupos", a.auth(true, a.hGruposAdd))           // R7: exige gerente no ato
 	m.Handle("GET /api/grupos/{id}/gerente", a.auth(true, a.hGrupoGerenteGet))
 	m.Handle("POST /api/grupos/{id}/trocar-gerente", a.auth(true, a.hGrupoTrocarGerente))
+	m.Handle("PATCH /api/grupos/{id}", a.auth(false, a.hGrupoUpdate))
 	m.Handle("POST /api/admin/grupos/vinculo", a.auth(true, a.hAdminVinculoSet))   // R8
 	m.Handle("DELETE /api/admin/grupos/vinculo", a.auth(true, a.hAdminVinculoRem)) // R8
 	m.Handle("GET /api/vinculos", a.auth(false, a.hVinculoList))
@@ -4765,6 +4766,84 @@ func (a *App) hGrupoTrocarGerente(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	a.st.Auditoria(&u.ID, "definir_gerente", "grupos", &gid, "novo="+req.Login, ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "gerente": req.Login})
+}
+
+// hGrupoUpdate: atualiza nome e código da unidade/grupo (admin em qualquer; gerente no seu próprio grupo ou subordinados).
+func (a *App) hGrupoUpdate(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	if u == nil {
+		jsonErro(w, http.StatusUnauthorized, "não autenticado")
+		return
+	}
+	if u.Papel != "admin" {
+		if u.Papel != "gerente" || u.GrupoID == nil || !a.st.EhSubordinado(*u.GrupoID, id) {
+			jsonErro(w, http.StatusForbidden, "sem permissão para alterar este grupo")
+			return
+		}
+	}
+
+	var req struct {
+		Nome   *string `json:"nome"`
+		Codigo *string `json:"codigo"`
+	}
+	if err := decodificar(r, &req); err != nil {
+		jsonErro(w, http.StatusBadRequest, "payload inválido: "+err.Error())
+		return
+	}
+
+	var nomeAtual, codigoAtual string
+	if err := a.st.db.QueryRow(`SELECT nome, COALESCE(codigo,'') FROM grupos WHERE id = ?`, id).Scan(&nomeAtual, &codigoAtual); err != nil {
+		jsonErro(w, http.StatusNotFound, "grupo inexistente")
+		return
+	}
+
+	novoNome := nomeAtual
+	if req.Nome != nil {
+		trimmed := strings.TrimSpace(*req.Nome)
+		if trimmed == "" {
+			jsonErro(w, http.StatusBadRequest, "nome do grupo não pode ser vazio")
+			return
+		}
+		var existenteID int64
+		if err := a.st.db.QueryRow(`SELECT id FROM grupos WHERE LOWER(nome) = LOWER(?) AND id <> ?`, trimmed, id).Scan(&existenteID); err == nil {
+			jsonErro(w, http.StatusBadRequest, "já existe outro grupo com este nome")
+			return
+		}
+		novoNome = trimmed
+	}
+
+	novoCodigo := codigoAtual
+	if req.Codigo != nil {
+		trimmedCod := strings.ToUpper(strings.TrimSpace(*req.Codigo))
+		if trimmedCod != "" {
+			var existenteID int64
+			if err := a.st.db.QueryRow(`SELECT id FROM grupos WHERE UPPER(codigo) = ? AND id <> ?`, trimmedCod, id).Scan(&existenteID); err == nil {
+				jsonErro(w, http.StatusBadRequest, "já existe outro grupo com este código")
+				return
+			}
+		}
+		novoCodigo = trimmedCod
+	}
+
+	if _, err := a.st.db.Exec(`UPDATE grupos SET nome = ?, codigo = ? WHERE id = ?`, novoNome, novoCodigo, id); err != nil {
+		jsonErro(w, http.StatusInternalServerError, "erro ao atualizar grupo: "+err.Error())
+		return
+	}
+
+	detalhes := fmt.Sprintf("nome=%s codigo=%s", novoNome, novoCodigo)
+	a.st.Auditoria(&u.ID, "editar", "grupos", &id, detalhes, ipDe(r))
+
+	jsonOK(w, map[string]any{
+		"ok":     true,
+		"id":     id,
+		"nome":   novoNome,
+		"codigo": novoCodigo,
+	})
 }
 
 // hAdminVinculoSet (R8): subordinação direto do painel admin — grava o vínculo
