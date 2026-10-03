@@ -81,6 +81,7 @@
      ABA 1: GRADE DE SERVIÇO & CALENDÁRIO DIÁRIO
      ===================================================================== */
   async function renderAbaGrade() {
+    const eu = quem(); // refutação Sargento 04/10: `eu` é local de ViewEscalas — sem isto, ReferenceError derruba a aba GRADE
     const cont = $('#escalaConteudo');
     const mesAtual = diaSelecionado.slice(0, 7);
 
