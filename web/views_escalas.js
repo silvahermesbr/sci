@@ -93,12 +93,14 @@
               <label style="font-weight:700">Data de Serviço</label>
               <input type="date" id="fDiaEscala" value="${diaSelecionado}" style="font-weight:700">
             </div>
+            ${eu.papel === 'gerente' ? `
             <div class="campo" style="margin:0; min-width:140px">
               <label>Fase da Escala</label>
               <div id="badgeFaseWrap" style="margin-top:4px">
                 <span class="vazio">…</span>
               </div>
             </div>
+            ` : ''}
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap">
             <button class="primario" id="btNovoPostoAvulso" style="background:#10b981; border-color:#10b981">
@@ -194,6 +196,8 @@
   }
 
   function atualizarBadgeFase(dataStr, turnos) {
+    const eu = quem();
+    if (!eu || eu.papel !== 'gerente') return; // controle de fase e exclusivo do gerente
     const wrap = $('#badgeFaseWrap');
     if (!wrap) return;
     const primeiraFase = (turnos[0] && turnos[0].fase) || 'aberto';

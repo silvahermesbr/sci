@@ -49,6 +49,8 @@
   --verde-txt: var(--verde-claro);
   --primaria: var(--verde);
   --primario: var(--verde);
+  --fundo: var(--painel);
+  --painel-escuro: var(--painel);
 
   /* Geometria e Sombras */
   --alvo: 42px;

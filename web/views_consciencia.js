@@ -227,16 +227,18 @@
         </div>
         <div style="display:flex; justify-content:flex-end; gap:8px">
           <button class="secundario" onclick="window.open('/api/pessoas/${pessoaID}/pdf', '_blank')">🖨️ Imprimir PDF</button>
-          <button class="primario" onclick="document.querySelector('.modal-mask').remove()">Fechar</button>
+          <button class="primario" id="btFecharFichaModal">Fechar</button>
         </div>
       `;
-      window.abrirModal(html);
+      const h = window.abrirModal(html);
+      h.modal.querySelector('#btFecharFichaModal').onclick = () => h.fechar();
     } catch (e) {
       window.toast('Falha ao abrir ficha: ' + e.message, 'erro');
     }
   };
 
   // Modal de Sugestões Setoriais (Workflow Auxiliar -> Chefe de Setor)
+  let hSugestoes = null; // handle do modal de sugestoes (fechamento limpo)
   window.abrirModalSugestoesSetor = async function () {
     try {
       const resp = await window.api('/api/setores/sugestoes?status=pendente');
@@ -266,10 +268,11 @@
         </div>
 
         <div style="display:flex; justify-content:flex-end">
-          <button class="secundario" onclick="document.querySelector('.modal-mask').remove()">Fechar</button>
+          <button class="secundario" id="btFecharSugestoesModal">Fechar</button>
         </div>
       `;
-      window.abrirModal(html);
+      hSugestoes = window.abrirModal(html);
+      hSugestoes.modal.querySelector('#btFecharSugestoesModal').onclick = () => hSugestoes.fechar();
     } catch (e) {
       window.toast('Falha ao abrir sugestões: ' + e.message, 'erro');
     }
@@ -284,8 +287,7 @@
         body: JSON.stringify({ acao: acao, justificativa: just })
       });
       window.toast(r.mensagem || 'Sugestão avaliada!');
-      const m = document.querySelector('.modal-mask');
-      if (m) m.remove();
+      if (hSugestoes) hSugestoes.fechar();
       window.abrirModalSugestoesSetor();
       if (typeof window.ViewConsciencia === 'function') window.ViewConsciencia();
     } catch (e) {
