@@ -5642,6 +5642,9 @@ func (a *App) hEscalasModelosList(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	var lista []map[string]any
+	if lista == nil {
+		lista = make([]map[string]any, 0) // fix cia-F9: nil marshaliza null — contrato front
+	}
 	for rows.Next() {
 		var id int64
 		var nome, desc, criadoEm string
@@ -5662,6 +5665,7 @@ func (a *App) hEscalasModelosList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "ID inválido")
@@ -5683,6 +5687,19 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 	}
 	mod.Ativo = ativoInt == 1
 
+	// Fix cia-F8: o DETALHE não era escopado — bravo lia o modelo completo do
+	// alpha com PII (nome_completo dos aptos) enquanto a LISTAGEM é escopada.
+	// Mesmo guard de dono do Save (cia-F3): admin (escopo<=0) livre.
+	var modeloGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM escala_modelos WHERE id = ?`, id).Scan(&modeloGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "Modelo não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && modeloGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "modelo fora do seu escopo")
+		return
+	}
+
 	// Postos
 	pRows, _ := a.st.db.Query(`
 		SELECT emp.id, emp.tipo_id, etp.nome, emp.hora_inicio, emp.hora_fim, emp.quantidade, emp.ordem,
@@ -5695,6 +5712,9 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 		WHERE emp.modelo_id = ?
 		ORDER BY emp.ordem ASC, emp.id ASC`, id)
 	var postos []map[string]any
+	if postos == nil {
+		postos = make([]map[string]any, 0) // fix cia-F9: nil marshaliza null — contrato front
+	}
 	if pRows != nil {
 		defer pRows.Close()
 		for pRows.Next() {
@@ -5731,6 +5751,9 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 		WHERE ema.modelo_id = ?
 		ORDER BY p.nome_guerra ASC`, id)
 	var aptos []map[string]any
+	if aptos == nil {
+		aptos = make([]map[string]any, 0) // fix cia-F9: nil marshaliza null — contrato front
+	}
 	if aRows != nil {
 		defer aRows.Close()
 		for aRows.Next() {
@@ -5791,10 +5814,28 @@ func (a *App) hEscalasModelosSave(w http.ResponseWriter, r *http.Request) {
 
 	modeloID := req.ID
 	if modeloID > 0 {
-		_, err = tx.Exec(`UPDATE escala_modelos SET nome = ?, descricao = ? WHERE id = ? AND grupo_id = ?`,
+		// Fix cia-F3: com id alheio, o UPDATE (escopado) não fazia nada (200
+		// fantasma) mas os DELETE+INSERT de postos/aptos SEM filtro de grupo
+		// REESCREVIAM o modelo da vítima. Checar dono antes de qualquer
+		// DELETE/INSERT: dono = grupo_id do modelo == escopo do usuário (admin
+		// escopo<=0 livre). A partir daqui os DELETEs operam sobre modelo próprio.
+		var modeloGrupo int64
+		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0) FROM escala_modelos WHERE id = ?`, modeloID).Scan(&modeloGrupo); err != nil {
+			jsonErro(w, http.StatusNotFound, "Modelo não encontrado")
+			return
+		}
+		if escopo > 0 && modeloGrupo != escopo {
+			jsonErro(w, http.StatusForbidden, "modelo fora do seu escopo")
+			return
+		}
+		ra, err := tx.Exec(`UPDATE escala_modelos SET nome = ?, descricao = ? WHERE id = ? AND grupo_id = ?`,
 			req.Nome, req.Descricao, modeloID, escopo)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if n, _ := ra.RowsAffected(); n == 0 {
+			jsonErro(w, http.StatusNotFound, "Modelo não encontrado no seu escopo")
 			return
 		}
 		_, _ = tx.Exec(`DELETE FROM escala_modelo_postos WHERE modelo_id = ?`, modeloID)
@@ -5852,6 +5893,18 @@ func (a *App) hEscalasModelosDel(w http.ResponseWriter, r *http.Request) {
 	}
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
+	// Fix cia-F5: modelo referenciado por turnos explodia em 500 FK cru
+	// (e ficava permanentemente indeletável). Pre-check: turnos apontando o
+	// modelo → 409 com instrução; sem turnos → DELETE normal (dono/escopo).
+	var turnos int
+	if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM escala_turnos WHERE modelo_id = ?`, id).Scan(&turnos); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if turnos > 0 {
+		jsonErro(w, http.StatusConflict, "modelo aplicado em turnos; exclua os turnos primeiro")
+		return
+	}
 	res, err := a.st.db.Exec(`DELETE FROM escala_modelos WHERE id = ? AND (? <= 0 OR grupo_id = ?)`, id, escopo, escopo)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -5932,6 +5985,21 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+
+	// Fix cia-F4: reaplicar o modelo na MESMA data duplicava turnos idênticos
+	// (BUGS_s2 B3: 2 turnos, mesma data/tipo/modelo, sem aviso). MENOR mudança
+	// segura = bloquear: turnos do MESMO modelo nesta data → 409 (o chefe tem
+	// "limpar-dia" para substituir por decisão própria).
+	var jaExistem int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM escala_turnos
+		WHERE modelo_id = ? AND substr(data_inicio,1,10) = ?`, req.ModeloID, req.Data).Scan(&jaExistem); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if jaExistem > 0 {
+		jsonErro(w, http.StatusConflict, "turnos já existentes para esta data (modelo já aplicado); use limpar-dia antes de reaplicar")
+		return
+	}
 
 	criados := 0
 	for _, p := range postos {
@@ -6335,6 +6403,12 @@ func (a *App) hEscalasAlterarFase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, _ := res.RowsAffected()
+	// Fix cia-F6: 200 fantasma {"atualizados":0} para não-dono (mesmo padrão do
+	// fix de delegar, bd6a7af) — UPDATE sem match TEM que recusar.
+	if n == 0 {
+		jsonErro(w, http.StatusNotFound, "escala não encontrada no seu escopo")
+		return
+	}
 	jsonOK(w, map[string]any{"ok": true, "atualizados": n, "fase": req.Fase})
 }
 
@@ -6946,6 +7020,32 @@ func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 		req.Quantidade = 1
 	}
 
+	// Fix cia-F1: anexos INLINE do cautelar gravavam mime/nome CRUS, bypassando a
+	// allowlist do endpoint dedicado (stored XSS latente no banco — BUGS_s3 S1-B1).
+	// Mesma regra do hMaterialAnexoAdd: valida o slice INTEIRO ANTES de abrir a tx
+	// (400 sem efeito colateral); dentro da tx, grava direto — erro ali = rollback.
+	for i := range req.Anexos {
+		anexo := &req.Anexos[i]
+		if strings.TrimSpace(anexo.NomeArquivo) == "" || strings.TrimSpace(anexo.DadosBase64) == "" {
+			continue // entrada incompleta: ignorada, como antes
+		}
+		mime := strings.ToLower(strings.TrimSpace(anexo.TipoMIME))
+		switch mime {
+		case "application/pdf", "image/png", "image/jpeg", "image/webp":
+			// permitido
+		default:
+			jsonErro(w, http.StatusBadRequest, "tipo não permitido (use PDF, PNG, JPEG ou WEBP)")
+			return
+		}
+		nome := sanitizarNomeArquivo(anexo.NomeArquivo)
+		if nome == "" {
+			jsonErro(w, http.StatusBadRequest, "nome de arquivo inválido")
+			return
+		}
+		anexo.TipoMIME = mime
+		anexo.NomeArquivo = nome
+	}
+
 	tx, err := a.st.db.Begin()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -7017,14 +7117,14 @@ func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 
 	for _, anexo := range req.Anexos {
 		if strings.TrimSpace(anexo.NomeArquivo) != "" && strings.TrimSpace(anexo.DadosBase64) != "" {
-			mime := anexo.TipoMIME
-			if mime == "" {
-				mime = "application/octet-stream"
-			}
-			_, _ = tx.Exec(`
+			// Já validado/sanitizado antes da tx (cia-F1); falha aqui = rollback.
+			if _, err := tx.Exec(`
 				INSERT INTO material_cautela_anexos (cautela_id, nome_arquivo, tipo_mime, tamanho, dados_base64)
 				VALUES (?, ?, ?, ?, ?)`,
-				cautelaID, anexo.NomeArquivo, mime, anexo.Tamanho, anexo.DadosBase64)
+				cautelaID, anexo.NomeArquivo, anexo.TipoMIME, anexo.Tamanho, anexo.DadosBase64); err != nil {
+				jsonErro(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 	}
 
@@ -7314,6 +7414,34 @@ func (a *App) hConfiguracoesSet(w http.ResponseWriter, r *http.Request) {
 // ANEXOS E DOCUMENTOS ESCANEADOS DE CAUTELAS (v1.0)
 // =====================================================================
 
+// escopoCautelaID (fix cia-F2): devolve o grupo dono da cautela via JOIN
+// cautela→item (material_itens.grupo_id). ErrSQLNoRows = cautela não existe;
+// outro erro = falha de leitura. Usar APENAS fora de tx (pool).
+func escopoCautelaID(db *sql.DB, cautelaID int64) (int64, error) {
+	var itemGrupo int64
+	err := db.QueryRow(`SELECT COALESCE(mi.grupo_id,0)
+		FROM material_cautelas mc JOIN material_itens mi ON mi.id = mc.item_id
+		WHERE mc.id = ?`, cautelaID).Scan(&itemGrupo)
+	return itemGrupo, err
+}
+
+// cautelaNoEscopo (fix cia-F2): verdadeiro se a cautela é acessível ao usuário
+// (admin escopo<=0 vê tudo; conta sem grupo -1 não vê nada). Em recusa, já
+// responde 403 (fora do escopo) ou 404 (inexistente) e devolve false.
+// Pool apenas — nada de tx aqui (lição bd6a7af).
+func (a *App) cautelaNoEscopo(u *Usuario, w http.ResponseWriter, cautelaID int64) bool {
+	itemGrupo, err := escopoCautelaID(a.st.db, cautelaID)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Cautela não encontrada")
+		return false
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
+		return false
+	}
+	return true
+}
+
 func (a *App) hMaterialAnexoAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	cautelaIDStr := r.PathValue("id")
@@ -7333,17 +7461,16 @@ func (a *App) hMaterialAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "Nome do arquivo e dados em base64 são obrigatórios")
 		return
 	}
-	// Fix P1-1: anexar em cautela exige escopo do item cautelado.
-	{
-		var itemGrupo int64
-		if err := a.st.db.QueryRow(`SELECT COALESCE(mi.grupo_id,0)
-			FROM material_cautelas mc JOIN material_itens mi ON mi.id = mc.item_id
-			WHERE mc.id = ?`, cautelaID).Scan(&itemGrupo); err == nil {
-			if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
-				jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
-				return
-			}
-		}
+	// Fix cia-F7: cautela inexistente era 500 FK cru — pre-check resolve (404) e
+	// junto com o escopo (mesmo bloco de antes, agora via helper cia-F2).
+	itemGrupo, err := escopoCautelaID(a.st.db, cautelaID)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "Cautela não encontrada")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
+		return
 	}
 	// Fix P1-3: teto REAL de anexo — o LimitReader de 1 MB corta o JSON inteiro;
 	// base64 cresce ~4/3, então o DECODED útil máximo aqui é ~600 KB.
@@ -7401,10 +7528,16 @@ func sanitizarNomeArquivo(nome string) string {
 }
 
 func (a *App) hMaterialAnexoList(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
 	cautelaIDStr := r.PathValue("id")
 	cautelaID, _ := strconv.ParseInt(cautelaIDStr, 10, 64)
 	if cautelaID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "ID da cautela inválido")
+		return
+	}
+	// Fix cia-F2 (IDOR): listagem de anexos sem checagem de escopo vazava
+	// metadados de cautela alheia.
+	if !a.cautelaNoEscopo(u, w, cautelaID) {
 		return
 	}
 	rows, err := a.st.db.Query(`
@@ -7418,6 +7551,9 @@ func (a *App) hMaterialAnexoList(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	var lista []map[string]any
+	if lista == nil {
+		lista = make([]map[string]any, 0) // fix cia-F9: nil marshaliza null — contrato front
+	}
 	for rows.Next() {
 		var id, cid, tam int64
 		var nome, mime, criada string
@@ -7436,10 +7572,21 @@ func (a *App) hMaterialAnexoList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) hMaterialAnexoGet(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
 	anexoIDStr := r.PathValue("id")
 	anexoID, _ := strconv.ParseInt(anexoIDStr, 10, 64)
 	if anexoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "ID inválido")
+		return
+	}
+	// Fix cia-F2 (IDOR): download de anexo sem escopo entregava BYTES do PDF
+	// do grupo alheio. Escopo via cautela_id da tabela de anexos.
+	var cautelaID int64
+	if err := a.st.db.QueryRow(`SELECT cautela_id FROM material_cautela_anexos WHERE id = ?`, anexoID).Scan(&cautelaID); err != nil {
+		jsonErro(w, http.StatusNotFound, "Documento anexo não encontrado")
+		return
+	}
+	if !a.cautelaNoEscopo(u, w, cautelaID) {
 		return
 	}
 	var nome, mime, b64 string
@@ -7490,9 +7637,23 @@ func (a *App) hMaterialAnexoDel(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "ID inválido")
 		return
 	}
-	_, err := a.st.db.Exec(`DELETE FROM material_cautela_anexos WHERE id = ?`, anexoID)
+	// Fix cia-F2 (IDOR): DELETE sem escopo permitia DESTRUIÇÃO cross-group
+	// (op_b apagou anexo alheio no play test). Validar ANTES do DELETE.
+	var cautelaID int64
+	if err := a.st.db.QueryRow(`SELECT cautela_id FROM material_cautela_anexos WHERE id = ?`, anexoID).Scan(&cautelaID); err != nil {
+		jsonErro(w, http.StatusNotFound, "Documento anexo não encontrado")
+		return
+	}
+	if !a.cautelaNoEscopo(u, w, cautelaID) {
+		return
+	}
+	res, err := a.st.db.Exec(`DELETE FROM material_cautela_anexos WHERE id = ?`, anexoID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		jsonErro(w, http.StatusNotFound, "Documento anexo não encontrado")
 		return
 	}
 	a.st.Auditoria(&u.ID, "excluir_anexo", "material_cautela_anexos", &anexoID, "", ipDe(r))
