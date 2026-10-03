@@ -268,27 +268,27 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 	var escGrupCond string
 	var escGrupArgs []any
 	if u.GrupoID != nil {
+		gids := []int64{*u.GrupoID}
+		gids = append(gids, a.gruposSuperioresAtivos(*u.GrupoID)...)
 		if u.Papel == "gerente" {
-			grupos := append([]int64{*u.GrupoID}, a.gruposSubordinadosAtivos(*u.GrupoID)...)
-			ph := strings.TrimSuffix(strings.Repeat("?,", len(grupos)), ",")
-			escGrupCond = fmt.Sprintf("et.grupo_id IN (%s)", ph)
-			for _, g := range grupos {
-				escGrupArgs = append(escGrupArgs, g)
-			}
-		} else {
-			escGrupCond = "et.grupo_id = ?"
-			escGrupArgs = append(escGrupArgs, *u.GrupoID)
+			gids = append(gids, a.gruposSubordinadosAtivos(*u.GrupoID)...)
 		}
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(gids)), ",")
+		escGrupCond = fmt.Sprintf("(et.grupo_id IN (%s) OR et.grupo_delegado_id = ?)", ph)
+		for _, g := range gids {
+			escGrupArgs = append(escGrupArgs, g)
+		}
+		escGrupArgs = append(escGrupArgs, *u.GrupoID)
 	} else {
 		escGrupCond = "1=0"
 	}
 
 	qEscalas := fmt.Sprintf(`
-		SELECT et.id, et.data_inicio, et.data_fim, etp.nome, COALESCE(g.nome, '—'), COALESCE(et.observacao, '')
+		SELECT et.id, et.data_inicio, COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), etp.nome, COALESCE(g.nome, '—'), COALESCE(et.observacao, '')
 		FROM escala_turnos et
 		JOIN escala_tipos etp ON etp.id = et.tipo_id
 		LEFT JOIN grupos g ON g.id = et.grupo_id
-		WHERE (substr(et.data_inicio, 1, 10) <= ? AND substr(et.data_fim, 1, 10) >= ?)
+		WHERE (substr(et.data_inicio, 1, 10) <= ? AND substr(COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), 1, 10) >= ?)
 		  AND (%s)
 		ORDER BY et.data_inicio ASC
 	`, escGrupCond)
@@ -298,26 +298,29 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 	if errEsc == nil {
 		for escRows.Next() {
 			var escItem EscalaVisao
-			_ = escRows.Scan(&escItem.TurnoID, &escItem.DataInicio, &escItem.DataFim,
-				&escItem.TipoNome, &escItem.GrupoNome, &escItem.Observacao)
-			escalas = append(escalas, escItem)
+			if errScan := escRows.Scan(&escItem.TurnoID, &escItem.DataInicio, &escItem.DataFim,
+				&escItem.TipoNome, &escItem.GrupoNome, &escItem.Observacao); errScan == nil {
+				escalas = append(escalas, escItem)
+			}
 		}
 		escRows.Close()
 
 		// Militares alocados em cada turno (após fechar escRows)
 		for i := range escalas {
 			pRows, errP := a.st.db.Query(`
-				SELECT p.nome_guerra, COALESCE(ep.funcao_escala, 'Serviço')
+				SELECT COALESCE(NULLIF(p.nome_guerra, ''), p.nome_completo, 'Militar'), COALESCE(NULLIF(ep.funcao_escala, ''), 'Serviço')
 				FROM escala_pessoas ep
 				JOIN pessoas p ON p.id = ep.pessoa_id
+				LEFT JOIN funcoes f ON f.id = p.funcao_id
 				WHERE ep.turno_id = ?
-				ORDER BY p.antiguidade ASC, p.nome_guerra ASC
+				ORDER BY COALESCE(f.antiguidade, 999) ASC, p.nome_guerra ASC
 			`, escalas[i].TurnoID)
 			if errP == nil {
 				for pRows.Next() {
 					var m EscalaMilitar
-					_ = pRows.Scan(&m.NomeGuerra, &m.Funcao)
-					escalas[i].Militares = append(escalas[i].Militares, m)
+					if errScanP := pRows.Scan(&m.NomeGuerra, &m.Funcao); errScanP == nil {
+						escalas[i].Militares = append(escalas[i].Militares, m)
+					}
 				}
 				pRows.Close()
 			}

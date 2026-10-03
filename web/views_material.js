@@ -116,14 +116,14 @@
               const c = it.cautela_ativa || {};
               const horasFora = c.data_saida ? Math.round((Date.now() - new Date(c.data_saida).getTime()) / 3600000) : 0;
               const atrasado = horasFora > 24;
-              const sens = it.nivel_sensibilidade || 'padrao';
+              const sens = it.sensibilidade || (it.nivel_sensibilidade === 'restrito' || it.nivel_sensibilidade === 'sensivel' ? 'controlado' : 'convencional');
               return `
                 <div style="background:var(--painel2); border:1px solid ${atrasado ? 'var(--verm)' : 'var(--borda)'}; border-radius:var(--raio); padding:12px; ${atrasado ? 'box-shadow: 0 0 10px rgba(239,68,68,0.15)' : ''}">
                   <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px">
                     <div>
                       <b style="font-size:14px">${esc(it.nome)}</b>
                       <span style="font-size:11.5px; color:var(--tx3); margin-left:6px">#${esc(it.codigo_patrimonio)}</span>
-                      ${sens !== 'padrao' ? `<span style="font-size:10px; margin-left:6px; font-weight:700; text-transform:uppercase; padding:1px 5px; border-radius:3px; ${sens === 'restrito' ? 'background:rgba(239,68,68,0.2); color:var(--verm)' : 'background:rgba(245,158,11,0.2); color:var(--ambar-txt)'}">${esc(sens)}</span>` : ''}
+                      ${sens === 'controlado' ? `<span style="font-size:10px; margin-left:6px; font-weight:700; text-transform:uppercase; padding:1px 5px; border-radius:3px; background:rgba(239,68,68,0.2); color:var(--verm)">Controlado</span>` : ''}
                     </div>
                     <div style="display:flex; gap:4px">
                       ${atrasado ? `<span style="font-size:10px; background:#ef4444; color:#fff; padding:2px 6px; border-radius:4px; font-weight:700">⏰ ATRASADO (+${horasFora}h)</span>` : ''}
@@ -1186,7 +1186,7 @@
 
           <div style="font-size:11px; color:#64748b; margin-top:6px; display:flex; justify-content:space-between">
             <span>Cat: ${esc(item.categoria_nome || 'Geral')}</span>
-            <span style="font-weight:700; text-transform:uppercase">Sens: ${esc(item.nivel_sensibilidade || 'padrao')}</span>
+            <span style="font-weight:700; text-transform:uppercase">Sens: ${esc(item.sensibilidade || (item.nivel_sensibilidade === 'restrito' || item.nivel_sensibilidade === 'sensivel' ? 'controlado' : 'convencional'))}</span>
           </div>
         </div>
 

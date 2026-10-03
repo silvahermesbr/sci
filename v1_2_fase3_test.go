@@ -583,3 +583,78 @@ func TestFase3MultiCalendariosEInscricaoForcada(t *testing.T) {
 	}
 }
 
+func TestCalendarioVisaoMilitaresEscalas(t *testing.T) {
+	app, _, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	adminCookie := loginAs(t, app, "admin", "admin123")
+
+	// 1. Criar grupo e gerente
+	_, resG := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "Companhia Calendario",
+	}, adminCookie)
+	gid := int64(resG["id"].(float64))
+
+	_, resU := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
+		"login":    "gerente_cal",
+		"senha":    "senha12345",
+		"papel":    "gerente",
+		"grupo_id": gid,
+	}, adminCookie)
+	_ = int64(resU["id"].(float64))
+
+	gerCookie := loginAs(t, app, "gerente_cal", "senha12345")
+
+	// 2. Cadastrar militares no efetivo
+	resP, _ := app.st.db.Exec(`INSERT INTO pessoas (grupo_id, nome_guerra, nome_completo, status) VALUES (?, 'SANTOS', 'Lucas Santos', 'ativo')`, gid)
+	pid1, _ := resP.LastInsertId()
+
+	resP2, _ := app.st.db.Exec(`INSERT INTO pessoas (grupo_id, nome_guerra, nome_completo, status) VALUES (?, 'ALMEIDA', 'Marcos Almeida', 'ativo')`, gid)
+	pid2, _ := resP2.LastInsertId()
+
+	// 3. Criar tipo de escala e turno com data_fim nulo
+	resTipo, _ := app.st.db.Exec(`INSERT INTO escala_tipos (grupo_id, nome, ativo) VALUES (?, 'Oficial de Dia', 1)`, gid)
+	tipoID, _ := resTipo.LastInsertId()
+
+	resTurno, errT := app.st.db.Exec(`INSERT INTO escala_turnos (grupo_id, tipo_id, data_inicio, data_fim) VALUES (?, ?, '2026-10-15T08:00:00', '2026-10-15T20:00:00')`, gid, tipoID)
+	if errT != nil {
+		t.Fatalf("falha ao inserir escala_turnos: %v", errT)
+	}
+	turnoID, _ := resTurno.LastInsertId()
+
+	// 4. Preencher turno com militares
+	_, _ = app.st.db.Exec(`INSERT INTO escala_pessoas (turno_id, pessoa_id, funcao_escala) VALUES (?, ?, 'Oficial de Dia')`, turnoID, pid1)
+	_, _ = app.st.db.Exec(`INSERT INTO escala_pessoas (turno_id, pessoa_id, funcao_escala) VALUES (?, ?, 'Adjunto')`, turnoID, pid2)
+
+	// 5. Consultar visão do calendário para 2026-10
+	rr, res := doJSONReq(app, "GET", "/api/calendario/visao?mes=2026-10", nil, gerCookie)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("falha ao consultar visao do calendario: code %d resp %v", rr.Code, res)
+	}
+
+	escalas, ok := res["escalas"].([]any)
+	if !ok || len(escalas) == 0 {
+		t.Fatalf("esperado pelo menos 1 escala no calendário de 2026-10, obtido: %v", res["escalas"])
+	}
+
+	escMap := escalas[0].(map[string]any)
+	if escMap["tipo_nome"] != "Oficial de Dia" {
+		t.Errorf("tipo_nome esperado 'Oficial de Dia', obtido: %v", escMap["tipo_nome"])
+	}
+
+	militares, okMil := escMap["militares"].([]any)
+	if !okMil || len(militares) != 2 {
+		t.Fatalf("esperado 2 militares na escala do calendário, obtido: %v", escMap["militares"])
+	}
+
+	m1 := militares[0].(map[string]any)
+	m2 := militares[1].(map[string]any)
+	if m1["nome_guerra"] != "ALMEIDA" && m1["nome_guerra"] != "SANTOS" {
+		t.Errorf("nome de guerra inesperado: %v", m1)
+	}
+	if m2["nome_guerra"] != "ALMEIDA" && m2["nome_guerra"] != "SANTOS" {
+		t.Errorf("nome de guerra inesperado: %v", m2)
+	}
+}
+
+

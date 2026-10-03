@@ -293,7 +293,7 @@
       if (p) {
         militarHTML = `
           <div>
-            <b>${esc(p.nome_guerra)}</b> <small style="color:var(--tx2)">(${esc(p.nome_completo)})</small>
+            <b>${p.funcao ? esc(p.funcao) + ' ' : ''}${esc(p.nome_guerra)}</b> <small style="color:var(--tx2)">(${esc(p.nome_completo)})</small>
             ${p.setor ? `<br><small style="color:var(--tx3)">Setor: ${esc(p.setor)}</small>` : ''}
           </div>
         `;
