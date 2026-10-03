@@ -362,6 +362,7 @@ func (a *App) rotas() {
 	m.Handle("GET /api/escalas/turnos/{id}/candidatos", reservaAuth(a.hEscalasTurnoCandidatos))
 	m.Handle("PATCH /api/escalas/fase", reservaAuth(a.hEscalasAlterarFase))
 	m.Handle("GET /api/escalas/relatorio-dia.pdf", a.auth(false, a.hEscalasRelatorioDiaPDF))
+	m.Handle("GET /api/escalas/relatorio-dia/pdf", a.auth(false, a.hEscalasRelatorioDiaPDF))
 	m.Handle("GET /api/escalas/minhas", a.auth(false, a.hEscalasMinhas))
 
 	// Módulo de Material e Cautelas (v1.0) — EM RESERVA (ordem Tenente 30/09)
@@ -5870,10 +5871,20 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ModeloID int64  `json:"modelo_id"`
 		Data     string `json:"data"` // YYYY-MM-DD
+		GrupoID  *int64 `json:"grupo_id"`
 	}
 	if err := decodificar(r, &req); err != nil || req.ModeloID <= 0 || req.Data == "" {
 		jsonErro(w, http.StatusBadRequest, "modelo_id e data são obrigatórios")
 		return
+	}
+	if escopo <= 0 && req.GrupoID != nil && *req.GrupoID > 0 {
+		escopo = *req.GrupoID
+	}
+	if escopo <= 0 {
+		_ = a.st.db.QueryRow(`SELECT COALESCE(grupo_id, 0) FROM escala_modelos WHERE id = ?`, req.ModeloID).Scan(&escopo)
+	}
+	if escopo <= 0 {
+		_ = a.st.db.QueryRow(`SELECT id FROM grupos ORDER BY id LIMIT 1`).Scan(&escopo)
 	}
 
 	// Buscar postos do modelo com faixas de posto/graduação
@@ -5949,6 +5960,8 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.st.Auditoria(&u.ID, "aplicar_modelo", "escala_turnos", &req.ModeloID,
+		fmt.Sprintf("data=%s turnos_criados=%d grupo=%d", req.Data, criados, escopo), ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "turnos_criados": criados, "fase": "aberto"})
 }
 
@@ -5956,22 +5969,28 @@ func (a *App) hEscalasLimparDia(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
 	var req struct {
-		Data string `json:"data"` // YYYY-MM-DD
+		Data    string `json:"data"` // YYYY-MM-DD
+		GrupoID *int64 `json:"grupo_id"`
 	}
 	if err := decodificar(r, &req); err != nil || req.Data == "" {
 		jsonErro(w, http.StatusBadRequest, "data obrigatória")
 		return
 	}
+	if escopo <= 0 && req.GrupoID != nil && *req.GrupoID > 0 {
+		escopo = *req.GrupoID
+	}
 
 	res, err := a.st.db.Exec(`
 		DELETE FROM escala_turnos
-		WHERE grupo_id = ? AND data_inicio LIKE ?`,
-		escopo, req.Data+"%")
+		WHERE (? <= 0 OR grupo_id = ?) AND data_inicio LIKE ?`,
+		escopo, escopo, req.Data+"%")
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	n, _ := res.RowsAffected()
+	a.st.Auditoria(&u.ID, "limpar_dia", "escala_turnos", nil,
+		fmt.Sprintf("data=%s grupo=%d removidos=%d", req.Data, escopo, n), ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "removidos": n})
 }
 
@@ -6329,19 +6348,22 @@ func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
 		WHERE (grupo_id = ? OR ? <= 0) AND data_inicio LIKE ?
 		ORDER BY id DESC LIMIT 1`, escopo, escopo, data+"%").Scan(&fase)
 
-	q := `SELECT et.id, etp.nome, et.data_inicio, et.data_fim,
+	q := `SELECT et.id, etp.nome, et.data_inicio, COALESCE(NULLIF(et.data_fim, ''), et.data_inicio),
 	             COALESCE(p.nome_guerra, ''), COALESCE(p.nome_completo, ''),
-	             COALESCE(s.nome, ''), COALESCE(et.status_delegacao, 'proprio'), COALESCE(gd.nome, '')
+	             COALESCE(s.nome, ''), COALESCE(et.status_delegacao, 'proprio'), COALESCE(gd.nome, ''),
+	             COALESCE(fu.nome, '')
 	      FROM escala_turnos et
 	      JOIN escala_tipos etp ON etp.id = et.tipo_id
 	      LEFT JOIN escala_pessoas ep ON ep.turno_id = et.id
 	      LEFT JOIN pessoas p ON p.id = ep.pessoa_id
+	      LEFT JOIN funcoes fu ON fu.id = p.funcao_id
 	      LEFT JOIN setores s ON s.id = p.setor_id
 	      LEFT JOIN grupos gd ON gd.id = et.grupo_delegado_id
-	      WHERE (et.grupo_id = ? OR ? <= 0) AND et.data_inicio LIKE ?
+	      WHERE (et.grupo_id = ? OR ? <= 0)
+	        AND (et.data_inicio LIKE ? OR (substr(et.data_inicio, 1, 10) <= ? AND substr(COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), 1, 10) >= ?))
 	      ORDER BY et.data_inicio ASC, et.id ASC`
 
-	rows, err := a.st.db.Query(q, escopo, escopo, data+"%")
+	rows, err := a.st.db.Query(q, escopo, escopo, data+"%", data, data)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -6351,8 +6373,8 @@ func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
 	var turnosPDF []EscalaTurnoPDF
 	for rows.Next() {
 		var id int64
-		var posto, di, df, ng, nc, setor, stDeleg, gDeleg string
-		if rows.Scan(&id, &posto, &di, &df, &ng, &nc, &setor, &stDeleg, &gDeleg) == nil {
+		var posto, di, df, ng, nc, setor, stDeleg, gDeleg, fuNome string
+		if rows.Scan(&id, &posto, &di, &df, &ng, &nc, &setor, &stDeleg, &gDeleg, &fuNome) == nil {
 			horario := ""
 			if len(di) >= 16 && len(df) >= 16 {
 				horario = di[11:16] + " às " + df[11:16]
@@ -6365,12 +6387,22 @@ func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
 					origem = "Delegado"
 				}
 			}
+			militarNomeCompleto := nc
+			militarNomeGuerra := ng
+			if fuNome != "" {
+				if militarNomeGuerra != "" {
+					militarNomeGuerra = fuNome + " " + militarNomeGuerra
+				}
+				if militarNomeCompleto != "" {
+					militarNomeCompleto = fuNome + " " + militarNomeCompleto
+				}
+			}
 			turnosPDF = append(turnosPDF, EscalaTurnoPDF{
 				ID:            id,
 				PostoNome:     posto,
 				Horario:       horario,
-				MilitarNome:   nc,
-				MilitarGuerra: ng,
+				MilitarNome:   militarNomeCompleto,
+				MilitarGuerra: militarNomeGuerra,
 				SetorOuOrigem: origem,
 				Status:        stDeleg,
 			})

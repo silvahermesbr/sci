@@ -1987,7 +1987,12 @@
       </div>
       <div id="gerGrupos" class="${abaGer === 'grupos' ? '' : 'oculto'}">
         <div class="cartao"><h3 style="margin-top:0">MEU GRUPO</h3>` +
-        (meus.map(g => `<div style="margin-bottom:8px">• <b>${esc(g.nome)}</b> ${codigoChip(g.codigo)} — ${g.efetivo} no efetivo · ${g.contas} conta(s)</div>`).join('')
+        (meus.map(g => `
+          <div style="margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+            <div>• <b>${esc(g.nome)}</b> ${codigoChip(g.codigo)} — ${g.efetivo} no efetivo · ${g.contas} conta(s)</div>
+            <button class="primario" style="font-size:12px; padding:4px 12px" data-editargrupo="${g.id}">⚙️ Editar</button>
+          </div>
+        `).join('')
           || '<span class="vazio">nenhum grupo</span>') + `</div>
         <div class="cartao"><h3 style="margin-top:0">Subordinação — Estrutura e Hierarquia da Unidade</h3>
           <div id="arvore2">${arvoreHTML(arvore, true)}</div></div>
@@ -2020,11 +2025,11 @@
     });
     ligarToggles($('#app'));
 
-    // Eventos da Árvore de Grupos para Gerente (#arvore2)
-    const arv2 = $('#arvore2');
-    if (arv2) {
-      ligarToggles(arv2);
-      arv2.querySelectorAll('[data-focargrupo]').forEach(b => {
+    // Eventos da Árvore e Cards de Grupos para Gerente (#gerGrupos)
+    const gerGrp = $('#gerGrupos');
+    if (gerGrp) {
+      ligarToggles(gerGrp);
+      gerGrp.querySelectorAll('[data-focargrupo]').forEach(b => {
         b.onclick = (e) => {
           e.stopPropagation();
           const gid = +b.dataset.focargrupo;
@@ -2032,11 +2037,25 @@
           window.ViewGrupos();
         };
       });
-      arv2.querySelectorAll('[data-editargrupo]').forEach(b => {
+      gerGrp.querySelectorAll('[data-editargrupo]').forEach(b => {
         b.onclick = (e) => {
           e.stopPropagation();
           const gid = +b.dataset.editargrupo;
-          const no = buscarNoPorId(arvore, gid);
+          let no = buscarNoPorId(arvore, gid);
+          if (!no) {
+            const gObj = grupos.find(x => x.id === gid);
+            if (gObj) {
+              no = {
+                id: gObj.id,
+                nome: gObj.nome,
+                codigo: gObj.codigo,
+                gerente: gerenteDe[gObj.id] || '',
+                efetivo: gObj.efetivo || 0,
+                contas: gObj.contas || 0,
+                filhos: []
+              };
+            }
+          }
           if (no) modalEditarGrupo(no, () => window.ViewGrupos(), { grupos, contas });
         };
       });

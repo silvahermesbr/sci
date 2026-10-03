@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 )
@@ -358,6 +360,137 @@ func TestMaterialDevolucaoParcialEQuantitativo(t *testing.T) {
 	}
 	if !achouQtdSens {
 		t.Fatalf("resposta de /api/material/cautelas nao incluiu quantidade ou sensibilidade")
+	}
+}
+
+func TestEscalaAplicarModeloELimparDiaAdmin(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	admin := loginAs(t, app, "admin", "admin123")
+
+	_, resG := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "Base Logística", "login": "cap_base", "senha": "base_password", "nome_guerra": "Cap Base",
+	}, admin)
+	gid := int64(resG["id"].(float64))
+	ger := loginAs(t, app, "cap_base", "base_password")
+
+	resTipo, _ := st.db.Exec(`INSERT INTO escala_tipos (nome, grupo_id) VALUES ('Guarda ao Portão', ?)`, gid)
+	tipoID, _ := resTipo.LastInsertId()
+
+	// Criar modelo com 2 postos
+	recMod, resMod := doJSONReq(app, "POST", "/api/escalas/modelos", map[string]any{
+		"nome": "Modelo Base Portão",
+		"postos": []map[string]any{
+			{"tipo_id": tipoID, "hora_inicio": "07:00", "hora_fim": "19:00", "quantidade": 2},
+		},
+	}, ger)
+	if recMod.Code != http.StatusOK {
+		t.Fatalf("erro ao criar modelo: %d", recMod.Code)
+	}
+	modID := int64(resMod["id"].(float64))
+
+	// Aplicar modelo para a data 2026-11-01 usando Gerente
+	recApl, resApl := doJSONReq(app, "POST", "/api/escalas/aplicar-modelo", map[string]any{
+		"modelo_id": modID,
+		"data":      "2026-11-01",
+	}, ger)
+	if recApl.Code != http.StatusOK {
+		t.Fatalf("erro ao aplicar modelo via gerente: %d (%v)", recApl.Code, resApl)
+	}
+	if int(resApl["turnos_criados"].(float64)) != 2 {
+		t.Fatalf("esperava 2 turnos criados, obteve: %v", resApl["turnos_criados"])
+	}
+
+	// Limpar o dia usando Gerente
+	recLimpar, resLimpar := doJSONReq(app, "POST", "/api/escalas/limpar-dia", map[string]any{
+		"data": "2026-11-01",
+	}, ger)
+	if recLimpar.Code != http.StatusOK {
+		t.Fatalf("erro ao limpar dia: %d (%v)", recLimpar.Code, resLimpar)
+	}
+	if int(resLimpar["removidos"].(float64)) != 2 {
+		t.Fatalf("esperava 2 turnos removidos, obteve: %v", resLimpar["removidos"])
+	}
+}
+
+func TestGrupoUpdateGerenteEArvore(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	admin := loginAs(t, app, "admin", "admin123")
+
+	_, resG := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "2ª Bateria de Obuses", "login": "cap_bateria", "senha": "bateria_password", "nome_guerra": "Cap Bateria",
+	}, admin)
+	gid := int64(resG["id"].(float64))
+	ger := loginAs(t, app, "cap_bateria", "bateria_password")
+
+	// Gerente atualiza seu próprio grupo via PATCH /api/grupos/{id}
+	novoNome := "2ª Bateria de Obuses Auto-Propulsados"
+	novoCod := "2BAT-AP"
+	recUpd, resUpd := doJSONReq(app, "PATCH", fmt.Sprintf("/api/grupos/%d", gid), map[string]any{
+		"nome":   novoNome,
+		"codigo": novoCod,
+	}, ger)
+	if recUpd.Code != http.StatusOK {
+		t.Fatalf("falha ao atualizar grupo pelo próprio gerente: %d (%v)", recUpd.Code, resUpd)
+	}
+
+	var nomeDB, codDB string
+	_ = st.db.QueryRow(`SELECT nome, codigo FROM grupos WHERE id = ?`, gid).Scan(&nomeDB, &codDB)
+	if nomeDB != novoNome || codDB != novoCod {
+		t.Fatalf("dados do grupo nao foram gravados no banco: nome=%s cod=%s", nomeDB, codDB)
+	}
+}
+
+func TestEscalaRelatorioDiaPDFComPostoGrad(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	admin := loginAs(t, app, "admin", "admin123")
+
+	_, resG := doJSONReq(app, "POST", "/api/grupos", map[string]any{
+		"nome": "Companhia Comando", "login": "cap_cmd", "senha": "cmd_password", "nome_guerra": "Cap Cmd",
+	}, admin)
+	gid := int64(resG["id"].(float64))
+	ger := loginAs(t, app, "cap_cmd", "cmd_password")
+
+	resF, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('3º Sargento', ?, 25)`, gid)
+	sgtID, _ := resF.LastInsertId()
+
+	resPes, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, funcao_id, status) VALUES ('Macedo', 'Felipe Macedo', ?, ?, 'ativo')`, gid, sgtID)
+	pesID, _ := resPes.LastInsertId()
+
+	resTipo, _ := st.db.Exec(`INSERT INTO escala_tipos (nome, grupo_id) VALUES ('Adjunto de Dia', ?)`, gid)
+	tipoID, _ := resTipo.LastInsertId()
+
+	// Inserir turno e alocar o militar
+	recT, resT := doJSONReq(app, "POST", "/api/escalas/turnos", map[string]any{
+		"tipo_id":     tipoID,
+		"data_inicio": "2026-11-15T07:00:00",
+		"data_fim":    "2026-11-16T07:00:00",
+		"pessoas": []map[string]any{
+			{"pessoa_id": pesID, "funcao_escala": "Adjunto"},
+		},
+	}, ger)
+	if recT.Code != http.StatusOK {
+		t.Fatalf("falha ao criar turno: %d (%v)", recT.Code, resT)
+	}
+
+	// Obter PDF
+	reqPDF := httptest.NewRequest("GET", "/api/escalas/relatorio-dia/pdf?data=2026-11-15", nil)
+	if ger != nil {
+		reqPDF.AddCookie(ger)
+	}
+	w := httptest.NewRecorder()
+	app.mux.ServeHTTP(w, reqPDF)
+	if w.Code != http.StatusOK {
+		t.Fatalf("falha ao gerar PDF de escala: %d (%s)", w.Code, w.Body.String())
+	}
+	body := w.Body.Bytes()
+	if len(body) < 100 || !bytes.HasPrefix(body, []byte("%PDF-")) {
+		t.Fatalf("resposta nao e um PDF valido (tamanho %d)", len(body))
 	}
 }
 
