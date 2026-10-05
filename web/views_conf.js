@@ -263,6 +263,8 @@
         { valor: 'arquivo', rotulo: 'Arquivo' }
       ], { valorPadrao: modoTela, onChange: (t) => window.ViewHoje(t) });
     }
+    // ordem 04/10 (Fase G6): CHEFE DE SETOR seleciona os OPERADORES do seu setor
+    if (ehChefeSetor) renderPainelOperadoresChefe();
     const pc = $('#perConfEntrada');
     if (pc) {
       const p = window.__perConfSel || (window.__perConfSel = { m: 'semana', dia: dataLocal(hojeD) });
@@ -1553,4 +1555,59 @@
 
     renderTela();
   };
+
+  /* =====================================================================
+     ordem 04/10 (Fase G6): CHEFE DE SETOR — seleciona OPERADORES dentre as
+     contas do SEU setor (endpoint /api/operadores-do-setor). O operador não é
+     criado: é designado. Painel injetado no fim da página de Conferências.
+     ===================================================================== */
+  window.__renderPainelOperadoresChefe = async function () {
+    let cont = document.getElementById('painelOpSetor');
+    if (!cont) {
+      cont = document.createElement('div');
+      cont.id = 'painelOpSetor';
+      cont.style.margin = '10px 0';
+      const app = document.getElementById('app');
+      if (!app) return;
+      app.appendChild(cont);
+    }
+    cont.innerHTML = '<div class="carregando">Carregando efetivo do setor…</div>';
+    let ops = [];
+    try { ops = await api('/api/operadores-do-setor'); } catch (e) {}
+    const linha = o => `
+      <tr data-oplogin="${esc(o.login)}">
+        <td class="num">#${o.id}</td>
+        <td><b>${esc(o.nome_guerra || o.login)}</b></td>
+        <td>${esc(o.nome_completo || '—')}</td>
+        <td>${esc(o.funcao_nome || '—')}</td>
+        <td>${o.eh_operador ? '<span class="alerta-ok">● OPERADOR</span>' : '<span style="color:var(--tx3)">● conta</span>'}</td>
+        <td>${o.eh_operador
+          ? `<span style="color:var(--tx3);font-size:12px">designado</span>`
+          : `<button class="primario" data-designar="${esc(o.login)}" style="min-height:34px;padding:6px 12px">Designar operador</button>`}</td>
+      </tr>`;
+    cont.innerHTML = `
+      <div class="cartao">
+        <h3 style="margin-top:0">OPERADORES DO MEU SETOR (${(ops || []).length})</h3>
+        <p style="color:var(--tx2);font-size:12px;margin:0 0 8px">O operador não é criado: você SELECIONA dentre as contas do seu setor. Conta nova no setor? Procure o encarregado de pessoal.</p>
+        <div class="campo" style="margin-bottom:8px"><label>Filtrar</label><input id="fOpSetor" placeholder="buscar login/nome…"></div>
+        <div class="rolagem"><table><thead><tr><th class="num">ID</th><th>Nome de Guerra</th><th>Nome Completo</th><th>Função</th><th>Situação</th><th>Ação</th></tr></thead>
+        <tbody>${(ops || []).map(linha).join('') || '<tr><td colspan="6"><span class="vazio">nenhuma conta no seu setor</span></td></tr>'}</tbody></table></div>
+      </div>`;
+    cont.querySelector('#fOpSetor').oninput = () => {
+      const q = cont.querySelector('#fOpSetor').value.trim().toLowerCase();
+      cont.querySelectorAll('tr[data-oplogin]').forEach(tr => {
+        tr.style.display = !q || tr.dataset.oplogin.toLowerCase().includes(q) ? '' : 'none';
+      });
+    };
+    cont.querySelectorAll('[data-designar]').forEach(b => {
+      b.onclick = async () => {
+        try {
+          await api('/api/operadores-do-setor', { method: 'POST', body: JSON.stringify({ login: b.dataset.designar }) });
+          toast('Operador designado');
+          window.__renderPainelOperadoresChefe();
+        } catch (e) {}
+      };
+    });
+  };
+  function renderPainelOperadoresChefe() { window.__renderPainelOperadoresChefe(); }
 })();

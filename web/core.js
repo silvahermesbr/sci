@@ -953,7 +953,9 @@ function rotear() {
   }
   // Usuário normal (ordem 04/10): login leva ao aviso de módulo não disponível
   if (h === '#/sem-modulo' || h === '#/perfil') { chamarView(h === '#/perfil' ? 'ViewPerfil' : 'ViewSemModulo'); return; }
-  if (!['gerente', 'operador', 'chefe_setor'].includes(papel) && h !== '#/mensagens') {
+  // ordem 04/10 — usuário sem função do sistema: NADA (login → aviso de módulo
+  // indisponível; só Meu Perfil fica acessível).
+  if (!['gerente', 'operador', 'chefe_setor'].includes(papel)) {
     chamarView('ViewSemModulo'); return;
   }
   // ordem 04/10 — portão por papel: operador não tem drive nem email interno;
