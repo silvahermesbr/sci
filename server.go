@@ -1138,6 +1138,11 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "o admin não inicia conferências — quem inicia é o gerente/operador de um grupo")
 		return
 	}
+	// ordem 04/10 (Fase G): conferência é iniciada por GERENTE DE GRUPO.
+	if u.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "a conferência é iniciada pelo gerente do grupo")
+		return
+	}
 	if u.GrupoID == nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return

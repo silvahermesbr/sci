@@ -222,25 +222,25 @@
       <div class="cartao"><div class="rolagem"><table>
       <thead><tr><th class="num">ID</th><th>Status</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th>Nome / Prazo / Encarregado</th><th class="num">Lanç.</th><th>Ações</th></tr></thead>
       <tbody>${itens.map(linha).join('') || `<tr><td colspan="10"><span class="vazio">${cols || 'nenhuma'}</span></td></tr>`}</tbody></table></div></div>`;
-    const abasTela = `
-      <div class="abas" style="margin:10px 0">
-        <button data-t="conferencias" class="${modoTela !== 'arquivo' ? 'ativo' : ''}">CONFERÊNCIAS</button>
-        <button data-t="arquivo" class="${modoTela === 'arquivo' ? 'ativo' : ''}">ARQUIVO</button></div>`;
+    // ordem 04/10: abas do módulo → DROPDOWN estilizado (Conferências × Arquivo)
+    const abasTela = `<div style="margin:10px 0;display:flex;align-items:center;gap:10px">
+      <span style="font-size:12px;color:var(--tx2)">Lista:</span>
+      <div id="abasHojeDD" style="min-width:190px"></div></div>`;
     let seletor = '';
     if (modoTela !== 'arquivo') {
       const p = window.__perConfSel || { m: 'semana', dia: dataLocal(hojeD) };
       if (!p.dia) p.dia = dataLocal(hojeD);
       seletor = `<div class="cartao" style="margin-bottom:10px">
-        <div class="abas" id="perConf">
-          <button data-p="dia" class="${p.m === 'dia' ? 'ativo' : ''}">Dia</button>
-          <button data-p="semana" class="${p.m === 'semana' ? 'ativo' : ''}">Semana</button>
-          <button data-p="mes" class="${p.m === 'mes' ? 'ativo' : ''}">Mês</button>
-          <button data-p="ano" class="${p.m === 'ano' ? 'ativo' : ''}">Ano</button>
-          <button data-p="livre" class="${p.m === 'livre' ? 'ativo' : ''}">Período livre</button></div>
-        <div class="form-linha" style="margin-top:8px"><div id="perConfEntrada"></div>
-        <button class="primario" id="perConfIr" style="min-height:40px">Aplicar</button></div></div>`;
+        <div class="form-linha" style="align-items:center;gap:10px">
+          <div id="perConf" style="min-width:170px"></div>
+          <div id="perConfEntrada" style="flex:1"></div>
+          <button class="primario" id="perConfIr" style="min-height:40px">Aplicar</button>
+        </div></div>`;
     }
     const ehChefeSetor = (window.ME && window.ME.papel) === 'chefe_setor';
+    // ordem 04/10: NOVA CONFERÊNCIA é ato de GERENTE (conferência iniciada por
+    // gerente de grupo); chefe de setor apenas lança presenças na conferência aberta.
+    const ehGerente = (window.ME && window.ME.papel) === 'gerente';
     $('#app').innerHTML = `<h2>Conferências</h2>${abasTela}${seletor}
       <div class="cartao" style="margin-bottom:10px">
         <div class="campo" style="margin:0">
@@ -249,14 +249,20 @@
         </div>
       </div>
       ${modoTela !== 'arquivo' ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-        ${!ehChefeSetor ? `<button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>` : ''}
+        ${ehGerente ? `<button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>` : ''}
         <span style="color:var(--tx2);font-size:12px">${ehChefeSetor ? 'Como Chefe de Setor, selecione uma conferência aberta para lançar presença do seu efetivo.' : 'abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)'}</span></div>` +
       tabela('Abertas', abertas) + tabela('Fechadas', fechadas)
       : tabela('Arquivadas', lista, 'nenhuma conferência arquivada')}
       <p style="color:var(--tx2);font-size:12px">${modoTela === 'arquivo'
         ? 'No arquivo, você pode pesquisar, abrir e conferir registros antigos ou gerar relatórios PDF a qualquer momento.'
         : 'O relatório PDF só é gerado para conferências fechadas. Arquivar tira a conferência desta listagem (vai para o ARQUIVO).'}`;
-    document.querySelectorAll('.abas button[data-t]').forEach(b => b.onclick = () => window.ViewHoje(b.dataset.t));
+    // ordem 04/10: abas → dropdown
+    if (typeof criarDropdown === 'function') {
+      criarDropdown($('#abasHojeDD'), [
+        { valor: 'conferencias', rotulo: 'Conferências' },
+        { valor: 'arquivo', rotulo: 'Arquivo' }
+      ], { valorPadrao: modoTela, onChange: (t) => window.ViewHoje(t) });
+    }
     const pc = $('#perConfEntrada');
     if (pc) {
       const p = window.__perConfSel || (window.__perConfSel = { m: 'semana', dia: dataLocal(hojeD) });
@@ -265,11 +271,19 @@
         else pc.innerHTML = `<div class="campo"><label>${p.m === 'ano' ? 'Ano (qualquer dia do ano)' : p.m === 'mes' ? 'Mês (qualquer dia do mês)' : p.m === 'dia' ? 'Dia' : 'Semana (qualquer dia dela)'}</label><input type="date" id="pcDia" value="${p.dia || dataLocal(hojeD)}"></div>`;
       };
       inp();
-      document.querySelectorAll('#perConf button').forEach(b => b.onclick = () => {
-        p.m = b.dataset.p; window.__perConfSel = p;
-        document.querySelectorAll('#perConf button').forEach(x => x.classList.toggle('ativo', x === b));
-        inp();
-      });
+      // ordem 04/10: abas do módulo → DROPDOWN estilizado
+      if (typeof criarDropdown === 'function') {
+        criarDropdown($('#perConf'), [
+          { valor: 'dia', rotulo: 'Dia' },
+          { valor: 'semana', rotulo: 'Semana' },
+          { valor: 'mes', rotulo: 'Mês' },
+          { valor: 'ano', rotulo: 'Ano' },
+          { valor: 'livre', rotulo: 'Período livre' }
+        ], {
+          valorPadrao: p.m,
+          onChange: (m) => { p.m = m; window.__perConfSel = p; inp(); }
+        });
+      }
       $('#perConfIr').onclick = () => {
         const d = $('#pcDia'); const de = $('#pcDe'); const ate = $('#pcAte');
         if (d) p.dia = d.value;

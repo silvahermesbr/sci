@@ -51,7 +51,13 @@ function rotuloPapel(p) {
 }
 window.rotuloPapel = rotuloPapel;
 
-function rotaInicial() { return ME && ME.papel === 'admin' ? '#/admin' : '#/hoje'; }
+function rotaInicial() {
+  const p = ME && ME.papel;
+  if (p === 'admin') return '#/admin';
+  // ordem 04/10 — usuário normal (sem papel do sistema) não tem módulos:
+  if (!['gerente', 'operador', 'chefe_setor'].includes(p)) return '#/sem-modulo';
+  return '#/hoje';
+}
 
 /* navega p/ hash; se já estiver nele, roteia direto (hashchange não dispara) */
 function irPara(hash) {
@@ -577,26 +583,46 @@ function montarShell(usuario) {
   if (papel === 'admin') {
     itens = [
       ['#/admin', 'ADMIN & DASHBOARD', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>'],
-      ['#/consciencia', 'CONSCIÊNCIA SITUACIONAL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'],
       ['#/mensagens', 'EMAIL INTERNO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true],
       ['#/avisos', 'MURAL DE AVISOS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'],
       ['#/relatorios', 'RELATÓRIOS & LOGS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'],
       ['#/configuracoes', 'CONFIGURAÇÕES', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>']
     ];
   } else {
-    itens = [
-      ['#/hoje', 'CONFERÊNCIA', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>'],
-      ['#/consciencia', 'CONSCIÊNCIA SITUACIONAL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>'],
-      ['#/mensagens', 'EMAIL INTERNO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true],
-      ['#/avisos', 'MURAL DE AVISOS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'],
-      ['#/calendario', 'CALENDÁRIO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>'],
-      ['#/drive', 'DRIVE LOCAL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>'],
-      ['#/escalas', 'ESCALAS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01"/></svg>'],
-      ['#/material', 'MATERIAL & CAUTELAS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>'],
-      ['#/relatorios', 'RELATÓRIOS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>']
-    ];
-    if (papel === 'gerente') {
-      itens.splice(2, 0, ['#/grupos', 'GERENCIAR GRUPO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>']);
+    // ordem 04/10 — SISTEMAS DISPONÍVEIS POR PAPEL:
+    //   Gerente: TODOS do seu grupo (conferência, email, avisos, drive, relatórios, gerenciar)
+    //   Chefe de setor: Conferência, Drive, mural de avisos e Email Interno
+    //   Operador: Conferência e mural de avisos
+    //   Conta sem função do sistema: NADA (login leva ao aviso de módulo indisponível)
+    const svgConf = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
+    const svgMsg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>';
+    const svgAvisos = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+    const svgDrive = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+    const svgRel = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>';
+    const svgGer = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+    if (papel === 'operador') {
+      itens = [
+        ['#/hoje', 'CONFERÊNCIA', svgConf],
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos]
+      ];
+    } else if (papel === 'chefe_setor') {
+      itens = [
+        ['#/hoje', 'CONFERÊNCIA', svgConf],
+        ['#/drive', 'DRIVE LOCAL', svgDrive],
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
+        ['#/mensagens', 'EMAIL INTERNO', svgMsg, true]
+      ];
+    } else {
+      itens = [
+        ['#/hoje', 'CONFERÊNCIA', svgConf],
+        ['#/mensagens', 'EMAIL INTERNO', svgMsg, true],
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
+        ['#/drive', 'DRIVE LOCAL', svgDrive],
+        ['#/relatorios', 'RELATÓRIOS', svgRel]
+      ];
+      if (papel === 'gerente') {
+        itens.splice(4, 0, ['#/grupos', 'GERENCIAR GRUPO', svgGer]);
+      }
     }
   }
 
@@ -919,9 +945,22 @@ function rotear() {
     irPara('#/admin');
     return;
   } // admin não tem grupo: restrito em dados operacionais de grupo, mas possui caixa de mensagens própria
-  if (h === '#/escalas') { chamarView('ViewEscalas'); return; }
-  if (h === '#/material') { chamarView('ViewMaterial'); return; }
-  if (h === '#/consciencia') { chamarView('ViewConsciencia'); return; }
+  // Modos de DESENVOLVIMENTO (ordem 04/10): escalas (1.8), material (1.6),
+  // calendário (1.7) e consciência situacional (1.9) — acesso removido
+  // across the board; código em acervo para as versões futuras.
+  if (h === '#/escalas' || h === '#/material' || h === '#/calendario' || h === '#/consciencia') {
+    chamarView('ViewModuloEmDesenvolvimento'); return;
+  }
+  // Usuário normal (ordem 04/10): login leva ao aviso de módulo não disponível
+  if (h === '#/sem-modulo' || h === '#/perfil') { chamarView(h === '#/perfil' ? 'ViewPerfil' : 'ViewSemModulo'); return; }
+  if (!['gerente', 'operador', 'chefe_setor'].includes(papel) && h !== '#/mensagens') {
+    chamarView('ViewSemModulo'); return;
+  }
+  // ordem 04/10 — portão por papel: operador não tem drive nem email interno;
+  // chefe de setor não tem relatórios.
+  if (h === '#/drive' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
+  if (h === '#/mensagens' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
+  if (h === '#/relatorios' && papel !== 'gerente') { chamarView('ViewSemModulo'); return; }
   // Fix P0: a onda apagou os cases de #/hoje e #/mensagens do router — gerente e
   // operador caíam no fallback (app em branco). Re-ligados (ViewMensagens aceita sub-aba).
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
@@ -1430,4 +1469,32 @@ window.enviarArquivoParaDrive = function (file) {
   }).then(meta => ({
     drive_arquivo_id: meta.id, nome: meta.nome_original, tipo: meta.tipo, tamanho: meta.tamanho
   }));
+};
+
+/* ---------- módulos em modo de desenvolvimento (ordem 04/10) ---------- */
+window.ViewModuloEmDesenvolvimento = function () {
+  const app = document.getElementById('app');
+  if (!app) return;
+  if (window.navAtiva) navAtiva('');
+  app.innerHTML = `
+    <div class="cartao" style="max-width:560px;margin:60px auto;text-align:center;padding:38px 28px">
+      <div style="font-size:44px;margin-bottom:12px">🚧</div>
+      <h2 style="margin:0 0 8px">Módulo em desenvolvimento</h2>
+      <p style="color:var(--tx2);font-size:13.5px;margin:0 0 4px">Este módulo foi reservado para uma versão futura do SCI.</p>
+      <p style="color:var(--tx3);font-size:12.5px;margin:0">Material → 1.6 · Calendário → 1.7 · Escalas → 1.8 · Consciência Situacional → 1.9</p>
+      <button type="button" class="primario" style="margin-top:18px;padding:8px 22px" onclick="location.hash='#/hoje'">Voltar ao início</button>
+    </div>`;
+};
+
+/* ---------- usuário normal: sem módulos (ordem 04/10) ---------- */
+window.ViewSemModulo = function () {
+  const app = document.getElementById('app');
+  if (!app) return;
+  if (window.navAtiva) navAtiva('');
+  app.innerHTML = `
+    <div class="cartao" style="max-width:560px;margin:60px auto;text-align:center;padding:38px 28px">
+      <div style="font-size:44px;margin-bottom:12px">🔒</div>
+      <h2 style="margin:0 0 8px">Módulo não disponível</h2>
+      <p style="color:var(--tx2);font-size:13.5px;margin:0">Sua conta ainda não possui funções no sistema. Procure o encarregado de pessoal do seu grupo para receber uma função.</p>
+    </div>`;
 };
