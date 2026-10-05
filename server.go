@@ -307,6 +307,8 @@ func (a *App) rotas() {
 	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4)
 	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
 	m.Handle("POST /api/usuarios", a.auth(false, a.hUsuariosAdd))
+	m.Handle("GET /api/operadores-do-setor", a.auth(false, a.hOperadoresDoSetor))
+	m.Handle("POST /api/operadores-do-setor", a.auth(false, a.hOperadoresDoSetor))
 	m.Handle("PATCH /api/usuarios/{id}", a.auth(false, a.hUsuarioEdit))
 	m.Handle("DELETE /api/usuarios/{id}", a.auth(false, a.hUsuarioExcluir))   // R6; gerente só operador do próprio grupo (v9.4)
 	m.Handle("POST /api/usuarios/{id}/senha", a.auth(false, a.hUsuarioSenha)) // admin: qualquer; gerente: operador do próprio grupo (v9.4)
@@ -4591,6 +4593,86 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 
 	a.st.Auditoria(&u.ID, "criar", "usuarios", &id, req.Login+" ("+papel+")", ipDe(r))
 	jsonOK(w, map[string]any{"id": id})
+}
+
+// hOperadoresDoSetor (ordem 04/10 — Fase G3): o CHEFE DE SETOR não cria
+// operadores — SELECIONA dentre as contas presentes no SEU setor. GET lista
+// os candidatos do setor; POST designa a conta como operador (INSERT do papel
+// na mesma linha, sem mudar o papel principal da conta).
+func (a *App) hOperadoresDoSetor(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.Papel != "chefe_setor" {
+		jsonErro(w, http.StatusForbidden, "somente chefe de setor opera este endpoint")
+		return
+	}
+	if u.GrupoID == nil {
+		jsonErro(w, http.StatusForbidden, "chefe de setor sem grupo definido")
+		return
+	}
+	var setorID *int64
+	_ = a.st.db.QueryRow(`SELECT setor_id FROM usuarios WHERE id = ?`, u.ID).Scan(&setorID)
+	if setorID == nil {
+		jsonErro(w, http.StatusBadRequest, "chefe de setor sem setor vinculado")
+		return
+	}
+
+	if r.Method == http.MethodGet {
+		rows, err := a.st.db.Query(`
+			SELECT u.id, u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
+			       COALESCE(u.funcao_id,0), COALESCE(f.nome,''),
+			       EXISTS(SELECT 1 FROM usuario_papeis up WHERE up.usuario_id = u.id AND up.grupo_id = ? AND up.papel = 'operador')
+			FROM usuarios u
+			LEFT JOIN funcoes f ON f.id = u.funcao_id
+			WHERE u.grupo_id = ? AND u.setor_id = ? AND u.ativo = 1
+			ORDER BY u.login`, *u.GrupoID, *u.GrupoID, *setorID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		defer rows.Close()
+		out := []map[string]any{}
+		for rows.Next() {
+			var id, fid int64
+			var login, ng, nc, fnome string
+			var ehOp int
+			if rows.Scan(&id, &login, &ng, &nc, &fid, &fnome, &ehOp) == nil {
+				out = append(out, map[string]any{
+					"id": id, "login": login, "nome_guerra": ng, "nome_completo": nc,
+					"funcao_id": fid, "funcao_nome": fnome, "eh_operador": ehOp == 1,
+				})
+			}
+		}
+		jsonOK(w, out)
+		return
+	}
+
+	// POST: designar {login} (conta do setor) como operador
+	var req struct {
+		Login string `json:"login"`
+	}
+	if err := decodificar(r, &req); err != nil || req.Login == "" {
+		jsonErro(w, http.StatusBadRequest, "login obrigatório")
+		return
+	}
+	login := strings.ToLower(strings.TrimSpace(req.Login))
+	var id int64
+	var grupo, setor *int64
+	err := a.st.db.QueryRow(`SELECT id, grupo_id, setor_id FROM usuarios WHERE login = ? AND ativo = 1`, login).
+		Scan(&id, &grupo, &setor)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "conta não encontrada")
+		return
+	}
+	if grupo == nil || *grupo != *u.GrupoID || setor == nil || *setor != *setorID {
+		jsonErro(w, http.StatusForbidden, "conta não pertence ao seu setor")
+		return
+	}
+	if _, err := a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'operador')`, id, *u.GrupoID); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "designar_operador", "usuarios", &id, login, ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": id})
 }
 
 // ---------- SPA ----------
