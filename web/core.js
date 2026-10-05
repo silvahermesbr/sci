@@ -36,6 +36,7 @@ function esc(s) {
     .replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 window.esc = esc;
+window.formatarTamanhoBytes = formatarTamanhoBytes;
 
 /* ---------- usuário da sessão ---------- */
 let ME = null;
@@ -1352,3 +1353,81 @@ window.montarRichEditor = function(container, placeholder, valorInicial) {
 };
 
 })();
+
+/* ---------- anexos com integração ao Drive (ordem Diretor 04/10) ----------
+   abrirSeletorDrive({jaSelecionados, onConfirma}): modal com a lista de
+   arquivos acessíveis (/api/drive/seletor); seleção devolve anexos por
+   REFERÊNCIA ({drive_arquivo_id, nome, tipo, tamanho}) — nada duplicado.
+   enviarArquivoParaDrive(file): sobe arquivo do PC p/ o drive e devolve a
+   referência (a cópia física fica no drive; o anexo referencia). */
+window.abrirSeletorDrive = function (opcoes) {
+  opcoes = opcoes || {};
+  api('/api/drive/seletor').then(lista => {
+    const jaSel = new Set((opcoes.jaSelecionados || []).filter(a => a && a.drive_arquivo_id).map(a => a.drive_arquivo_id));
+    const sel = new Set(jaSel);
+    const html = `
+      <div class="modal" style="max-width:560px;width:94%">
+        <h3 style="margin-top:0">Selecionar arquivos do Drive</h3>
+        <input type="text" id="sdBusca" placeholder="Filtrar por nome…" style="width:100%;margin-bottom:10px">
+        <div id="sdLista" style="max-height:44vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
+        <div class="modal-acoes" style="justify-content:flex-end;gap:8px;margin-top:12px">
+          <button type="button" class="acao-linha" id="sdCancelar">Cancelar</button>
+          <button type="button" class="primario" id="sdConfirmar">Anexar selecionados</button>
+        </div>
+      </div>`;
+    const m = modal(html);
+    const q = s => m.querySelector(s);
+
+    function render() {
+      const termo = (q('#sdBusca').value || '').toLowerCase();
+      const itens = (lista || []).filter(a => !termo || (a.nome || '').toLowerCase().includes(termo));
+      q('#sdLista').innerHTML = itens.length === 0
+        ? '<div style="padding:18px;text-align:center;color:var(--tx3)">Nenhum arquivo no seu drive.</div>'
+        : itens.map(a => `
+          <label class="acao-linha" style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 10px;border-radius:8px">
+            <input type="checkbox" data-id="${a.drive_arquivo_id}" ${sel.has(a.drive_arquivo_id) ? 'checked' : ''}>
+            <span style="flex:1">📄 <b>${esc(a.nome)}</b> <small style="color:var(--tx3)">(${formatarTamanhoBytes(a.tamanho)}${a.grupo_nome ? ' · ' + esc(a.grupo_nome) : ''})</small></span>
+          </label>`).join('');
+      q('#sdLista').querySelectorAll('input[type=checkbox]').forEach(cb => {
+        cb.onchange = () => {
+          const id = +cb.dataset.id;
+          if (cb.checked) sel.add(id); else sel.delete(id);
+        };
+      });
+    }
+    q('#sdBusca').oninput = render;
+    render();
+
+    q('#sdCancelar').onclick = () => m.remove();
+    q('#sdConfirmar').onclick = () => {
+      const escolhidos = (lista || []).filter(a => sel.has(a.drive_arquivo_id)).map(a => ({
+        drive_arquivo_id: a.drive_arquivo_id, nome: a.nome, tipo: a.tipo, tamanho: a.tamanho
+      }));
+      m.remove();
+      if (typeof opcoes.onConfirma === 'function') opcoes.onConfirma(escolhidos);
+    };
+  }).catch(() => toast('Falha ao abrir o drive', 'erro'));
+};
+
+function formatarTamanhoBytes(b) {
+  if (b === undefined || b === null) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+  return (b / 1048576).toFixed(1) + ' MB';
+}
+
+window.enviarArquivoParaDrive = function (file) {
+  const fd = new FormData();
+  fd.append('arquivo', file);
+  return fetch('/api/drive/upload', {
+    method: 'POST',
+    headers: { 'X-SCI': '1' },
+    credentials: 'same-origin',
+    body: fd
+  }).then(r => {
+    if (!r.ok) throw new Error('upload falhou');
+    return r.json();
+  }).then(meta => ({
+    drive_arquivo_id: meta.id, nome: meta.nome_original, tipo: meta.tipo, tamanho: meta.tamanho
+  }));
+};

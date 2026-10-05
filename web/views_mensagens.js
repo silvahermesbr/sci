@@ -567,10 +567,13 @@
                   ? '<span style="color:var(--verm-txt)">⚖️ Sua Resposta Formal ao Despacho (Obrigatória):</span>' 
                   : '<span>💬 Adicionar Resposta / Acompanhamento na Thread:</span>'}
               </label>
-              <label class="acao-linha" style="cursor:pointer;font-size:11.5px;padding:2px 8px">
-                📎 Anexar
-                <input type="file" id="threadInputAnexo" multiple style="display:none">
-              </label>
+              <div style="display:flex;gap:6px">
+                <button type="button" class="acao-linha" id="threadBtAnexoDrive" style="cursor:pointer;font-size:11.5px;padding:2px 8px">🗂️ Do Drive</button>
+                <label class="acao-linha" style="cursor:pointer;font-size:11.5px;padding:2px 8px">
+                  📎 Do computador
+                  <input type="file" id="threadInputAnexo" multiple style="display:none">
+                </label>
+              </div>
             </div>
             <div id="threadNovoPostEditor"></div>
             <div id="threadListaAnexos" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px"></div>
@@ -620,6 +623,7 @@
             const idx = +link.dataset.idx;
             const anx = msg.anexos[idx];
             if (anx && anx.dados_base64) link.href = anx.dados_base64;
+            else if (anx && anx.drive_arquivo_id) link.href = '/api/drive/download/' + anx.drive_arquivo_id;
           };
         });
       }
@@ -632,6 +636,7 @@
               const idx = +link.dataset.idx;
               const anx = r.anexos[idx];
               if (anx && anx.dados_base64) link.href = anx.dados_base64;
+              else if (anx && anx.drive_arquivo_id) link.href = '/api/drive/download/' + anx.drive_arquivo_id;
             };
           });
         }
@@ -663,7 +668,7 @@
       function renderAnexosResposta() {
         contAnxResp.innerHTML = anexosResposta.map((a, i) => `
           <span class="msg-anexo-item" style="font-size:11px">
-            📄 ${esc(a.nome)} <small>(${formatarTamanho(a.tamanho)})</small>
+            ${a.drive_arquivo_id ? '🗂️' : '📄'} ${esc(a.nome)} <small>(${formatarTamanho(a.tamanho)})</small>
             <span data-remanx="${i}" style="cursor:pointer;font-weight:bold;margin-left:4px;color:var(--verm-txt)">&times;</span>
           </span>
         `).join('');
@@ -675,25 +680,36 @@
         });
       }
 
-      if (inputAnxResp) {
-        inputAnxResp.onchange = (e) => {
-          const files = Array.from(e.target.files || []);
-          files.forEach(file => {
-            if (file.size > 25 * 1024 * 1024) {
-              return toast(`Arquivo ${file.name} excede o limite de 25MB`, 'erro');
-            }
-            const reader = new FileReader();
-            reader.onload = () => {
-              anexosResposta.push({
-                nome: file.name,
-                tamanho: file.size,
-                tipo: file.type,
-                dados_base64: reader.result
-              });
+      const btAnxDriveResp = mModal.querySelector('#threadBtAnexoDrive');
+      if (btAnxDriveResp) {
+        btAnxDriveResp.onclick = () => {
+          window.abrirSeletorDrive({
+            jaSelecionados: anexosResposta,
+            onConfirma: (escolhidos) => {
+              anexosResposta = escolhidos;
               renderAnexosResposta();
-            };
-            reader.readAsDataURL(file);
+            }
           });
+        };
+      }
+
+      if (inputAnxResp) {
+        inputAnxResp.onchange = async (e) => {
+          const files = Array.from(e.target.files || []);
+          for (const file of files) {
+            if (file.size > 25 * 1024 * 1024) {
+              toast(`Arquivo ${file.name} excede o limite de 25MB`, 'erro');
+              continue;
+            }
+            try {
+              const ref = await window.enviarArquivoParaDrive(file);
+              anexosResposta.push(ref);
+            } catch (err) {
+              toast(`Falha ao enviar ${file.name} ao drive`, 'erro');
+            }
+          }
+          e.target.value = '';
+          renderAnexosResposta();
         };
       }
 
@@ -885,14 +901,17 @@
             <div id="mEditorContainer"></div>
           </div>
 
-          <!-- Upload de Anexos -->
+          <!-- Anexos (ordem 04/10): do DRIVE (referência, sem duplicar) ou do PC (sobe p/ o drive e referencia) -->
           <div style="margin-bottom:16px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">
               <label style="font-weight:700;font-size:12.5px">Anexos de Documentos:</label>
-              <label class="acao-linha" style="cursor:pointer;font-size:12px;padding:3px 8px">
-                📎 Adicionar Arquivo
-                <input type="file" id="mInputAnexo" multiple style="display:none">
-              </label>
+              <div style="display:flex;gap:6px">
+                <button type="button" class="acao-linha" id="mBtAnexoDrive" style="cursor:pointer;font-size:12px;padding:3px 8px">🗂️ Do Drive</button>
+                <label class="acao-linha" style="cursor:pointer;font-size:12px;padding:3px 8px">
+                  💻 Do computador
+                  <input type="file" id="mInputAnexo" multiple style="display:none">
+                </label>
+              </div>
             </div>
             <div id="mListaAnexos" style="display:flex;gap:6px;flex-wrap:wrap"></div>
           </div>
@@ -986,7 +1005,7 @@
         const contAnx = q('#mListaAnexos');
         contAnx.innerHTML = anexosCarregados.map((a, i) => `
           <span class="msg-anexo-item" style="font-size:11.5px">
-            📄 ${esc(a.nome)} <small>(${formatarTamanho(a.tamanho)})</small>
+            ${a.drive_arquivo_id ? '🗂️' : '📄'} ${esc(a.nome)} <small>(${formatarTamanho(a.tamanho)})</small>
             <span data-remanx="${i}" style="cursor:pointer;font-weight:bold;margin-left:4px;color:var(--verm-txt)">&times;</span>
           </span>
         `).join('');
@@ -1000,25 +1019,33 @@
       }
       renderAnexosModal();
 
-      // Input file to base64
-      q('#mInputAnexo').onchange = (e) => {
-        const files = Array.from(e.target.files || []);
-        files.forEach(file => {
-          if (file.size > 25 * 1024 * 1024) {
-            return toast(`Arquivo ${file.name} excede o limite de 25MB para mensagens`, 'erro');
-          }
-          const reader = new FileReader();
-          reader.onload = () => {
-            anexosCarregados.push({
-              nome: file.name,
-              tamanho: file.size,
-              tipo: file.type,
-              dados_base64: reader.result
-            });
+      // Anexos DO DRIVE (referência) e DO PC (cópia sobe p/ o drive — ordem 04/10)
+      q('#mBtAnexoDrive').onclick = () => {
+        window.abrirSeletorDrive({
+          jaSelecionados: anexosCarregados,
+          onConfirma: (escolhidos) => {
+            anexosCarregados = escolhidos;
             renderAnexosModal();
-          };
-          reader.readAsDataURL(file);
+          }
         });
+      };
+
+      q('#mInputAnexo').onchange = async (e) => {
+        const files = Array.from(e.target.files || []);
+        for (const file of files) {
+          if (file.size > 25 * 1024 * 1024) {
+            toast(`Arquivo ${file.name} excede o limite de 25MB para mensagens`, 'erro');
+            continue;
+          }
+          try {
+            const ref = await window.enviarArquivoParaDrive(file);
+            anexosCarregados.push(ref);
+          } catch (err) {
+            toast(`Falha ao enviar ${file.name} ao drive`, 'erro');
+          }
+        }
+        e.target.value = '';
+        renderAnexosModal();
       };
 
       q('#mBtnCancel').onclick = () => mModal.remove();

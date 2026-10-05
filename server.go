@@ -234,6 +234,7 @@ func (a *App) rotas() {
 
 	// Módulo de Drive Local (v1.2 Fase 3)
 	m.Handle("GET /api/drive/itens", a.auth(false, a.hDriveItens))
+	m.Handle("GET /api/drive/seletor", a.auth(false, a.hDriveSeletor))
 	m.Handle("POST /api/drive/pastas", a.auth(false, a.hDrivePastasAdd))
 	m.Handle("PATCH /api/drive/pastas/{id}", a.auth(false, a.hDrivePastasEdit))
 	m.Handle("DELETE /api/drive/pastas/{id}", a.auth(false, a.hDrivePastasDel))

@@ -279,11 +279,25 @@
                         <span>${fmtData(c.criado_em)} ${fmtHora(c.criado_em)}</span>
                       </div>
                       <div style="color:var(--tx);line-height:1.4">${c.texto}</div>
+                      ${(c.anexos && c.anexos.length) ? `
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+                          ${c.anexos.map(anx => anx.drive_arquivo_id
+                            ? `<a href="/api/drive/download/${anx.drive_arquivo_id}" class="msg-anexo-item" style="font-size:11.5px">🗂️ ${esc(anx.nome || 'arquivo')} <small>(${formatarTamanhoBytes(anx.tamanho)})</small></a>`
+                            : (anx.dados_base64 ? `<a href="${anx.dados_base64}" download="${esc(anx.nome || 'anexo')}" class="msg-anexo-item" style="font-size:11.5px">📄 ${esc(anx.nome || 'anexo')} <small>(${formatarTamanhoBytes(anx.tamanho)})</small></a>` : ''))}
+                        </div>` : ''}
                     </div>
                   `).join('')}
                 </div>
                 <div id="editorComm_${id}" style="margin-bottom:8px"></div>
-                <div style="text-align:right">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px">
+                  <div style="display:flex;gap:6px;align-items:center">
+                    <button type="button" class="acao-linha" id="btAnxDriveComm_${id}" style="cursor:pointer;font-size:11.5px;padding:2px 8px">🗂️ Do Drive</button>
+                    <label class="acao-linha" style="cursor:pointer;font-size:11.5px;padding:2px 8px">
+                      📎 Do computador
+                      <input type="file" id="inputAnxComm_${id}" multiple style="display:none">
+                    </label>
+                    <div id="listaAnxComm_${id}" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+                  </div>
                   <button type="button" class="primario" id="btEnvComm_${id}" style="padding:6px 14px;font-size:12px">Enviar Comentário</button>
                 </div>
               `;
@@ -293,13 +307,54 @@
                 box.querySelector(`#editorComm_${id}`).innerHTML = `<textarea id="txtComm_${id}" rows="2" style="width:100%" placeholder="Adicione um comentário..."></textarea>`;
               }
 
+              // Anexos do comentário (ordem 04/10): drive (referência) ou PC → drive
+              let anexosComm = [];
+              const renderAnexosComm = () => {
+                const contA = box.querySelector(`#listaAnxComm_${id}`);
+                if (!contA) return;
+                contA.innerHTML = anexosComm.map((a, i) => `
+                  <span class="msg-anexo-item" style="font-size:11px">
+                    ${a.drive_arquivo_id ? '🗂️' : '📄'} ${esc(a.nome)} <small>(${formatarTamanhoBytes(a.tamanho)})</small>
+                    <span data-rm="${i}" style="cursor:pointer;font-weight:bold;margin-left:4px;color:var(--verm-txt)">&times;</span>
+                  </span>`).join('');
+                contA.querySelectorAll('[data-rm]').forEach(b => {
+                  b.onclick = () => { anexosComm.splice(+b.dataset.rm, 1); renderAnexosComm(); };
+                });
+              };
+              const btAnxDriveComm = box.querySelector(`#btAnxDriveComm_${id}`);
+              if (btAnxDriveComm) {
+                btAnxDriveComm.onclick = () => {
+                  window.abrirSeletorDrive({
+                    jaSelecionados: anexosComm,
+                    onConfirma: (escolhidos) => { anexosComm = escolhidos; renderAnexosComm(); }
+                  });
+                };
+              }
+              const inputAnxComm = box.querySelector(`#inputAnxComm_${id}`);
+              if (inputAnxComm) {
+                inputAnxComm.onchange = async (e) => {
+                  const files = Array.from(e.target.files || []);
+                  for (const file of files) {
+                    if (file.size > 25 * 1024 * 1024) { toast(`Arquivo ${file.name} excede 25MB`, 'erro'); continue; }
+                    try {
+                      const ref = await window.enviarArquivoParaDrive(file);
+                      anexosComm.push(ref);
+                    } catch (err) {
+                      toast(`Falha ao enviar ${file.name} ao drive`, 'erro');
+                    }
+                  }
+                  e.target.value = '';
+                  renderAnexosComm();
+                };
+              }
+
               box.querySelector(`#btEnvComm_${id}`).onclick = async () => {
                 const texto = editorComm ? editorComm.getHTML() : box.querySelector(`#txtComm_${id}`).value.trim();
                 if (!texto || texto === '<p><br></p>') { toast('Digite o comentário', 'erro'); return; }
                 try {
                   await api(`/api/avisos/${id}/comentar`, {
                     method: 'POST',
-                    body: JSON.stringify({ texto })
+                    body: JSON.stringify({ texto, anexos: anexosComm })
                   });
                   toast('Comentário registrado!');
                   recarregarComentarios();

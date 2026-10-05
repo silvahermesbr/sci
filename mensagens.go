@@ -481,8 +481,11 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	anexosJSON := "[]"
-	if req.Anexos != nil {
-		if b, err := json.Marshal(req.Anexos); err == nil {
+	if lista, errA := anexosDeRequest(a, u, req.Anexos); errA != nil {
+		jsonErro(w, errA.codigo, errA.mensagem)
+		return
+	} else if lista != nil {
+		if b, err := json.Marshal(lista); err == nil {
 			anexosJSON = string(b)
 		}
 	}
@@ -1076,8 +1079,11 @@ func (a *App) hMensagensResponderThread(w http.ResponseWriter, r *http.Request) 
 	}
 
 	anexosJSON := "[]"
-	if req.Anexos != nil {
-		if b, err := json.Marshal(req.Anexos); err == nil {
+	if lista, errA := anexosDeRequest(a, u, req.Anexos); errA != nil {
+		jsonErro(w, errA.codigo, errA.mensagem)
+		return
+	} else if lista != nil {
+		if b, err := json.Marshal(lista); err == nil {
 			anexosJSON = string(b)
 		}
 	}
@@ -1427,6 +1433,7 @@ func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
 		// Fix contrato: o front (views_avisos.js) envia {texto}; aceitar AMBOS os campos.
 		Texto      string `json:"texto"`
 		Comentario string `json:"comentario"`
+		Anexos     any    `json:"anexos"` // ordem 04/10: todo comentário pode anexar arquivos
 	}
 	if err := decodificar(r, &req); err != nil {
 		jsonErro(w, http.StatusBadRequest, "dados inválidos")
@@ -1442,10 +1449,21 @@ func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Anexos do comentário: referência ao drive (sem duplicação) ou base64 legado.
+	anexosJSON := "[]"
+	if lista, errA := anexosDeRequest(a, u, req.Anexos); errA != nil {
+		jsonErro(w, errA.codigo, errA.mensagem)
+		return
+	} else if lista != nil {
+		if b, err := json.Marshal(lista); err == nil {
+			anexosJSON = string(b)
+		}
+	}
+
 	res, err := a.st.db.Exec(`
-		INSERT INTO aviso_comentarios (aviso_id, usuario_id, papel_id, comentario)
-		VALUES (?, ?, ?, ?)`,
-		id, u.ID, u.PapelAtivoID, comentario)
+		INSERT INTO aviso_comentarios (aviso_id, usuario_id, papel_id, comentario, anexos)
+		VALUES (?, ?, ?, ?, ?)`,
+		id, u.ID, u.PapelAtivoID, comentario, anexosJSON)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao inserir comentário: "+err.Error())
 		return
@@ -1469,7 +1487,7 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 
 	// Comentários
 	cRows, _ := a.st.db.Query(`
-		SELECT ac.id, ac.comentario, ac.criado_em,
+		SELECT ac.id, ac.comentario, ac.criado_em, COALESCE(ac.anexos,'[]'),
 		       u.id, u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
 		       COALESCE(up.papel,''), COALESCE(up.nome_exibicao,'')
 		FROM aviso_comentarios ac
@@ -1481,12 +1499,18 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 	if cRows != nil {
 		for cRows.Next() {
 			var cid, uid int64
-			var com, dts, login, guerra, completo, papel, exibicao string
-			if cRows.Scan(&cid, &com, &dts, &uid, &login, &guerra, &completo, &papel, &exibicao) == nil {
+			var com, dts, login, guerra, completo, papel, exibicao, anxJSON string
+			if cRows.Scan(&cid, &com, &dts, &anxJSON, &uid, &login, &guerra, &completo, &papel, &exibicao) == nil {
+				var anexosList []any
+				_ = json.Unmarshal([]byte(anxJSON), &anexosList)
+				if anexosList == nil {
+					anexosList = []any{}
+				}
 				comentarios = append(comentarios, map[string]any{
 					"id":            cid,
 					"comentario":    com,
 					"text":          com, // alias consumido pelo render do front (views_avisos.js lê c.texto)
+					"anexos":        anexosList,
 					"criado_em":     dts,
 					"usuario_id":    uid,
 					"login":         login,
