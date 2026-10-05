@@ -13,6 +13,8 @@ import (
 	"strings"
 )
 
+var espacosRe = regexp.MustCompile(`\s+`)
+
 var tagRe = regexp.MustCompile(`(?i)<(/?)([a-zA-Z0-9]+)((?:[^>])*?)>`)
 var styleAlignRe = regexp.MustCompile(`(?i)^\s*(?:style\s*=\s*")?\s*text-align\s*:\s*(left|center|right|justify)\s*;?\s*"?\s*$`)
 var corRe = regexp.MustCompile(`^#[0-9a-fA-F]{3}([0-9a-fA-F]{3}([0-9a-fA-F]{2})?)?$`)
@@ -68,4 +70,14 @@ func sanitizaRichText(in string) string {
 	}
 	sb.WriteString(escapeHTML(in[last:]))
 	return sb.String()
+}
+// remediarAssunto (ordem Diretor 04/10): o título da mensagem às vezes chega
+// com marcações do editor ("<strong>assunto</strong>", entidades, quebras).
+// Assunto é TÍTULO: vira texto puro — tags removidas (o texto interno fica),
+// entidades decodificadas, espaços/quebras colapsados.
+func remediarAssunto(in string) string {
+	out := tagRe.ReplaceAllString(in, " ")
+	out = html.UnescapeString(out)
+	out = espacosRe.ReplaceAllString(out, " ")
+	return strings.TrimSpace(out)
 }

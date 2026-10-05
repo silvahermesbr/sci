@@ -252,12 +252,17 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 
 	if soDespachos {
 		filtroExtra += " AND m.tipo = 'despacho'"
+	} else {
+		// Email Interno (ordem 04/10): a caixa CONVENCIONAL não mostra despachos
+		// ainda em aberto; o despacho FINALIZADO virou mensagem comum e aí sim
+		// aparece na caixa de entrada normal.
+		filtroExtra += " AND (COALESCE(m.tipo,'comum') = 'comum' OR m.finalizado_em IS NOT NULL)"
 	}
 
 	q := `
 		SELECT m.id, m.assunto, m.corpo, m.criada_em,
 		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
-		       COALESCE(m.anexos, '[]'), m.pai_id,
+		       COALESCE(m.anexos, '[]'), m.pai_id, m.finalizado_em,
 		       md.id, md.lida_em, md.lida_por_usuario_id,
 		       COALESCE(u_lida.nome_guerra, ''),
 		       md.visualizado_em, md.respondido_em, md.pasta_id, md.arquivada,
@@ -289,12 +294,12 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		var remPapel, remGrupoNome, remFuncaoNome, remNomeExibicao string
 		var lidaPorGuerra, tipo, anexosJSON string
 		var exigeResposta, arquivada int
-		var lidaEm, visualizadoEm, respondidoEm *string
+		var lidaEm, visualizadoEm, respondidoEm, finalizadoEm *string
 		var lidaPorID, remGrupoID, remFuncaoID, paiID, pastaID *int64
 
 		if err := rows.Scan(
 			&msgID, &assunto, &corpo, &criadaEm,
-			&tipo, &exigeResposta, &anexosJSON, &paiID,
+			&tipo, &exigeResposta, &anexosJSON, &paiID, &finalizadoEm,
 			&destID, &lidaEm, &lidaPorID, &lidaPorGuerra,
 			&visualizadoEm, &respondidoEm, &pastaID, &arquivada,
 			&remPapelID, &remUsuarioID,
@@ -318,6 +323,7 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 				"exige_resposta":   exigeResposta == 1,
 				"anexos":           anexosList,
 				"pai_id":           paiID,
+				"finalizado_em":    finalizadoEm,
 				"lida_em":          lidaEm,
 				"lida_por_id":      lidaPorID,
 				"lida_por_nome":    lidaPorGuerra,
@@ -453,7 +459,7 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fix P0 XSS: sanitiza na ESCRITA (mesma allowlist do editor rich text).
-	req.Assunto = strings.TrimSpace(req.Assunto)
+	req.Assunto = strings.TrimSpace(remediarAssunto(req.Assunto))
 	req.Corpo = strings.TrimSpace(sanitizaRichText(req.Corpo))
 	if req.Assunto == "" || req.Corpo == "" {
 		jsonErro(w, http.StatusBadRequest, "assunto e mensagem são obrigatórios")

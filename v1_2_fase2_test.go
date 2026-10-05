@@ -123,9 +123,14 @@ func TestFase2DespachosEAvisos(t *testing.T) {
 		t.Fatalf("falha ao responder despacho: %v", res)
 	}
 
-	// 6. Agora o despacho deve constar como atendido (respondido_em preenchido)
-	rrAny, resAny = doJSONReqAny(app, "GET", "/api/mensagens/inbox", nil, bravoCookie)
+	// 6. Agora o despacho deve constar como atendido (respondido_em preenchido).
+	// (ordem 04/10 "Email Interno": o inbox CONVENCIONAL só mostra mensagens
+	// comuns; despachos listam pela aba ?despacho=1.)
+	rrAny, resAny = doJSONReqAny(app, "GET", "/api/mensagens/inbox?despacho=1", nil, bravoCookie)
 	inbox = resAny.([]any)
+	if len(inbox) != 1 {
+		t.Fatalf("esperado 1 despacho na aba de despachos de Bravo, obtido: %d", len(inbox))
+	}
 	msgItem = inbox[0].(map[string]any)
 	if msgItem["respondido_em"] == nil {
 		t.Fatalf("esperado respondido_em não-nulo após envio da resposta ao despacho")

@@ -131,6 +131,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV29(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV30(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2025,3 +2028,43 @@ func (s *Store) EhSubordinado(superiorID, subordinadoID int64) bool {
 	return false
 }
 
+// migrarV30 (ordem Diretor 04/10, "Email Interno"): finalização de despacho e
+// anexos em comentários de aviso.
+//   - mensagens.finalizado_em/finalizado_por: despacho finalizado pelo
+//     destinatário vira mensagem comum (some das pendências, pode ser
+//     encaminhado como mensagem normal).
+//   - aviso_comentarios.anexos: todo comentário pode carregar arquivos
+//     (JSON array, mesmo formato de mensagens.anexos).
+// Idempotente: checa pragma_table_info antes de cada ALTER.
+func (s *Store) migrarV30() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 30`).Scan(&v)
+	if v == 30 {
+		return nil
+	}
+
+	var nFin int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('mensagens') WHERE name = 'finalizado_em'`).Scan(&nFin)
+	if nFin == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE mensagens ADD COLUMN finalizado_em TEXT`); err != nil {
+			return fmt.Errorf("migração v30 alter mensagens finalizado_em: %w", err)
+		}
+	}
+	var nFinPor int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('mensagens') WHERE name = 'finalizado_por'`).Scan(&nFinPor)
+	if nFinPor == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE mensagens ADD COLUMN finalizado_por INTEGER REFERENCES usuarios(id)`); err != nil {
+			return fmt.Errorf("migração v30 alter mensagens finalizado_por: %w", err)
+		}
+	}
+
+	var nAnx int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('aviso_comentarios') WHERE name = 'anexos'`).Scan(&nAnx)
+	if nAnx == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE aviso_comentarios ADD COLUMN anexos TEXT NOT NULL DEFAULT '[]'`); err != nil {
+			return fmt.Errorf("migração v30 alter aviso_comentarios anexos: %w", err)
+		}
+	}
+
+	return s.marcarVersao(30)
+}

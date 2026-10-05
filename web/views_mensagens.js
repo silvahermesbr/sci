@@ -1,4 +1,4 @@
-/* SCI — Módulo de Mensageria Interna, Despachos & Fórum de Avisos (v1.2 Fase 2)
+/* SCI — Email Interno (ex-Mensageria), Despachos & Fórum de Avisos (v1.2 Fase 2; renome/abas nested ordem Diretor 04/10)
    Comunicação formal institucional, Despachos com Retorno Obrigatório,
    Anexos, Pastas e Mural Gerencial com Registro de Ciente e Auditoria. */
 (function () {
@@ -49,34 +49,37 @@
     app.innerHTML = `
       <div class="msg-header-topo">
         <div>
-          <h2 style="margin:0 0 4px">Mensageria & Despachos</h2>
-          <p style="color:var(--tx2);font-size:13px;margin:0">Comunicação operacional oficial, despachos auditáveis com retorno exigido e threads por função.</p>
+          <h2 style="margin:0 0 4px">Email Interno</h2>
+          <p style="color:var(--tx2);font-size:13px;margin:0">Caixa de entrada e enviadas para mensagens convencionais; aba própria de despachos, com retorno exigido e finalização pelo destinatário.</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button type="button" class="primario" id="btNovaMsg" style="display:flex;align-items:center;gap:6px;padding:8px 16px">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            Nova Mensagem / Despacho
+            <span id="btNovaMsgRotulo">Nova Mensagem</span>
           </button>
         </div>
       </div>
 
-      <div class="msg-abas-container" style="flex-wrap:wrap">
-        <button type="button" class="msg-aba-btn ${abaAtual === 'inbox' ? 'ativo' : ''}" id="abaInbox">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
-          Entrada <span id="badgeInboxAba" class="badge-mini oculto">0</span>
-        </button>
-        <button type="button" class="msg-aba-btn ${abaAtual === 'despachos' ? 'ativo' : ''}" id="abaDespachos">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          Despachos <span id="badgeDespachosAba" class="badge-mini oculto">0</span>
-        </button>
-        <button type="button" class="msg-aba-btn ${abaAtual === 'enviadas' ? 'ativo' : ''}" id="abaEnviadas">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-          Enviadas
-        </button>
-        <button type="button" class="msg-aba-btn ${abaAtual === 'arquivadas' ? 'ativo' : ''}" id="abaArquivadas">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
-          Arquivo
-        </button>
+      <!-- Abas NESTED (ordem 04/10): dropdown "Convencional" (Entrada/Enviadas/Arquivo)
+           + grupo "Despachos" (Recebidas/Enviadas). Botão de ARQUIVO: mensagens no
+           grupo convencional, despachos realizados no grupo de despachos. -->
+      <div class="msg-abas-container" style="flex-wrap:wrap;gap:10px">
+        <div style="display:inline-flex;border:1px solid var(--borda2);border-radius:8px;overflow:hidden">
+          <button type="button" class="msg-aba-btn ${['inbox','enviadas','arquivadas'].includes(abaAtual) ? 'ativo' : ''}" id="abaConvencional" style="border-radius:0;border:none">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+            Convencional <span id="badgeInboxAba" class="badge-mini oculto">0</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div id="ddConvencional" style="display:none;position:absolute;background:var(--painel2);border:1px solid var(--borda2);border-radius:8px;z-index:60;min-width:170px;box-shadow:0 10px 28px rgba(0,0,0,.35)"></div>
+        </div>
+        <div style="display:inline-flex;border:1px solid var(--borda2);border-radius:8px;overflow:hidden;position:relative">
+          <button type="button" class="msg-aba-btn ${['despachos','despachos_enviadas','arquivo_despachos'].includes(abaAtual) ? 'ativo' : ''}" id="abaDespachos" style="border-radius:0;border:none">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            Despachos <span id="badgeDespachosAba" class="badge-mini oculto">0</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div id="ddDespachos" style="display:none;position:absolute;background:var(--painel2);border:1px solid var(--borda2);border-radius:8px;z-index:60;min-width:190px;box-shadow:0 10px 28px rgba(0,0,0,.35)"></div>
+        </div>
       </div>
 
       <!-- Barra de Pastas Personalizadas (visível na Inbox) -->
@@ -95,32 +98,90 @@
     const cont = document.getElementById('msgConteudo');
     const barraPastas = document.getElementById('msgBarraPastas');
 
-    // Botões de Abas
-    const abas = {
-      inbox: document.getElementById('abaInbox'),
-      despachos: document.getElementById('abaDespachos'),
-      enviadas: document.getElementById('abaEnviadas'),
-      arquivadas: document.getElementById('abaArquivadas')
+    // Abas NESTED (ordem 04/10): dois grupos — Convencional (inbox/enviadas/arquivadas)
+    // e Despachos (recebidas/enviadas/arquivo). Dropdown estilizado por grupo.
+    const GRUPO_DE = {
+      inbox: 'convencional', enviadas: 'convencional', arquivadas: 'convencional',
+      despachos: 'despachos', despachos_enviadas: 'despachos', arquivo_despachos: 'despachos'
     };
+    const ROTULO_ABA = {
+      inbox: 'Caixa de Entrada', enviadas: 'Enviadas', arquivadas: 'Arquivo de Mensagens',
+      despachos: 'Despachos Recebidos', despachos_enviadas: 'Despachos Enviados',
+      arquivo_despachos: 'Arquivo de Despachos'
+    };
+    const ITENS_GRUPO = {
+      convencional: ['inbox', 'enviadas', 'arquivadas'],
+      despachos: ['despachos', 'despachos_enviadas', 'arquivo_despachos']
+    };
+
+    const btConv = document.getElementById('abaConvencional');
+    const btDesp = document.getElementById('abaDespachos');
+    const ddConv = document.getElementById('ddConvencional');
+    const ddDesp = document.getElementById('ddDespachos');
+
+    function marcarGruposAtivos() {
+      const g = GRUPO_DE[abaAtual] || 'convencional';
+      if (btConv) btConv.classList.toggle('ativo', g === 'convencional');
+      if (btDesp) btDesp.classList.toggle('ativo', g === 'despachos');
+      // Rótulo do botão principal mostra a sub-aba corrente
+      const lbl = ROTULO_ABA[abaAtual] || '';
+      if (btConv && g === 'convencional') {
+        btConv.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = ' ' + lbl + ' '; });
+      }
+      if (btDesp && g === 'despachos') {
+        btDesp.childNodes.forEach(n => { if (n.nodeType === 3) n.textContent = ' ' + lbl + ' '; });
+      }
+      const rot = document.getElementById('btNovaMsgRotulo');
+      if (rot) rot.textContent = g === 'despachos' ? 'Novo Despacho' : 'Nova Mensagem';
+    }
+
+    function montarDropdown(dd, grupo) {
+      if (!dd) return;
+      dd.innerHTML = ITENS_GRUPO[grupo].map(aba => `
+        <button type="button" data-aba="${aba}" class="msg-aba-btn ${aba === abaAtual ? 'ativo' : ''}" style="display:block;width:100%;text-align:left;border:none;border-radius:0;background:transparent;padding:9px 14px">
+          ${ROTULO_ABA[aba]}
+        </button>
+      `).join('');
+      dd.querySelectorAll('[data-aba]').forEach(b => {
+        b.onclick = (ev) => {
+          ev.stopPropagation();
+          ddConv.style.display = 'none';
+          ddDesp.style.display = 'none';
+          alternarAba(b.dataset.aba);
+        };
+      });
+    }
+
+    function toggleDropdown(dd, grupo) {
+      const aberto = dd.style.display !== 'none';
+      ddConv.style.display = 'none';
+      ddDesp.style.display = 'none';
+      if (!aberto) { montarDropdown(dd, grupo); dd.style.display = 'block'; }
+    }
+    if (btConv) btConv.onclick = (e) => { e.stopPropagation(); toggleDropdown(ddConv, 'convencional'); };
+    if (btDesp) btDesp.onclick = (e) => { e.stopPropagation(); toggleDropdown(ddDesp, 'despachos'); };
+    document.addEventListener('click', (e) => {
+      if (ddConv && !ddConv.contains(e.target) && e.target !== btConv) ddConv.style.display = 'none';
+      if (ddDesp && !ddDesp.contains(e.target) && e.target !== btDesp) ddDesp.style.display = 'none';
+    });
 
     function alternarAba(novaAba) {
       abaAtual = novaAba;
-      Object.keys(abas).forEach(k => {
-        if (abas[k]) abas[k].classList.toggle('ativo', k === novaAba);
-      });
+      marcarGruposAtivos();
       barraPastas.style.display = (novaAba === 'inbox') ? 'flex' : 'none';
 
       if (novaAba === 'inbox') carregarInbox();
       else if (novaAba === 'despachos') carregarDespachos();
+      else if (novaAba === 'despachos_enviadas') carregarDespachosEnviadas();
+      else if (novaAba === 'arquivo_despachos') carregarArquivoDespachos();
       else if (novaAba === 'enviadas') carregarEnviadas();
       else if (novaAba === 'arquivadas') carregarArquivadas();
     }
 
-    Object.keys(abas).forEach(k => {
-      if (abas[k]) abas[k].onclick = () => alternarAba(k);
-    });
-
-    document.getElementById('btNovaMsg').onclick = () => abrirModalCompor();
+    document.getElementById('btNovaMsg').onclick = () => {
+      const g = GRUPO_DE[abaAtual] || 'convencional';
+      abrirModalCompor({ tipo: g === 'despachos' ? 'despacho' : 'comum' });
+    };
 
     document.getElementById('btAddPasta').onclick = async () => {
       const nome = prompt('Nome da nova pasta pessoal:');
@@ -181,13 +242,33 @@
     }
 
     async function carregarDespachos() {
-      cont.innerHTML = '<div class="carregando">Carregando despachos…</div>';
+      cont.innerHTML = '<div class="carregando">Carregando despachos recebidos…</div>';
       try {
         const msgs = await api('/api/mensagens/inbox?despacho=1');
         renderListaMensagens(msgs, 'despachos');
         atualizarBadges();
       } catch (e) {
         cont.innerHTML = '<div class="vazio" style="padding:40px;text-align:center">Falha ao carregar despachos.</div>';
+      }
+    }
+
+    async function carregarDespachosEnviadas() {
+      cont.innerHTML = '<div class="carregando">Carregando despachos enviados…</div>';
+      try {
+        const msgs = await api('/api/mensagens/enviadas?despacho=1');
+        renderListaEnviadas(msgs, true);
+      } catch (e) {
+        cont.innerHTML = '<div class="vazio" style="padding:40px;text-align:center">Falha ao carregar despachos enviados.</div>';
+      }
+    }
+
+    async function carregarArquivoDespachos() {
+      cont.innerHTML = '<div class="carregando">Carregando arquivo de despachos…</div>';
+      try {
+        const msgs = await api('/api/mensagens/inbox?despacho=1&arquivadas=1');
+        renderListaMensagens(msgs, 'arquivo_despachos');
+      } catch (e) {
+        cont.innerHTML = '<div class="vazio" style="padding:40px;text-align:center">Falha ao carregar arquivo de despachos.</div>';
       }
     }
 
@@ -263,7 +344,6 @@
                 ${badgeAnexos}
               </div>
               <div class="msg-card-assunto">${esc(m.assunto)}</div>
-              <div class="msg-card-resumo">${esc(m.corpo.substring(0, 130))}${m.corpo.length > 130 ? '…' : ''}</div>
             </div>
           </div>
         `;
@@ -280,12 +360,13 @@
       });
     }
 
-    function renderListaEnviadas(msgs) {
+    function renderListaEnviadas(msgs, soDespachos) {
+      if (soDespachos) msgs = (msgs || []).filter(m => m.tipo === 'despacho');
       if (!msgs || msgs.length === 0) {
         cont.innerHTML = `
           <div class="msg-vazio-card">
             <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            <p>Nenhuma mensagem enviada por esta função ainda.</p>
+            <p>${soDespachos ? 'Nenhum despacho enviado por esta função ainda.' : 'Nenhuma mensagem enviada por esta função ainda.'}</p>
           </div>
         `;
         return;
@@ -313,7 +394,6 @@
               </div>
               <div style="margin:2px 0 5px">${badgeDespacho}</div>
               <div class="msg-card-assunto">${esc(m.assunto)}</div>
-              <div class="msg-card-resumo">${esc(m.corpo.substring(0, 130))}${m.corpo.length > 130 ? '…' : ''}</div>
             </div>
           </div>
         `;
@@ -325,7 +405,7 @@
         card.onclick = () => {
           const id = +card.dataset.msgid;
           const msgObj = msgs.find(x => x.id === id);
-          if (msgObj) abrirModalVisualizar(msgObj, 'enviadas');
+          if (msgObj) abrirModalVisualizar(msgObj, soDespachos ? 'despachos_enviadas' : 'enviadas');
         };
       });
     }
@@ -357,7 +437,10 @@
                 <b style="color:var(--verm-txt);display:block;margin-bottom:2px">⚠️ DESPACHO COM RETORNO OBRIGATÓRIO</b>
                 <span style="font-size:12.5px;color:var(--tx2)">Esta solicitação exige resposta formal. O arquivamento ou exclusão está bloqueado até o envio da resposta abaixo nesta thread.</span>
               </div>
-              <button type="button" class="primario" id="btRolarParaResposta" style="padding:6px 14px;font-size:12.5px;white-space:nowrap">⬇️ Responder Abaixo</button>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button type="button" class="primario" id="btRolarParaResposta" style="padding:6px 14px;font-size:12.5px;white-space:nowrap">⬇️ Responder Abaixo</button>
+                <button type="button" class="acao-linha" id="btFinalizarDespacho" style="padding:6px 14px;font-size:12.5px;white-space:nowrap" title="Encerra o despacho sem resposta formal: vira mensagem comum no arquivo e nas caixas normais">✔️ Finalizar Despacho</button>
+              </div>
             </div>
           `;
         } else if (thread.eh_destinatario && thread.meu_respondido_em) {
@@ -656,6 +739,21 @@
         };
       }
 
+      // FINALIZAR despacho (ordem 04/10): destinatário encerra SEM responder;
+      // vira mensagem comum (sai das pendências, entra na caixa convencional).
+      const btnFin = mModal.querySelector('#btFinalizarDespacho');
+      if (btnFin) {
+        btnFin.onclick = async () => {
+          if (!confirm('Finalizar este despacho sem resposta formal? Ele vira mensagem comum e não exige mais retorno.')) return;
+          try {
+            await api(`/api/mensagens/${m.id}/finalizar`, { method: 'POST' });
+            toast('Despacho finalizado. Registrado como mensagem comum.');
+            mModal.remove();
+            alternarAba(abaAtual);
+          } catch (e) {}
+        };
+      }
+
       // Arquivar / Desarquivar
       const btnArq = mModal.querySelector('#btArquivarMsg');
       if (btnArq) {
@@ -740,21 +838,14 @@
         <div class="modal" style="max-width:760px;width:95%">
           <h3 style="margin-top:0;display:flex;align-items:center;gap:8px">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            Compor Mensagem Institucional ou Despacho
+            ${dadosIniciais.tipo === 'despacho' ? 'Compor Despacho' : 'Nova Mensagem'}
           </h3>
 
           <div class="campo" style="margin-bottom:12px">
-            <label style="font-weight:700;display:flex;align-items:center;gap:6px">
-              Tipo de Comunicação Institucional
-            </label>
-            <select id="mTipo" style="width:100%;height:38px;font-weight:600;background:var(--painel2);border:1px solid var(--borda2);border-radius:var(--raio)">
-              <option value="comum" ${dadosIniciais.tipo !== 'despacho' ? 'selected' : ''}>✉️ Mensagem Comum (Informativo / Padrão)</option>
-              <option value="despacho" ${dadosIniciais.tipo === 'despacho' ? 'selected' : ''}>⚖️ Despacho Formal (Retorno Obrigatório & Auditoria)</option>
-            </select>
-            <div id="mTipoDesc" style="font-size:12px;color:var(--tx2);margin-top:4px">
+            <div id="mTipoDesc" style="font-size:12px;color:var(--tx2)">
               ${dadosIniciais.tipo === 'despacho'
-                ? '⚖️ <b style="color:var(--verm-txt)">Despacho Formal:</b> Exige manifestação/resposta formal obrigatória do destinatário antes que ele possa arquivar ou excluir.'
-                : '✉️ <b style="color:var(--tx1)">Mensagem Comum:</b> Comunicação direta e informativa, sem trava de resposta obrigatória.'}
+                ? '⚖️ <b style="color:var(--verm-txt)">Despacho Formal</b> — emitido a partir da aba Despachos. Exige manifestação formal do destinatário (ou finalização por ele).'
+                : '✉️ <b style="color:var(--tx1)">Mensagem Convencional</b> — emitida a partir do grupo Convencional, sem trava de resposta.'}
             </div>
           </div>
 
@@ -930,21 +1021,13 @@
         });
       };
 
-      // Alternância de descrição do tipo de comunicação
-      q('#mTipo').onchange = (e) => {
-        const isDesp = e.target.value === 'despacho';
-        q('#mTipoDesc').innerHTML = isDesp
-          ? '⚖️ <b style="color:var(--verm-txt)">Despacho Formal:</b> Exige manifestação/resposta formal obrigatória do destinatário antes que ele possa arquivar ou excluir.'
-          : '✉️ <b style="color:var(--tx1)">Mensagem Comum:</b> Comunicação direta e informativa, sem trava de resposta obrigatória.';
-      };
-
       q('#mBtnCancel').onclick = () => mModal.remove();
 
       q('#mBtnEnviar').onclick = async () => {
         const destArray = Array.from(selecionadosIds);
         const assunto = q('#mAssunto').value.trim();
         const corpo = editorInst ? (typeof editorInst.getHTML === 'function' ? editorInst.getHTML().trim() : (typeof editorInst.getValue === 'function' ? editorInst.getValue().trim() : '')) : (q('#mCorpoFallback') ? q('#mCorpoFallback').value.trim() : '');
-        const tipo = q('#mTipo').value;
+        const tipo = (GRUPO_DE[abaAtual] === 'despachos' || dadosIniciais.tipo === 'despacho') ? 'despacho' : 'comum';
 
         if (destArray.length === 0) { toast('Selecione pelo menos um destinatário (ou CC)', 'erro'); return; }
         if (!assunto) { toast('Informe o assunto', 'erro'); return; }
@@ -999,7 +1082,7 @@
       }
 
       const totalPendencias = count + despachos;
-      const txt = totalPendencias === 1 ? '1 pendência na mensageria' : `${totalPendencias} mensagens/despachos pendentes`;
+      const txt = totalPendencias === 1 ? '1 pendência no Email Interno' : `${totalPendencias} mensagens/despachos pendentes`;
       const elMsg1 = document.getElementById('sinoHoverMsgTxt');
       if (elMsg1) elMsg1.textContent = txt;
       const elMsg2 = document.getElementById('mobSinoHoverMsgTxt');
