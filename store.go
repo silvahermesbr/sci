@@ -2191,31 +2191,32 @@ func (s *Store) migrarV34() error {
 	// do AUTOR como titular NO GRUPO DO REGISTRO. O subselect usa MIN(funcao_id)
 	// para determinismo caso o autor seja titular de mais de uma função (o índice
 	// v32 permite: 1 titular por função, não 1 função por pessoa).
+	// Dialeto SQLite: UPDATE NÃO aceita alias entre tabela e SET (Postgres-ismo).
 	if _, err := s.db.Exec(`
-		UPDATE drive_pastas dp SET funcao_id = (
+		UPDATE drive_pastas SET funcao_id = (
 			SELECT MIN(fm.funcao_id) FROM funcao_membros fm
-			WHERE fm.usuario_id = dp.autor_usuario_id AND fm.grupo_id = dp.grupo_id
+			WHERE fm.usuario_id = drive_pastas.autor_usuario_id AND fm.grupo_id = drive_pastas.grupo_id
 			  AND fm.titularidade = 'titular'
-		) WHERE dp.funcao_id IS NULL
+		) WHERE drive_pastas.funcao_id IS NULL
 	`); err != nil {
 		return fmt.Errorf("migração v34 backflow drive_pastas: %w", err)
 	}
 	if _, err := s.db.Exec(`
-		UPDATE drive_arquivos da SET funcao_id = (
+		UPDATE drive_arquivos SET funcao_id = (
 			SELECT MIN(fm.funcao_id) FROM funcao_membros fm
-			WHERE fm.usuario_id = da.autor_usuario_id AND fm.grupo_id = da.grupo_id
+			WHERE fm.usuario_id = drive_arquivos.autor_usuario_id AND fm.grupo_id = drive_arquivos.grupo_id
 			  AND fm.titularidade = 'titular'
-		) WHERE da.funcao_id IS NULL
+		) WHERE drive_arquivos.funcao_id IS NULL
 	`); err != nil {
 		return fmt.Errorf("migração v34 backflow drive_arquivos: %w", err)
 	}
 	if _, err := s.db.Exec(`
-		UPDATE mensagens m SET funcao_id = (
+		UPDATE mensagens SET funcao_id = (
 			SELECT MIN(fm.funcao_id) FROM funcao_membros fm
-			WHERE fm.usuario_id = m.remetente_usuario_id
-			  AND fm.grupo_id = (SELECT up.grupo_id FROM usuario_papeis up WHERE up.id = m.remetente_papel_id)
+			WHERE fm.usuario_id = mensagens.remetente_usuario_id
+			  AND fm.grupo_id = (SELECT up.grupo_id FROM usuario_papeis up WHERE up.id = mensagens.remetente_papel_id)
 			  AND fm.titularidade = 'titular'
-		) WHERE m.funcao_id IS NULL
+		) WHERE mensagens.funcao_id IS NULL
 	`); err != nil {
 		return fmt.Errorf("migração v34 backflow mensagens: %w", err)
 	}

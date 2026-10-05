@@ -339,7 +339,11 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 
 	out := []map[string]any{}
 	for rows.Next() {
-		var msgID, destID, remPapelID, remUsuarioID int64
+		var msgID, remPapelID, remUsuarioID int64
+		// Braço da função (UNION): md.* vem NULL → ponteiro, senão o Scan
+		// falha e a linha da função é DESCARTADA em silêncio (lista sem a
+		// Caixa da Função com 200).
+		var destID *int64
 		var assunto, corpo, criadaEm, remLogin, remNomeGuerra, remNomeCompleto string
 		var remPapel, remGrupoNome, remFuncaoNome, remNomeExibicao string
 		var lidaPorGuerra, tipo, anexosJSON string
