@@ -1388,59 +1388,115 @@ window.montarRichEditor = function (container, placeholder, valorInicial) {
 
 })();
 
-/* ---------- anexos com integração ao Drive (ordem Diretor 04/10) ----------
-   abrirSeletorDrive({jaSelecionados, onConfirma}): modal com a lista de
-   arquivos acessíveis (/api/drive/seletor); seleção devolve anexos por
-   REFERÊNCIA ({drive_arquivo_id, nome, tipo, tamanho}) — nada duplicado.
-   enviarArquivoParaDrive(file): sobe arquivo do PC p/ o drive e devolve a
-   referência (a cópia física fica no drive; o anexo referencia). */
+/* ---------- anexos com integração ao Drive (ordem Diretor 04/10; remake DELIB-0010
+   item 5, 05/10): NUNCA mais lista plana — modal é navegador de PASTAS começando na
+   RAIZ do drive do usuário (GET /api/drive/itens, sem pasta_id = raiz acessível),
+   com breadcrumbs clicáveis, pastas navegáveis e busca local de arquivos. Seleção
+   devolve anexos por REFERÊNCIA ({drive_arquivo_id, nome, tipo, tamanho}) — nada
+   duplicado. Seleção PERSISTE ao navegar entre pastas. */
 window.abrirSeletorDrive = function (opcoes) {
   opcoes = opcoes || {};
-  api('/api/drive/seletor').then(lista => {
-    const jaSel = new Set((opcoes.jaSelecionados || []).filter(a => a && a.drive_arquivo_id).map(a => a.drive_arquivo_id));
-    const sel = new Set(jaSel);
-    const html = `
-      <div class="modal" style="max-width:560px;width:94%">
-        <h3 style="margin-top:0">Selecionar arquivos do Drive</h3>
-        <input type="text" id="sdBusca" placeholder="Filtrar por nome…" style="width:100%;margin-bottom:10px">
-        <div id="sdLista" style="max-height:44vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px"></div>
-        <div class="modal-acoes" style="justify-content:flex-end;gap:8px;margin-top:12px">
-          <button type="button" class="acao-linha" id="sdCancelar">Cancelar</button>
-          <button type="button" class="primario" id="sdConfirmar">Anexar selecionados</button>
-        </div>
-      </div>`;
-    const m = modal(html);
-    const q = s => m.querySelector(s);
+  const jaSel = (opcoes.jaSelecionados || []).filter(a => a && a.drive_arquivo_id);
+  const sel = new Set(jaSel.map(a => a.drive_arquivo_id));
+  const meta = {}; // drive_arquivo_id -> {nome, tipo, tamanho} (acumula o que já foi visto)
+  jaSel.forEach(a => { meta[a.drive_arquivo_id] = { nome: a.nome, tipo: a.tipo, tamanho: a.tamanho }; });
 
-    function render() {
-      const termo = (q('#sdBusca').value || '').toLowerCase();
-      const itens = (lista || []).filter(a => !termo || (a.nome || '').toLowerCase().includes(termo));
-      q('#sdLista').innerHTML = itens.length === 0
-        ? '<div style="padding:18px;text-align:center;color:var(--tx3)">Nenhum arquivo no seu drive.</div>'
-        : itens.map(a => `
-          <label class="acao-linha" style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 10px;border-radius:8px">
-            <input type="checkbox" data-id="${a.drive_arquivo_id}" ${sel.has(a.drive_arquivo_id) ? 'checked' : ''}>
-            <span style="flex:1">📄 <b>${esc(a.nome)}</b> <small style="color:var(--tx3)">(${formatarTamanhoBytes(a.tamanho)}${a.grupo_nome ? ' · ' + esc(a.grupo_nome) : ''})</small></span>
-          </label>`).join('');
-      q('#sdLista').querySelectorAll('input[type=checkbox]').forEach(cb => {
-        cb.onchange = () => {
-          const id = +cb.dataset.id;
-          if (cb.checked) sel.add(id); else sel.delete(id);
-        };
-      });
-    }
-    q('#sdBusca').oninput = render;
-    render();
+  const html = `
+    <div class="modal">
+      <h3 style="margin-top:0">Anexar do Drive</h3>
+      <div id="sdTrilha" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;font-size:12.5px;margin-bottom:8px;color:var(--tx2)"></div>
+      <input type="text" id="sdBusca" placeholder="Filtrar arquivos desta pasta por nome…" style="width:100%;margin-bottom:10px">
+      <div id="sdLista" style="max-height:44vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px;min-height:120px"></div>
+      <div id="sdRodape" style="margin-top:8px;font-size:12px;color:var(--tx3);min-height:16px"></div>
+      <div class="modal-acoes" style="justify-content:flex-end;gap:8px;margin-top:10px">
+        <button type="button" class="acao-linha" id="sdCancelar">Cancelar</button>
+        <button type="button" class="primario" id="sdConfirmar">Anexar selecionados</button>
+      </div>
+    </div>`;
+  const m = window.abrirModal(html, null, { largura: '620px' });
+  const q = s => m.modal.querySelector(s);
 
-    q('#sdCancelar').onclick = () => m.remove();
-    q('#sdConfirmar').onclick = () => {
-      const escolhidos = (lista || []).filter(a => sel.has(a.drive_arquivo_id)).map(a => ({
-        drive_arquivo_id: a.drive_arquivo_id, nome: a.nome, tipo: a.tipo, tamanho: a.tamanho
-      }));
-      m.remove();
-      if (typeof opcoes.onConfirma === 'function') opcoes.onConfirma(escolhidos);
-    };
-  }).catch(() => toast('Falha ao abrir o drive', 'erro'));
+  let trilha = [{ id: 0, nome: 'Meu Drive' }];
+  let pastasAqui = [];
+  let arqsAqui = [];
+
+  function renderTrilha() {
+    const t = q('#sdTrilha');
+    t.innerHTML = trilha.map((p, i) => {
+      const ultimo = i === trilha.length - 1;
+      const no = ultimo
+        ? `<b style="color:var(--tx)">${esc(p.nome)}</b>`
+        : `<a href="javascript:void(0)" data-sdpasta="${p.id}" style="color:var(--tx2);text-decoration:underline">${esc(p.nome)}</a>`;
+      return (i ? '<span style="color:var(--tx3)">›</span>' : '') + no;
+    }).join('');
+    t.querySelectorAll('[data-sdpasta]').forEach(a => { a.onclick = () => navegar(+a.dataset.sdpasta); });
+  }
+
+  function renderLista() {
+    const termo = (q('#sdBusca').value || '').toLowerCase();
+    const arqs = arqsAqui.filter(a => !termo || (a.nome_original || '').toLowerCase().includes(termo));
+    const linhas = [];
+    (pastasAqui || []).forEach(p => {
+      linhas.push(`
+        <div class="acao-linha" data-sdentra="${p.id}" style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 10px;border-radius:8px">
+          <span style="font-size:16px">📁</span>
+          <span style="flex:1"><b>${esc(p.nome)}</b> <small style="color:var(--tx3)">· ${p.qtd_itens || 0} item(ns)</small></span>
+          <span style="font-size:11.5px;color:var(--tx3)">abrir ›</span>
+        </div>`);
+    });
+    arqs.forEach(a => {
+      meta[a.id] = { nome: a.nome_original, tipo: a.tipo, tamanho: a.tamanho };
+      linhas.push(`
+        <label class="acao-linha" style="display:flex;align-items:center;gap:10px;cursor:pointer;padding:8px 10px;border-radius:8px">
+          <input type="checkbox" data-id="${a.id}" ${sel.has(a.id) ? 'checked' : ''}>
+          <span style="font-size:16px">📄</span>
+          <span style="flex:1"><b>${esc(a.nome_original)}</b> <small style="color:var(--tx3)">(${formatarTamanhoBytes(a.tamanho)})</small></span>
+        </label>`);
+    });
+    q('#sdLista').innerHTML = linhas.length === 0
+      ? '<div style="padding:18px;text-align:center;color:var(--tx3)">Pasta vazia.</div>'
+      : linhas.join('');
+    q('#sdLista').querySelectorAll('[data-sdentra]').forEach(el => { el.onclick = () => navegar(+el.dataset.sdentra); });
+    q('#sdLista').querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.onchange = () => {
+        const id = +cb.dataset.id;
+        if (cb.checked) sel.add(id); else sel.delete(id);
+        atualizarRodape();
+      };
+    });
+  }
+
+  function atualizarRodape() {
+    q('#sdRodape').textContent = sel.size > 0 ? `${sel.size} arquivo(s) selecionado(s)` : '';
+  }
+
+  function navegar(pid) {
+    q('#sdBusca').value = '';
+    q('#sdLista').innerHTML = '<div class="carregando">Carregando…</div>';
+    api('/api/drive/itens' + (pid > 0 ? '?pasta_id=' + pid : '')).then(d => {
+      trilha = (d && d.breadcrumbs && d.breadcrumbs.length) ? d.breadcrumbs : [{ id: 0, nome: 'Meu Drive' }];
+      pastasAqui = (d && d.pastas) || [];
+      arqsAqui = (d && d.arquivos) || [];
+      renderTrilha();
+      renderLista();
+      atualizarRodape();
+    }).catch(() => {
+      q('#sdLista').innerHTML = '<div style="padding:18px;text-align:center;color:var(--verm-txt)">Falha ao carregar a pasta.</div>';
+    });
+  }
+
+  // Busca NUNCA recria o próprio input (o filtro atua só na lista — foco preservado).
+  q('#sdBusca').oninput = renderLista;
+  q('#sdCancelar').onclick = () => m.fechar();
+  q('#sdConfirmar').onclick = () => {
+    const escolhidos = [...sel].map(id => {
+      const mm = meta[id] || {};
+      return { drive_arquivo_id: id, nome: mm.nome || ('arquivo-' + id), tipo: mm.tipo || '', tamanho: mm.tamanho || 0 };
+    });
+    m.fechar();
+    if (typeof opcoes.onConfirma === 'function') opcoes.onConfirma(escolhidos);
+  };
+  navegar(0);
 };
 
 function formatarTamanhoBytes(b) {
