@@ -309,6 +309,8 @@ func (a *App) rotas() {
 	m.Handle("GET /api/conferencias", a.auth(false, a.hConferenciaList))
 
 	m.Handle("GET /api/catalogo/{t}", a.auth(false, a.hCatalogoList))
+	m.Handle("GET /api/setores/agregado", a.auth(false, a.hSetoresAgregado))
+	m.Handle("GET /api/drive/arquivo_grupo", a.auth(false, a.hDriveArquivoGrupo))
 	m.Handle("POST /api/catalogo/{t}", a.auth(false, a.hCatalogoAdd))
 	m.Handle("DELETE /api/catalogo/{t}/{id}", a.auth(false, a.hCatalogoDel))
 	m.Handle("PATCH /api/catalogo/{t}/{id}/pai", a.auth(false, a.hCatalogoReparentar))

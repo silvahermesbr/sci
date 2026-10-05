@@ -319,12 +319,14 @@
 
   /* --- ADMIN › usuários: Gestão Completa de Contas, Nomes e Multi-Funções --- */
   async function admUsuarios() {
-    const [lista, grupos, funcoesRes] = await Promise.all([
+    const [lista, grupos, funcoesRes, setoresRes] = await Promise.all([
       api('/api/usuarios'),
       api('/api/grupos'),
-      api('/api/catalogo/funcoes').catch(() => [])
+      api('/api/catalogo/funcoes').catch(() => []),
+      api('/api/catalogo/setores').catch(() => [])
     ]);
     const funcoesLista = Array.isArray(funcoesRes) ? funcoesRes : (funcoesRes.funcoes || []);
+    const setoresLista = (Array.isArray(setoresRes) ? setoresRes : []).filter(s => s.ativo !== false);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
     const optsGrupos = `<option value="">— Sem grupo (Global / Atribuir depois) —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
 

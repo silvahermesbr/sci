@@ -70,6 +70,7 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 		GrupoID      *int64 `json:"grupo_id"`
 		Papel        string `json:"papel"`
 		FuncaoID     *int64 `json:"funcao_id"`
+		SetorID      *int64 `json:"setor_id"` // onda itens79: setor do chefe_setor no ato da atribuição
 		NomeExibicao string `json:"nome_exibicao"`
 	}
 	if err := decodificar(r, &req); err != nil {
@@ -151,6 +152,20 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, _ := res.LastInsertId()
+	// Onda itens79 (item 9): chefe_setor pode nascer JÁ com o setor — o
+	// formulário "Atribuir Função/Cadeira" manda setor_id opcional. Só
+	// chefe_setor aceita; setor tem que existir e pertencer ao grupo do papel
+	// (ou ser global). Erro aqui é 400 real, nunca silencioso.
+	if papel == "chefe_setor" && req.SetorID != nil && *req.SetorID > 0 {
+		if req.GrupoID == nil || !a.setorIDValidoNoGrupo(*req.SetorID, *req.GrupoID) {
+			jsonErro(w, http.StatusBadRequest, "setor não pertence ao grupo do papel")
+			return
+		}
+		if _, err := a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, *req.SetorID, usuarioID); err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
+			return
+		}
+	}
 	if req.FuncaoID != nil {
 		var pID *int64
 		_ = a.st.db.QueryRow(`SELECT pessoa_id FROM usuarios WHERE id = ?`, usuarioID).Scan(&pID)
