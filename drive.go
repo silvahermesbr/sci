@@ -94,6 +94,14 @@ func (a *App) checarAcessoPasta(u *Usuario, pastaID int64, precisaEdicao bool) (
 		}
 	}
 
+	// Onda 05/10 (dupla chave ADITIVA — DELIB-0010 B): a pasta é POSSESSO da
+	// função que o usuário EXERCE (funcao_membros) → leitura garantida. Ex-
+	// titular perde este braço (herança Q3) sem perder o que é seu (autor/
+	// grants permanecem). Edição NÃO vem pela função (só leitura).
+	if a.acessoViaFuncaoPasta(u, pastaID, precisaEdicao) {
+		return true, grupoID, nil
+	}
+
 	// Herança de pasta pai
 	if paiID != nil && *paiID > 0 {
 		return a.checarAcessoPasta(u, *paiID, precisaEdicao)
@@ -178,6 +186,13 @@ func (a *App) checarAcessoArquivo(u *Usuario, arquivoID int64, precisaEdicao boo
 		if errP == nil && ok {
 			return true, meta, nil
 		}
+	}
+
+	// Onda 05/10 (dupla chave ADITIVA — DELIB-0010 B): arquivo é POSSESSO da
+	// função que o usuário EXERCE → leitura garantida (herança Q3 p/ sucessor;
+	// ex-titular perde SÓ este braço). Edição NÃO vem pela função (só leitura).
+	if a.acessoViaFuncaoArquivo(u, arquivoID, precisaEdicao) {
+		return true, meta, nil
 	}
 
 	// Onda 05/10 (item 4): ARQUIVO é item isolado — acesso = lista em
@@ -490,9 +505,9 @@ func (a *App) hDrivePastasAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := a.st.db.Exec(`
-		INSERT INTO drive_pastas (nome, grupo_id, pai_id, autor_usuario_id, autor_papel_id)
-		VALUES (?, ?, ?, ?, ?)
-	`, req.Nome, grupoID, req.PastaID, u.ID, u.PapelAtivoID)
+		INSERT INTO drive_pastas (nome, grupo_id, pai_id, autor_usuario_id, autor_papel_id, funcao_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, req.Nome, grupoID, req.PastaID, u.ID, u.PapelAtivoID, a.funcaoTitularNoGrupo(u, grupoID))
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao criar pasta: "+err.Error())
 		return
@@ -692,9 +707,9 @@ func (a *App) hDriveUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := a.st.db.Exec(`
-		INSERT INTO drive_arquivos (pasta_id, grupo_id, nome_original, nome_armazenado, tipo, tamanho, autor_usuario_id, autor_papel_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, pastaID, grupoID, nomeOriginal, nomeArmazenado, tipoMime, tam, u.ID, u.PapelAtivoID)
+		INSERT INTO drive_arquivos (pasta_id, grupo_id, nome_original, nome_armazenado, tipo, tamanho, autor_usuario_id, autor_papel_id, funcao_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, pastaID, grupoID, nomeOriginal, nomeArmazenado, tipoMime, tam, u.ID, u.PapelAtivoID, a.funcaoTitularNoGrupo(u, grupoID))
 	if err != nil {
 		_ = os.Remove(caminhoCompleto)
 		jsonErro(w, http.StatusInternalServerError, "falha ao cadastrar metadados do arquivo: "+err.Error())

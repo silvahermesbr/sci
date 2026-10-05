@@ -143,6 +143,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV33(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV34(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2024,6 +2027,7 @@ func (s *Store) migrarV29() error {
 // titulares/auxiliares por função em cada grupo (gerenciar → Funções).
 //   - UNIQUE(funcao_id, grupo_id, usuario_id): mesmo usuário não repete na função.
 //   - Índice parcial único: 1 titular por (função, grupo) — segundo → conflito.
+//
 // Idempotente: CREATE TABLE/INDEX IF NOT EXISTS.
 func (s *Store) migrarV32() error {
 	var v int
@@ -2057,6 +2061,7 @@ func (s *Store) migrarV32() error {
 // conferência — designação de chefes/operadores por conferência.
 //   - UNIQUE implícito via INSERT OR IGNORE no handler (SELECT-primeiro).
 //   - papel_na_escala: 'chefe' | 'operador'; designado_por rastreia quem nomeou.
+//
 // Idempotente: CREATE TABLE/INDEX IF NOT EXISTS.
 func (s *Store) migrarV33() error {
 	var v int
@@ -2121,6 +2126,7 @@ func (s *Store) EhSubordinado(superiorID, subordinadoID int64) bool {
 //     encaminhado como mensagem normal).
 //   - aviso_comentarios.anexos: todo comentário pode carregar arquivos
 //     (JSON array, mesmo formato de mensagens.anexos).
+//
 // Idempotente: checa pragma_table_info antes de cada ALTER.
 func (s *Store) migrarV30() error {
 	var v int
@@ -2160,6 +2166,7 @@ func (s *Store) migrarV30() error {
 //   - conferencias.nome: rótulo dado pelo gerente na NOVA CONFERÊNCIA.
 //   - conferencias.encarregado_usuario_id: encarregado de pessoal da conf.
 //   - conferencias.prazo_final: horário-limite p/ operadores concluírem.
+//
 // Idempotente (pragma_table_info antes de cada ALTER).
 func (s *Store) migrarV31() error {
 	var v int
@@ -2186,4 +2193,79 @@ func (s *Store) migrarV31() error {
 	}
 
 	return s.marcarVersao(31)
+}
+
+// migrarV34 (onda 05/10, "Drive/Email POR FUNÇÃO" — DELIB-0010 B + decisões Q1/Q3):
+// a FUNÇÃO é a dona do registro no drive e no email; usuários mudam, a função
+// permanece (sucessor herda — Q3; auxiliar fica em stand-by, Q1).
+//   - drive_pastas.funcao_id / drive_arquivos.funcao_id / mensagens.funcao_id:
+//     função proprietária do registro (NULL = legado de usuário, acesso atual
+//     preservado — nada muda para quem não tem função).
+//   - BACKFLOW: registros existentes herdam a função do AUTOR quando ele era
+//     titular de função no grupo do registro (funcao_membros, titularidade =
+//     'titular'). Sem função → permanece NULL. Idempotente.
+func (s *Store) migrarV34() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 34`).Scan(&v)
+	if v == 34 {
+		return nil
+	}
+
+	for _, tab := range []string{"drive_pastas", "drive_arquivos", "mensagens"} {
+		var n int
+		_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info(?) WHERE name = 'funcao_id'`, tab).Scan(&n)
+		if n == 0 {
+			if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN funcao_id INTEGER REFERENCES funcoes(id)`, tab)); err != nil {
+				if !strings.Contains(err.Error(), "duplicate column") {
+					return fmt.Errorf("migração v34 add %s.funcao_id: %w", tab, err)
+				}
+			}
+		}
+	}
+
+	// BACKFLOW idempotente: só toca linha com funcao_id NULL, e resolve a função
+	// do AUTOR como titular NO GRUPO DO REGISTRO. O subselect usa MIN(funcao_id)
+	// para determinismo caso o autor seja titular de mais de uma função (o índice
+	// v32 permite: 1 titular por função, não 1 função por pessoa).
+	// Dialeto SQLite: UPDATE NÃO aceita alias entre tabela e SET (Postgres-ismo).
+	if _, err := s.db.Exec(`
+		UPDATE drive_pastas SET funcao_id = (
+			SELECT MIN(fm.funcao_id) FROM funcao_membros fm
+			WHERE fm.usuario_id = drive_pastas.autor_usuario_id AND fm.grupo_id = drive_pastas.grupo_id
+			  AND fm.titularidade = 'titular'
+		) WHERE drive_pastas.funcao_id IS NULL
+	`); err != nil {
+		return fmt.Errorf("migração v34 backflow drive_pastas: %w", err)
+	}
+	if _, err := s.db.Exec(`
+		UPDATE drive_arquivos SET funcao_id = (
+			SELECT MIN(fm.funcao_id) FROM funcao_membros fm
+			WHERE fm.usuario_id = drive_arquivos.autor_usuario_id AND fm.grupo_id = drive_arquivos.grupo_id
+			  AND fm.titularidade = 'titular'
+		) WHERE drive_arquivos.funcao_id IS NULL
+	`); err != nil {
+		return fmt.Errorf("migração v34 backflow drive_arquivos: %w", err)
+	}
+	if _, err := s.db.Exec(`
+		UPDATE mensagens SET funcao_id = (
+			SELECT MIN(fm.funcao_id) FROM funcao_membros fm
+			WHERE fm.usuario_id = mensagens.remetente_usuario_id
+			  AND fm.grupo_id = (SELECT up.grupo_id FROM usuario_papeis up WHERE up.id = mensagens.remetente_papel_id)
+			  AND fm.titularidade = 'titular'
+		) WHERE mensagens.funcao_id IS NULL
+	`); err != nil {
+		return fmt.Errorf("migração v34 backflow mensagens: %w", err)
+	}
+
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_drive_pastas_funcao ON drive_pastas(funcao_id)`); err != nil {
+		return fmt.Errorf("migração v34 índice drive_pastas: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_drive_arquivos_funcao ON drive_arquivos(funcao_id)`); err != nil {
+		return fmt.Errorf("migração v34 índice drive_arquivos: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mensagens_funcao ON mensagens(funcao_id)`); err != nil {
+		return fmt.Errorf("migração v34 índice mensagens: %w", err)
+	}
+
+	return s.marcarVersao(34)
 }

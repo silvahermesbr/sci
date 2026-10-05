@@ -259,7 +259,50 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		filtroExtra += " AND (COALESCE(m.tipo,'comum') = 'comum' OR m.finalizado_em IS NOT NULL)"
 	}
 
+	// Onda 05/10 (email POR FUNÇÃO): braço ADITIVO — mensagens POSSESSO de
+	// função exercida pelo usuário entram no inbox (UNION lógico), cada item
+	// UMA única vez (o braço da função exclui ids que já vieram da caixa
+	// pessoal) e com da_funcao=true. Mensagem da função não tem linha em
+	// mensagem_destinatarios (destID=NULL) → o front agrupa na Caixa da
+	// Função e o arquivar bloqueia.
+	//
+	// Contrato dos filtros: ?arquivadas=1 devolve SÓ a caixa pessoal (a da
+	// função não arquivável); ?despacho=1 e ?pasta_id filtram os dois braços.
+	var funcaoExtra, pessoalExtra string
+	funs := a.funcoesExercidas(u)
+	if len(funs) > 0 && !soArquivadas {
+		marcas := ""
+		for i := range funs {
+			if i > 0 {
+				marcas += ","
+			}
+			marcas += "?"
+		}
+		// Braço PESSOAL: mensagem carimbada que chegou também por linha de
+		// destinatário aparece UMA vez (pelo braço da função) — sem esta
+		// dedupe o UNION ALL devolve duplicata para quem é destinatário E
+		// exerce a função.
+		pessoalExtra = ` AND (m.funcao_id IS NULL OR m.funcao_id NOT IN (` + marcas + `))`
+		for _, f := range funs {
+			args = append(args, f)
+		}
+		// Braço da função = mensagens POSSESSO das funções que o usuário
+		// EXERCE (IN). NOT IN aqui excluía exatamente as mensagens da própria
+		// função (a caixa ficava vazia p/ o titular) e vazava mensagens de
+		// funções alheias (FV4 pegou).
+		funcaoExtra = ` AND m.funcao_id IN (` + marcas + `)`
+		for _, f := range funs {
+			args = append(args, f)
+		}
+	} else {
+		// Sem função exercida (ou no arquivo): braço da função desligado —
+		// 1=0 impede qualquer linha do segundo SELECT. Pessoal sem dedupe
+		// (nada a dedupar).
+		funcaoExtra = ` AND 1=0`
+	}
+
 	q := `
+		SELECT * FROM (
 		SELECT m.id, m.assunto, m.corpo, m.criada_em,
 		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
 		       COALESCE(m.anexos, '[]'), m.pai_id, m.finalizado_em,
@@ -269,7 +312,8 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		       m.remetente_papel_id, m.remetente_usuario_id,
 		       u_rem.login, COALESCE(u_rem.nome_guerra, ''), COALESCE(u_rem.nome_completo, ''),
 		       up_rem.papel, up_rem.grupo_id, COALESCE(g_rem.nome, ''),
-		       up_rem.funcao_id, COALESCE(f_rem.nome, ''), COALESCE(up_rem.nome_exibicao, '')
+		       up_rem.funcao_id, COALESCE(f_rem.nome, ''), COALESCE(up_rem.nome_exibicao, ''),
+		       0 AS da_funcao
 		FROM mensagem_destinatarios md
 		JOIN mensagens m ON m.id = md.mensagem_id
 		JOIN usuario_papeis up_rem ON up_rem.id = m.remetente_papel_id
@@ -277,8 +321,26 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN grupos g_rem ON g_rem.id = up_rem.grupo_id
 		LEFT JOIN funcoes f_rem ON f_rem.id = up_rem.funcao_id
 		LEFT JOIN usuarios u_lida ON u_lida.id = md.lida_por_usuario_id
-		WHERE md.destinatario_papel_id = ? AND md.excluida = 0` + filtroExtra + `
-		ORDER BY m.id DESC LIMIT 150`
+		WHERE md.destinatario_papel_id = ? AND md.excluida = 0` + filtroExtra + pessoalExtra + `
+		UNION ALL
+		SELECT m.id, m.assunto, m.corpo, m.criada_em,
+		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
+		       COALESCE(m.anexos, '[]'), m.pai_id, m.finalizado_em,
+		       NULL, NULL, NULL,
+		       '',
+		       NULL, NULL, NULL, 0,
+		       m.remetente_papel_id, m.remetente_usuario_id,
+		       u_rem.login, COALESCE(u_rem.nome_guerra, ''), COALESCE(u_rem.nome_completo, ''),
+		       up_rem.papel, up_rem.grupo_id, COALESCE(g_rem.nome, ''),
+		       up_rem.funcao_id, COALESCE(f_rem.nome, ''), COALESCE(up_rem.nome_exibicao, ''),
+		       1 AS da_funcao
+		FROM mensagens m
+		JOIN usuario_papeis up_rem ON up_rem.id = m.remetente_papel_id
+		JOIN usuarios u_rem ON u_rem.id = m.remetente_usuario_id
+		LEFT JOIN grupos g_rem ON g_rem.id = up_rem.grupo_id
+		LEFT JOIN funcoes f_rem ON f_rem.id = up_rem.funcao_id
+		WHERE m.funcao_id IS NOT NULL` + funcaoExtra + `
+		) ORDER BY id DESC LIMIT 150`
 
 	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
@@ -289,11 +351,15 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 
 	out := []map[string]any{}
 	for rows.Next() {
-		var msgID, destID, remPapelID, remUsuarioID int64
+		var msgID, remPapelID, remUsuarioID int64
+		// Braço da função (UNION): md.* vem NULL → ponteiro, senão o Scan
+		// falha e a linha da função é DESCARTADA em silêncio (lista sem a
+		// Caixa da Função com 200).
+		var destID *int64
 		var assunto, corpo, criadaEm, remLogin, remNomeGuerra, remNomeCompleto string
 		var remPapel, remGrupoNome, remFuncaoNome, remNomeExibicao string
 		var lidaPorGuerra, tipo, anexosJSON string
-		var exigeResposta, arquivada int
+		var exigeResposta, arquivada, daFuncao int
 		var lidaEm, visualizadoEm, respondidoEm, finalizadoEm *string
 		var lidaPorID, remGrupoID, remFuncaoID, paiID, pastaID *int64
 
@@ -306,6 +372,7 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 			&remLogin, &remNomeGuerra, &remNomeCompleto,
 			&remPapel, &remGrupoID, &remGrupoNome,
 			&remFuncaoID, &remFuncaoNome, &remNomeExibicao,
+			&daFuncao,
 		); err == nil {
 			var anexosList []any
 			_ = json.Unmarshal([]byte(anexosJSON), &anexosList)
@@ -331,6 +398,7 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 				"respondido_em":    respondidoEm,
 				"pasta_id":         pastaID,
 				"arquivada":        arquivada == 1,
+				"da_funcao":        daFuncao == 1,
 				"remetente": map[string]any{
 					"usuario_id":    remUsuarioID,
 					"login":         remLogin,
@@ -543,10 +611,21 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Carimbo da função (onda 05/10): a mensagem nasce possessO da função
+	// TITULAR exercida pelo remetente NO GRUPO do papel ativo (backflow v34
+	// usa a mesma resolução). Sem função exercida → NULL = legado de usuário.
+	var remGrupoID int64
+	_ = a.st.db.QueryRow(`SELECT COALESCE(grupo_id, 0) FROM usuario_papeis WHERE id = ?`,
+		*u.PapelAtivoID).Scan(&remGrupoID)
+	var funcaoMsg any
+	if remGrupoID > 0 {
+		funcaoMsg = a.funcaoTitularNoGrupo(u, remGrupoID)
+	}
+
 	res, err := a.st.db.Exec(`
-		INSERT INTO mensagens (assunto, corpo, remetente_papel_id, remetente_usuario_id, tipo, exige_resposta, anexos, pai_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.Assunto, req.Corpo, *u.PapelAtivoID, u.ID, tipo, exigeRespInt, anexosJSON, req.PaiID)
+		INSERT INTO mensagens (assunto, corpo, remetente_papel_id, remetente_usuario_id, tipo, exige_resposta, anexos, pai_id, funcao_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.Assunto, req.Corpo, *u.PapelAtivoID, u.ID, tipo, exigeRespInt, anexosJSON, req.PaiID, funcaoMsg)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao salvar mensagem: "+err.Error())
 		return
@@ -635,6 +714,21 @@ func (a *App) hMensagensArquivar(w http.ResponseWriter, r *http.Request) {
 	}
 	if exigeResp == 1 && respEm == nil {
 		jsonErro(w, http.StatusBadRequest, "Despacho com resposta exigida. É obrigatório responder antes de arquivar.")
+		return
+	}
+
+	// Onda 05/10 (caixa da função): mensagem POSSESSO da função que o usuário
+	// exerce NÃO é arquivável pelo titular — o arquivamento é da caixa PESSOAL
+	// (linha em mensagem_destinatarios); a função permanece mesmo com troca de
+	// titular. Mesmo padrão do bloqueio de despacho pendente: 400 com mensagem
+	// clara.
+	var funcaoID *int64
+	if err := a.st.db.QueryRow(`SELECT funcao_id FROM mensagens WHERE id = ?`, msgID).Scan(&funcaoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "mensagem não encontrada")
+		return
+	}
+	if funcaoID != nil && a.funcaoExercidaByID(u, *funcaoID) {
+		jsonErro(w, http.StatusBadRequest, "Mensagem da Caixa da Função não pode ser arquivada — a caixa da função permanece com a função, não com o titular.")
 		return
 	}
 

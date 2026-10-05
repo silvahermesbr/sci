@@ -16,9 +16,9 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v33 = onda Escalas 05/10: conferencia_escalas — escala de guarda da conferência).
+// (v34 = onda 05/10 função: drive/email por função — herança p/ sucessor).
 // Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 33
+const versaoSchemaBinario = 34
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio
