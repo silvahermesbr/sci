@@ -279,10 +279,13 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 			marcas += "?"
 			args = append(args, f)
 		}
-		funcaoExtra = ` AND m.funcao_id NOT IN (` + marcas + `)`
-		// Nota: NOT IN remove da caixa da função o que o usuário já recebeu
-		// como pessoal; braço pessoal NÃO filtra por funcao_id (legado NULL
-		// e carimbado com destinatário aparecem uma vez, pela linha md).
+		funcaoExtra = ` AND m.funcao_id IN (` + marcas + `)`
+		// Braço da função = mensagens POSSESSO das funções que o usuário
+		// EXERCE (IN). NOT IN aqui excluía exatamente as mensagens da própria
+		// função (a caixa ficava vazia p/ o titular) e vazava mensagens de
+		// funções alheias (FV4 pegou). A dedupe contra a caixa pessoal fica no
+		// braço pessoal NÃO filtrar por funcao_id (legado NULL e carimbado com
+		// destinatário aparecem uma vez, pela linha md).
 	} else if len(funs) == 0 || soArquivadas {
 		// Sem função exercida (ou no arquivo): braço da função desligado —
 		// 1=0 impede qualquer linha do segundo SELECT.
