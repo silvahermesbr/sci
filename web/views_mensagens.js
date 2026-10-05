@@ -633,7 +633,7 @@
       `;
 
       const mModal = modal(html);
-      const editorThread = window.montarRichEditor ? window.montarRichEditor(mModal.querySelector('#threadNovoPostEditor'), thread.minha_resposta_pendente ? 'Digite aqui sua resposta formal ao despacho…' : 'Escreva um acompanhamento…') : null;
+      const editorThread = window.EditorRico ? window.EditorRico.init(mModal.querySelector('#threadNovoPostEditor'), { placeholder: thread.minha_resposta_pendente ? 'Digite aqui sua resposta formal ao despacho…' : 'Escreva um acompanhamento…' }) : null;
 
       // Eventos de Anexos do Post Raiz
       if (msg.anexos && msg.anexos.length > 0) {
@@ -947,8 +947,8 @@
 
       // Instancia Rich Editor
       let editorInst = null;
-      if (typeof window.montarRichEditor === 'function') {
-        editorInst = window.montarRichEditor(q('#mEditorContainer'), 'Digite aqui o teor da mensagem institucional ou despacho…', dadosIniciais.corpo || '');
+      if (window.EditorRico) {
+        editorInst = window.EditorRico.init(q('#mEditorContainer'), { placeholder: 'Digite aqui o teor da mensagem institucional ou despacho…', valorInicial: dadosIniciais.corpo || '' });
       } else {
         q('#mEditorContainer').innerHTML = `<textarea id="mCorpoFallback" rows="6" style="width:100%;resize:vertical">${esc(dadosIniciais.corpo || '')}</textarea>`;
       }

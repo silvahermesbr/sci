@@ -668,7 +668,15 @@
       <div id="cmLista" style="max-height:220px;overflow:auto;margin-bottom:10px">
         <span class="vazio">carregando…</span></div>
       <div class="campo"><label>Novo comentário</label>
-        <textarea id="cmNovo" rows="2" placeholder="registre aqui…"></textarea></div>
+        <div id="cmEditor" style="margin-bottom:8px"></div></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <button type="button" class="acao-linha" id="cmAnxDrive" style="cursor:pointer;font-size:11.5px;padding:2px 8px">🗂️ Anexar: Do Drive</button>
+        <label class="acao-linha" style="cursor:pointer;font-size:11.5px;padding:2px 8px">
+          📎 Do computador
+          <input type="file" id="cmAnxInput" multiple style="display:none">
+        </label>
+        <div id="cmAnxLista" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
       <div class="modal-acoes">
         <button class="fantasma" id="cmX">Fechar</button>
         <button class="primario" id="cmGo">Adicionar</button></div></div>`);
@@ -689,17 +697,57 @@
         raiz.querySelector('#cmLista').innerHTML = meus.length ? msgOmitidos + mostrar.map(c =>
           `<div class="cartao" style="padding:8px;margin-bottom:6px">
            <small style="color:var(--tx2)">#${c.ordem} · ${esc(c.operador)} · ${(c.datahora || '').slice(0, 16).replace('T', ' ')}</small>
-           <div>${esc(c.comentario)}</div></div>`).join('') : '<span class="vazio">sem comentários</span>';
+           <div>${c.comentario_rico ? c.comentario_rico : esc(c.comentario)}</div>
+           ${(c.anexos && c.anexos.length) ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+             ${c.anexos.map(anx => anx.drive_arquivo_id
+               ? `<a href="/api/drive/download/${anx.drive_arquivo_id}" class="msg-anexo-item" style="font-size:11px" target="_blank">🗂️ ${esc(anx.nome || 'arquivo')}</a>`
+               : (anx.id ? `<a href="/api/anexos/comentario/${anx.id}" class="msg-anexo-item" style="font-size:11px" target="_blank">📄 ${esc(anx.nome || 'anexo')}</a>` : ''))}</div>` : ''}</div>`).join('') : '<span class="vazio">sem comentários</span>';
         confRender($('#busca') ? $('#busca').value : '');
       } catch (e) { raiz.querySelector('#cmLista').innerHTML = '<span class="vazio">falha ao carregar</span>'; }
     };
+    // onda 05/10: editor rico (delegação EditorRico) + anexos (mesmo padrão do cautelar/avisos)
+    const editorComm = window.EditorRico ? window.EditorRico.init(raiz.querySelector('#cmEditor'), { placeholder: 'registre aqui…' }) : null;
+    let anexosComm = [];
+    const renderAnexosComm = () => {
+      const contA = raiz.querySelector('#cmAnxLista');
+      if (!contA) return;
+      contA.innerHTML = anexosComm.map((a, i) => `
+        <span class="msg-anexo-item" style="font-size:11px">
+          🗂️ ${esc(a.nome)} <small>(${window.formatarTamanhoBytes ? formatarTamanhoBytes(a.tamanho) : a.tamanho})</small>
+          <span data-rm="${i}" style="cursor:pointer;font-weight:bold;margin-left:4px;color:var(--verm-txt)">&times;</span>
+        </span>`).join('');
+      contA.querySelectorAll('[data-rm]').forEach(b => {
+        b.onclick = () => { anexosComm.splice(+b.dataset.rm, 1); renderAnexosComm(); };
+      });
+    };
+    raiz.querySelector('#cmAnxDrive').onclick = () => {
+      if (!window.abrirSeletorDrive) { toast('Seletor do drive indisponível', 'erro'); return; }
+      window.abrirSeletorDrive({ jaSelecionados: anexosComm, onConfirma: (escolhidos) => { anexosComm = escolhidos; renderAnexosComm(); } });
+    };
+    raiz.querySelector('#cmAnxInput').onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      for (const file of files) {
+        if (file.size > 25 * 1024 * 1024) { toast(`Arquivo ${file.name} excede 25MB`, 'erro'); continue; }
+        try {
+          const ref = await window.enviarArquivoParaDrive(file);
+          anexosComm.push(ref);
+        } catch (err) {
+          toast(`Falha ao enviar ${file.name} ao drive`, 'erro');
+        }
+      }
+      e.target.value = '';
+      renderAnexosComm();
+    };
+
     await carregar();
     raiz.querySelector('#cmGo').onclick = async () => {
-      const txt = raiz.querySelector('#cmNovo').value.trim();
-      if (!txt) { toast('Escreva o comentário', 'erro'); return; }
+      const txt = editorComm ? editorComm.getHTML() : '';
+      if (!txt || txt === '<p><br></p>') { toast('Escreva o comentário', 'erro'); return; }
       try {
-        await api('/api/comentarios', { method: 'POST', body: JSON.stringify({ conferencia_id: cid, pessoa_id: pessoaId, comentario: txt }) });
-        raiz.querySelector('#cmNovo').value = '';
+        await api('/api/comentarios', { method: 'POST', body: JSON.stringify({ conferencia_id: cid, pessoa_id: pessoaId, comentario: txt, anexos: anexosComm }) });
+        if (editorComm) editorComm.setHTML('');
+        anexosComm = [];
+        renderAnexosComm();
         toast('Comentário adicionado');
         await carregar();
       } catch (e) {}

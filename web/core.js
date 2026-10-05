@@ -1347,57 +1347,12 @@ window.showSetupModal = function() {
   }
 };
 
-window.montarRichEditor = function(container, placeholder, valorInicial) {
-  container.innerHTML = `
-    <div class="rich-editor-wrapper">
-      <div class="rich-toolbar">
-        <div class="rich-btn-group">
-          <button type="button" class="rich-btn" data-cmd="bold" title="Negrito (Ctrl+B)"><b>B</b></button>
-          <button type="button" class="rich-btn" data-cmd="italic" title="Itálico (Ctrl+I)"><i>I</i></button>
-          <button type="button" class="rich-btn" data-cmd="underline" title="Sublinhado (Ctrl+U)"><u>U</u></button>
-        </div>
-        <div class="rich-btn-group">
-          <button type="button" class="rich-btn" data-cmd="formatBlock" data-val="H2" title="Título (H2)"><b style="font-size:11px">H2</b></button>
-          <button type="button" class="rich-btn" data-cmd="formatBlock" data-val="H3" title="Subtítulo (H3)"><b style="font-size:10px">H3</b></button>
-          <button type="button" class="rich-btn" data-cmd="formatBlock" data-val="P" title="Parágrafo"><span style="font-size:10px">¶</span></button>
-        </div>
-        <div class="rich-btn-group">
-          <button type="button" class="rich-btn" data-cmd="justifyLeft" title="Alinhar à Esquerda">⇤</button>
-          <button type="button" class="rich-btn" data-cmd="justifyCenter" title="Centralizar">≡</button>
-          <button type="button" class="rich-btn" data-cmd="justifyRight" title="Alinhar à Direita">⇥</button>
-          <button type="button" class="rich-btn" data-cmd="justifyFull" title="Justificado">≣</button>
-        </div>
-        <div class="rich-btn-group">
-          <button type="button" class="rich-btn" data-cmd="insertUnorderedList" title="Lista com Marcadores">• List</button>
-          <button type="button" class="rich-btn" data-cmd="insertOrderedList" title="Lista Numerada">1. List</button>
-        </div>
-        <div class="rich-btn-group">
-          <button type="button" class="rich-btn" data-cmd="removeFormat" title="Limpar Formatação">🧹</button>
-        </div>
-      </div>
-      <div class="rich-content" contenteditable="true" data-placeholder="${placeholder || ''}">${valorInicial || ''}</div>
-    </div>
-  `;
-  const toolbar = container.querySelector('.rich-toolbar');
-  const editor = container.querySelector('.rich-content');
-
-  toolbar.querySelectorAll('.rich-btn').forEach(btn => {
-    btn.onmousedown = (e) => {
-      e.preventDefault();
-      const cmd = btn.dataset.cmd;
-      const val = btn.dataset.val || null;
-      document.execCommand(cmd, false, val);
-      editor.focus();
-    };
-  });
-
-  return {
-    getHTML: () => editor.innerHTML.trim(),
-    setHTML: (h) => { editor.innerHTML = h; },
-    getText: () => editor.innerText.trim(),
-    focus: () => editor.focus(),
-    getElement: () => editor
-  };
+/* onda 05/10: delegação ao módulo web/editor_rico.js (EditorRico).
+   'completa' preserva o conjunto antigo de botões (H2/H3/¶, alinhamentos, limpar). */
+window.montarRichEditor = function (container, placeholder, valorInicial) {
+  return window.EditorRico && window.EditorRico.init
+    ? window.EditorRico.init(container, { placeholder: placeholder, valorInicial: valorInicial, toolbar: 'completa' })
+    : null;
 };
 
 })();

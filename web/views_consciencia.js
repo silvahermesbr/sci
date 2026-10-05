@@ -48,11 +48,15 @@
       <div id="dashboardConsciencia"><div class="carregando">Carregando indicadores consolidados…</div></div>
     `;
 
-    // Carregar dados da API
-    await carregarDashboard();
-
-    // Eventos
+    // Eventos PRIMEIRO (fix onda 0510: se a carga falha, os handlers morriam
+    // antes de serem ligados — botão 'Atualizar Painel' ficava morto)
     document.getElementById('btRecarregarConsciencia').onclick = () => carregarDashboard();
+
+    // Carregar dados da API (erro fica no container, não derruba a view)
+    try { await carregarDashboard(); } catch (e) {
+      const cont = document.getElementById('dashboardConsciencia');
+      if (cont) cont.innerHTML = '<div class="vazio">Falha ao carregar indicadores: ' + esc(String(e && e.message || e)) + '</div>';
+    }
 
     const inpBusca = document.getElementById('inpBuscaRapidaMilitar');
     const btBusca = document.getElementById('btBuscarRapidoMilitar');
