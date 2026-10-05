@@ -581,10 +581,9 @@ function montarShell(usuario) {
   // Popular itens de navegação na Sidebar com ícones modernos
   let itens;
   if (papel === 'admin') {
-    // P0 onda 05/10 — sidebar dinâmica: admin vê SÓ o que abre. O redirect no
-    // topo do rotear() leva ao painel (#/admin); módulos de grupo (Conferência,
-    // Drive, Relatórios, Avisos) NÃO aparecem para quem não os usa.
+    // Correção Diretor 05/10: o admin TEM o dashboard de admin na sidebar.
     itens = [
+      ['#/admin', 'PAINEL ADMIN', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>'],
       ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'],
       ['#/mensagens', 'EMAIL INTERNO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true]
     ];
