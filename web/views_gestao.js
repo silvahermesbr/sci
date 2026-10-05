@@ -734,6 +734,13 @@
             </div>
           </div>
 
+          <div class="form-linha" id="nuLinhaSetor" style="margin-bottom:8px; display:none">
+            <div class="campo" style="flex:1">
+              <label>Setor / Seção (escopo do chefe de setor)</label>
+              <select id="nuSetor"><option value="">— Nenhum —</option>${setoresLista.map(s => `<option value="${s.id}">${esc(s.nome)}${s.sigla ? ' (' + esc(s.sigla) + ')' : ''}</option>`).join('')}</select>
+            </div>
+          </div>
+
           <div id="nuAjudaPapel" style="font-size:12px; color:var(--tx2); background:var(--painel2); border:1px solid var(--borda); border-radius:6px; padding:10px; margin-bottom:14px">
             ℹ️ <b>Hierarquia (ordem 04/10):</b> contas criadas pelo admin nascem SEM grupo. O gerente designa os chefes de setor; cada chefe seleciona os operadores do seu setor.
           </div>
@@ -749,10 +756,12 @@
 
       const selP = div.querySelector('#nuPapel');
       const grpField = div.querySelector('#nuCampoGrupo');
+      const linhaSetor = div.querySelector('#nuLinhaSetor');
       const ajuda = div.querySelector('#nuAjudaPapel');
 
       selP.onchange = () => {
         const p = selP.value;
+        if (linhaSetor) linhaSetor.style.display = (p === 'chefe_setor') ? 'flex' : 'none';
         if (p === 'admin') {
           grpField.style.display = 'none';
           ajuda.innerHTML = 'ℹ️ <b>Administrador:</b> Acesso irrestrito a configurações globais, backup e governança da estrutura.';
@@ -779,6 +788,11 @@
         // gerente continua exigindo unidade.
         const grupoId = +div.querySelector('#nuGrupo').value || null;
         const funcaoId = +div.querySelector('#nuFuncao').value || null;
+        // onda itens79: setor vai no create quando papel = chefe_setor (hUsuariosAdd
+        // JÁ grava usuarios.setor_id — server.go:4604). chefe sem setor pode escolher
+        // depois; se selecionado, manda o id do catálogo.
+        const setorSel = div.querySelector('#nuSetor');
+        const setorId = (papel === 'chefe_setor' && setorSel && setorSel.value) ? (+setorSel.value || null) : null;
 
         if (!login || !completo || !guerra) {
           toast('Preencha os campos obrigatórios (*)', 'erro');
@@ -801,7 +815,8 @@
               senha,
               papel,
               grupo_id: grupoId,
-              funcao_id: funcaoId
+              funcao_id: funcaoId,
+              setor_id: setorId
             })
           });
           if (res && res.id) {
