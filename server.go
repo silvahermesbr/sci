@@ -3828,7 +3828,7 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 		        COALESCE(nome_guerra,''), COALESCE(nome_completo,''),
 		        COALESCE(data_nascimento,''), COALESCE(tipo_sanguineo,''),
 		        COALESCE(telefone,''), COALESCE(email,''),
-		        COALESCE(endereco,''), COALESCE(foto_base64,'')
+		        COALESCE(endereco,''), COALESCE(foto_base64,''), COALESCE(setor_id,0)
 		 FROM usuarios ORDER BY id`)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -3837,13 +3837,13 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, grupoID int64
+		var id, grupoID, setorID int64
 		var login, papel, criado, senhas, nomeGuerra, nomeCompleto string
 		var dataNasc, tipoSang, tel, email, endereco, foto string
 		var pessoaID *int64
 		var ativo int
 		if rows.Scan(&id, &login, &papel, &pessoaID, &grupoID, &ativo, &criado, &senhas, &nomeGuerra, &nomeCompleto,
-			&dataNasc, &tipoSang, &tel, &email, &endereco, &foto) == nil {
+			&dataNasc, &tipoSang, &tel, &email, &endereco, &foto, &setorID) == nil {
 			// escopo: admin vê tudo; gerente vê o PRÓPRIO grupo + subordinados
 			// (ordem 04/10); operador/chefe só contas do próprio grupo, SEM
 			// dados de sessão/senha (v9.4).
@@ -3861,7 +3861,7 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 			}
 			item := map[string]any{
 				"id": id, "login": login, "papel": papel, "pessoa_id": pessoaID,
-				"grupo_id": grupoID, "ativo": ativo == 1, "criado_em": criado,
+				"grupo_id": grupoID, "setor_id": setorID, "ativo": ativo == 1, "criado_em": criado,
 				"nome_guerra": nomeGuerra, "nome_completo": nomeCompleto,
 				"data_nascimento": dataNasc, "tipo_sanguineo": tipoSang,
 				"telefone": tel, "email": email, "endereco": endereco, "foto_base64": foto,

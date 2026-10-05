@@ -66,6 +66,117 @@
     };
   };
 
+  /* --- onda Escalas (05/10): painel ESCALA dentro do modal de detalhes ---
+     d.escala (GET /api/conferencia/{id}) já traz {usuario_id, papel_na_escala,
+     login, nome_guerra}. Quem designa (mesma regra do guardaEscala no backend):
+     gerente → chefe+operador do próprio grupo; chefe_setor → SÓ operador do SEU
+     setor. Admin/operador/encarregado veem a escala só-leitura. */
+  const escalaLinhasHTML = (escala, podeDesignar) => {
+    const souChefe = window.ME && window.ME.papel === 'chefe_setor';
+    if (!escala.length) return '<tr><td colspan="3"><span class="vazio">Ninguém designado na escala.</span></td></tr>';
+    return escala.map(e => `
+        <tr>
+          <td><b>${esc(e.nome_guerra || e.login)}</b> <small style="color:var(--tx2)">(${esc(e.login)})</small></td>
+          <td>${e.papel_na_escala === 'chefe' ? '👑 chefe' : 'operador'}</td>
+          <td style="text-align:right">${podeDesignar && (!souChefe || e.papel_na_escala === 'operador')
+            ? `<button type="button" class="acao-linha" data-remesc="${e.usuario_id}" data-nome="${esc(e.nome_guerra || e.login)}">remover</button>` : ''}</td>
+        </tr>`).join('');
+  };
+
+  const blocoEscalaHTML = (d) => {
+    const escala = d.escala || [];
+    const pode = !!(window.ME && (window.ME.papel === 'gerente' || window.ME.papel === 'chefe_setor'));
+    return `
+      <div style="margin-top:14px;border-top:1px solid var(--borda);padding-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <h4 style="margin:0">📅 ESCALA DA CONFERÊNCIA</h4>
+          ${pode ? '<button type="button" class="primario" id="btAddEscala" style="font-size:12px;padding:4px 12px">+ Designar</button>' : ''}
+        </div>
+        <table id="tabEscalaModal">
+          <thead><tr><th>Conta</th><th>Papel na escala</th><th></th></tr></thead>
+          <tbody id="tbEscalaModal">${escalaLinhasHTML(escala, pode)}</tbody>
+        </table>
+      </div>`;
+  };
+
+  const ligarBlocoEscala = (m, d) => {
+    const bt = m.modal.querySelector('#btAddEscala');
+    if (bt) bt.onclick = () => abrirModalDesignarEscala(d, m);
+    m.modal.querySelectorAll('[data-remesc]').forEach(b => {
+      b.onclick = async () => {
+        if (!(await confirmar(`Remover ${b.dataset.nome} da escala desta conferência?`))) return;
+        const r = await processar(() => api(`/api/conferencia/${d.id}/escala/${b.dataset.remesc}`, { method: 'DELETE' }), 'Removendo da escala…');
+        if (r.ok) recarregarModalEscala(m, d);
+      };
+    });
+  };
+
+  // Re-render SÓ do bloco da escala (não reabre o modal — preserva o filtro
+  // digitado e o scroll dos lançamentos).
+  const recarregarModalEscala = async (m, d) => {
+    try {
+      const novo = await api('/api/conferencia/' + d.id);
+      d.escala = novo.escala || [];
+      const tb = m.modal.querySelector('#tbEscalaModal');
+      if (!tb) return;
+      const pode = !!(window.ME && (window.ME.papel === 'gerente' || window.ME.papel === 'chefe_setor'));
+      tb.innerHTML = escalaLinhasHTML(d.escala, pode);
+      ligarBlocoEscala(m, d);
+    } catch (e) {
+      toast('Falha ao recarregar a escala: ' + (e.message || e), 'erro');
+    }
+  };
+
+  // Modal secundário de designação: candidatos de GET /api/usuarios —
+  // gerente: grupo_id === ME.grupo_id && ativo; chefe: setor_id === ME.setor_id
+  // && ativo (e papel fixo 'operador', igual ao guardaEscala do backend).
+  const abrirModalDesignarEscala = async (d, m) => {
+    try {
+      const me = window.ME || {};
+      const souChefe = me.papel === 'chefe_setor';
+      const contas = (await api('/api/usuarios')) || [];
+      let cand;
+      if (souChefe) cand = contas.filter(c => c.ativo && me.setor_id && c.setor_id === me.setor_id);
+      else cand = contas.filter(c => c.ativo && c.grupo_id === me.grupo_id);
+      const jaNa = new Set((d.escala || []).map(e => e.usuario_id));
+      const livres = cand.filter(c => !jaNa.has(c.id));
+      if (!livres.length) {
+        toast(souChefe && !me.setor_id ? 'Sua conta não tem setor vinculado — solicite ao gerente' : 'Sem candidatos disponíveis', 'erro');
+        return;
+      }
+      const opts = livres.map(c => `<option value="${c.id}">${esc(c.nome_guerra || c.login)} (${esc(c.login)})</option>`).join('');
+      const html = `
+        <div>
+          <h3 style="margin:0 0 10px">Designar na escala — conferência #${d.id}</h3>
+          <div class="campo" style="margin-bottom:10px">
+            <select id="selEscConta"><option value="">— conta —</option>${opts}</select>
+          </div>
+          ${souChefe ? '' : `
+          <div class="campo" style="margin-bottom:10px">
+            <select id="selEscPapel"><option value="operador">Operador</option><option value="chefe">👑 Chefe</option></select>
+          </div>`}
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+            <button type="button" class="fantasma" id="escCancelar">Cancelar</button>
+            <button type="button" class="primario" id="escAplicar">Designar</button>
+          </div>
+        </div>`;
+      const mm = window.abrirModal(html, null, { largura: '460px' });
+      mm.modal.querySelector('#escCancelar').onclick = () => mm.fechar();
+      mm.modal.querySelector('#escAplicar').onclick = async () => {
+        const sel = mm.modal.querySelector('#selEscConta');
+        if (!sel.value) { toast('Escolha a conta', 'erro'); return; }
+        const selP = mm.modal.querySelector('#selEscPapel');
+        const papel = souChefe ? 'operador' : (selP ? selP.value : 'operador');
+        const r = await processar(() => api(`/api/conferencia/${d.id}/escala`, {
+          method: 'POST', body: JSON.stringify({ usuario_id: +sel.value, papel_na_escala: papel })
+        }), 'Designando na escala…');
+        if (r.ok) { mm.fechar(); recarregarModalEscala(m, d); }
+      };
+    } catch (e) {
+      toast('Falha ao carregar candidatos: ' + (e.message || e), 'erro');
+    }
+  };
+
   // Modal para abrir e inspecionar detalhes de qualquer conferência (fechada ou arquivada)
   window.abrirModalDetalhesConferencia = async function (confID) {
     try {
@@ -108,6 +219,7 @@
               <tbody>${pres.map(linhaLanc).join('') || '<tr><td colspan="5"><span class="vazio">Nenhum militar registrado.</span></td></tr>'}</tbody>
             </table>
           </div>
+          ${blocoEscalaHTML(d, pres.length)}
         </div>`;
       // Onda UX 0510: largura via opção do abrirModal — sem div interna duplicando
       // max-width (transbordava do .modal de 440px fixo).
@@ -117,6 +229,7 @@
         m.fechar();
         window.abrirModalPDFConferencia(confID);
       };
+      ligarBlocoEscala(m, d);
       const fInp = m.modal.querySelector('#fModalLanc');
       if (fInp) {
         fInp.oninput = () => {
