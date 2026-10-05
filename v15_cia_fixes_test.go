@@ -151,10 +151,19 @@ func TestCiaF2IDORAnexos(t *testing.T) {
 	anexoID := int64(resAnx["id"].(float64))
 
 	// gerente B + operador B (grupo alheio)
+	// (ordem 04/10: gerente não cria operador — cria chefe de setor, que cria
+	// o operador)
 	_, gerB := criaGrupo(t, app, admin, "G Cia F2 B", "ger_f2b")
+	rrChefe, resChefe := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
+		"login": "chefe_f2b", "senha": "senha12345", "papel": "chefe_setor",
+	}, gerB)
+	if rrChefe.Code != http.StatusOK {
+		t.Fatalf("criar chefe B: %d (%v)", rrChefe.Code, resChefe)
+	}
+	chefeB := loginAs(t, app, "chefe_f2b", "senha12345")
 	rrOp, resOp := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
 		"login": "op_f2b", "senha": "senha12345", "papel": "operador",
-	}, gerB)
+	}, chefeB)
 	if rrOp.Code != http.StatusOK {
 		t.Fatalf("criar operador B: %d (%v)", rrOp.Code, resOp)
 	}

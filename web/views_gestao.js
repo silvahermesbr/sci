@@ -273,10 +273,17 @@
       ['grupos', 'Estrutura & Grupos'],
       ['backup', 'Sistema & Backup']
     ];
+    // ordem 04/10: abas do módulo → DROPDOWN estilizado
     $('#app').innerHTML = `<h2>Administração do Sistema</h2>
-      <div class="abas">${abas.map(([k, t]) => `<button data-a="${k}" class="${abaAdmin === k ? 'ativo' : ''}">${t}</button>`).join('')}</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="font-size:12px;color:var(--tx2)">Seção:</span>
+        <div id="abasAdminDD" style="min-width:230px"></div></div>
       <div id="adm"><div class="carregando">…</div></div>`;
-    document.querySelectorAll('.abas button').forEach(b => b.onclick = () => { abaAdmin = b.dataset.a; window.ViewAdmin(); });
+    if (typeof criarDropdown === 'function') {
+      criarDropdown($('#abasAdminDD'), abas.map(([k, t]) => ({ valor: k, rotulo: t })), {
+        valorPadrao: abaAdmin, onChange: (k) => { abaAdmin = k; window.ViewAdmin(); }
+      });
+    }
     if (abaAdmin === 'dashboard') await admDashboard();
     else if (abaAdmin === 'usuarios') await admUsuarios();
     else if (abaAdmin === 'grupos') await admGrupos();
@@ -708,14 +715,24 @@
                 <option value="admin">Administrador (Global)</option>
               </select>
             </div>
+            <div class="campo" style="flex:1">
+              <label>Função / Encarregado (opcional)</label>
+              <select id="nuFuncao">
+                <option value="">— Nenhuma —</option>
+                ${funcoesLista.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+
+          <div class="form-linha" style="margin-bottom:8px">
             <div class="campo" id="nuCampoGrupo" style="flex:1">
-              <label>Grupo / Unidade *</label>
-              <select id="nuGrupo">${optsGrupos}</select>
+              <label>Grupo / Unidade (padrão: sem grupo)</label>
+              <select id="nuGrupo"><option value="">— Sem grupo (padrão) —</option>${optsGrupos}</select>
             </div>
           </div>
 
           <div id="nuAjudaPapel" style="font-size:12px; color:var(--tx2); background:var(--painel2); border:1px solid var(--borda); border-radius:6px; padding:10px; margin-bottom:14px">
-            ℹ️ <b>Operador:</b> Acesso operacional às conferências do grupo. Múltiplos operadores podem atuar simultaneamente no mesmo grupo.
+            ℹ️ <b>Hierarquia (ordem 04/10):</b> contas criadas pelo admin nascem SEM grupo. O gerente designa os chefes de setor; cada chefe seleciona os operadores do seu setor.
           </div>
 
           <div class="modal-acoes">
@@ -755,7 +772,10 @@
         const completo = div.querySelector('#nuCompleto').value.trim();
         const guerra = div.querySelector('#nuGuerra').value.trim();
         const papel = selP.value;
+        // ordem 04/10: padrão é SEM grupo (admin vincula depois se quiser);
+        // gerente continua exigindo unidade.
         const grupoId = +div.querySelector('#nuGrupo').value || null;
+        const funcaoId = +div.querySelector('#nuFuncao').value || null;
 
         if (!login || !completo || !guerra) {
           toast('Preencha os campos obrigatórios (*)', 'erro');
@@ -777,7 +797,8 @@
               login,
               senha,
               papel,
-              grupo_id: grupoId
+              grupo_id: grupoId,
+              funcao_id: funcaoId
             })
           });
           if (res && res.id) {
@@ -1916,12 +1937,11 @@
     const optsMoverGer = `<option value="">— destino (dentro da sua hierarquia) —</option>` +
       grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
 
+    // ordem 04/10: abas do módulo → DROPDOWN estilizado
     $('#app').innerHTML = `<h2>Gerenciar</h2>
-      <div class="abas" id="abasGer">
-        <button data-g="pessoal" class="${abaGer === 'pessoal' ? 'ativo' : ''}">Pessoal</button>
-        <button data-g="tags" class="${abaGer === 'tags' ? 'ativo' : ''}">Tags</button>
-        <button data-g="grupos" class="${abaGer === 'grupos' ? 'ativo' : ''}">Grupos</button>
-        <button data-g="operadores" class="${abaGer === 'operadores' ? 'ativo' : ''}">Operadores</button></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="font-size:12px;color:var(--tx2)">Seção:</span>
+        <div id="abasGerDD" style="min-width:200px"></div></div>
       <div id="gerPessoal" class="${abaGer === 'pessoal' ? '' : 'oculto'}">
         ${formPessoa}
         <div class="cartao"><h3 style="margin-top:0">BANCO DE PESSOAL (${(pessoas.pessoas || []).length})</h3>
@@ -1999,10 +2019,11 @@
           <div id="arvore2">${arvoreHTML(arvore, true)}</div></div>
       </div>
       <div id="gerOperadores" class="${abaGer === 'operadores' ? '' : 'oculto'}">
+        <!-- ordem 04/10: gerente NÃO cria operador — seleciona CHEFES DE SETOR
+             (aba Pessoal não cobre: isso fica no modal de usuário do admin) e são
+             os chefes que designam operadores dentre as contas do seu setor. -->
         <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
-        <div class="form-linha"><div class="campo"><label>Login do operador</label><input id="opLogin"></div>
-        <div class="campo"><label>Senha (mín. 8)</label><input id="opSenha" type="password"></div>
-        <div class="campo" style="align-self:end"><button class="primario" id="opGo">Criar operador</button></div></div>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">O gerente não cria operadores. Fluxo da hierarquia: <b>gerente</b> designa os <b>chefes de setor</b> → cada <b>chefe</b> seleciona os operadores dentre as contas do SEU setor (aba de gestão do chefe).</p>
         <div class="campo" style="margin-bottom:8px"><label>Filtrar operadores</label><input id="fOp" placeholder="buscar login…"></div>
         <div class="rolagem" style="margin-top:10px"><table><thead><tr><th>ID</th><th>Login</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
         <tbody>${operadores.map(o => `
@@ -2013,17 +2034,26 @@
           || '<tr><td colspan="5"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div></div>
       </div>`;
 
-    /* --- alternância de sub-abas --- */
-    document.querySelectorAll('#abasGer button').forEach(b => b.onclick = () => {
-      abaGer = b.dataset.g;
-      ['pessoal', 'tags', 'grupos', 'operadores'].forEach(k => {
-        const el = $('#ger' + k[0].toUpperCase() + k.slice(1));
-        if (el) el.classList.toggle('oculto', k !== abaGer);
+    /* --- alternância de sub-abas (ordem 04/10: dropdown estilizado) --- */
+    if (typeof criarDropdown === 'function') {
+      criarDropdown($('#abasGerDD'), [
+        { valor: 'pessoal', rotulo: 'Pessoal' },
+        { valor: 'tags', rotulo: 'Tags' },
+        { valor: 'grupos', rotulo: 'Grupos' },
+        { valor: 'operadores', rotulo: 'Operadores' }
+      ], {
+        valorPadrao: abaGer,
+        onChange: (k) => {
+          abaGer = k;
+          ['pessoal', 'tags', 'grupos', 'operadores'].forEach(kk => {
+            const el = $('#ger' + kk[0].toUpperCase() + kk.slice(1));
+            if (el) el.classList.toggle('oculto', kk !== abaGer);
+          });
+          if (abaGer === 'tags') carregarCats();
+          if (abaGer === 'pessoal') atualizarSelectsCatalogos();
+        }
       });
-      document.querySelectorAll('.abas button[data-g]').forEach(x => x.classList.toggle('ativo', x.dataset.g === abaGer));
-      if (abaGer === 'tags') carregarCats(); // v9.16.9: carrega ao clicar (não só na 1ª renderização)
-      if (abaGer === 'pessoal') atualizarSelectsCatalogos();
-    });
+    }
     ligarToggles($('#app'));
 
     // Eventos da Árvore e Cards de Grupos para Gerente (#gerGrupos)
@@ -2477,13 +2507,8 @@
     };
     if (abaGer === 'tags') carregarCats(); else $('#gerTags').addEventListener('renderTags', carregarCats, { once: true });
 
-    /* --- operadores: criar (acima da tabela) + senha/mover/excluir + filtro --- */
-    $('#opGo').onclick = async () => {
-      const login = $('#opLogin').value.trim(), senha = $('#opSenha').value;
-      if (!login || senha.length < 8) { toast('Login e senha (mín. 8) obrigatórios', 'erro'); return; }
-      const r = await processar(() => api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, senha, papel: 'operador' }) }), `Criando operador ${login}…`);
-      if (r.ok) { toast('Operador criado'); window.ViewGrupos(); }
-    };
+    /* --- operadores: senha/mover/excluir + filtro (ordem 04/10: gerente NÃO
+       cria operador — o form de criação foi removido; chefes designam) --- */
     $('#fOp').oninput = () => {
       const q = $('#fOp').value.trim().toLowerCase();
       document.querySelectorAll('#gerOperadores tbody tr[data-login]').forEach(tr => {

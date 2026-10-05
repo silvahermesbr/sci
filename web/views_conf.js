@@ -902,20 +902,24 @@
     const renderTela = () => {
       $('#app').innerHTML = `
         <h2>Relatórios & Auditoria</h2>
-        <div class="abas" id="abasRelatorios" style="margin-bottom:16px">
-          <button data-aba="consolidado" class="${abaPrincipal === 'consolidado' ? 'ativo' : ''}">📊 Resumo Consolidado & PDF</button>
-          <button data-aba="conferencias" class="${abaPrincipal === 'conferencias' ? 'ativo' : ''}">📋 Conferências Individuais</button>
-          <button data-aba="individual" class="${abaPrincipal === 'individual' ? 'ativo' : ''}">🔍 Busca Individual por Militar</button>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <span style="font-size:12px;color:var(--tx2)">Seção:</span>
+          <div id="abasRelDD" style="min-width:250px"></div>
         </div>
         <div id="corpoRelatorios"></div>
       `;
 
-      document.querySelectorAll('#abasRelatorios button').forEach(btn => {
-        btn.onclick = () => {
-          abaPrincipal = btn.dataset.aba;
-          renderTela();
-        };
-      });
+      // ordem 04/10: abas do módulo → DROPDOWN estilizado
+      if (typeof criarDropdown === 'function') {
+        criarDropdown($('#abasRelDD'), [
+          { valor: 'consolidado', rotulo: '📊 Resumo Consolidado & PDF' },
+          { valor: 'conferencias', rotulo: '📋 Conferências Individuais' },
+          { valor: 'individual', rotulo: '🔍 Busca Individual por Militar' }
+        ], {
+          valorPadrao: abaPrincipal,
+          onChange: (k) => { abaPrincipal = k; renderTela(); }
+        });
+      }
 
       if (abaPrincipal === 'consolidado') viewRelConsolidado();
       else if (abaPrincipal === 'conferencias') viewRelConferenciasIndividuais();
@@ -930,14 +934,10 @@
       alvo.innerHTML = `
         <div class="cartao">
           ${gSel ? `<div class="form-linha" style="margin-bottom:8px">${gSel}</div>` : ''}
-          <div class="abas" id="modos" style="margin-bottom:12px">
-            <button data-m="dia" class="ativo">Dia</button>
-            <button data-m="semana">Semana</button>
-            <button data-m="ano">Ano</button>
-            <button data-m="livre">Período livre</button>
-          </div>
-          <div class="form-linha" style="grid-template-columns:1fr auto;align-items:end">
-            <div id="entrada"></div>
+          <div class="form-linha" style="align-items:center;gap:10px;margin-bottom:12px">
+            <span style="font-size:12px;color:var(--tx2)">Período:</span>
+            <div id="modosDD" style="min-width:160px"></div>
+            <div id="entrada" style="flex:1"></div>
             <button class="primario" id="btGerar" style="min-height:44px; padding:0 20px">Gerar Relatório</button>
           </div>
         </div>
@@ -982,11 +982,15 @@
       })();
       gerar();
 
-      document.querySelectorAll('#modos button').forEach(b => b.onclick = () => {
-        modo = b.dataset.m;
-        document.querySelectorAll('#modos button').forEach(x => x.classList.toggle('ativo', x === b));
-        entrada();
-      });
+      // ordem 04/10: modos de período → dropdown estilizado
+      if (typeof criarDropdown === 'function') {
+        criarDropdown($('#modosDD'), [
+          { valor: 'dia', rotulo: 'Dia' },
+          { valor: 'semana', rotulo: 'Semana' },
+          { valor: 'ano', rotulo: 'Ano' },
+          { valor: 'livre', rotulo: 'Período livre' }
+        ], { valorPadrao: modo, onChange: (m) => { modo = m; entrada(); } });
+      }
       $('#btGerar').onclick = gerar;
     };
 
