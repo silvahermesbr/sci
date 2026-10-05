@@ -156,6 +156,126 @@ func TestFinalizarGuardas(t *testing.T) {
 	}
 }
 
+// D4c: finalizar é ÚNICO — re-finalizar despacho já finalizado → 409.
+func TestFinalizarDuplicadoBloqueado(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	ckGer := loginAsPapel(t, app, st, "gerfd", "gerente")
+	ckOp := loginAsPapel(t, app, st, "opfd", "operador")
+	msgID := enviarDespachoTeste(t, app, st, ckGer, "opfd")
+
+	rr1, res1 := doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/finalizar", msgID), nil, ckOp)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("1ª finalização deve 200, veio %d: %v", rr1.Code, res1)
+	}
+	rr2, res2 := doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/finalizar", msgID), nil, ckOp)
+	if rr2.Code != http.StatusConflict {
+		t.Fatalf("2ª finalização deve 409, veio %d: %v", rr2.Code, res2)
+	}
+
+	// Selo único: finalizado_em gravado uma vez (hora explícita no banco).
+	var conta int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM mensagens WHERE id = ? AND finalizado_em IS NOT NULL`, msgID).Scan(&conta); err != nil || conta != 1 {
+		t.Fatalf("finalizado_em deve existir e ser único, conta=%d err=%v", conta, err)
+	}
+}
+
+// D4d: resposta SEM finalizar continua possível — despacho respondido segue
+// exigido até a finalização (ordem 05/10: resposta e finalização independentes).
+func TestResponderSemFinalizarMantemPendencia(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	ckGer := loginAsPapel(t, app, st, "gerrf", "gerente")
+	ckOp := loginAsPapel(t, app, st, "oprf", "operador")
+	msgID := enviarDespachoTeste(t, app, st, ckGer, "oprf")
+
+	// responde SEM finalizar
+	rrR, resR := doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/responder", msgID), map[string]any{
+		"corpo": "<p>Ciente, em execução.</p>",
+	}, ckOp)
+	if rrR.Code != http.StatusOK {
+		t.Fatalf("responder deve 200, veio %d: %v", rrR.Code, resR)
+	}
+
+	// pendência BAIXOU para o destinatário (respondido_em gravado)…
+	rrCnt, resCnt := doJSONReq(app, "GET", "/api/mensagens/contador", nil, ckOp)
+	if rrCnt.Code != http.StatusOK {
+		t.Fatalf("contador: %d", rrCnt.Code)
+	}
+	if pend, _ := resCnt["despachos_pendentes"].(float64); pend != 0 {
+		t.Fatalf("após resposta a pendência do destinatário baixa, veio %v", resCnt)
+	}
+
+	// …mas o despacho NÃO foi finalizado: thread segue exigida até FINALIZAR.
+	var exigeResp int
+	var finalizado *string
+	if err := st.db.QueryRow(`SELECT COALESCE(exige_resposta,0), finalizado_em FROM mensagens WHERE id = ?`, msgID).Scan(&exigeResp, &finalizado); err != nil {
+		t.Fatalf("ler despacho: %v", err)
+	}
+	if exigeResp != 1 || finalizado != nil {
+		t.Fatalf("resposta sem finalizar NÃO deve baixar exige_resposta nem selar finalizado_em: exige=%d fin=%v", exigeResp, finalizado)
+	}
+
+	// thread expõe o estado p/ o front: pendência minha baixada + não finalizado
+	rrT, resT := doJSONReq(app, "GET", fmt.Sprintf("/api/mensagens/%d/thread", msgID), nil, ckOp)
+	if rrT.Code != http.StatusOK {
+		t.Fatalf("thread: %d", rrT.Code)
+	}
+	if fin, _ := resT["mensagem"].(map[string]any)["finalizado_em"]; fin != nil {
+		t.Fatalf("thread não deveria reportar finalizado_em, veio %v", fin)
+	}
+
+	// agora FINALIZAR depois de responder deve 200 (ordem: resposta não impede finalização)
+	rrF, resF := doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/finalizar", msgID), nil, ckOp)
+	if rrF.Code != http.StatusOK {
+		t.Fatalf("finalizar pós-resposta deve 200, veio %d: %v", rrF.Code, resF)
+	}
+}
+
+// D4e: abas separadas também nos ENVIADOS — ?despacho=1 devolve só despachos;
+// sem o parâmetro, só mensagens convencionais (contrato espelha o inbox).
+func TestEnviadasAbasDespacho(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+
+	ckGer := loginAsPapel(t, app, st, "gerenv", "gerente")
+	_ = loginAsPapel(t, app, st, "openv", "operador")
+	var papelOpID int64
+	if err := st.db.QueryRow(`SELECT up.id FROM usuario_papeis up JOIN usuarios u ON u.id = up.usuario_id WHERE u.login='openv'`).Scan(&papelOpID); err != nil {
+		t.Fatalf("papel operador: %v", err)
+	}
+
+	// 1 despacho + 1 comum enviados pelo gerente
+	_ = enviarDespachoTeste(t, app, st, ckGer, "openv")
+	rrC, resC := doJSONReq(app, "POST", "/api/mensagens", map[string]any{
+		"destinatario_papel_ids": []int64{papelOpID},
+		"assunto":                "Comum enviadas",
+		"corpo":                  "<p>informativo</p>",
+		"tipo":                   "comum",
+	}, ckGer)
+	if rrC.Code != http.StatusOK {
+		t.Fatalf("enviar comum: %d %v", rrC.Code, resC)
+	}
+
+	rrD, resD := doJSONReq(app, "GET", "/api/mensagens/enviadas?despacho=1", nil, ckGer)
+	if rrD.Code != http.StatusOK {
+		t.Fatalf("enviadas?despacho=1: %d", rrD.Code)
+	}
+	if strings.Contains(rrD.Body.String(), "Comum enviadas") || !strings.Contains(rrD.Body.String(), "Despacho de prova D") {
+		t.Fatalf("aba enviados-despachos deve trazer só despachos: %s", resD)
+	}
+
+	rrN, resN := doJSONReq(app, "GET", "/api/mensagens/enviadas", nil, ckGer)
+	if rrN.Code != http.StatusOK {
+		t.Fatalf("enviadas: %d", rrN.Code)
+	}
+	if strings.Contains(rrN.Body.String(), "Despacho de prova D") || !strings.Contains(rrN.Body.String(), "Comum enviadas") {
+		t.Fatalf("aba enviados convencionais deve trazer só mensagens comuns: %s", resN)
+	}
+}
+
 // Teste do assunto sem tags (ordem 04/10: "Título às vezes chega como
 // <strong>alguma coisa</strong>, com marks — remediar").
 func TestAssuntoSemTags(t *testing.T) {

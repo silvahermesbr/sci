@@ -316,7 +316,9 @@
 
         let badgeDespacho = '';
         if (m.tipo === 'despacho' || m.exige_resposta) {
-          if (!m.respondido_em) {
+          if (m.finalizado_em) {
+            badgeDespacho = `<span class="badge-despacho-ok">✔️ DESPACHO FINALIZADO</span>`;
+          } else if (!m.respondido_em) {
             badgeDespacho = `<span class="badge-despacho-pendente">⚠️ DESPACHO: RESPOSTA EXIGIDA</span>`;
           } else {
             badgeDespacho = `<span class="badge-despacho-ok">✓ DESPACHO ATENDIDO</span>`;
@@ -361,6 +363,8 @@
     }
 
     function renderListaEnviadas(msgs, soDespachos) {
+      // Onda 05/10: o filtro de despachos é feito pela API (?despacho=1);
+      // mantido como 2ª linha de defesa para payload legado em cache.
       if (soDespachos) msgs = (msgs || []).filter(m => m.tipo === 'despacho');
       if (!msgs || msgs.length === 0) {
         cont.innerHTML = `
@@ -379,7 +383,9 @@
         let badgeDespacho = '';
         if (m.tipo === 'despacho' || m.exige_resposta) {
           const respondidos = dests.filter(d => !!d.respondido_em).length;
-          badgeDespacho = `<span class="${respondidos === dests.length ? 'badge-despacho-ok' : 'badge-despacho-pendente'}">DESPACHO: ${respondidos}/${dests.length} RESPONDIDOS</span>`;
+          badgeDespacho = m.finalizado_em
+            ? `<span class="badge-despacho-ok">DESPACHO FINALIZADO: ${respondidos}/${dests.length} RESPONDIDOS</span>`
+            : `<span class="${respondidos === dests.length ? 'badge-despacho-ok' : 'badge-despacho-pendente'}">DESPACHO: ${respondidos}/${dests.length} RESPONDIDOS</span>`;
         }
 
         return `
@@ -426,10 +432,17 @@
       const papelRem = (rem.papel || '').toUpperCase() + (rem.grupo_nome ? ' — ' + rem.grupo_nome : ' — Global');
 
       const ehDespacho = msg.tipo === 'despacho' || msg.exige_resposta;
+      const finalizado = !!msg.finalizado_em;
 
       // Status do Despacho
       let bannerDespacho = '';
-      if (ehDespacho) {
+      if (ehDespacho && finalizado) {
+        bannerDespacho = `
+          <div style="background:rgba(16, 185, 129, 0.1);border:1px solid rgba(16,185,129,0.3);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--verde-txt)">
+            ✔️ <b>Despacho FINALIZADO</b> em ${fmtData(msg.finalizado_em)} às ${fmtHora(msg.finalizado_em)} — não exige mais retorno; segue como mensagem comum no arquivo e nas caixas.
+          </div>
+        `;
+      } else if (ehDespacho) {
         if (thread.minha_resposta_pendente) {
           bannerDespacho = `
             <div style="background:rgba(239, 68, 68, 0.12);border:1px solid rgba(239,68,68,0.35);border-radius:6px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
@@ -443,10 +456,16 @@
               </div>
             </div>
           `;
-        } else if (thread.eh_destinatario && thread.meu_respondido_em) {
+        } else if (thread.eh_destinatario) {
+          // Onda 05/10: resposta SEM finalizar — respondido segue com botão de
+          // FINALIZAR (resposta e finalização são ações independentes).
+          const respTxt = thread.meu_respondido_em
+            ? `Resposta formal registrada em ${fmtData(thread.meu_respondido_em)} às ${fmtHora(thread.meu_respondido_em)}.`
+            : '';
           bannerDespacho = `
-            <div style="background:rgba(16, 185, 129, 0.1);border:1px solid rgba(16,185,129,0.3);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:var(--verde-txt)">
-              ✓ <b>Despacho Atendido:</b> Sua resposta formal foi registrada nesta thread em ${fmtData(thread.meu_respondido_em)} às ${fmtHora(thread.meu_respondido_em)}.
+            <div style="background:rgba(16, 185, 129, 0.1);border:1px solid rgba(16,185,129,0.3);border-radius:6px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;font-size:12.5px">
+              <span style="color:var(--verde-txt)">✓ <b>Despacho Atendido:</b> ${respTxt} A thread segue aberta para acompanhamentos.</span>
+              <button type="button" class="acao-linha" id="btFinalizarDespacho" style="padding:6px 14px;font-size:12.5px;white-space:nowrap" title="Encerra o despacho definitivamente: vira mensagem comum no arquivo e nas caixas normais">✔️ Finalizar Despacho</button>
             </div>
           `;
         } else if (thread.eh_remetente) {
