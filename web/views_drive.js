@@ -412,7 +412,7 @@
   function abrirMenuPasta(pastaID, nomeAtual, podeEditar) {
     const html = `
       <div class="cartao modal-conteudo-box" style="max-width:400px;margin:auto">
-        <h3 style="margin:0 0 8px">${esc(nomeAtual)}</h3>
+        <h3 class="drive-modal-titulo" title="${esc(nomeAtual)}">${esc(nomeAtual)}</h3>
         <p style="color:var(--tx3);font-size:12px;margin:0 0 16px">Gerenciamento e permissões da pasta</p>
         <div class="menu-acoes-drive-lista">
           <button type="button" class="btn-drive-menu-item" id="btCompPasta">
@@ -473,7 +473,7 @@
   function abrirMenuArquivo(arquivoID, nomeAtual, podeEditar) {
     const html = `
       <div class="cartao modal-conteudo-box" style="max-width:400px;margin:auto">
-        <h3 style="margin:0 0 8px">${esc(nomeAtual)}</h3>
+        <h3 class="drive-modal-titulo" title="${esc(nomeAtual)}">${esc(nomeAtual)}</h3>
         <p style="color:var(--tx3);font-size:12px;margin:0 0 16px">Gerenciamento do documento físico</p>
         <div class="menu-acoes-drive-lista">
           <a href="/api/drive/download/${arquivoID}?inline=1" target="_blank" class="btn-drive-menu-item">
@@ -484,11 +484,23 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
             Baixar Cópia
           </a>
+          <button type="button" class="btn-drive-menu-item" id="btPropArq">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            Propriedades
+          </button>
           <button type="button" class="btn-drive-menu-item" id="btCompArq">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
             Compartilhar Acesso
           </button>
           ${podeEditar ? `
+            <button type="button" class="btn-drive-menu-item" id="btMoverArq">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              Mover Arquivo…
+            </button>
+            <button type="button" class="btn-drive-menu-item" id="btCopiarArq">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              Copiar para Pasta…
+            </button>
             <button type="button" class="btn-drive-menu-item" id="btRenomearArq">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
               Renomear Arquivo
@@ -507,12 +519,35 @@
     const m = abrirModal(html);
     m.modal.querySelector('#btFecharMA').onclick = m.fechar;
 
+    m.modal.querySelector('#btPropArq').onclick = () => {
+      m.fechar();
+      abrirModalPropriedades(arquivoID);
+    };
+
     m.modal.querySelector('#btCompArq').onclick = () => {
       m.fechar();
       abrirModalCompartilhamento('arquivo', arquivoID, nomeAtual);
     };
 
     if (podeEditar) {
+      m.modal.querySelector('#btMoverArq').onclick = () => {
+        m.fechar();
+        abrirModalSelecionarPasta('Mover Arquivo', nomeAtual, (pastaDestino) => {
+          api(`/api/drive/arquivos/${arquivoID}/mover`, { method: 'POST', body: JSON.stringify({ pasta_id: pastaDestino }) })
+            .then(() => { toast('Arquivo movido!'); window.ViewDrive(); })
+            .catch(e => toast(e.message || 'Falha ao mover', 'erro'));
+        });
+      };
+
+      m.modal.querySelector('#btCopiarArq').onclick = () => {
+        m.fechar();
+        abrirModalSelecionarPasta('Copiar Arquivo', nomeAtual, (pastaDestino) => {
+          api(`/api/drive/arquivos/${arquivoID}/copiar`, { method: 'POST', body: JSON.stringify({ pasta_id: pastaDestino }) })
+            .then(() => { toast('Arquivo copiado!'); window.ViewDrive(); })
+            .catch(e => toast(e.message || 'Falha ao copiar', 'erro'));
+        });
+      };
+
       m.modal.querySelector('#btRenomearArq').onclick = () => {
         m.fechar();
         const novo = prompt('Novo nome para o arquivo:', nomeAtual);
@@ -536,6 +571,108 @@
         }
       };
     }
+  }
+
+  // Modal "Escolher Pasta" — usado por MOVER e COPIAR (árvore recursiva do grupo
+  // + Compartilhados Comigo; destino vazio = raiz do próprio grupo).
+  async function abrirModalSelecionarPasta(titulo, nomeArq, aoEscolher) {
+    const html = `
+      <div class="cartao modal-conteudo-box" style="max-width:460px;margin:auto">
+        <h3 style="margin:0 0 4px">${esc(titulo)}</h3>
+        <p style="color:var(--tx3);font-size:12px;margin:0 0 12px">Destino de "${esc(nomeArq)}" — deixe em <b>Raiz do Meu Drive</b> para ir para a raiz.</p>
+        <select id="selPastaDestino" style="width:100%;padding:8px;border:1px solid var(--borda);border-radius:6px;background:var(--painel);color:var(--tx)">
+          <option value="0">Raiz do Meu Drive</option>
+        </select>
+        <div style="text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+          <button type="button" class="btn-cancelar" id="btCancSelPasta">Cancelar</button>
+          <button type="button" class="primario" id="btConfSelPasta">Confirmar</button>
+        </div>
+      </div>
+    `;
+    const m = abrirModal(html);
+    m.modal.querySelector('#btCancSelPasta').onclick = m.fechar;
+
+    const sel = m.modal.querySelector('#selPastaDestino');
+    try {
+      const [meu, comp] = await Promise.all([
+        api('/api/drive/itens?pasta_id=0').catch(() => null),
+        api('/api/drive/itens?pasta_id=0&compartilhados=1').catch(() => null),
+      ]);
+      const linhas = [];
+      const varrer = (lista, prefixo) => {
+        (lista || []).forEach(p => {
+          linhas.push({ id: p.id, label: prefixo + p.nome });
+          if (p.qtd_itens > 0) {
+            api(`/api/drive/itens?pasta_id=${p.id}`).then(sub => varrer(sub.pastas, prefixo + p.nome + ' / ')).catch(() => {});
+          }
+        });
+      };
+      if (meu && meu.pastas) varrer(meu.pastas, '');
+      if (comp && comp.pastas) {
+        comp.pastas.forEach(p => {
+          if (!linhas.some(l => l.id === p.id)) linhas.push({ id: p.id, label: '[Compartilhada] ' + p.nome });
+        });
+      }
+      sel.innerHTML = '<option value="0">Raiz do Meu Drive</option>' +
+        linhas.map(l => `<option value="${l.id}">${esc(l.label)}</option>`).join('');
+    } catch (e) {
+      // mantém só a raiz
+    }
+
+    m.modal.querySelector('#btConfSelPasta').onclick = () => {
+      const pid = +sel.value || 0;
+      m.fechar();
+      aoEscolher(pid);
+    };
+  }
+
+  // Modal de PROPRIEDADES (item 3 da ordem): nome completo (com wrap), enviado em,
+  // por quem, tamanho e TABELA de acessos (alvo + desde quando + nível).
+  async function abrirModalPropriedades(arquivoID) {
+    let p;
+    try {
+      p = await api(`/api/drive/arquivos/${arquivoID}/propriedades`);
+    } catch (err) {
+      toast(err.message || 'Falha ao carregar propriedades', 'erro');
+      return;
+    }
+    const acessos = p.acessos || [];
+    const linhasAcesso = acessos.length === 0
+      ? '<tr><td colspan="3" style="text-align:center;color:var(--tx3);padding:10px">Sem compartilhamentos — acesso restrito ao autor e à gerência da unidade.</td></tr>'
+      : acessos.map(c => `
+          <tr>
+            <td>${esc(c.alvo_nome)} <span class="badge-mini" style="font-size:10px">${esc(c.alvo_tipo)}</span></td>
+            <td class="num">${c.pode_editar ? 'Editor' : 'Visualizador'}</td>
+            <td class="num">${esc(c.criado_em_fmt || c.criado_em || '—')}</td>
+          </tr>
+        `).join('');
+    const html = `
+      <div class="cartao modal-conteudo-box" style="max-width:540px;margin:auto">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+          <h3 class="drive-modal-titulo" title="${esc(p.nome_original)}">${esc(p.nome_original)}</h3>
+          <button type="button" class="btn-fechar-modal" id="btXProp">✕</button>
+        </div>
+        <table class="tabela" style="margin:8px 0 14px">
+          <tbody>
+            <tr><td style="color:var(--tx3);width:38%">Enviado em</td><td>${esc(p.criado_em_fmt || p.criado_em || '—')}</td></tr>
+            <tr><td style="color:var(--tx3)">Enviado por</td><td>${esc(p.autor_nome || '—')}</td></tr>
+            <tr><td style="color:var(--tx3)">Tamanho</td><td>${formatarTamanho(p.tamanho)}</td></tr>
+            <tr><td style="color:var(--tx3)">Local</td><td>${esc(p.pasta_nome || 'Raiz do Meu Drive')}</td></tr>
+          </tbody>
+        </table>
+        <h4 style="margin:0 0 6px;font-size:13px;color:var(--tx2)">Quem tem acesso</h4>
+        <div style="max-height:220px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px">
+          <table class="tabela" style="margin:0">
+            <thead>
+              <tr><th style="text-align:left">Quem</th><th class="num">Nível</th><th class="num">Desde</th></tr>
+            </thead>
+            <tbody>${linhasAcesso}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+    const m = abrirModal(html);
+    m.modal.querySelector('#btXProp').onclick = m.fechar;
   }
 
   // Modal de Compartilhamento Granular estilo Google Drive
@@ -632,7 +769,7 @@
           <div class="item-comp-linha" style="display:flex;align-items:center;justify-content:space-between;padding:6px 4px;border-bottom:1px solid var(--borda)">
             <div>
               <div style="font-weight:600;font-size:13px">${esc(c.alvo_nome)} <span class="badge-mini" style="font-size:10px">${esc(c.alvo_tipo)}</span></div>
-              <div style="font-size:11px;color:var(--tx3)">${c.pode_editar ? 'Editor' : 'Visualizador'}</div>
+              <div style="font-size:11px;color:var(--tx3)">${c.pode_editar ? 'Editor' : 'Visualizador'}${c.criado_em_fmt ? ' · desde ' + esc(c.criado_em_fmt) : ''}</div>
             </div>
             <button type="button" class="btn-icone-mini btnRevogarComp" data-cid="${c.id}" title="Remover Permissão" style="color:var(--verm)">✕</button>
           </div>

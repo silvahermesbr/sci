@@ -3184,6 +3184,37 @@ input[type="checkbox"] {
   gap: 6px;
 }
 
+/* ===== Onda 0510-drive: ellipsis de nomes longos + título com wrap nos modais ===== */
+/* Pastas: o span é filho de flex — sem min-width:0 o flex item não encolhe e o
+   ellipsis nunca aparece (nome empurra os botões para fora do cartão). */
+.pasta-icone-nome > .pasta-nome {
+  min-width: 0;
+  max-width: 100%;
+  display: block;
+}
+/* Modais do Drive: título em UMA linha com ellipsis (o nome COMPLETO fica no
+   tooltip e, nas PROPRIEDADES, visível inteiro com wrap). */
+.drive-modal-titulo {
+  margin: 0 0 8px;
+  font-size: 16px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.modal-conteudo-box .drive-modal-titulo {
+  max-width: calc(100% - 40px);
+}
+/* Breadcrumb não estoura a barra de navegação. */
+.drive-breadcrumbs .crumb-item {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
 .btn-drive-menu-item {
   display: flex;
   align-items: center;
