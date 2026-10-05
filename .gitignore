@@ -25,3 +25,6 @@ FLAG_BACKUP.txt
 
 # binários de build (nunca no repo)
 bin/
+
+# experimentos de referência (não integram o build)
+web/vendor/
