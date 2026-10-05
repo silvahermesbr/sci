@@ -26,13 +26,19 @@ func (a *App) hMensagensFinalizar(w http.ResponseWriter, r *http.Request) {
 
 	var tipo string
 	var exigeResp int
-	err = a.st.db.QueryRow(`SELECT COALESCE(tipo,'comum'), COALESCE(exige_resposta,0) FROM mensagens WHERE id = ?`, msgID).Scan(&tipo, &exigeResp)
+	var finalizadoEm *string
+	err = a.st.db.QueryRow(`SELECT COALESCE(tipo,'comum'), COALESCE(exige_resposta,0), finalizado_em FROM mensagens WHERE id = ?`, msgID).Scan(&tipo, &exigeResp, &finalizadoEm)
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "mensagem não encontrada")
 		return
 	}
 	if tipo != "despacho" {
 		jsonErro(w, http.StatusConflict, "apenas despachos são finalizados")
+		return
+	}
+	// Onda 05/10: finalização é única — re-finalizar não reescreve o selo.
+	if finalizadoEm != nil {
+		jsonErro(w, http.StatusConflict, "despacho já finalizado")
 		return
 	}
 

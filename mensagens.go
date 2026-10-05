@@ -356,11 +356,12 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, []any{})
 		return
 	}
+	soDespachos := r.URL.Query().Get("despacho") == "1"
 
 	rows, err := a.st.db.Query(`
 		SELECT m.id, m.assunto, m.corpo, m.criada_em,
 		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
-		       COALESCE(m.anexos, '[]'), m.pai_id
+		       COALESCE(m.anexos, '[]'), m.pai_id, m.finalizado_em
 		FROM mensagens m
 		WHERE m.remetente_papel_id = ?
 		ORDER BY m.id DESC LIMIT 100`, *u.PapelAtivoID)
@@ -375,7 +376,8 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 		var assunto, corpo, criadaEm, tipo, anexosJSON string
 		var exigeResposta int
 		var paiID *int64
-		if err := rows.Scan(&id, &assunto, &corpo, &criadaEm, &tipo, &exigeResposta, &anexosJSON, &paiID); err == nil {
+		var finalizadoEm *string
+		if err := rows.Scan(&id, &assunto, &corpo, &criadaEm, &tipo, &exigeResposta, &anexosJSON, &paiID, &finalizadoEm); err == nil {
 			var anexosList []any
 			_ = json.Unmarshal([]byte(anexosJSON), &anexosList)
 			if anexosList == nil {
@@ -391,12 +393,16 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 				"exige_resposta": exigeResposta == 1,
 				"anexos":         anexosList,
 				"pai_id":         paiID,
+				"finalizado_em":  finalizadoEm,
 			})
 		}
 	}
 	rows.Close()
 
-	out := []map[string]any{}
+	// Onda 05/10: abas separadas também nos ENVIADOS — ?despacho=1 devolve só
+	// despachos; sem o parâmetro, só mensagens convencionais (contrato espelha
+	// o inbox). Filtrado em memória após o fetch dos destinatários.
+	var out []map[string]any
 	for _, msg := range msgs {
 		id := msg["id"].(int64)
 		destRows, _ := a.st.db.Query(`
@@ -432,6 +438,13 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 			destRows.Close()
 		}
 		msg["destinatarios"] = dests
+		ehDespacho := msg["tipo"] == "despacho"
+		if soDespachos && !ehDespacho {
+			continue
+		}
+		if !soDespachos && ehDespacho {
+			continue
+		}
 		out = append(out, msg)
 	}
 	jsonOK(w, out)
@@ -814,12 +827,13 @@ func (a *App) hMensagensThread(w http.ResponseWriter, r *http.Request) {
 	var mID, remPapelID, remUID int64
 	var assunto, corpo, criadaEm, tipo, anexosJSON string
 	var exigeResp int
+	var finalizadoEm *string
 	err = a.st.db.QueryRow(`
 		SELECT id, assunto, corpo, criada_em, remetente_papel_id, remetente_usuario_id,
-		       COALESCE(tipo, 'comum'), COALESCE(exige_resposta, 0), COALESCE(anexos, '[]')
+		       COALESCE(tipo, 'comum'), COALESCE(exige_resposta, 0), COALESCE(anexos, '[]'), finalizado_em
 		FROM mensagens WHERE id = ?`, msgID).Scan(
 		&mID, &assunto, &corpo, &criadaEm, &remPapelID, &remUID,
-		&tipo, &exigeResp, &anexosJSON)
+		&tipo, &exigeResp, &anexosJSON, &finalizadoEm)
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "mensagem não encontrada")
 		return
@@ -1005,6 +1019,7 @@ func (a *App) hMensagensThread(w http.ResponseWriter, r *http.Request) {
 			"tipo":           tipo,
 			"exige_resposta": exigeResp == 1,
 			"anexos":         anexosList,
+			"finalizado_em":  finalizadoEm,
 			"remetente": map[string]any{
 				"papel_id":      remPapelID,
 				"usuario_id":    remUID,
