@@ -30,10 +30,15 @@ func criaUsuarioTeste(t *testing.T, st *Store, login, senha, papel string) {
 }
 
 // loginAsPapel: cria usuário do papel e loga — atalho para os testes de guarda.
-func loginAsPapel(t *testing.T, app *App, st *Store, login, papel string) *http.Cookie {
+// Senha opcional (ordem Diretor 04/10): sem senha usa o padrão "senha-<papel>".
+func loginAsPapel(t *testing.T, app *App, st *Store, login, papel string, senha ...string) *http.Cookie {
 	t.Helper()
-	criaUsuarioTeste(t, st, login, "senha-"+papel, papel)
-	return loginAs(t, app, login, "senha-"+papel)
+	s := "senha-" + papel
+	if len(senha) > 0 && senha[0] != "" {
+		s = senha[0]
+	}
+	criaUsuarioTeste(t, st, login, s, papel)
+	return loginAs(t, app, login, s)
 }
 
 // doRawReq: request com corpo arbitrário (multipart, binário) e headers explícitos.

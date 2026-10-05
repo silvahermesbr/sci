@@ -28,6 +28,9 @@ type ConferenciaPDF struct {
 	FechadaEm   *string          `json:"fechada_em"`
 	CriadoPor   string           `json:"criado_por"`
 	GeradoPor   string           `json:"gerado_por"`
+	// Assinatura (ordem Diretor 04/10): nome completo em negrito + função
+	// específica do grupo logo abaixo (quando houver).
+	FuncaoGeradoPor string `json:"funcao_gerado_por,omitempty"`
 	Resumo      map[string]int   `json:"resumo"`
 	Lancamentos []map[string]any `json:"lancamentos"`
 	Filtro      string           `json:"filtro,omitempty"`
@@ -636,12 +639,19 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 	pdf.SetFont("Helvetica", "", 8.5)
 	pdf.SetTextColor(50, 50, 50)
 	pdf.CellFormat(0, 4, "________________________________________________________", "", 1, "C", false, 0, "")
+	// Assinatura por NOME COMPLETO em negrito (ordem Diretor 04/10): nunca o
+	// login. Função específica do grupo logo abaixo, quando houver.
 	nomeResp := c.GeradoPor
-	if c.FechadoPorNome != "" {
+	if strings.TrimSpace(nomeResp) == "" {
 		nomeResp = c.FechadoPorNome
 	}
 	pdf.SetFont("Helvetica", "B", 9)
 	pdf.CellFormat(0, 5, T(nomeResp), "", 1, "C", false, 0, "")
+	if strings.TrimSpace(c.FuncaoGeradoPor) != "" {
+		pdf.SetFont("Helvetica", "", 7.5)
+		pdf.SetTextColor(71, 85, 105)
+		pdf.CellFormat(0, 4, T(c.FuncaoGeradoPor), "", 1, "C", false, 0, "")
+	}
 	pdf.SetFont("Helvetica", "", 7.5)
 	pdf.SetTextColor(100, 116, 139)
 	pdf.CellFormat(0, 4, T("Responsável pela Conferência"), "", 1, "C", false, 0, "")

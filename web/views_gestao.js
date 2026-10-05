@@ -1149,28 +1149,29 @@
     if (!cList || !cList.length) {
       try { cList = await api('/api/usuarios'); } catch (e) { cList = []; }
     }
-    const contasGrupo = (cList || []).filter(c => c.grupo_id === gid && c.papel !== 'admin' && c.ativo);
+    // Ordem Diretor 04/10: gerente pode ser QUALQUER conta indicada pelo admin —
+    // não apenas quem já está alocado ao grupo (o backend vincula na troca).
+    const contasGrupo = (cList || []).filter(c => c.papel !== 'admin' && c.ativo);
     const temGerente = contasGrupo.some(c => c.papel === 'gerente');
     const html = `
       <div class="modal" style="max-width:500px">
         <h3 style="margin-top:0">👤 ${temGerente ? 'Trocar Gerente' : 'Definir Gerente'} — ${esc(gnome)}</h3>
         <p style="color:var(--tx2); font-size:13px; margin-bottom:12px">
-          ${temGerente 
-            ? 'Selecione um usuário deste grupo para assumir a titularidade. O gerente atual passará a operador.' 
-            : 'Selecione um dos usuários alocados a este grupo para herdar a função de Gerente titular.'}
+          ${temGerente
+            ? 'Selecione qualquer conta ativa para assumir a titularidade — de dentro ou de fora do grupo (ordem do Diretor). O gerente atual passará a operador.'
+            : 'Selecione qualquer conta ativa para ser o Gerente titular — o vínculo com o grupo é feito automaticamente.'}
         </p>
-        
+
         ${contasGrupo.length === 0 ? `
           <div class="vazio" style="padding:20px; text-align:center; margin-bottom:14px">
-            Nenhum usuário alocado nesta unidade.<br>
-            <small style="color:var(--tx3)">Use o botão <b>Alocar Usuário</b> para vincular militares ao grupo antes de definir o gerente.</small>
+            Nenhuma conta ativa disponível.
           </div>
         ` : `
           <div class="campo" style="margin-bottom:14px">
             <label>Conta a assumir a gerência</label>
             <select id="mSelNovaConta">
-              <option value="">— Selecione uma conta do grupo —</option>
-              ${contasGrupo.map(c => `<option value="${esc(c.login)}" ${c.papel === 'gerente' ? 'disabled' : ''}>${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)} ${c.papel === 'gerente' ? '★ Atual Gerente' : ''}</option>`).join('')}
+              <option value="">— Selecione uma conta —</option>
+              ${contasGrupo.map(c => { const atual = c.papel === 'gerente' && c.grupo_id === gid; return `<option value="${esc(c.login)}" ${atual ? 'disabled' : ''}>${esc(c.login)} (${rotuloPapel(c.papel)}) - ${esc(c.nome_guerra || c.login)} ${atual ? '★ Atual Gerente' : ''}</option>`; }).join('')}
             </select>
           </div>
         `}
@@ -2654,8 +2655,11 @@
       };
     }
 
-    // Modal de Senha
-    $('#pfBtMudarSenha').onclick = () => modalSenha();
+    // Modal de Senha (ordem Diretor 04/10/26: atual + nova + confirmação antes do save).
+    // window.modalSenha = versão do core.js (preflight em /api/senha); o modalSenha local
+    // daqui é o de REDEFINIÇÃO por admin/gerente (POST /api/usuarios/{id}/senha) — chamar
+    // o local sem id era o bug do "ID não reconhecido" no Meu Perfil.
+    $('#pfBtMudarSenha').onclick = () => window.modalSenha();
 
     // Salvar Perfil
     $('#pfGo').onclick = async () => {

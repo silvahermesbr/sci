@@ -2307,10 +2307,35 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		JOIN usuarios u ON u.id = COALESCE(c.fechada_por, c.criado_por)
 		WHERE c.id = ?`, id).Scan(&fechadoPorNome)
 
+	// "Iniciada por" também por NOME COMPLETO (ordem Diretor 04/10): o login
+	// nunca aparece no PDF, nem no banner nem na assinatura.
+	var criadoPorNome string
+	_ = a.st.db.QueryRow(`
+		SELECT COALESCE(NULLIF(u.nome_completo,''), NULLIF(u.nome_guerra,''), u.login)
+		FROM conferencias c
+		JOIN usuarios u ON u.id = c.criado_por
+		WHERE c.id = ?`, id).Scan(&criadoPorNome)
+
+	// Assinatura por NOME COMPLETO (ordem Diretor 04/10): o PDF nunca mostra o
+	// login — quem assina é identificado pelo nome completo (fallback nome de
+	// guerra) e, quando houver, a função específica do grupo logo abaixo.
+	var quemAssina string
+	_ = a.st.db.QueryRow(`
+		SELECT COALESCE(NULLIF(u2.nome_completo,''), NULLIF(u2.nome_guerra,''), u2.login)
+		FROM usuarios u2 WHERE u2.id = ?`, u.ID).Scan(&quemAssina)
+	if strings.TrimSpace(quemAssina) == "" {
+		quemAssina = u.Login
+	}
+	var funcaoAssina string
+	_ = a.st.db.QueryRow(`
+		SELECT f.nome FROM usuarios u2
+		JOIN funcoes f ON f.id = u2.funcao_id AND f.grupo_id IS NOT DISTINCT FROM u2.grupo_id
+		WHERE u2.id = ?`, u.ID).Scan(&funcaoAssina)
+
 	cp := ConferenciaPDF{
 		ID: id, Data: data, Status: status, CriadaEm: criadaEm, FechadaEm: fechada,
-		CriadoPor: criadoPor, GeradoPor: u.Login, Resumo: resumo, Lancamentos: lanc,
-		Filtro: filtro, FechadoPorNome: fechadoPorNome,
+		CriadoPor: criadoPorNome, GeradoPor: quemAssina, Resumo: resumo, Lancamentos: lanc,
+		Filtro: filtro, FechadoPorNome: fechadoPorNome, FuncaoGeradoPor: funcaoAssina,
 	}
 	pdf, err := a.gerarConferenciaPDF(cp)
 	if err != nil {
