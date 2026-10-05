@@ -140,6 +140,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV32(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV33(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2048,6 +2051,35 @@ func (s *Store) migrarV32() error {
 	}
 
 	return s.marcarVersao(32)
+}
+
+// migrarV33 (onda Escalas 05/10, "conferencia_escalas"): escala de guarda da
+// conferência — designação de chefes/operadores por conferência.
+//   - UNIQUE implícito via INSERT OR IGNORE no handler (SELECT-primeiro).
+//   - papel_na_escala: 'chefe' | 'operador'; designado_por rastreia quem nomeou.
+// Idempotente: CREATE TABLE/INDEX IF NOT EXISTS.
+func (s *Store) migrarV33() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 33`).Scan(&v)
+	if v == 33 {
+		return nil
+	}
+
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS conferencia_escalas (
+		id INTEGER PRIMARY KEY,
+		conferencia_id INTEGER NOT NULL REFERENCES conferencias(id),
+		usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+		papel_na_escala TEXT NOT NULL CHECK (papel_na_escala IN ('chefe','operador')),
+		designado_por INTEGER REFERENCES usuarios(id),
+		criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	)`); err != nil {
+		return fmt.Errorf("migração v33 tabela conferencia_escalas: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_conf_escalas_conferencia ON conferencia_escalas(conferencia_id)`); err != nil {
+		return fmt.Errorf("migração v33 índice conferencia_id: %w", err)
+	}
+
+	return s.marcarVersao(33)
 }
 
 // EhSubordinado verifica se subordinadoID é igual ou subordinado (transitivo) a superiorID na árvore de grupos.
