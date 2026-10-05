@@ -857,6 +857,13 @@
             </div>
           </div>
 
+          <div class="form-linha" id="apLinhaSetor" style="margin-bottom:10px; display:none">
+            <div class="campo" style="flex:1">
+              <label>Setor / Seção (obrigatório p/ chefe de setor)</label>
+              <select id="apSetor"><option value="">— Nenhum —</option>${setoresLista.map(s => `<option value="${s.id}" data-grupo="${s.grupo_id == null ? '' : s.grupo_id}">${esc(s.nome)}${s.sigla ? ' (' + esc(s.sigla) + ')' : ''}</option>`).join('')}</select>
+            </div>
+          </div>
+
           <div class="campo" style="margin-bottom:12px">
             <label>Posto / Graduação (Opcional)</label>
             <select id="apFuncao">
@@ -880,10 +887,34 @@
 
       const selP = div.querySelector('#apPapel');
       const grpField = div.querySelector('#apCampoGrupo');
+      const linhaSetor = div.querySelector('#apLinhaSetor');
+      const selSetor = div.querySelector('#apSetor');
+      const selGrupo = div.querySelector('#apGrupo');
       const ajuda = div.querySelector('#apAjuda');
+
+      // onda itens79: a linha de setor aparece só p/ chefe_setor e as opções
+      // filtram pelo grupo escolhido (ou globais, grupo NULL). O backend
+      // (hUsuarioPapelAdd) valida de novo — 400 se o setor não é do grupo.
+      const filtrarSetores = () => {
+        if (!selSetor) return;
+        const gid = selGrupo.value;
+        selSetor.querySelectorAll('option[data-grupo]').forEach(op => {
+          const gOp = op.dataset.grupo;
+          op.style.display = (!gid || gOp === '' || gOp === gid) ? '' : 'none';
+        });
+        if (selSetor.selectedOptions[0] && selSetor.selectedOptions[0].style.display === 'none') {
+          selSetor.value = '';
+        }
+      };
+      if (selGrupo) selGrupo.onchange = filtrarSetores;
 
       selP.onchange = () => {
         const p = selP.value;
+        if (linhaSetor) {
+          const mostrar = (p === 'chefe_setor');
+          linhaSetor.style.display = mostrar ? 'flex' : 'none';
+          if (mostrar) filtrarSetores();
+        }
         if (p === 'admin') {
           grpField.style.display = 'none';
           ajuda.innerHTML = '🌐 <b>Administrador:</b> Acesso global ao sistema.';
@@ -904,6 +935,9 @@
         const papel = selP.value;
         const grupoId = +div.querySelector('#apGrupo').value || null;
         const funcaoId = +div.querySelector('#apFuncao').value || null;
+        // onda itens79: chefe_setor pode nascer já com o setor (conveniência do
+        // formulário; nomear_chefe continua sendo a via canônica).
+        const setorId = (papel === 'chefe_setor' && selSetor && selSetor.value) ? (+selSetor.value || null) : null;
 
         if (papel !== 'admin' && !grupoId) {
           toast('Selecione o grupo para esta função', 'erro');
@@ -916,7 +950,8 @@
             body: JSON.stringify({
               papel,
               grupo_id: grupoId,
-              funcao_id: funcaoId
+              funcao_id: funcaoId,
+              setor_id: setorId
             })
           });
           toast('Nova função atribuída com sucesso!');
