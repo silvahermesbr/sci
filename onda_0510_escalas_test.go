@@ -33,6 +33,12 @@ func escalasSetup(t *testing.T, app *App, st *Store) (gid, setorA, setorB, uidGe
 	criaUsuarioTeste(t, st, "opa_esc", "senha-gerente", "operador")
 	criaUsuarioTeste(t, st, "opb_esc", "senha-gerente", "operador")
 
+	if _, err := st.db.Exec(`UPDATE usuarios SET nome_guerra = CASE login
+		WHEN 'ger_esc' THEN 'Gerência' WHEN 'ch_esc' THEN 'Chefe X'
+		WHEN 'opa_esc' THEN 'Op A' ELSE 'Op B' END
+		WHERE login IN ('ger_esc','ch_esc','opa_esc','opb_esc')`); err != nil {
+		t.Fatalf("nome_guerra dos usuários de teste: %v", err)
+	}
 	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login IN ('ger_esc','ch_esc','opa_esc','opb_esc')`, gid); err != nil {
 		t.Fatalf("vincular grupo: %v", err)
 	}
@@ -112,7 +118,7 @@ func TestX1GerenteDesignaEscala(t *testing.T) {
 func TestX2ChefeOutroSetor403(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
-	gid, _, _, uidGer, _, uidOpB, _ := escalasSetup(t, app, st)
+	_, _, _, uidGer, _, _, uidOpB := escalasSetup(t, app, st)
 	// sessão DIRETA (CriarSessao): logar como gerente religaria o papel_ativo
 	// à primeira linha de usuario_papeis (gerente), escondendo o papel do chefe.
 	tokGer, _, _ := st.CriarSessao(uidGer, ttlSessao)
