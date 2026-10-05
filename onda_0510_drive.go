@@ -141,6 +141,9 @@ func (a *App) driveMoverCopiar(w http.ResponseWriter, r *http.Request, copia boo
 	acao := "drive_mover_arquivo"
 	novoPastaID := req.PastaID
 	var novoID int64
+	// Carimbo da função (onda 05/10): a cópia nasce possessO da função TITULAR
+	// do autor no grupo do NOVO registro (mesma resolução do backflow v34).
+	funcaoCopia := a.funcaoTitularNoGrupo(u, grupoInt64De(meta["grupo_id"]))
 	if copia {
 		acao = "drive_copiar_arquivo"
 		// Cópia FÍSICA própria: nome_armazenado é UNIQUE no schema — cada item
@@ -152,10 +155,10 @@ func (a *App) driveMoverCopiar(w http.ResponseWriter, r *http.Request, copia boo
 			return
 		}
 		res, errI := a.st.db.Exec(`
-			INSERT INTO drive_arquivos (pasta_id, grupo_id, nome_original, nome_armazenado, tipo, tamanho, autor_usuario_id, autor_papel_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO drive_arquivos (pasta_id, grupo_id, nome_original, nome_armazenado, tipo, tamanho, autor_usuario_id, autor_papel_id, funcao_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, nullInt64(novoPastaID), meta["grupo_id"], meta["nome_original"], novoNomeArm,
-			meta["tipo"], nBytes, u.ID, u.PapelAtivoID)
+			meta["tipo"], nBytes, u.ID, u.PapelAtivoID, funcaoCopia)
 		if errI != nil {
 			_ = os.Remove(filepath.Join(a.pastaFisicaDrive(), novoNomeArm))
 			jsonErro(w, http.StatusInternalServerError, "falha ao copiar arquivo: "+errI.Error())

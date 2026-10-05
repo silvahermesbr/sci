@@ -543,10 +543,21 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Carimbo da função (onda 05/10): a mensagem nasce possessO da função
+	// TITULAR exercida pelo remetente NO GRUPO do papel ativo (backflow v34
+	// usa a mesma resolução). Sem função exercida → NULL = legado de usuário.
+	var remGrupoID int64
+	_ = a.st.db.QueryRow(`SELECT COALESCE(grupo_id, 0) FROM usuario_papeis WHERE id = ?`,
+		*u.PapelAtivoID).Scan(&remGrupoID)
+	var funcaoMsg any
+	if remGrupoID > 0 {
+		funcaoMsg = a.funcaoTitularNoGrupo(u, remGrupoID)
+	}
+
 	res, err := a.st.db.Exec(`
-		INSERT INTO mensagens (assunto, corpo, remetente_papel_id, remetente_usuario_id, tipo, exige_resposta, anexos, pai_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.Assunto, req.Corpo, *u.PapelAtivoID, u.ID, tipo, exigeRespInt, anexosJSON, req.PaiID)
+		INSERT INTO mensagens (assunto, corpo, remetente_papel_id, remetente_usuario_id, tipo, exige_resposta, anexos, pai_id, funcao_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.Assunto, req.Corpo, *u.PapelAtivoID, u.ID, tipo, exigeRespInt, anexosJSON, req.PaiID, funcaoMsg)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao salvar mensagem: "+err.Error())
 		return

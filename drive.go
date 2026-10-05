@@ -505,9 +505,9 @@ func (a *App) hDrivePastasAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := a.st.db.Exec(`
-		INSERT INTO drive_pastas (nome, grupo_id, pai_id, autor_usuario_id, autor_papel_id)
-		VALUES (?, ?, ?, ?, ?)
-	`, req.Nome, grupoID, req.PastaID, u.ID, u.PapelAtivoID)
+		INSERT INTO drive_pastas (nome, grupo_id, pai_id, autor_usuario_id, autor_papel_id, funcao_id)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, req.Nome, grupoID, req.PastaID, u.ID, u.PapelAtivoID, a.funcaoTitularNoGrupo(u, grupoID))
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao criar pasta: "+err.Error())
 		return
@@ -707,9 +707,9 @@ func (a *App) hDriveUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := a.st.db.Exec(`
-		INSERT INTO drive_arquivos (pasta_id, grupo_id, nome_original, nome_armazenado, tipo, tamanho, autor_usuario_id, autor_papel_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, pastaID, grupoID, nomeOriginal, nomeArmazenado, tipoMime, tam, u.ID, u.PapelAtivoID)
+		INSERT INTO drive_arquivos (pasta_id, grupo_id, nome_original, nome_armazenado, tipo, tamanho, autor_usuario_id, autor_papel_id, funcao_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, pastaID, grupoID, nomeOriginal, nomeArmazenado, tipoMime, tam, u.ID, u.PapelAtivoID, a.funcaoTitularNoGrupo(u, grupoID))
 	if err != nil {
 		_ = os.Remove(caminhoCompleto)
 		jsonErro(w, http.StatusInternalServerError, "falha ao cadastrar metadados do arquivo: "+err.Error())

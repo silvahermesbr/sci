@@ -58,6 +58,35 @@ func (a *App) funcaoExercidaByID(u *Usuario, fID int64) bool {
 	return false
 }
 
+// funcaoTitularNoGrupo: função em que o usuário é TITULAR no grupo gID — mesma
+// resolução do backflow v34 (MIN(funcao_id), titularidade='titular'): 1 titular
+// por função, mas o usuário pode titularizar mais de uma, então MIN amarra o
+// determinismo. nil (NULL) quando não exerce → registro nasce legado de usuário.
+// Usado no CARIMBO DA ESCRITA (pasta/upload/cópia/mensagem).
+func (a *App) funcaoTitularNoGrupo(u *Usuario, grupoID int64) *int64 {
+	if u == nil || grupoID <= 0 {
+		return nil
+	}
+	var fID *int64
+	_ = a.st.db.QueryRow(`SELECT MIN(funcao_id) FROM funcao_membros
+		WHERE usuario_id = ? AND grupo_id = ? AND titularidade = 'titular'`,
+		u.ID, grupoID).Scan(&fID)
+	return fID
+}
+
+// grupoInt64De: meta["grupo_id"] (checarAcessoArquivo) vem como int64 do Scan —
+// tolera any por segurança e devolve 0 quando ausente (funcaoTitularNoGrupo
+// trata 0 como "sem grupo" → NULL).
+func grupoInt64De(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case int:
+		return int64(x)
+	}
+	return 0
+}
+
 // acessoViaFuncaoPasta: braço ADITIVO da função para pastas. true só quando a
 // pasta é POSSESSO da função (funcao_id exercida pelo usuário) e não pede edição.
 func (a *App) acessoViaFuncaoPasta(u *Usuario, pastaID int64, precisaEdicao bool) bool {
