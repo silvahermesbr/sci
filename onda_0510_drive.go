@@ -233,6 +233,14 @@ func (a *App) hDriveArquivoPropriedades(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Onda 05/10: o front exibe badge "da função" — devolve a função do item.
+	var funcaoID *int64
+	_ = a.st.db.QueryRow(`SELECT funcao_id FROM drive_arquivos WHERE id = ?`, id).Scan(&funcaoID)
+	var funcaoNome string
+	if funcaoID != nil {
+		_ = a.st.db.QueryRow(`SELECT nome FROM funcoes WHERE id = ?`, *funcaoID).Scan(&funcaoNome)
+	}
+
 	pastaNome := ""
 	if pastaID != nil && *pastaID > 0 {
 		_ = a.st.db.QueryRow(`SELECT nome FROM drive_pastas WHERE id = ?`, *pastaID).Scan(&pastaNome)
