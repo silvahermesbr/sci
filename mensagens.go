@@ -1345,6 +1345,13 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	grupoID := u.GrupoID
+	if req.GrupoID != nil && *req.GrupoID > 0 {
+		// Onda C2 (05/10): admin publica para grupo explícito (admin é global,
+		// não tem grupo na sessão). Gerente continua travado no próprio.
+		if u.Papel == "admin" {
+			grupoID = req.GrupoID
+		}
+	}
 	if grupoID == nil || *grupoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "aviso deve estar vinculado a um grupo")
 		return
