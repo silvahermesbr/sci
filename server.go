@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -80,9 +81,17 @@ func decodificar(r *http.Request, v any) error {
 
 // ---------- backup definitivo ----------
 
+// backupMu serializa o par "checar colisão de nome → VACUUM INTO" dentro do
+// processo. Sem ele, 2 backups no mesmo segundo (POST /api/backup simultâneos ou
+// backup assíncrono de fechamento × manual) passam os dois pelo os.Stat e o segundo
+// VACUUM INTO morre com "output file already exists" (F4, -race: reproduzido).
+var backupMu sync.Mutex
+
 // backupAgora cria backups/sci_YYYYMMDD_HHMMSS.db consistente (VACUUM INTO),
 // com sha256 + linha no MANIFEST.txt. Todos os dados vivem em arquivo.
 func (a *App) backupAgora() (arquivo, shaHex string, err error) {
+	backupMu.Lock()
+	defer backupMu.Unlock()
 	dir := a.st.dataDir + string(os.PathSeparator) + "backups"
 	if err = os.MkdirAll(dir, 0o750); err != nil {
 		return
