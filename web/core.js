@@ -337,13 +337,18 @@ function renderPaginadorHTML(info, idContainer) {
 window.renderPaginadorHTML = renderPaginadorHTML;
 
 /* ---------- modal ---------- */
-/* abrirModal(html) → {fechar(), mask, modal}. Fecha em Esc, clique na máscara
-   ou fechar(); aoFechar opcional dispara uma única vez em qualquer fechamento. */
-function abrirModal(html, aoFechar) {
+/* abrirModal(html [, aoFechar] [, opcoes]) → {fechar(), mask, modal}. Fecha em Esc,
+   clique na máscara ou fechar(); aoFechar opcional dispara uma única vez em qualquer
+   fechamento. opcoes.largura (ex. '850px') ajusta o max-width do modal — onda UX
+   0510 item 1 (ordem Diretor): modais largos NÃO transbordam (.modal ganhou
+   max-height:90vh + overflow-y:auto e a largura vira opção em vez de style inline). */
+function abrirModal(html, aoFechar, opcoes) {
   const mask = document.createElement('div');
   mask.className = 'modal-mask';
   const modal = document.createElement('div');
   modal.className = 'modal';
+  const largura = opcoes && opcoes.largura ? String(opcoes.largura) : '';
+  if (largura) modal.style.maxWidth = largura;
   modal.innerHTML = html;
   mask.appendChild(modal);
   document.body.appendChild(mask);

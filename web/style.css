@@ -910,6 +910,10 @@ input[type="checkbox"] {
 .modal {
   width: 100%;
   max-width: 440px;
+  /* Onda UX 0510 (item 1, ordem Diretor): modal NUNCA transborda a viewport —
+     conteúdo alto rola DENTRO do modal, nunca sai para fora da tela. */
+  max-height: 90vh;
+  overflow-y: auto;
   background: var(--painel);
   border: 1px solid var(--borda2);
   border-radius: 16px;
@@ -917,6 +921,12 @@ input[type="checkbox"] {
   box-shadow: var(--sombra-g);
   animation: surgir 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
+
+/* Larguras ajustáveis por opção do abrirModal (core.js): {largura:'850px'} ou
+   classe modal-lg/modal-md. Modais largos (detalhes de conferência, relatório,
+   seletor do drive, visualização de mensagens) usam a mesma via. */
+.modal.modal-lg { max-width: 850px; }
+.modal.modal-md { max-width: 640px; }
 
 .modal h3 {
   margin: 0 0 16px;
@@ -931,6 +941,57 @@ input[type="checkbox"] {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+
+/* Opções em CARTÃO com seleção única (onda UX 0510, item 2 — modal de Relatório
+   PDF): mesmo padrão visual do checkbox da conferência (.pessoa/.chk) — borda,
+   hover e seleção destacada com filete verde. */
+.pdf-opcao {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  background: var(--painel);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  min-height: var(--alvo);
+  padding: 10px 16px;
+  color: var(--tx);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.pdf-opcao:hover {
+  border-color: var(--borda2);
+  background: var(--painel2);
+}
+
+.pdf-opcao.selecionada {
+  border-color: rgba(16, 185, 129, 0.45);
+  box-shadow: inset 4px 0 0 var(--verde), 0 2px 8px rgba(16, 185, 129, 0.1);
+}
+
+.pdf-opcao input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  cursor: pointer;
+  accent-color: var(--verde);
+}
+
+.pdf-opcao b {
+  display: block;
+  font-size: 13.5px;
+}
+
+.pdf-opcao small {
+  display: block;
+  color: var(--tx2);
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 /* ---------- 13. Toasts ---------- */
@@ -3835,3 +3896,7 @@ input[type="checkbox"] {
   }
 }
 
+
+/* Onda UX 0510 (item 3): mural no padrão Email Interno — card clicável abre a leitura */
+.aviso-card[data-veraviso]:hover { border-color: var(--verde-claro, #4ade80); box-shadow: 0 0 0 1px var(--verde-claro, #4ade80) inset; }
+.aviso-card[data-veraviso] .aviso-card-titulo { color: var(--tx); }
