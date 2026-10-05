@@ -3793,6 +3793,12 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
+	// ordem 04/10 (Grupos): gerente vê o PRÓPRIO grupo + GRUPOS SUBORDINADOS
+	// (admin continua vendo todos). Operador/chefe seguem só no próprio grupo.
+	var subordinados []int64
+	if u.Papel == "gerente" && escopo > 0 {
+		subordinados = a.gruposSubordinadosAtivos(escopo)
+	}
 	rows, err := a.st.db.Query(
 		`SELECT id, login, papel, pessoa_id, COALESCE(grupo_id,0), ativo, criado_em, senhas,
 		        COALESCE(nome_guerra,''), COALESCE(nome_completo,''),
@@ -3814,9 +3820,18 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 		var ativo int
 		if rows.Scan(&id, &login, &papel, &pessoaID, &grupoID, &ativo, &criado, &senhas, &nomeGuerra, &nomeCompleto,
 			&dataNasc, &tipoSang, &tel, &email, &endereco, &foto) == nil {
-			// escopo: admin vê tudo; gerente vê o PRÓPRIO grupo (gerencia os do seu);
-			// operador só vê contas do próprio grupo, SEM dados de sessão/senha (v9.4).
+			// escopo: admin vê tudo; gerente vê o PRÓPRIO grupo + subordinados
+			// (ordem 04/10); operador/chefe só contas do próprio grupo, SEM
+			// dados de sessão/senha (v9.4).
 			mostrar := escopo <= 0 || int64(escopo) == grupoID
+			if !mostrar && len(subordinados) > 0 {
+				for _, sid := range subordinados {
+					if sid == grupoID {
+						mostrar = true
+						break
+					}
+				}
+			}
 			if !mostrar {
 				continue
 			}
@@ -4457,6 +4472,8 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		Papel    string `json:"papel"`
 		PessoaID *int64 `json:"pessoa_id"`
 		GrupoID  *int64 `json:"grupo_id"`
+		FuncaoID *int64 `json:"funcao_id"`
+		SetorID  *int64 `json:"setor_id"`
 	}
 	if err := decodificar(r, &req); err != nil || req.Login == "" {
 		jsonErro(w, http.StatusBadRequest, "identificação obrigatória")
@@ -4476,27 +4493,63 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador | chefe_setor)")
 		return
 	}
-	// hierarquia de criação (v9.3):
-	// - ADMIN é o ÚNICO que cria GERENTE (e admin)
-	// - GERENTE cria OPERADOR e CHEFE_SETOR, sempre no PRÓPRIO grupo
-	// - OPERADOR / CHEFE_SETOR não cria conta nenhuma
-	if u.Papel == "operador" || u.Papel == "chefe_setor" {
-		jsonErro(w, http.StatusForbidden, "operador ou chefe de setor não cria contas")
+	// Hierarquia de criação (ordem Diretor 04/10 — "Criação de usuários" e
+	// "Sistema de operadores"):
+	// - ADMIN cria qualquer papel; usuários criados pelo admin NÃO têm grupo
+	//   (exceto gerente, que exige unidade).
+	// - GERENTE cria CHEFE_SETOR no próprio grupo; gerente NÃO cria operador —
+	//   ele seleciona os chefes de setor do grupo, e os chefes selecionam os
+	//   operadores dentre os usuários do seu setor.
+	// - CHEFE_SETOR promove a OPERADOR somente usuário DO SEU SETOR.
+	// - OPERADOR não cria conta nenhuma.
+	// A liberação do menu de gestão no front é atrelada à FUNÇÃO de encarregado
+	// de pessoal (catálogo do grupo); a defesa dura aqui é por PAPEL.
+	if u.Papel == "operador" {
+		jsonErro(w, http.StatusForbidden, "operador não cria contas")
 		return
 	}
 	if u.Papel != "admin" {
-		if papel != "operador" && papel != "chefe_setor" {
-			jsonErro(w, http.StatusForbidden, "somente o admin cria gerentes")
-			return
-		}
 		if u.GrupoID == nil {
 			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
 			return
 		}
-		req.GrupoID = u.GrupoID // força o próprio grupo, ignore o que vier no corpo
+		switch {
+		case u.Papel == "gerente":
+			if papel != "chefe_setor" {
+				jsonErro(w, http.StatusForbidden, "gerente seleciona chefes de setor; operadores são designados pelos chefes")
+				return
+			}
+			req.GrupoID = u.GrupoID // força o próprio grupo, ignore o que vier no corpo
+		case u.Papel == "chefe_setor":
+			if papel != "operador" {
+				jsonErro(w, http.StatusForbidden, "chefe de setor só designa operadores")
+				return
+			}
+			req.GrupoID = u.GrupoID
+		default:
+			jsonErro(w, http.StatusForbidden, "sem permissão para criar contas")
+			return
+		}
 	}
 	if papel == "admin" {
 		req.GrupoID = nil // admin é global
+	}
+	// ordem 04/10: DEFAULT dos usuários criados pelo admin é SEM grupo — o
+	// modal do admin não envia grupo. Se o corpo trouxer grupo explícito
+	// (provisionamento/seed), o admin pode vinculá-lo deliberadamente.
+	// CHEFE_SETOR designa OPERADOR: a conta herda o SETOR do chefe (é o
+	// vínculo que define o escopo de atuação); gerente/admin podem informar
+	// funcao_id/setor_id explícitos (catálogos do grupo) na criação.
+	if u.Papel == "chefe_setor" && papel == "operador" && req.SetorID == nil {
+		var setorChefe *int64
+		_ = a.st.db.QueryRow(`SELECT setor_id FROM usuarios WHERE id = ?`, u.ID).Scan(&setorChefe)
+		req.SetorID = setorChefe
+	}
+	if req.SetorID != nil && *req.SetorID <= 0 {
+		req.SetorID = nil
+	}
+	if req.FuncaoID != nil && *req.FuncaoID <= 0 {
+		req.FuncaoID = nil
 	}
 	if papel == "gerente" && (req.GrupoID == nil || *req.GrupoID <= 0) {
 		jsonErro(w, http.StatusBadRequest, "gerente deve obrigatoriamente estar vinculado a uma unidade")
@@ -4508,15 +4561,17 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res, err := a.st.db.Exec(
-		`INSERT INTO usuarios (login, senha_hash, papel, pessoa_id, grupo_id, precisa_setup) VALUES (?,?,?,?,?,?)`,
-		strings.ToLower(strings.TrimSpace(req.Login)), hash, papel, req.PessoaID, req.GrupoID, precisaSetup)
+		`INSERT INTO usuarios (login, senha_hash, papel, pessoa_id, grupo_id, funcao_id, setor_id, precisa_setup) VALUES (?,?,?,?,?,?,?,?)`,
+		strings.ToLower(strings.TrimSpace(req.Login)), hash, papel, req.PessoaID, req.GrupoID, req.FuncaoID, req.SetorID, precisaSetup)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "não criado (duplicado?): "+err.Error())
 		return
 	}
 	id, _ := res.LastInsertId()
 	var funcaoID *int64
-	if req.PessoaID != nil {
+	if req.FuncaoID != nil {
+		funcaoID = req.FuncaoID // função informada no create (ordem 04/10)
+	} else if req.PessoaID != nil {
 		_ = a.st.db.QueryRow(`SELECT funcao_id FROM pessoas WHERE id = ?`, *req.PessoaID).Scan(&funcaoID)
 	}
 	_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
