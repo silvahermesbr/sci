@@ -259,7 +259,38 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		filtroExtra += " AND (COALESCE(m.tipo,'comum') = 'comum' OR m.finalizado_em IS NOT NULL)"
 	}
 
+	// Onda 05/10 (email POR FUNÇÃO): braço ADITIVO — mensagens POSSESSO de
+	// função exercida pelo usuário entram no inbox (UNION lógico), cada item
+	// UMA única vez (o braço da função exclui ids que já vieram da caixa
+	// pessoal) e com da_funcao=true. Mensagem da função não tem linha em
+	// mensagem_destinatarios (destID=NULL) → o front agrupa na Caixa da
+	// Função e o arquivar bloqueia.
+	//
+	// Contrato dos filtros: ?arquivadas=1 devolve SÓ a caixa pessoal (a da
+	// função não arquivável); ?despacho=1 e ?pasta_id filtram os dois braços.
+	var funcaoExtra string
+	funs := a.funcoesExercidas(u)
+	if len(funs) > 0 && !soArquivadas {
+		marcas := ""
+		for i, f := range funs {
+			if i > 0 {
+				marcas += ","
+			}
+			marcas += "?"
+			args = append(args, f)
+		}
+		funcaoExtra = ` AND m.funcao_id NOT IN (` + marcas + `)`
+		// Nota: NOT IN remove da caixa da função o que o usuário já recebeu
+		// como pessoal; braço pessoal NÃO filtra por funcao_id (legado NULL
+		// e carimbado com destinatário aparecem uma vez, pela linha md).
+	} else if len(funs) == 0 || soArquivadas {
+		// Sem função exercida (ou no arquivo): braço da função desligado —
+		// 1=0 impede qualquer linha do segundo SELECT.
+		funcaoExtra = ` AND 1=0`
+	}
+
 	q := `
+		SELECT * FROM (
 		SELECT m.id, m.assunto, m.corpo, m.criada_em,
 		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
 		       COALESCE(m.anexos, '[]'), m.pai_id, m.finalizado_em,
@@ -269,7 +300,8 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		       m.remetente_papel_id, m.remetente_usuario_id,
 		       u_rem.login, COALESCE(u_rem.nome_guerra, ''), COALESCE(u_rem.nome_completo, ''),
 		       up_rem.papel, up_rem.grupo_id, COALESCE(g_rem.nome, ''),
-		       up_rem.funcao_id, COALESCE(f_rem.nome, ''), COALESCE(up_rem.nome_exibicao, '')
+		       up_rem.funcao_id, COALESCE(f_rem.nome, ''), COALESCE(up_rem.nome_exibicao, ''),
+		       0 AS da_funcao
 		FROM mensagem_destinatarios md
 		JOIN mensagens m ON m.id = md.mensagem_id
 		JOIN usuario_papeis up_rem ON up_rem.id = m.remetente_papel_id
@@ -278,7 +310,25 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN funcoes f_rem ON f_rem.id = up_rem.funcao_id
 		LEFT JOIN usuarios u_lida ON u_lida.id = md.lida_por_usuario_id
 		WHERE md.destinatario_papel_id = ? AND md.excluida = 0` + filtroExtra + `
-		ORDER BY m.id DESC LIMIT 150`
+		UNION ALL
+		SELECT m.id, m.assunto, m.corpo, m.criada_em,
+		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
+		       COALESCE(m.anexos, '[]'), m.pai_id, m.finalizado_em,
+		       NULL, NULL, NULL,
+		       '',
+		       NULL, NULL, NULL, 0,
+		       m.remetente_papel_id, m.remetente_usuario_id,
+		       u_rem.login, COALESCE(u_rem.nome_guerra, ''), COALESCE(u_rem.nome_completo, ''),
+		       up_rem.papel, up_rem.grupo_id, COALESCE(g_rem.nome, ''),
+		       up_rem.funcao_id, COALESCE(f_rem.nome, ''), COALESCE(up_rem.nome_exibicao, ''),
+		       1 AS da_funcao
+		FROM mensagens m
+		JOIN usuario_papeis up_rem ON up_rem.id = m.remetente_papel_id
+		JOIN usuarios u_rem ON u_rem.id = m.remetente_usuario_id
+		LEFT JOIN grupos g_rem ON g_rem.id = up_rem.grupo_id
+		LEFT JOIN funcoes f_rem ON f_rem.id = up_rem.funcao_id
+		WHERE m.funcao_id IS NOT NULL` + funcaoExtra + `
+		) ORDER BY id DESC LIMIT 150`
 
 	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
@@ -293,7 +343,7 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		var assunto, corpo, criadaEm, remLogin, remNomeGuerra, remNomeCompleto string
 		var remPapel, remGrupoNome, remFuncaoNome, remNomeExibicao string
 		var lidaPorGuerra, tipo, anexosJSON string
-		var exigeResposta, arquivada int
+		var exigeResposta, arquivada, daFuncao int
 		var lidaEm, visualizadoEm, respondidoEm, finalizadoEm *string
 		var lidaPorID, remGrupoID, remFuncaoID, paiID, pastaID *int64
 
@@ -306,6 +356,7 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 			&remLogin, &remNomeGuerra, &remNomeCompleto,
 			&remPapel, &remGrupoID, &remGrupoNome,
 			&remFuncaoID, &remFuncaoNome, &remNomeExibicao,
+			&daFuncao,
 		); err == nil {
 			var anexosList []any
 			_ = json.Unmarshal([]byte(anexosJSON), &anexosList)
@@ -331,6 +382,7 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 				"respondido_em":    respondidoEm,
 				"pasta_id":         pastaID,
 				"arquivada":        arquivada == 1,
+				"da_funcao":        daFuncao == 1,
 				"remetente": map[string]any{
 					"usuario_id":    remUsuarioID,
 					"login":         remLogin,
