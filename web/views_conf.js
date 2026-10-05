@@ -528,6 +528,41 @@
         }
       }
 
+      const totalVerif = pessoasSetor.filter(x => C.verif.has(x.id)).length;
+      let jaInseriuDivisor = false;
+
+      const itensHTML = pessoasSetor.map((p, idx) => {
+        const sit = sitDe(p);
+        const ehVerif = C.verif.has(p.id);
+        const escInfo = (C.escalados || []).find(x => x.pessoa_id === p.id);
+        const badgeEscala = escInfo
+          ? `<span style="background:rgba(87,161,115,.2); color:var(--verde-claro); font-size:11px; padding:1px 6px; border-radius:4px; font-weight:700" title="Escalado em ${esc(escInfo.tipo_nome)}">🛡️ ${esc(escInfo.tipo_nome)}</span>`
+          : '';
+        const selDest = sit === 'justificada'
+          ? `<select class="sel-destino" data-id="${p.id}"><option value="">destino…</option>` +
+            C.destinos.map(dx => `<option value="${dx.id}" ${C.dest[p.id] == dx.id ? 'selected' : ''}>${esc(dx.nome)}</option>`).join('') + '</select>'
+          : '';
+        const optSit = s => `<option value="${s}" ${sit === s ? 'selected' : ''}>${ROTULO[s]}</option>`;
+
+        let divisorHTML = '';
+        if (ehVerif && !jaInseriuDivisor) {
+          jaInseriuDivisor = true;
+          divisorHTML = `
+            <div class="divisor-verificados">
+              <span class="divisor-linha"></span>
+              <span class="divisor-rotulo">✓ Verificados (${totalVerif} de ${pessoasSetor.length})</span>
+              <span class="divisor-linha"></span>
+            </div>
+          `;
+        }
+
+        return divisorHTML + `<div class="pessoa ${ehVerif ? 'verificado' : ''}" data-id="${p.id}">
+          <input type="checkbox" class="chk" data-id="${p.id}" ${ehVerif ? 'checked' : ''} title="verifiquei esta pessoa">
+          <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
+          <select class="sel-situacao" data-id="${p.id}" title="situação">${sit === 'nao_verificado' ? '<option value="nao_verificado" disabled selected>NÃO VERIFICADO</option>' : ''}${SITUACOES.map(optSit).join('')}</select>
+          ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
+      }).join('');
+
       listas += `<div class="grupo-setor">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
           <h4 style="margin:0">${esc(setor)} · ${pessoasSetor.length}</h4>
