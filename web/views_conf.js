@@ -249,7 +249,7 @@
         </div>
       </div>
       ${modoTela !== 'arquivo' ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-        ${ehGerente ? `<button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>` : ''}
+        ${(ehGerente || ehEnc) ? `<button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>` : ''}
         <span style="color:var(--tx2);font-size:12px">${ehChefeSetor ? 'Como Chefe de Setor, selecione uma conferência aberta para lançar presença do seu efetivo.' : 'abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)'}</span></div>` +
       tabela('Abertas', abertas) + tabela('Fechadas', fechadas)
       : tabela('Arquivadas', lista, 'nenhuma conferência arquivada')}
@@ -394,11 +394,12 @@
     const escaladosOntem = d.escalados_ontem || [];
     let pessoasLista = d.pessoas || [];
     const ehChefe = window.ME && window.ME.papel === 'chefe_setor';
-    if (ehChefe) {
-      const meuSetorId = window.ME.setor_id;
-      if (meuSetorId) {
-        pessoasLista = pessoasLista.filter(p => p.setor_id === meuSetorId);
-      }
+    const ehOper = window.ME && window.ME.papel === 'operador';
+    // Onda 05/10 (ordem Diretor): chefe_setor E OPERADOR veem só o próprio setor;
+    // gerente e encarregado veem o grupo inteiro (fallback: setor_id da pessoa vinculada).
+    const escopoSetor = (window.ME && (ehChefe || ehOper) && (window.ME.setor_id || window.ME.pessoa_setor_id)) || null;
+    if (escopoSetor) {
+      pessoasLista = pessoasLista.filter(p => p.setor_id === escopoSetor);
     }
     C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados, escaladosOntem, setoresStatus: d.setores_status || [] };
     confRender();
@@ -419,7 +420,7 @@
 
   function confRender(filtro = '') {
     const semC = !C.c;
-    const ehChefe = window.ME && window.ME.papel === 'chefe_setor';
+    const ehChefe = window.ME && (window.ME.papel === 'chefe_setor' || window.ME.papel === 'operador');
     const f = (filtro || '').trim().toLowerCase();
     const porSetor = {};
     C.pessoas

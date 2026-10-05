@@ -122,6 +122,18 @@ func TestConcorrenciaMarcacaoSimultaneaMesmaPessoa(t *testing.T) {
 
 	criaUsuarioTeste(t, st, "ger_conc_b", "senha-gerente", "operador")
 	tokB := vinculaGrupoDoLogin(t, app, st, "ger_conc_b", gidDe(t, st))
+	// onda 05/10 (ordem Diretor): operador só marca no PRÓPRIO setor —
+	// operador B recebe setor e a pessoa marcada passa a pertencer a ele.
+	var setorConcB int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome) VALUES ('Setor Conc B') RETURNING id`).Scan(&setorConcB); err != nil {
+		t.Fatalf("criar setor conc b: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE login = 'ger_conc_b'`, setorConcB); err != nil {
+		t.Fatalf("setor do operador b: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE pessoas SET setor_id = ? WHERE id = ?`, setorConcB, p1); err != nil {
+		t.Fatalf("setor da pessoa p1: %v", err)
+	}
 
 	var wg sync.WaitGroup
 	chA := make(chan *httptest.ResponseRecorder, 1)
