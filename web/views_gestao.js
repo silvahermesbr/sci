@@ -2025,6 +2025,12 @@
         <div class="rolagem"><table><thead><tr><th>Função</th><th>Designados</th><th>Designar</th></tr></thead>
         <tbody id="tabFun"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
+      <div id="gerChefes" class="${abaGer === 'chefes' ? '' : 'oculto'}">
+        <div class="cartao"><h3 style="margin-top:0">CHEFES DE SETOR — Nomeação e Destituição</h3>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Cada setor com seu chefe atual. Nomear atribui o papel <b>chefe_setor</b> e vincula o setor à conta; destituir remove o papel (setor fica livre).</p>
+        <div class="rolagem"><table><thead><tr><th>Setor</th><th>Chefe atual</th><th>Nomear</th></tr></thead>
+        <tbody id="tabChefes"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
+      </div>
       <div id="gerOperadores" class="${abaGer === 'operadores' ? '' : 'oculto'}">
         <!-- ordem 04/10: gerente NÃO cria operador — seleciona CHEFES DE SETOR
              (aba Pessoal não cobre: isso fica no modal de usuário do admin) e são
@@ -2048,18 +2054,20 @@
         { valor: 'tags', rotulo: 'Tags' },
         { valor: 'grupos', rotulo: 'Grupos' },
         { valor: 'operadores', rotulo: 'Operadores' },
-        { valor: 'funcoes', rotulo: 'Funções' }
+        { valor: 'funcoes', rotulo: 'Funções' },
+        { valor: 'chefes', rotulo: 'Chefes' }
       ], {
         valorPadrao: abaGer,
         onChange: (k) => {
           abaGer = k;
-          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes'].forEach(kk => {
+          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes'].forEach(kk => {
             const el = $('#ger' + kk[0].toUpperCase() + kk.slice(1));
             if (el) el.classList.toggle('oculto', kk !== abaGer);
           });
           if (abaGer === 'tags') carregarCats();
           if (abaGer === 'pessoal') atualizarSelectsCatalogos();
           if (abaGer === 'funcoes') carregarFuncoesMembros();
+          if (abaGer === 'chefes') carregarChefes();
         }
       });
     }
@@ -2123,6 +2131,61 @@
       }
     }
     if (abaGer === 'funcoes') carregarFuncoesMembros();
+    if (abaGer === 'chefes') carregarChefes();
+
+    /* --- onda Escalas (05/10): aba CHEFES — nomear/destituir chefe de setor --- */
+    async function carregarChefes() {
+      const tb = $('#tabChefes');
+      if (!tb) return;
+      tb.innerHTML = '<tr><td colspan="3"><span class="carregando">…</span></td></tr>';
+      try {
+        const [setoresG, contasR] = await Promise.all([api('/api/catalogo/setores'), api('/api/usuarios')]);
+        const doGrupo = (contasR || []).filter(c => c.grupo_id === eu.grupo_id && c.ativo);
+        const chefeDeSetor = {};
+        doGrupo.forEach(c => {
+          (c.papeis || []).forEach(p => {
+            if (p.papel === 'chefe_setor' && c.setor_id) chefeDeSetor[c.setor_id] = c;
+          });
+        });
+        const listaS = (setoresG || []).filter(s => s.ativo !== false);
+        if (!listaS.length) { tb.innerHTML = '<tr><td colspan="3"><span class="vazio">nenhum setor no catálogo</span></td></tr>'; return; }
+        const opContas = doGrupo.map(c => `<option value="${c.id}">${esc(c.nome_guerra || c.login)} (${esc(c.login)})</option>`).join('');
+        tb.innerHTML = listaS.map(s => {
+          const ch = chefeDeSetor[s.id];
+          const atual = ch
+            ? `<b>👑 ${esc(ch.nome_guerra || ch.login)}</b> <small style="color:var(--tx2)">(${esc(ch.login)})</small>
+               <button class="acao-linha" data-destituir="${ch.id}" data-nome="${esc(ch.nome_guerra || ch.login)}" data-setor="${esc(s.nome)}">destituir</button>`
+            : '<span style="color:var(--tx3)">sem chefe</span>';
+          return `<tr>
+            <td><b>${esc(s.nome)}</b>${s.sigla ? ' <code style="font-size:11px">' + esc(s.sigla) + '</code>' : ''}</td>
+            <td>${atual}</td>
+            <td>
+              <div class="form-linha" style="gap:6px;align-items:center;flex-wrap:wrap">
+                <select data-selchefe="${s.id}" style="min-width:170px"><option value="">— conta —</option>${opContas}</select>
+                <button class="primario" data-nomear="${s.id}" data-setor="${esc(s.nome)}" style="font-size:12px;padding:4px 12px">Nomear</button>
+              </div>
+            </td></tr>`;
+        }).join('');
+        tb.querySelectorAll('[data-nomear]').forEach(bt => {
+          bt.onclick = async () => {
+            const sID = +bt.dataset.nomear;
+            const sel = tb.querySelector(`[data-selchefe="${sID}"]`);
+            if (!sel || !sel.value) { toast('Escolha a conta', 'erro'); return; }
+            const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/nomear_chefe', { method: 'POST', body: JSON.stringify({ usuario_id: +sel.value, setor_id: sID }) }), 'Nomeando chefe…');
+            if (r.ok) carregarChefes();
+          };
+        });
+        tb.querySelectorAll('[data-destituir]').forEach(bt => {
+          bt.onclick = async () => {
+            if (!(await confirmar(`Destituir ${bt.dataset.nome} como chefe de ${bt.dataset.setor}?`))) return;
+            const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/destituir_chefe', { method: 'POST', body: JSON.stringify({ usuario_id: +bt.dataset.destituir }) }), 'Destituindo chefe…');
+            if (r.ok) carregarChefes();
+          };
+        });
+      } catch (e) {
+        tb.innerHTML = '<tr><td colspan="3"><span class="vazio">Falha ao carregar chefes.</span></td></tr>';
+      }
+    }
 
     // Eventos da Árvore e Cards de Grupos para Gerente (#gerGrupos)
     const gerGrp = $('#gerGrupos');
