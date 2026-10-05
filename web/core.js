@@ -581,12 +581,12 @@ function montarShell(usuario) {
   // Popular itens de navegação na Sidebar com ícones modernos
   let itens;
   if (papel === 'admin') {
+    // P0 onda 05/10 — sidebar dinâmica: admin vê SÓ o que abre. O redirect no
+    // topo do rotear() leva ao painel (#/admin); módulos de grupo (Conferência,
+    // Drive, Relatórios, Avisos) NÃO aparecem para quem não os usa.
     itens = [
-      ['#/admin', 'ADMIN & DASHBOARD', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>'],
-      ['#/mensagens', 'EMAIL INTERNO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true],
-      ['#/avisos', 'MURAL DE AVISOS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>'],
-      ['#/relatorios', 'RELATÓRIOS & LOGS', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>'],
-      ['#/configuracoes', 'CONFIGURAÇÕES', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>']
+      ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'],
+      ['#/mensagens', 'EMAIL INTERNO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true]
     ];
   } else {
     // ordem 04/10 — SISTEMAS DISPONÍVEIS POR PAPEL:
@@ -612,17 +612,21 @@ function montarShell(usuario) {
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
         ['#/mensagens', 'EMAIL INTERNO', svgMsg, true]
       ];
-    } else {
+    } else if (papel === 'gerente') {
       itens = [
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/mensagens', 'EMAIL INTERNO', svgMsg, true],
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
+        ['#/grupos', 'GERENCIAR GRUPO', svgGer],
         ['#/relatorios', 'RELATÓRIOS', svgRel]
       ];
-      if (papel === 'gerente') {
-        itens.splice(4, 0, ['#/grupos', 'GERENCIAR GRUPO', svgGer]);
-      }
+    } else {
+      // P0 onda 05/10 — conta SEM função do sistema: só Meu Perfil
+      // (login → aviso de módulo indisponível; nada mais é visível).
+      itens = [
+        ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>']
+      ];
     }
   }
 
@@ -955,7 +959,10 @@ function rotear() {
   if (h === '#/sem-modulo' || h === '#/perfil') { chamarView(h === '#/perfil' ? 'ViewPerfil' : 'ViewSemModulo'); return; }
   // ordem 04/10 — usuário sem função do sistema: NADA (login → aviso de módulo
   // indisponível; só Meu Perfil fica acessível).
-  if (!['gerente', 'operador', 'chefe_setor'].includes(papel)) {
+  // P0 onda 05/10: 'admin' NÃO cai no portão de bloqueio — sem isso as rotas
+  // #/admin e #/configuracoes (fim da função) ficavam inalcançáveis para o admin,
+  // que era capturado aqui e levado a "Módulo não disponível".
+  if (papel !== 'admin' && !['gerente', 'operador', 'chefe_setor'].includes(papel)) {
     chamarView('ViewSemModulo'); return;
   }
   // ordem 04/10 — portão por papel: operador não tem drive nem email interno;
