@@ -4551,6 +4551,18 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	if req.FuncaoID != nil && *req.FuncaoID <= 0 {
 		req.FuncaoID = nil
 	}
+	// ordem 04/10 (Fase G): função informada deve pertencer ao catálogo do
+	// grupo de vinculação (global = grupo NULL serve a todos). Gerente não
+	// atravessa grupos atribuindo função alheia.
+	if req.FuncaoID != nil {
+		var fGrupo *int64
+		_ = a.st.db.QueryRow(`SELECT grupo_id FROM funcoes WHERE id = ?`, *req.FuncaoID).Scan(&fGrupo)
+		alvo := req.GrupoID
+		if fGrupo != nil && (alvo == nil || *fGrupo != *alvo) {
+			jsonErro(w, http.StatusForbidden, "função não pertence ao catálogo do grupo")
+			return
+		}
+	}
 	if papel == "gerente" && (req.GrupoID == nil || *req.GrupoID <= 0) {
 		jsonErro(w, http.StatusBadRequest, "gerente deve obrigatoriamente estar vinculado a uma unidade")
 		return

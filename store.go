@@ -1090,6 +1090,13 @@ func (s *Store) UsuarioDaSessao(tokenCru string) (*Usuario, error) {
 		_ = s.db.QueryRow(`SELECT nome FROM grupos WHERE id = ?`, *u.GrupoID).Scan(&u.GrupoNome)
 	}
 
+	// ordem 04/10 (Fase G): nome da FUNÇÃO global (sem papel ativo) também
+	// vai ao perfil — o front usa funcao_nome p/ liberar módulos por função
+	// (encarregado de pessoal etc.).
+	if u.FuncaoNome == "" && u.FuncaoID != nil {
+		_ = s.db.QueryRow(`SELECT nome FROM funcoes WHERE id = ?`, *u.FuncaoID).Scan(&u.FuncaoNome)
+	}
+
 	papeis, err := s.PapeisDoUsuario(u.ID)
 	if err == nil {
 		u.Papeis = papeis
