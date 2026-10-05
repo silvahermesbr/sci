@@ -296,6 +296,13 @@ func (a *App) rotas() {
 	m.Handle("POST /api/conferencia/{id}/setor/{setor_id}/reabrir", confMarcarAuth(a.hConferenciaSetorReabrir))
 	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.auth(false, a.hConferenciaPDF))
 
+	// Escala de guarda (onda 05/10): gerente designa chefe/operador; chefe
+	// designa operador do próprio setor; admin → 403 no handler (regra escopada).
+	m.Handle("POST /api/conferencia/{id}/escala", a.auth(false, a.hConferenciaEscalaSet))
+	m.Handle("DELETE /api/conferencia/{id}/escala/{usuario_id}", a.auth(false, a.hConferenciaEscalaDel))
+	m.Handle("POST /api/grupos/{id}/nomear_chefe", a.auth(false, a.hGrupoNomearChefe))
+	m.Handle("POST /api/grupos/{id}/destituir_chefe", a.auth(false, a.hGrupoDestituirChefe))
+
 	m.Handle("GET /api/efetivo_atual", a.auth(false, a.hEfetivoAtual)) // todos os papéis: admin vê todos, demais veem o escopo
 	m.Handle("GET /api/presenca/periodo", a.auth(false, a.hPresencaPeriodo))
 	m.Handle("GET /api/conferencias", a.auth(false, a.hConferenciaList))
@@ -885,6 +892,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		"pessoas":         a.pessoasAtivas(escopo),
 		"escalados":       escalados,
 		"escalados_ontem": escaladosOntem,
+		"escala":          a.escalaDaConferencia(f.ID),
 	})
 }
 
@@ -1938,6 +1946,7 @@ func (a *App) hConferenciaDescartar(w http.ResponseWriter, r *http.Request) {
 	for _, q := range []string{
 		`DELETE FROM comentarios WHERE conferencia_id = ?`,
 		`DELETE FROM presencas WHERE conferencia_id = ?`,
+		`DELETE FROM conferencia_escalas WHERE conferencia_id = ?`,
 		`DELETE FROM conferencias WHERE id = ?`,
 	} {
 		if _, e := tx.Exec(q, id); e != nil {
@@ -2199,6 +2208,7 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		"conferencia": cMap,
 		"lancamentos": lanc,
 		"presencas":   lanc,
+		"escala":      a.escalaDaConferencia(id),
 		"resumo": map[string]any{
 			"presentes": cont["presente"], "atrasos": cont["atraso"],
 			"faltas": cont["falta"], "justificadas": cont["justificada"],
