@@ -132,14 +132,14 @@ func TestRegressaoAvisosXSSeContratos(t *testing.T) {
 		t.Fatalf("esperado 2 comentários, obtido %d", len(comps))
 	}
 	c0 := comps[0].(map[string]any)
-	if _, temTexto := c0["text"]; !temTexto {
-		t.Fatalf("alias 'text' ausente no JSON de comentários (front lê c.texto)")
+	if _, temTexto := c0["texto"]; !temTexto {
+		t.Fatalf("campo 'texto' ausente no JSON de comentários (contrato onda UX 0510: front lê c.texto)")
 	}
-	if strings.Contains(c0["text"].(string), "<script") {
-		t.Fatalf("XSS armazenado em comentário: %q", c0["text"])
+	if strings.Contains(c0["texto"].(string), "<script") {
+		t.Fatalf("XSS armazenado em comentário: %q", c0["texto"])
 	}
-	if !strings.Contains(c0["text"].(string), "<i>ciente</i>") {
-		t.Fatalf("formatação legítima do comentário perdida: %q", c0["text"])
+	if !strings.Contains(c0["texto"].(string), "<i>ciente</i>") {
+		t.Fatalf("formatação legítima do comentário perdida: %q", c0["texto"])
 	}
 
 	// 5) operador registra ciente → contrato registrado_em/funcao_nome/grupo_nome presente

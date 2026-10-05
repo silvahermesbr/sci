@@ -129,7 +129,7 @@
         }
 
         return `
-          <div class="aviso-card ${a.fixado ? 'fixado' : ''}" id="avisoCard_${a.id}" style="margin-bottom:14px">
+          <div class="aviso-card ${a.fixado ? 'fixado' : ''}" id="avisoCard_${a.id}" data-veraviso="${a.id}" style="margin-bottom:14px;cursor:pointer">
             <div class="aviso-card-topo">
               <div>
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
@@ -146,25 +146,11 @@
               </div>
             </div>
 
-            <div class="aviso-card-corpo" style="word-break:break-word;line-height:1.65">${a.conteudo}</div>
-
-            <div class="aviso-card-rodape">
-              <div style="display:flex;align-items:center;gap:8px">
+            <div class="aviso-card-rodape" style="margin-top:8px">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 ${btnCiente}
-                <button type="button" class="acao-linha" data-vercientes="${a.id}" style="font-size:12px;padding:3px 8px">
-                  👥 Ver Cientes (${a.total_cientes || 0})
-                </button>
+                <span style="font-size:12px;color:var(--tx3)">👥 ${a.total_cientes || 0} cientes · 💬 ${a.total_comentarios || 0} comentários</span>
               </div>
-
-              <div style="display:flex;align-items:center;gap:8px">
-                <button type="button" class="acao-linha" data-togglecomm="${a.id}" style="font-size:12px;padding:3px 8px">
-                  💬 Comentários (${a.total_comentarios || 0})
-                </button>
-              </div>
-            </div>
-
-            <div class="aviso-comentarios-box" id="boxComm_${a.id}" style="display:none;margin-top:10px;padding:12px;background:var(--painel2);border-radius:8px">
-              <div class="carregando">Carregando comentários…</div>
             </div>
           </div>
         `;
@@ -250,6 +236,106 @@
       });
 
       // Toggle Comentários
+      // Onda UX 0510 (item 3): clique no card abre modal de LEITURA (padrão Email Interno) —
+      // conteúdo completo + ciente AUTOMÁTICO na abertura (fallback: botão manual) + discussão.
+      cont.querySelectorAll('[data-veraviso]').forEach(card => {
+        card.addEventListener('click', async ev => {
+          if (ev.target.closest('button') || ev.target.closest('[data-veraviso] button')) return;
+          const id = +card.dataset.veraviso;
+          const a = (avisos || []).find(x => x.id === id);
+          if (!a) return;
+          const autor = a.autor || {};
+
+          // Ciente automático na abertura (se pendente); botão manual permanece como fallback.
+          if (!a.meu_ciente) {
+            api(`/api/avisos/${id}/ciente`, { method: 'POST' })
+              .then(() => { a.meu_ciente = true; toast('Ciente registrado na leitura.'); })
+              .catch(() => {});
+          }
+
+          const html = `
+            <div class="modal" style="max-width:760px;width:95%">
+              <h3 style="margin-top:0">${a.fixado ? '📌 ' : ''}${esc(a.titulo)}</h3>
+              <div style="font-size:12px;color:var(--tx3);margin-bottom:12px">
+                Publicado em <b>${esc(a.grupo_nome)}</b> · ${fmtData(a.criado_em)} ${fmtHora(a.criado_em)} ·
+                Por: ${esc(autor.nome_guerra || autor.login || 'Comando')}
+              </div>
+              <div style="word-break:break-word;line-height:1.65;max-height:40vh;overflow-y:auto;border:1px solid var(--borda);border-radius:8px;padding:14px;background:var(--painel2)">${a.conteudo}</div>
+              <div id="avModCiente_${id}" style="margin-top:12px;display:flex;align-items:center;gap:10px">
+                ${a.meu_ciente
+                  ? '<span class="badge-despacho-ok" style="padding:4px 10px">✓ Ciente Registrado</span>'
+                  : '<button type="button" class="primario" id="btCienteMod_' + id + '" style="padding:5px 14px;font-size:12px">✋ Dar Ciente</button><span style="font-size:11.5px;color:var(--tx3)">registrando automaticamente…</span>'}
+                <button type="button" class="acao-linha" id="btCientesMod_${id}" style="font-size:12px;padding:3px 8px">👥 Cientes (${a.total_cientes || 0})</button>
+              </div>
+              <div style="margin-top:14px;border-top:1px solid var(--borda);padding-top:10px">
+                <div id="boxCommMod_${id}"><div class="carregando">Carregando discussão…</div></div>
+              </div>
+              <div class="modal-acoes">
+                <button type="button" class="acao-linha" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+              </div>
+            </div>
+          `;
+          const m = window.abrirModal(html, null, { largura: '760px' });
+
+          // Fallback manual de ciente (caso o automático falhe)
+          const btC = m.modal.querySelector(`#btCienteMod_${id}`);
+          if (btC) btC.onclick = async () => {
+            try {
+              await api(`/api/avisos/${id}/ciente`, { method: 'POST' });
+              a.meu_ciente = true;
+              btC.outerHTML = '<span class="badge-despacho-ok" style="padding:4px 10px">✓ Ciente Registrado</span>';
+              toast('Ciente formal registrado!');
+            } catch (e) { toast(e.message || 'Falha ao registrar ciente', 'erro'); }
+          };
+
+          // Auditoria de cientes dentro do modal
+          m.modal.querySelector(`#btCientesMod_${id}`).onclick = async () => {
+            try {
+              const d = await api(`/api/avisos/${id}/detalhes`);
+              const cs = d.cientes || [];
+              toast(cs.length ? `${cs.length} ciente(s) registrado(s).` : 'Nenhum ciente registrado ainda.');
+            } catch (e) { toast('Erro ao buscar cientes', 'erro'); }
+          };
+
+          // Discussão/comentários no pé do modal (reusa o render extraído)
+          const boxMod = m.modal.querySelector(`#boxCommMod_${id}`);
+          try {
+            const d = await api(`/api/avisos/${id}/detalhes`);
+            const comentarios = d.comentarios || [];
+            boxMod.innerHTML = `
+              <div style="font-weight:700;font-size:13px;margin-bottom:8px">Discussão & Manifestações (${comentarios.length}):</div>
+              <div style="display:flex;flex-direction:column;gap:8px;max-height:220px;overflow-y:auto;margin-bottom:12px">
+                ${comentarios.length === 0 ? '<div style="font-size:12px;color:var(--tx3)">Nenhum comentário registrado.</div>' : comentarios.map(c => `
+                  <div style="background:var(--painel3);border-radius:6px;padding:8px 10px;font-size:12.5px;border:1px solid var(--borda)">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11.5px;color:var(--tx2)">
+                      <span><b>${esc(c.nome_guerra || c.login)}</b> (${esc(c.funcao_nome || c.papel || '')})</span>
+                      <span>${fmtData(c.criado_em)} ${fmtHora(c.criado_em)}</span>
+                    </div>
+                    <div style="color:var(--tx);line-height:1.4">${c.texto || c.comentario || ''}</div>
+                  </div>
+                `).join('')}
+              </div>
+              <textarea id="txtCommMod_${id}" placeholder="Escreva seu comentário…" style="width:100%;min-height:60px;background:var(--painel2);border:1px solid var(--borda);border-radius:6px;color:var(--tx);font-size:12.5px;padding:8px"></textarea>
+              <div style="display:flex;justify-content:flex-end;margin-top:6px">
+                <button type="button" class="primario" id="btEnvCommMod_${id}" style="padding:5px 14px;font-size:12px">Enviar Comentário</button>
+              </div>
+            `;
+            m.modal.querySelector(`#btEnvCommMod_${id}`).onclick = async () => {
+              const texto = m.modal.querySelector(`#txtCommMod_${id}`).value.trim();
+              if (!texto) { toast('Digite o comentário', 'erro'); return; }
+              try {
+                await api(`/api/avisos/${id}/comentar`, { method: 'POST', body: JSON.stringify({ texto }) });
+                toast('Comentário registrado!');
+                m.fechar();
+                carregarAvisos();
+              } catch (e) { toast(e.message || 'Falha ao comentar', 'erro'); }
+            };
+          } catch (e) {
+            boxMod.innerHTML = '<div class="vazio">Erro ao carregar comentários.</div>';
+          }
+        });
+      });
+
       cont.querySelectorAll('[data-togglecomm]').forEach(b => {
         b.onclick = async () => {
           const id = +b.dataset.togglecomm;
@@ -264,6 +350,8 @@
           box.style.display = 'block';
           box.innerHTML = '<div class="carregando">Carregando comentários…</div>';
 
+          // Onda UX 0510 (item 3): renderização de comentários EXTRAÍDA p/ escopo da lista —
+          // reutilizada pelo modal de leitura do aviso (abrirAvisoModal).
           async function recarregarComentarios() {
             try {
               const detalhe = await api(`/api/avisos/${id}/detalhes`);
@@ -275,10 +363,10 @@
                   ${comentarios.length === 0 ? '<div style="font-size:12px;color:var(--tx3)">Nenhum comentário registrado.</div>' : comentarios.map(c => `
                     <div style="background:var(--painel3);border-radius:6px;padding:8px 10px;font-size:12.5px;border:1px solid var(--borda)">
                       <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:11.5px;color:var(--tx2)">
-                        <span><b>${esc(c.nome_guerra || c.login)}</b> (${esc(c.funcao_nome || c.papel)})</span>
+                        <span><b>${esc(c.nome_guerra || c.login)}</b> (${esc(c.funcao_nome || c.papel || '')})</span>
                         <span>${fmtData(c.criado_em)} ${fmtHora(c.criado_em)}</span>
                       </div>
-                      <div style="color:var(--tx);line-height:1.4">${c.texto}</div>
+                      <div style="color:var(--tx);line-height:1.4">${c.texto || c.comentario || ''}</div>
                       ${(c.anexos && c.anexos.length) ? `
                         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
                           ${c.anexos.map(anx => anx.drive_arquivo_id

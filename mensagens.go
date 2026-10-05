@@ -1511,22 +1511,27 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Comentários
+	// Comentários. Onda UX 0510 (item 4): funcao_nome via COALESCE em 3 níveis —
+	// função do PAPEL (funcoes do usuario_papeis), função do USUÁRIO (usuarios.funcao_id)
+	// e nome_exibicao — o front exibia "undefined" quando nenhuma chegava.
 	cRows, _ := a.st.db.Query(`
 		SELECT ac.id, ac.comentario, ac.criado_em, COALESCE(ac.anexos,'[]'),
 		       u.id, u.login, COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
-		       COALESCE(up.papel,''), COALESCE(up.nome_exibicao,'')
+		       COALESCE(up.papel,''), COALESCE(up.nome_exibicao,''),
+		       COALESCE(NULLIF(fc.nome,''), COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(up.nome_exibicao,''),'')))
 		FROM aviso_comentarios ac
 		JOIN usuarios u ON u.id = ac.usuario_id
 		LEFT JOIN usuario_papeis up ON up.id = ac.papel_id
+		LEFT JOIN funcoes fc ON fc.id = up.funcao_id
+		LEFT JOIN funcoes fu ON fu.id = u.funcao_id
 		WHERE ac.aviso_id = ? ORDER BY ac.id ASC`, id)
 
 	comentarios := []map[string]any{}
 	if cRows != nil {
 		for cRows.Next() {
 			var cid, uid int64
-			var com, dts, login, guerra, completo, papel, exibicao, anxJSON string
-			if cRows.Scan(&cid, &com, &dts, &anxJSON, &uid, &login, &guerra, &completo, &papel, &exibicao) == nil {
+			var com, dts, login, guerra, completo, papel, exibicao, funcao, anxJSON string
+			if cRows.Scan(&cid, &com, &dts, &anxJSON, &uid, &login, &guerra, &completo, &papel, &exibicao, &funcao) == nil {
 				var anexosList []any
 				_ = json.Unmarshal([]byte(anxJSON), &anexosList)
 				if anexosList == nil {
@@ -1535,7 +1540,7 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 				comentarios = append(comentarios, map[string]any{
 					"id":            cid,
 					"comentario":    com,
-					"text":          com, // alias consumido pelo render do front (views_avisos.js lê c.texto)
+					"texto":         com, // onda UX 0510: nome canônico que o front consome (era "text")
 					"anexos":        anexosList,
 					"criado_em":     dts,
 					"usuario_id":    uid,
@@ -1544,6 +1549,7 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 					"nome_completo": completo,
 					"papel":         papel,
 					"nome_exibicao": exibicao,
+					"funcao_nome":   funcao,
 				})
 			}
 		}

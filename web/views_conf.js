@@ -35,16 +35,29 @@
       <div style="font-size:12.5px;color:var(--tx2);margin-bottom:14px">Escolha o recorte antes de gerar:</div>
       <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
         ${presets.map((p, i) => `
-          <label style="display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid var(--borda);border-radius:8px;cursor:pointer">
-            <input type="radio" name="pdfFiltro" value="${p.k}" ${i === 0 ? 'checked' : ''} style="margin-top:3px">
-            <span><b>${p.label}</b><br><span style="font-size:11.5px;color:var(--tx2)">${p.desc}</span></span>
+          <label class="pdf-opcao ${i === 0 ? 'selecionada' : ''}">
+            <input type="radio" name="pdfFiltro" value="${p.k}" ${i === 0 ? 'checked' : ''}>
+            <span><b>${p.label}</b><small>${p.desc}</small></span>
           </label>`).join('')}
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button type="button" class="secundario" id="pdfCancelar">Cancelar</button>
         <button type="button" class="primario" id="pdfGerar">Gerar PDF</button>
       </div>`;
-    const m = window.abrirModal(html);
+    const m = window.abrirModal(html, null, { largura: '520px' });
+    // Onda UX 0510 (item 2): cartões clicáveis no padrão dos checkboxes da
+    // conferência — clique em qualquer parte marca; seleção destacada; ÚNICA.
+    m.modal.querySelectorAll('.pdf-opcao').forEach(cartao => {
+      const radio = cartao.querySelector('input[name="pdfFiltro"]');
+      const destacar = () => {
+        m.modal.querySelectorAll('.pdf-opcao').forEach(c => c.classList.toggle('selecionada', c.querySelector('input').checked));
+      };
+      cartao.addEventListener('click', ev => {
+        if (ev.target !== radio) radio.checked = true;
+        destacar();
+      });
+      radio.addEventListener('change', destacar);
+    });
     m.modal.querySelector('#pdfCancelar').onclick = () => m.fechar();
     m.modal.querySelector('#pdfGerar').onclick = () => {
       const f = m.modal.querySelector('input[name="pdfFiltro"]:checked').value;
@@ -69,7 +82,7 @@
         </tr>`;
 
       const html = `
-        <div style="max-width:850px;width:95vw">
+        <div>
           <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px">
             <div>
               <h3 style="margin:0">Conferência #${d.id} · ${fmtData(d.data)} (${d.status ? d.status.toUpperCase() : 'CONFERÊNCIA'})</h3>
@@ -96,7 +109,9 @@
             </table>
           </div>
         </div>`;
-      const m = window.abrirModal(html);
+      // Onda UX 0510: largura via opção do abrirModal — sem div interna duplicando
+      // max-width (transbordava do .modal de 440px fixo).
+      const m = window.abrirModal(html, null, { largura: '850px' });
       m.modal.querySelector('#modalConfFechar').onclick = () => m.fechar();
       m.modal.querySelector('#modalConfPDF').onclick = () => {
         m.fechar();

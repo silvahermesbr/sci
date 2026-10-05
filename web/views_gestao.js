@@ -17,10 +17,11 @@
   /* ---------- blocos compartilhados ---------- */
 
   // abrirModal (core) insere o .modal-mask no body e devolve o elemento; aqui só
-  // completamos com fechar por ESC / clique fora, como nos modais do protótipo.
-  function modal(html) {
+  // completa com fechar por ESC / clique fora, como nos modais do protótipo.
+  // Onda UX 0510: repassa opcoes (ex. {largura:'850px'}) ao abrirModal do core.
+  function modal(html, opcoes) {
     // v9.16.2 FIX: abrirModal devolve {fechar, mask, modal}; expor o ELEMENTO mask com helper fechar
-    const h = abrirModal(html);
+    const h = abrirModal(html, null, opcoes);
     if (!h) return null;
     const m = h.mask;
     m.fechar = h.fechar;
