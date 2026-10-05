@@ -701,6 +701,21 @@ func (a *App) hMensagensArquivar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Onda 05/10 (caixa da função): mensagem POSSESSO da função que o usuário
+	// exerce NÃO é arquivável pelo titular — o arquivamento é da caixa PESSOAL
+	// (linha em mensagem_destinatarios); a função permanece mesmo com troca de
+	// titular. Mesmo padrão do bloqueio de despacho pendente: 400 com mensagem
+	// clara.
+	var funcaoID *int64
+	if err := a.st.db.QueryRow(`SELECT funcao_id FROM mensagens WHERE id = ?`, msgID).Scan(&funcaoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "mensagem não encontrada")
+		return
+	}
+	if funcaoID != nil && a.funcaoExercidaByID(u, *funcaoID) {
+		jsonErro(w, http.StatusBadRequest, "Mensagem da Caixa da Função não pode ser arquivada — a caixa da função permanece com a função, não com o titular.")
+		return
+	}
+
 	_, err = a.st.db.Exec(`
 		UPDATE mensagem_destinatarios
 		SET arquivada = 1
