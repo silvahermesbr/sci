@@ -180,12 +180,11 @@ func (a *App) checarAcessoArquivo(u *Usuario, arquivoID int64, precisaEdicao boo
 		}
 	}
 
-	// Mesma Unidade: leitura por padrão
-	if u.GrupoID != nil && *u.GrupoID == grupoID {
-		if !precisaEdicao {
-			return true, meta, nil
-		}
-	}
+	// Onda 05/10 (item 4): ARQUIVO é item isolado — acesso = lista em
+	// drive_compartilhamentos (usuário/papel/grupo) + autor + gerência.
+	// A antiga cortesia "mesma unidade lê por padrão" foi removida: membro do
+	// grupo SEM grant não vê nem baixa o arquivo (hDriveItens filtra por aqui;
+	// download/anexos/herança de pasta não dependem desta regra).
 
 	return false, meta, nil
 }

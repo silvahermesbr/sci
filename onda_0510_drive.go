@@ -77,26 +77,35 @@ func (a *App) hDriveArquivoCopiar(w http.ResponseWriter, r *http.Request) {
 
 // copiarFisicoDrive: duplica o arquivo físico em dados/drive com nome único novo
 // (mesmo padrão do upload: nanotimestamp + hex + ext). Stream, sem carregar em RAM.
-func copiarFisicoDrive(a *App, nomeArmazenado, ext string) (string, error) {
+// Devolve o NOME novo e os bytes efetivamente gravados — o INSERT registra o
+// tamanho REAL do físico, nunca o metadado antigo do item de origem.
+func copiarFisicoDrive(a *App, nomeArmazenado, ext string) (string, int64, error) {
 	if len(ext) > 10 {
 		ext = ""
 	}
 	novo := fmt.Sprintf("%d_%s%s", time.Now().UnixNano(), hexAleatorioDrive(8), ext)
 	src, err := os.Open(filepath.Join(a.pastaFisicaDrive(), nomeArmazenado))
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	defer src.Close()
 	dst, err := os.Create(filepath.Join(a.pastaFisicaDrive(), novo))
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, src); err != nil {
+	n, errC := io.Copy(dst, src)
+	if errC != nil {
+		_ = dst.Close()
 		_ = os.Remove(filepath.Join(a.pastaFisicaDrive(), novo))
-		return "", err
+		return "", 0, errC
 	}
-	return novo, nil
+	// Close em disco: sem ele (ou falhando), bytes ficam no buffer e o físico
+	// pode nascer truncado/ausente — gravidade real da gravação é o Close.
+	if errF := dst.Close(); errF != nil {
+		_ = os.Remove(filepath.Join(a.pastaFisicaDrive(), novo))
+		return "", 0, errF
+	}
+	return novo, n, nil
 }
 
 func (a *App) driveMoverCopiar(w http.ResponseWriter, r *http.Request, copia bool) {
@@ -137,7 +146,7 @@ func (a *App) driveMoverCopiar(w http.ResponseWriter, r *http.Request, copia boo
 		// Cópia FÍSICA própria: nome_armazenado é UNIQUE no schema — cada item
 		// referencia 1 físico próprio em dados/drive (sem migração necessária).
 		ext := filepath.Ext(meta["nome_original"].(string))
-		novoNomeArm, errC := copiarFisicoDrive(a, meta["nome_armazenado"].(string), ext)
+		novoNomeArm, nBytes, errC := copiarFisicoDrive(a, meta["nome_armazenado"].(string), ext)
 		if errC != nil {
 			jsonErro(w, http.StatusInternalServerError, "falha ao copiar o arquivo físico: "+errC.Error())
 			return
@@ -146,7 +155,7 @@ func (a *App) driveMoverCopiar(w http.ResponseWriter, r *http.Request, copia boo
 			INSERT INTO drive_arquivos (pasta_id, grupo_id, nome_original, nome_armazenado, tipo, tamanho, autor_usuario_id, autor_papel_id)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		`, nullInt64(novoPastaID), meta["grupo_id"], meta["nome_original"], novoNomeArm,
-			meta["tipo"], meta["tamanho"], u.ID, u.PapelAtivoID)
+			meta["tipo"], nBytes, u.ID, u.PapelAtivoID)
 		if errI != nil {
 			_ = os.Remove(filepath.Join(a.pastaFisicaDrive(), novoNomeArm))
 			jsonErro(w, http.StatusInternalServerError, "falha ao copiar arquivo: "+errI.Error())

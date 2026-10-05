@@ -34,6 +34,18 @@ func montaDrive(t *testing.T, app *App, st *Store) (int64, *http.Cookie) {
 	return gid, ckGer
 }
 
+// papelIDDe: id da linha de papel (usuario_papeis) do login — padrão da casa
+// quando o teste precisa de alvo_tipo=papel/usuario com alvo_id real. Falha o
+// teste se a linha não existir (silenciar aqui virava alvo_id=0 → 400).
+func papelIDDe(t *testing.T, st *Store, login string) int64 {
+	t.Helper()
+	var id int64
+	if err := st.db.QueryRow(`SELECT up.id FROM usuario_papeis up JOIN usuarios u ON u.id = up.usuario_id WHERE u.login = ?`, login).Scan(&id); err != nil {
+		t.Fatalf("papel de %s: %v", login, err)
+	}
+	return id
+}
+
 func criaArquivoDriveEm(t *testing.T, st *Store, gid int64, nome, nomeArm, autor string, pastaID *int64) int64 {
 	t.Helper()
 	var id int64
@@ -241,10 +253,11 @@ func TestDrivePropriedades(t *testing.T) {
 	gid, ckGer := montaDrive(t, app, st)
 	arqID := criaArquivoDriveEm(t, st, gid, "Relatorio_Diario_De_Operacao_Edicao_Extremamente_Longa.pdf", "arq_prop", "gerdr", nil)
 
-	var papelOpID int64
-	_ = st.db.QueryRow(`SELECT up.id FROM usuario_papeis up JOIN usuarios u ON u.id = up.usuario_id WHERE u.login='opdr'`).Scan(&papelOpID)
-
 	// Grants: para o operador (usuário) e para o próprio grupo.
+	// Garante usuário + linha de papel do opdr (login sincroniza usuario_papeis);
+	// sem isto o lookup de alvo_id morre em "no rows" e o grant ia com alvo_id=0.
+	loginAsPapel(t, app, st, "opdr", "operador")
+	papelOpID := papelIDDe(t, st, "opdr")
 	rrC, _ := doJSONReq(app, "POST", "/api/drive/compartilhar", map[string]any{"arquivo_id": arqID, "alvo_tipo": "usuario", "alvo_id": papelOpID, "pode_editar": true}, ckGer)
 	if rrC.Code != http.StatusOK {
 		t.Fatalf("compartilhar deve 200, veio %d: %s", rrC.Code, rrC.Body.String())
