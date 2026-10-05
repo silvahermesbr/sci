@@ -232,6 +232,11 @@ func (a *App) rotas() {
 	m.Handle("GET /api/avisos/{id}/detalhes", a.auth(false, a.hAvisosDetalhes))
 	m.Handle("POST /api/avisos/{id}/repostar", a.auth(false, a.hAvisosRepostar))
 
+	// Onda C2 (05/10): Aba Funções — designação de membros por função (gerente).
+	m.Handle("GET /api/grupo/funcoes/membros", a.auth(false, a.hFuncaoMembrosGet))
+	m.Handle("POST /api/grupo/funcoes/membros", a.auth(false, a.hFuncaoMembrosSet))
+	m.Handle("DELETE /api/grupo/funcoes/membros/{id}", a.auth(false, a.hFuncaoMembrosDel))
+
 	// Módulo de Drive Local (v1.2 Fase 3)
 	m.Handle("GET /api/drive/itens", a.auth(false, a.hDriveItens))
 	m.Handle("GET /api/drive/seletor", a.auth(false, a.hDriveSeletor))

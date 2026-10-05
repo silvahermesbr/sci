@@ -137,6 +137,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV31(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV32(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2012,6 +2015,39 @@ func (s *Store) migrarV29() error {
 	_, _ = s.db.Exec(`UPDATE material_itens SET sensibilidade = 'convencional' WHERE sensibilidade IS NULL OR sensibilidade = '' OR nivel_sensibilidade NOT IN ('sensivel', 'restrito')`)
 
 	return s.marcarVersao(29)
+}
+
+// migrarV32 (onda C2 05/10, "Aba Funções"): funcao_membros — designação de
+// titulares/auxiliares por função em cada grupo (gerenciar → Funções).
+//   - UNIQUE(funcao_id, grupo_id, usuario_id): mesmo usuário não repete na função.
+//   - Índice parcial único: 1 titular por (função, grupo) — segundo → conflito.
+// Idempotente: CREATE TABLE/INDEX IF NOT EXISTS.
+func (s *Store) migrarV32() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 32`).Scan(&v)
+	if v == 32 {
+		return nil
+	}
+
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS funcao_membros (
+		id INTEGER PRIMARY KEY,
+		funcao_id INTEGER NOT NULL REFERENCES funcoes(id),
+		grupo_id INTEGER NOT NULL REFERENCES grupos(id),
+		usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+		titularidade TEXT NOT NULL CHECK (titularidade IN ('titular','auxiliar')),
+		criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+		UNIQUE (funcao_id, grupo_id, usuario_id)
+	)`); err != nil {
+		return fmt.Errorf("migração v32 tabela funcao_membros: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_funcao_membros_titular ON funcao_membros(funcao_id, grupo_id) WHERE titularidade = 'titular'`); err != nil {
+		return fmt.Errorf("migração v32 índice titular único: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_funcao_membros_grupo ON funcao_membros(grupo_id)`); err != nil {
+		return fmt.Errorf("migração v32 índice grupo: %w", err)
+	}
+
+	return s.marcarVersao(32)
 }
 
 // EhSubordinado verifica se subordinadoID é igual ou subordinado (transitivo) a superiorID na árvore de grupos.

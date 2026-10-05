@@ -1225,8 +1225,10 @@ func (a *App) hMensagensDestinatarios(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+	// Onda C2 (05/10): mural em TODOS os papéis com grupo + leitura global do
+	// admin (escopo 0 → sem filtro). Sem grupo e sem ser admin → 403.
+	if !podeVerMural(u) {
+		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
 		return
 	}
 	escopo := escopoDoUsuario(u)
@@ -1312,7 +1314,9 @@ func (a *App) hAvisosList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel != "gerente" {
+	// Onda C2 (05/10): admin também publica (frontend já exibia o botão);
+	// sem grupo ativo, ninguém publica (aviso exige grupo de destino).
+	if u.Papel != "gerente" && u.Papel != "admin" {
 		jsonErro(w, http.StatusForbidden, "apenas gerentes de grupo podem publicar avisos")
 		return
 	}
@@ -1341,6 +1345,13 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	grupoID := u.GrupoID
+	if req.GrupoID != nil && *req.GrupoID > 0 {
+		// Onda C2 (05/10): admin publica para grupo explícito (admin é global,
+		// não tem grupo na sessão). Gerente continua travado no próprio.
+		if u.Papel == "admin" {
+			grupoID = req.GrupoID
+		}
+	}
 	if grupoID == nil || *grupoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "aviso deve estar vinculado a um grupo")
 		return
@@ -1370,8 +1381,8 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+	if !podeVerMural(u) {
+		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
 		return
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -1407,8 +1418,8 @@ func (a *App) hAvisosDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosCiente(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+	if !podeVerMural(u) {
+		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
 		return
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -1434,8 +1445,8 @@ func (a *App) hAvisosCiente(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+	if !podeVerMural(u) {
+		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
 		return
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -1490,8 +1501,8 @@ func (a *App) hAvisosComentar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel == "admin" {
-		jsonErro(w, http.StatusForbidden, "administrador não possui acesso aos avisos operacionais")
+	if !podeVerMural(u) {
+		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
 		return
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
