@@ -193,7 +193,10 @@ func (a *App) checarAcessoArquivo(u *Usuario, arquivoID int64, precisaEdicao boo
 // ---------- Handlers HTTP do Drive Local ----------
 
 // GET /api/drive/itens?pasta_id={id}&compartilhados={0|1}
-func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
+// DEPRECATADO na onda 05/10: a rota usa a.hDriveItens (onda_0510_drive_itens.go),
+// com visibilidade decidida por item pelas funções canônicas de acesso. Corpo
+// legado mantido como referência histórica — NÃO editar.
+func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	if u.Papel == "admin" {
 		jsonErro(w, http.StatusForbidden, "administrador não possui acesso ao drive operacional")
@@ -901,6 +904,8 @@ func (a *App) hDriveCompartilhar(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/drive/compartilhamentos?pasta_id={id}&arquivo_id={id} - Listar Permissões Ativas
+// Onda 05/10: devolve também criado_em_fmt (Brasília) — fonte da tabela de acessos
+// nas propriedades; e é exigido acesso de LEITURA ao item (antes só checava o alvo dado).
 func (a *App) hDriveCompartilhamentosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	if u.Papel == "admin" {
@@ -940,11 +945,12 @@ func (a *App) hDriveCompartilhamentosList(w http.ResponseWriter, r *http.Request
 	}
 
 	type CompItem struct {
-		ID         int64  `json:"id"`
-		AlvoTipo   string `json:"alvo_tipo"`
-		AlvoNome   string `json:"alvo_nome"`
-		PodeEditar bool   `json:"pode_editar"`
-		CriadoEm   string `json:"criado_em"`
+		ID          int64  `json:"id"`
+		AlvoTipo    string `json:"alvo_tipo"`
+		AlvoNome    string `json:"alvo_nome"`
+		PodeEditar  bool   `json:"pode_editar"`
+		CriadoEm    string `json:"criado_em"`
+		CriadoEmFmt string `json:"criado_em_fmt"`
 	}
 
 	var itens []CompItem
@@ -995,6 +1001,7 @@ func (a *App) hDriveCompartilhamentosList(w http.ResponseWriter, r *http.Request
 			var pEd int
 			_ = rws.Scan(&it.ID, &pEd, &it.CriadoEm, &it.AlvoTipo, &it.AlvoNome)
 			it.PodeEditar = pEd == 1
+			it.CriadoEmFmt = driveFmtDataHora(it.CriadoEm)
 			itens = append(itens, it)
 		}
 	}
