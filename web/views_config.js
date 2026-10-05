@@ -128,12 +128,13 @@
           </button>
         </div>
 
-        <!-- 4. Roadmap (ordem 04/10: salvar registros em roadmap — versão sobe SOMENTE por ordem do Diretor) -->
+        <!-- 4. Roadmap (ordem 04/10: salvar registros em roadmap — a designação
+             de versão é ato do DIRETOR; nenhuma versão é titulada aqui) -->
         <div class="cartao">
           <h3 style="margin-top:0">🗺️ Roadmap de Versões (registro)</h3>
-          <p style="color:var(--tx2);font-size:12.5px;margin-bottom:10px">Versão atual: <b>1.5</b> — hierarquia de papéis e modos de desenvolvimento (ordem 04/10). Próximas versões registradas:</p>
+          <p style="color:var(--tx2);font-size:12.5px;margin-bottom:10px">Registro das versões planejadas (ordem 04/10). A designação da versão corrente é ato do Diretor — este painel não titula versão.</p>
           <div class="rolagem"><table><thead><tr><th class="num">Versão</th><th>Escopo</th></tr></thead><tbody>
-            <tr><td class="num"><b>1.5</b></td><td>Hierarquia de papéis — criação de usuários, chefes designam operadores, escalas/material/calendário em modo dev, consciência situacional reservada, dropdowns, sistemas por papel</td></tr>
+            <tr><td class="num"><b>1.5</b></td><td>Hierarquia de papéis — criação de usuários, chefes designam operadores, escalas/material/calendário em modo dev, consciência situacional reservada, dropdowns, sistemas por papel <i>(escopo entregue pela ordem 04/10; designação pendente)</i></td></tr>
             <tr><td class="num">1.6</td><td>Módulo de material implementado e debugado</td></tr>
             <tr><td class="num">1.7</td><td>Módulo de calendário implementado e debugado</td></tr>
             <tr><td class="num">1.8</td><td>Módulo de escalas implementado e debugado</td></tr>
