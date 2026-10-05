@@ -16,8 +16,9 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v30/v31 = ordem 04/10: Email Interno + conferência c/ encarregado e prazo). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 31
+// (v32 = onda C2 05/10: funcao_membros — titular/auxiliar por função e grupo).
+// Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
+const versaoSchemaBinario = 32
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio
