@@ -111,21 +111,12 @@ func TestFase5ConscienciaSituacionalResumo(t *testing.T) {
 
 	com := loginAs(t, app, "comandante", "senha12345")
 
-	// Consultar API de consciência situacional
-	recResumo, res := doJSONReq(app, "GET", "/api/consciencia/resumo", nil, com)
-	if recResumo.Code != http.StatusOK {
-		t.Fatalf("esperava 200 em /api/consciencia/resumo, obteve %d", recResumo.Code)
+	// Onda 05/10 (ordem Diretor): Consciência Situacional em ACERVO para versão
+	// futura — rota DESLIGADA (404) across the board; handler preservado no fonte.
+	// O teste passa a cravar o contrato novo: 404 (rota fora do ar).
+	recResumo, _ := doJSONReq(app, "GET", "/api/consciencia/resumo", nil, com)
+	if recResumo.Code != http.StatusNotFound {
+		t.Fatalf("esperava 404 em /api/consciencia/resumo (módulo em acervo), obteve %d", recResumo.Code)
 	}
-
-	t.Logf("RESUMO RESULT: %+v", res)
-
-	totalEf := int(res["total_efetivo"].(float64))
-	if totalEf != 2 {
-		t.Fatalf("esperava total_efetivo = 2, obteve %d", totalEf)
-	}
-
-	subs := res["subordinados"].([]any)
-	if len(subs) != 2 { // superior + subordinado
-		t.Fatalf("esperava 2 grupos monitorados, obteve %d", len(subs))
-	}
+	_ = com
 }

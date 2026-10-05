@@ -403,7 +403,10 @@ func (a *App) rotas() {
 	m.Handle("POST /api/setores/sugestoes/{id}/avaliar", a.auth(false, a.hSetorSugestoesAvaliar))
 
 	// Consciência Situacional (v1.5) — Comando e Visão Geral Consolidada
-	m.Handle("GET /api/consciencia/resumo", a.auth(false, a.hConscienciaResumo))
+	// Consciência Situacional: módulo em ACERVO para versão futura (ordem Diretor
+	// 05/10/26: acesso removido across the board). Rota DESLIGADA (404 — mesmo
+	// tratamento de rota inexistente); handler e código preservados para o religamento.
+	m.HandleFunc("GET /api/consciencia/resumo", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 
 	// Módulo de Configurações e White-Label (v1.0)
 	m.HandleFunc("GET /api/configuracoes", a.hConfiguracoesGet)
