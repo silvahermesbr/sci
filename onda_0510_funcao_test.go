@@ -134,6 +134,27 @@ func TestFuncaoTrocaTitular(t *testing.T) {
 		t.Fatalf("mensagem não carimbada (v=%v err=%v)", fMsg, err)
 	}
 
+	// Dedupe do UNION: o remetente é destinatário do PRÓPRIO papel e, na
+	// origem, titular da função — a carimbada aparece UMA vez (braço da
+	// função vence o pessoal), nunca duplicada pelo UNION ALL.
+	rrSelf, _ := doJSONReq(app, "GET", "/api/mensagens/inbox", nil, ckTit)
+	var inboxSelf []map[string]any
+	if err := json.Unmarshal(rrSelf.Body.Bytes(), &inboxSelf); err != nil {
+		t.Fatalf("inbox do titular não é array: %v", err)
+	}
+	nSelf := 0
+	for _, m := range inboxSelf {
+		if int64(m["id"].(float64)) == msgID {
+			nSelf++
+			if v, _ := m["da_funcao"].(bool); !v {
+				t.Fatalf("FV4: titular deveria ver a própria msg como da função (da_funcao=true)")
+			}
+		}
+	}
+	if nSelf != 1 {
+		t.Fatalf("FV4: msg carimbada com destinatário deveria aparecer 1 vez p/ o titular; veio %d", nSelf)
+	}
+
 	// Mensagem pessoal legada (sem função) para o ex-titular continuar vendo.
 	rrL, resL := doJSONReq(app, "POST", "/api/mensagens", map[string]any{
 		"assunto": "Recado pessoal", "corpo": "<p>seu</p>",

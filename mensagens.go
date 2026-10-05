@@ -268,27 +268,36 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 	//
 	// Contrato dos filtros: ?arquivadas=1 devolve SÓ a caixa pessoal (a da
 	// função não arquivável); ?despacho=1 e ?pasta_id filtram os dois braços.
-	var funcaoExtra string
+	var funcaoExtra, pessoalExtra string
 	funs := a.funcoesExercidas(u)
 	if len(funs) > 0 && !soArquivadas {
 		marcas := ""
-		for i, f := range funs {
+		for i := range funs {
 			if i > 0 {
 				marcas += ","
 			}
 			marcas += "?"
+		}
+		// Braço PESSOAL: mensagem carimbada que chegou também por linha de
+		// destinatário aparece UMA vez (pelo braço da função) — sem esta
+		// dedupe o UNION ALL devolve duplicata para quem é destinatário E
+		// exerce a função.
+		pessoalExtra = ` AND (m.funcao_id IS NULL OR m.funcao_id NOT IN (` + marcas + `))`
+		for _, f := range funs {
 			args = append(args, f)
 		}
-		funcaoExtra = ` AND m.funcao_id IN (` + marcas + `)`
 		// Braço da função = mensagens POSSESSO das funções que o usuário
 		// EXERCE (IN). NOT IN aqui excluía exatamente as mensagens da própria
 		// função (a caixa ficava vazia p/ o titular) e vazava mensagens de
-		// funções alheias (FV4 pegou). A dedupe contra a caixa pessoal fica no
-		// braço pessoal NÃO filtrar por funcao_id (legado NULL e carimbado com
-		// destinatário aparecem uma vez, pela linha md).
-	} else if len(funs) == 0 || soArquivadas {
+		// funções alheias (FV4 pegou).
+		funcaoExtra = ` AND m.funcao_id IN (` + marcas + `)`
+		for _, f := range funs {
+			args = append(args, f)
+		}
+	} else {
 		// Sem função exercida (ou no arquivo): braço da função desligado —
-		// 1=0 impede qualquer linha do segundo SELECT.
+		// 1=0 impede qualquer linha do segundo SELECT. Pessoal sem dedupe
+		// (nada a dedupar).
 		funcaoExtra = ` AND 1=0`
 	}
 
@@ -312,7 +321,7 @@ func (a *App) hMensagensInbox(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN grupos g_rem ON g_rem.id = up_rem.grupo_id
 		LEFT JOIN funcoes f_rem ON f_rem.id = up_rem.funcao_id
 		LEFT JOIN usuarios u_lida ON u_lida.id = md.lida_por_usuario_id
-		WHERE md.destinatario_papel_id = ? AND md.excluida = 0` + filtroExtra + `
+		WHERE md.destinatario_papel_id = ? AND md.excluida = 0` + filtroExtra + pessoalExtra + `
 		UNION ALL
 		SELECT m.id, m.assunto, m.corpo, m.criada_em,
 		       COALESCE(m.tipo, 'comum'), COALESCE(m.exige_resposta, 0),
