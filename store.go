@@ -134,6 +134,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV30(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV31(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2067,4 +2070,37 @@ func (s *Store) migrarV30() error {
 	}
 
 	return s.marcarVersao(30)
+}
+
+// migrarV31 (ordem Diretor 04/10, "Módulo de conferência"): conferência
+// nomeada com ENCARREGADO DE PESSOAL e prazo final (pronto da conferência).
+//   - conferencias.nome: rótulo dado pelo gerente na NOVA CONFERÊNCIA.
+//   - conferencias.encarregado_usuario_id: encarregado de pessoal da conf.
+//   - conferencias.prazo_final: horário-limite p/ operadores concluírem.
+// Idempotente (pragma_table_info antes de cada ALTER).
+func (s *Store) migrarV31() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 31`).Scan(&v)
+	if v == 31 {
+		return nil
+	}
+
+	for _, col := range []struct {
+		nome string
+		ddl  string
+	}{
+		{"nome", `ALTER TABLE conferencias ADD COLUMN nome TEXT`},
+		{"encarregado", `ALTER TABLE conferencias ADD COLUMN encarregado_usuario_id INTEGER REFERENCES usuarios(id)`},
+		{"prazo", `ALTER TABLE conferencias ADD COLUMN prazo_final TEXT`},
+	} {
+		var n int
+		_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('conferencias') WHERE name = ?`, col.nome).Scan(&n)
+		if n == 0 {
+			if _, err := s.db.Exec(col.ddl); err != nil {
+				return fmt.Errorf("migração v31 alter conferencias %s: %w", col.nome, err)
+			}
+		}
+	}
+
+	return s.marcarVersao(31)
 }

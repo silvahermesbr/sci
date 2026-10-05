@@ -181,14 +181,28 @@
     let haAberta = null;
     try { const d = await api('/api/conferencia/hoje'); haAberta = d.conferencia || null; } catch (e) {}
     const souAdmin = (window.ME && window.ME.papel) === 'admin';
-    const linha = c => `
-      <tr data-cid="${c.id}"><td class="num"><b>#${c.id}</b></td>
+    const linha = c => {
+      const emAberto = c.status === 'aberta' && modoTela !== 'arquivo';
+      const detalheToggle = emAberto ? `
+        <tr class="conf-toggle-detalhe" data-toggle-de="${c.id}" style="display:none">
+          <td colspan="10" style="background:var(--painel2)">
+            <div style="display:flex;gap:18px;flex-wrap:wrap;padding:8px 4px;font-size:12.5px">
+              <span>Nome: <b>${esc(c.nome || 'Conferência #' + c.id)}</b></span>
+              <span>Prazo p/ pronto: <b>${esc(c.prazo_final || '—')}</b></span>
+              <span>Encarregado de pessoal: <b>${esc(c.encarregado_nome || 'a designar')}</b></span>
+              <span>Lançamentos: <b>${c.lancamentos}</b></span>
+            </div>
+          </td>
+        </tr>` : '';
+      const celulas = `
       <td>${c.status === 'aberta' ? 'Aberta' : 'Fechada'}</td>
       <td>${c.status === 'aberta' ? fmtHora(c.criada_em) : fmtHora(c.fechada_em)}</td>
       <td>${fmtData(c.data)}</td>
       <td>${esc(c.grupo || '—')}</td>
       <td>${esc(c.criado_por || '—')}</td>
-      <td class="num">${c.lancamentos}</td>
+      <td>${emAberto ? `${esc(c.nome || '—')} · prazo ${esc(c.prazo_final || '—')} · enc.: ${esc(c.encarregado_nome || '—')}` : esc(c.nome || '—')}</td>
+      <td class="num">${c.lancamentos}</td>`;
+      const acoes = `
       <td style="white-space:nowrap">${modoTela === 'arquivo'
         ? `<button class="primario" data-abrir-detalhes="${c.id}" style="min-height:36px;padding:8px 12px">Visualizar</button>
            <button style="min-height:36px;padding:8px 12px" data-pdfconf="${c.id}">Relatório PDF</button>
@@ -197,15 +211,17 @@
           ? `<button class="primario" data-abrir-detalhes="${c.id}" style="min-height:36px;padding:8px 12px">Visualizar</button>
              <button style="min-height:36px;padding:8px 12px" data-pdfconf="${c.id}">Relatório PDF</button>
              <button data-arquivar="${c.id}" style="min-height:36px;padding:8px 12px">Arquivar</button>`
-          : `<button class="primario" data-abrir="${c.id}" style="min-height:36px;padding:8px 12px">Abrir</button>`)}</td></tr>`;
+          : `<button class="primario" data-abrir="${c.id}" style="min-height:36px;padding:8px 12px">Abrir</button>`)}</td></tr>${detalheToggle}`;
+      return `<tr data-cid="${c.id}" ${emAberto ? `data-toggle-btn="${c.id}" style="cursor:pointer"` : ''}><td class="num"><b>#${c.id}</b></td>${celulas}${acoes}`;
+    };
     const porData = (a, b) => String(b.data || '').localeCompare(String(a.data || '')) || b.id - a.id;
     const abertas = lista.filter(c => c.status === 'aberta').sort(porData);
     const fechadas = lista.filter(c => c.status === 'fechada').sort(porData);
     const tabela = (titulo, itens, cols) => `
       <h3 style="margin:14px 0 8px">${titulo} (${itens.length})</h3>
       <div class="cartao"><div class="rolagem"><table>
-      <thead><tr><th class="num">ID</th><th>Status</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th class="num">Lanç.</th><th>Ações</th></tr></thead>
-      <tbody>${itens.map(linha).join('') || `<tr><td colspan="8"><span class="vazio">${cols || 'nenhuma'}</span></td></tr>`}</tbody></table></div></div>`;
+      <thead><tr><th class="num">ID</th><th>Status</th><th>Horário</th><th>Data</th><th>Grupo</th><th>Operador</th><th>Nome / Prazo / Encarregado</th><th class="num">Lanç.</th><th>Ações</th></tr></thead>
+      <tbody>${itens.map(linha).join('') || `<tr><td colspan="10"><span class="vazio">${cols || 'nenhuma'}</span></td></tr>`}</tbody></table></div></div>`;
     const abasTela = `
       <div class="abas" style="margin:10px 0">
         <button data-t="conferencias" class="${modoTela !== 'arquivo' ? 'ativo' : ''}">CONFERÊNCIAS</button>
@@ -262,13 +278,50 @@
         window.ViewHoje('conferencias');
       };
     }
+    // NOVA CONFERÊNCIA (ordem 04/10): modal solicita NOME e PRAZO FINAL;
+    // cancelar remove (nada persistido); despachar cria a conferência em aberto.
     const btNova = $('#btNovaConf');
-    if (btNova) btNova.onclick = async () => {
-      try {
-        const r = await api('/api/conferencia/iniciar', { method: 'POST', body: '{}' });
-        location.hash = '#/conferencia?id=' + (r.conferencia ? r.conferencia.id : r.id);
-      } catch (e) {}
+    if (btNova) btNova.onclick = () => {
+      const html = `
+        <div class="modal" style="max-width:480px;width:92%">
+          <h3 style="margin-top:0">Nova Conferência</h3>
+          <div class="campo" style="margin-bottom:10px">
+            <label style="font-weight:700">Nome da conferência</label>
+            <input type="text" id="ncNome" placeholder="ex.: Conferência de pessoal — 2ª semana" style="width:100%">
+          </div>
+          <div class="campo" style="margin-bottom:14px">
+            <label style="font-weight:700">Prazo final (pronto da conferência)</label>
+            <input type="time" id="ncPrazo" style="width:100%">
+            <small style="color:var(--tx2);font-size:11.5px">Operadores têm até este horário para finalizar a conferência do pessoal do seu setor.</small>
+          </div>
+          <div class="modal-acoes" style="justify-content:flex-end;gap:8px">
+            <button type="button" class="acao-linha" id="ncCancelar">Cancelar</button>
+            <button type="button" class="primario" id="ncDespachar">Despachar</button>
+          </div>
+        </div>`;
+      const m = modal(html);
+      m.querySelector('#ncCancelar').onclick = () => m.remove(); // cancelar: remove a conferência (nada foi criado)
+      m.querySelector('#ncDespachar').onclick = async () => {
+        const nome = m.querySelector('#ncNome').value.trim();
+        const prazo = m.querySelector('#ncPrazo').value;
+        if (!nome) { toast('Informe o nome da conferência', 'erro'); return; }
+        try {
+          const r = await api('/api/conferencia/iniciar', { method: 'POST', body: JSON.stringify({ nome, prazo_final: prazo }) });
+          m.remove();
+          toast('Conferência despachada e em aberto.');
+          location.hash = '#/conferencia?id=' + (r.conferencia ? r.conferencia.id : r.id);
+        } catch (e) {}
+      };
     };
+    // TOGGLE da conferência em aberto (ordem 04/10): clicar na linha expande
+    // os detalhes (nome, prazo, encarregado).
+    document.querySelectorAll('[data-toggle-btn]').forEach(tr => {
+      tr.onclick = (ev) => {
+        if (ev.target.closest('button')) return; // botões da linha mantêm o comportamento próprio
+        const det = document.querySelector(`[data-toggle-de="${tr.dataset.toggleBtn}"]`);
+        if (det) det.style.display = det.style.display === 'none' ? '' : 'none';
+      };
+    });
     document.querySelectorAll('[data-abrir]').forEach(b => b.onclick = () => {
       location.hash = '#/conferencia?id=' + b.dataset.abrir;
     });

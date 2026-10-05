@@ -1123,7 +1123,10 @@ func (a *App) pessoasAtivas(escopo int64) []map[string]any {
 // hConferenciaIniciar: cria a conferência com data/hora de AGORA (Brasília) e a deixa ABERTA.
 func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Local string `json:"local"`
+		Local       string `json:"local"`
+		Nome        string `json:"nome"`        // ordem 04/10: modal NOVA CONFERÊNCIA pede nome
+		PrazoFinal  string `json:"prazo_final"` // horário-limite p/ pronto da conferência
+		Encarregado *int64 `json:"encarregado_usuario_id"` // encarregado de pessoal
 	}
 	_ = decodificar(r, &req)
 	// ordem Tenente (28/09): data/hora são coletadas do relógio — horário de Brasília
@@ -1139,6 +1142,12 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	}
 	grupoID := *u.GrupoID
 	data := time.Now().In(a.horaLocal).Format("2006-01-02")
+	// ordem 04/10: a NOVA CONFERÊNCIA é nomeada pelo MODAL (nome+prazo; cancelar
+	// descarta, despachar cria). Na API, chamadas sem nome (testes/integrações)
+	// recebem o nome padrão — o front nunca envia vazio.
+	if strings.TrimSpace(req.Nome) == "" {
+		req.Nome = tipoConferenciaPadrao + " — " + data
+	}
 	tipoID, _, err := a.tipoPadraoID()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "tipo '"+tipoConferenciaPadrao+"' inexistente")
@@ -1151,8 +1160,9 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	// v9.15.3: banco grava UTC REAL (sufixo Z verdadeiro); EXIBIÇÃO converte p/ Brasília
 	criadoEm := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	res, e := a.st.db.Exec(
-		`INSERT INTO conferencias (data, tipo_id, local, grupo_id, criado_por, criado_em) VALUES (?,?,?,?,?,?)`,
-		data, tipoID, req.Local, grupoID, u.ID, criadoEm)
+		`INSERT INTO conferencias (data, tipo_id, local, grupo_id, criado_por, criado_em, nome, prazo_final, encarregado_usuario_id) VALUES (?,?,?,?,?,?,?,?,?)`,
+		data, tipoID, req.Local, grupoID, u.ID, criadoEm,
+		strings.TrimSpace(req.Nome), strings.TrimSpace(req.PrazoFinal), req.Encarregado)
 	if e != nil {
 		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
@@ -1820,7 +1830,10 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(NULLIF(u.nome_guerra,''), u.login), c.criado_em, c.fechada_em,
 		       (SELECT COUNT(*) FROM presencas p WHERE p.conferencia_id = c.id) AS lanc,
 		       COALESCE(c.grupo_id,0), COALESCE((SELECT g.nome FROM grupos g WHERE g.id = c.grupo_id),'—'),
-		       c.arquivada_em
+		       c.arquivada_em,
+		       COALESCE(c.nome,''), COALESCE(c.prazo_final,''),
+		       COALESCE((SELECT COALESCE(NULLIF(u2.nome_completo,''), NULLIF(u2.nome_guerra,''), u2.login)
+		                 FROM usuarios u2 WHERE u2.id = c.encarregado_usuario_id),'')
 		FROM conferencias c
 		LEFT JOIN usuarios u ON u.id = c.criado_por`
 	var rows *sql.Rows
@@ -1860,11 +1873,13 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 		var lanc int
 		var grupoNome string
 		var arquivada *string
-		if rows.Scan(&id, &data, &hora, &local, &status, &criado, &criadaEm, &fechada, &lanc, &grupoID, &grupoNome, &arquivada) == nil {
+		var nome, prazo, encarregado string
+		if rows.Scan(&id, &data, &hora, &local, &status, &criado, &criadaEm, &fechada, &lanc, &grupoID, &grupoNome, &arquivada, &nome, &prazo, &encarregado) == nil {
 			out = append(out, map[string]any{
 				"id": id, "data": data, "hora": hora, "local": local, "status": status,
 				"criado_por": criado, "criada_em": criadaEm, "fechada_em": fechada, "lancamentos": lanc,
 				"grupo_id": grupoID, "grupo": grupoNome, "arquivada_em": arquivada,
+				"nome": nome, "prazo_final": prazo, "encarregado_nome": encarregado,
 			})
 		}
 	}
