@@ -288,12 +288,38 @@
             } catch (e) { toast(e.message || 'Falha ao registrar ciente', 'erro'); }
           };
 
-          // Auditoria de cientes dentro do modal
+          // Auditoria de cientes dentro do modal — CORREÇÃO (ordem do Diretor): lista REAL,
+          // não toast. Reusa a tabela "Auditoria de Ciente Formal" (quem viu, função/grupo, data).
           m.modal.querySelector(`#btCientesMod_${id}`).onclick = async () => {
             try {
               const d = await api(`/api/avisos/${id}/detalhes`);
-              const cs = d.cientes || [];
-              toast(cs.length ? `${cs.length} ciente(s) registrado(s).` : 'Nenhum ciente registrado ainda.');
+              const cientes = d.cientes || [];
+              const htmlC = `
+                <div class="modal" style="max-width:560px;width:95%">
+                  <h3 style="margin-top:0">Auditoria de Ciente Formal</h3>
+                  <p style="color:var(--tx2);font-size:12.5px;margin-bottom:12px">Militares que registraram confirmação de leitura deste comunicado:</p>
+                  <div style="max-height:320px;overflow-y:auto;border:1px solid var(--borda);border-radius:6px;padding:8px">
+                    ${cientes.length === 0 ? '<div class="vazio" style="padding:16px;text-align:center">Nenhum militar registrou ciente ainda.</div>' : `
+                      <table style="width:100%;font-size:12px">
+                        <thead><tr><th>Militar / Conta</th><th>Função / Grupo</th><th>Data &amp; Hora</th></tr></thead>
+                        <tbody>
+                          ${cientes.map(c => `
+                            <tr>
+                              <td><b>${esc(c.nome_guerra || c.login)}</b></td>
+                              <td>${esc(c.funcao_nome || c.papel || '')} (${esc(c.grupo_nome || '—')})</td>
+                              <td>${fmtData(c.registrado_em)} ${fmtHora(c.registrado_em)}</td>
+                            </tr>
+                          `).join('')}
+                        </tbody>
+                      </table>
+                    `}
+                  </div>
+                  <div class="modal-acoes" style="margin-top:14px">
+                    <button type="button" class="primario" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+                  </div>
+                </div>
+              `;
+              window.abrirModal(htmlC, null, { largura: '560px' });
             } catch (e) { toast('Erro ao buscar cientes', 'erro'); }
           };
 
