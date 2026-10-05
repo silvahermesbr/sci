@@ -40,13 +40,23 @@ window.formatarTamanhoBytes = formatarTamanhoBytes;
 
 /* ---------- usuário da sessão ---------- */
 let ME = null;
-function definirUsuario(u) { ME = u; window.SCI_ME = u; window.ME = u; }
+function definirUsuario(u) {
+  // Onda 05/10 (ordem Diretor): encarregado de pessoal (função c/ "encarregado",
+  // sem papel do sistema) atua na CONFERÊNCIA — papel-conf derivado no cliente.
+  if (u && !u.papel && typeof u.funcao_nome === 'string' &&
+      u.funcao_nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('encarregado')) {
+    u.papel = 'encarregado';
+  }
+  ME = u; window.SCI_ME = u; window.ME = u;
+  window.ehEncarregado = () => (ME && ME.papel === 'encarregado');
+}
 window.definirUsuario = definirUsuario;
 
 function rotuloPapel(p) {
   if (p === 'admin') return 'ADMIN';
   if (p === 'gerente') return 'GERENTE';
   if (p === 'chefe_setor') return 'CHEFE DE SETOR';
+  if (p === 'encarregado') return 'ENCARREGADO';
   return 'OPERADOR';
 }
 window.rotuloPapel = rotuloPapel;
@@ -55,7 +65,9 @@ function rotaInicial() {
   const p = ME && ME.papel;
   if (p === 'admin') return '#/admin';
   // ordem 04/10 — usuário normal (sem papel do sistema) não tem módulos:
-  if (!['gerente', 'operador', 'chefe_setor'].includes(p)) return '#/sem-modulo';
+  if (['gerente', 'operador', 'chefe_setor'].includes(p)) return '#/hoje';
+  if (p === 'encarregado') return '#/hoje'; // onda 05/10: papel-conf derivado (função encarregado)
+  return '#/sem-modulo';
   return '#/hoje';
 }
 
@@ -457,7 +469,8 @@ function textoContextoUsuario(u) {
 }
 
 function montarShell(usuario) {
-  definirUsuario(usuario);
+  if (typeof usuario === 'object' && usuario && usuario.setor_id === undefined) { /* login/setup: sem wrapper */ }
+definirUsuario(usuario);
   
   // Garantir container estrutural de layout
   let layout = $('#layoutApp');
@@ -620,6 +633,13 @@ function montarShell(usuario) {
         ['#/grupos', 'GERENCIAR GRUPO', svgGer],
         ['#/relatorios', 'RELATÓRIOS', svgRel]
       ];
+    } else if (window.ehEncarregado && window.ehEncarregado()) {
+      // Onda 05/10 (ordem Diretor): ENCARREGADO DE PESSOAL (sem papel do sistema)
+      // atua na CONFERÊNCIA com escopo de grupo (mesma conferência do grupo).
+      itens = [
+        ['#/hoje', 'CONFERÊNCIA', svgConf],
+        ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>']
+      ];
     } else {
       // P0 onda 05/10 — conta SEM função do sistema: só Meu Perfil
       // (login → aviso de módulo indisponível; nada mais é visível).
@@ -680,7 +700,8 @@ function montarShell(usuario) {
           });
           if (res && res.usuario) {
             toast('Contexto alterado com sucesso!');
-            definirUsuario(res.usuario);
+            if (res && res.setor_id !== undefined && res.usuario) res.usuario.setor_id = res.setor_id; // onda 0510
+definirUsuario(res.usuario);
             montarShell(res.usuario);
             irPara(rotaInicial());
           }
@@ -838,7 +859,8 @@ function viewLogin() {
     if (btn) btn.disabled = true;
     try {
       const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ login: login, senha: senha }) });
-      definirUsuario(r.usuario);
+      if (r && r.setor_id !== undefined && r.usuario) r.usuario.setor_id = r.setor_id; // onda 0510
+definirUsuario(r.usuario);
       if (r.usuario.precisa_setup && window.showSetupModal) {
         window.showSetupModal();
         if (btn) btn.disabled = false;
@@ -961,7 +983,8 @@ function rotear() {
   // P0 onda 05/10: 'admin' NÃO cai no portão de bloqueio — sem isso as rotas
   // #/admin e #/configuracoes (fim da função) ficavam inalcançáveis para o admin,
   // que era capturado aqui e levado a "Módulo não disponível".
-  if (papel !== 'admin' && !['gerente', 'operador', 'chefe_setor'].includes(papel)) {
+  if (papel === 'encarregado') { /* onda 05/10: função de encarregado de pessoal passa no portão */ }
+  else if (papel !== 'admin' && !['gerente', 'operador', 'chefe_setor'].includes(papel)) {
     chamarView('ViewSemModulo'); return;
   }
   // ordem 04/10 — portão por papel: operador não tem drive nem email interno;

@@ -259,10 +259,12 @@ func (a *App) rotas() {
 	m.Handle("GET /api/calendario/compartilhamentos", a.auth(false, a.hCalendarioCompartilhamentosList))
 	m.Handle("DELETE /api/calendario/compartilhamentos/{id}", a.auth(false, a.hCalendarioCompartilhamentosDel))
 
-	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria)
-	confAuth := func(h http.HandlerFunc) http.Handler { return a.authPapeis([]string{"gerente", "operador"}, h) }
+	// abas de conferência/presença: GERENTE e OPERADOR apenas (R2/R11 — admin tem nav própria).
+	// Onda 05/10 (ordem Diretor): + ENCARREGADO DE PESSOAL (função c/ "encarregado"
+	// no nome, mesmo sem papel do sistema) em TODAS as áreas de conferência.
+	confAuth := func(h http.HandlerFunc) http.Handler { return a.authConf(h) }
 	confMarcarAuth := func(h http.HandlerFunc) http.Handler {
-		return a.authPapeis([]string{"gerente", "operador", "chefe_setor"}, h)
+		return a.authConfCom([]string{"gerente", "operador", "chefe_setor"}, h)
 	}
 
 	// Arquivo de conferências + filtro de período (ordem Tenente 30/09):
@@ -488,7 +490,14 @@ func (a *App) hAuthSetup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) hMe(w http.ResponseWriter, r *http.Request) {
-	jsonOK(w, map[string]any{"usuario": usuarioDoCtx(r)})
+	u := usuarioDoCtx(r)
+	// Onda 05/10: setor_id resolvido (usuarios.setor_id → pessoas.setor_id) —
+	// o front usa para o escopo de setor de chefe/operador na conferência.
+	setorID := u.SetorID
+	if setorID == nil && u.PessoaID != nil && *u.PessoaID > 0 {
+		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorID)
+	}
+	jsonOK(w, map[string]any{"usuario": u, "setor_id": setorID})
 }
 
 func (a *App) hLogout(w http.ResponseWriter, r *http.Request) {
@@ -923,24 +932,10 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Regra de Setor: Chefe de Setor só tira falta/presença do seu próprio setor
-	if u.Papel == "chefe_setor" {
-		var setorChefe *int64
-		if u.SetorID != nil {
-			setorChefe = u.SetorID
-		} else if u.PessoaID != nil {
-			_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorChefe)
-		}
-		if setorChefe == nil {
-			jsonErro(w, http.StatusForbidden, "chefe de setor sem setor atribuído no cadastro")
-			return
-		}
-		var setorPessoa *int64
-		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, req.PessoaID).Scan(&setorPessoa)
-		if setorPessoa == nil || *setorPessoa != *setorChefe {
-			jsonErro(w, http.StatusForbidden, "chefe de setor só pode lançar presença para militares do seu próprio setor")
-			return
-		}
+	// Onda 05/10 (ordem Diretor): chefe_setor E operador só lançam no PRÓPRIO setor;
+	// gerente e encarregado de pessoal lançam no grupo inteiro (mesma conferência).
+	if !a.guardaSetorNaMarcar(w, u, req.PessoaID) {
+		return
 	}
 	if req.Situacao == "" {
 		// "desmarcar" o check (ordem Tenente 30/09): REMOVE a verificação — grava
@@ -1141,9 +1136,10 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "o admin não inicia conferências — quem inicia é o gerente/operador de um grupo")
 		return
 	}
-	// ordem 04/10 (Fase G): conferência é iniciada por GERENTE DE GRUPO.
-	if u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "a conferência é iniciada pelo gerente do grupo")
+	// Onda 05/10 (ordem Diretor): conferência é iniciada por GERENTE DE GRUPO
+	// ou ENCARREGADO DE PESSOAL (função) — mesmo escopo (grupo).
+	if u.Papel != "gerente" && !a.ehEncarregado(u) {
+		jsonErro(w, http.StatusForbidden, "a conferência é iniciada pelo gerente ou pelo encarregado de pessoal")
 		return
 	}
 	if u.GrupoID == nil {

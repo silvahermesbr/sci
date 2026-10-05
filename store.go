@@ -1007,15 +1007,23 @@ func (s *Store) CriarSessaoComPapel(usuarioID int64, papelID *int64, ttl time.Du
 		if errPid == nil {
 			papelID = &pid
 		} else {
+			// Onda 05/10 (ordem Diretor): conta SEM papel do sistema (ex.:
+			// encarregado de pessoal que só tem função) loga com sessão
+			// papel_ativo_id = NULL — UsuarioDaSessao já trata o NULL.
+			// O caminho antigo sintetizava linha em usuario_papeis com o
+			// usuarios.papel cru (fora do CHECK) e morria na FOREIGN KEY.
 			var papel string
 			var grupoID, funcaoID *int64
 			if errU := s.db.QueryRow(`SELECT papel, grupo_id, funcao_id FROM usuarios WHERE id = ?`, usuarioID).Scan(&papel, &grupoID, &funcaoID); errU == nil {
-				resP, _ := s.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
-					usuarioID, grupoID, papel, funcaoID)
-				if resP != nil {
-					newPID, _ := resP.LastInsertId()
-					if newPID > 0 {
-						papelID = &newPID
+				switch papel {
+				case "admin", "gerente", "operador", "chefe_setor":
+					resP, _ := s.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
+						usuarioID, grupoID, papel, funcaoID)
+					if resP != nil {
+						newPID, _ := resP.LastInsertId()
+						if newPID > 0 {
+							papelID = &newPID
+						}
 					}
 				}
 			}
