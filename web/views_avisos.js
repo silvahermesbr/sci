@@ -375,7 +375,15 @@
     // Modal Publicar Novo Aviso
     const btNovo = document.getElementById('btNovoAviso');
     if (btNovo) {
-      btNovo.onclick = () => {
+      btNovo.onclick = async () => {
+        // Onda C2 (05/10): admin é global — escolhe o GRUPO DE DESTINO do aviso.
+        let optGrupos = '';
+        if (u.papel === 'admin') {
+          try {
+            const gs = await api('/api/grupos');
+            optGrupos = (gs || []).map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
+          } catch (e) {}
+        }
         const html = `
           <div class="modal" style="max-width:680px;width:95%">
             <h3 style="margin-top:0">📢 Publicar Novo Aviso no Mural</h3>
@@ -385,6 +393,11 @@
               <label style="font-weight:700">Título do Comunicado *</label>
               <input type="text" id="avTitulo" placeholder="ex.: Diretrizes para Operação Especial, Escalas de Serviço…" style="width:100%">
             </div>
+            ${u.papel === 'admin' ? `
+            <div class="campo" style="margin-bottom:12px">
+              <label style="font-weight:700">Grupo de Destino *</label>
+              <select id="avGrupo" style="width:100%"><option value="">— selecione o grupo —</option>${optGrupos}</select>
+            </div>` : ''}
 
             <div class="campo" style="margin-bottom:12px">
               <label style="font-weight:700">Conteúdo do Comunicado (Barra de Formatação DOCX) *</label>
@@ -418,6 +431,11 @@
             toast('Título e conteúdo são obrigatórios', 'erro');
             return;
           }
+          let grupoID;
+          if (u.papel === 'admin') {
+            grupoID = +(m.querySelector('#avGrupo') || {}).value || 0;
+            if (!grupoID) { toast('Escolha o grupo de destino', 'erro'); return; }
+          }
 
           m.querySelector('#avPublicar').disabled = true;
           try {
@@ -426,7 +444,8 @@
               body: JSON.stringify({
                 titulo,
                 conteudo,
-                fixado
+                fixado,
+                grupo_id: grupoID
               })
             });
             toast('Aviso publicado com sucesso no mural!');

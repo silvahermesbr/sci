@@ -2018,6 +2018,12 @@
         <div class="cartao"><h3 style="margin-top:0">Subordinação — Estrutura e Hierarquia da Unidade</h3>
           <div id="arvore2">${arvoreHTML(arvore, true)}</div></div>
       </div>
+      <div id="gerFuncoes" class="${abaGer === 'funcoes' ? '' : 'oculto'}">
+        <div class="cartao"><h3 style="margin-top:0">FUNÇÕES DO GRUPO — Titulares e Auxiliares</h3>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Designação de membros por função do catálogo: <b>1 titular</b> por função (garantido pelo sistema) e quantos auxiliares forem necessários. Somente contas do SEU grupo.</p>
+        <div class="rolagem"><table><thead><tr><th>Função</th><th>Designados</th><th>Designar</th></tr></thead>
+        <tbody id="tabFun"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
+      </div>
       <div id="gerOperadores" class="${abaGer === 'operadores' ? '' : 'oculto'}">
         <!-- ordem 04/10: gerente NÃO cria operador — seleciona CHEFES DE SETOR
              (aba Pessoal não cobre: isso fica no modal de usuário do admin) e são
@@ -2040,21 +2046,82 @@
         { valor: 'pessoal', rotulo: 'Pessoal' },
         { valor: 'tags', rotulo: 'Tags' },
         { valor: 'grupos', rotulo: 'Grupos' },
-        { valor: 'operadores', rotulo: 'Operadores' }
+        { valor: 'operadores', rotulo: 'Operadores' },
+        { valor: 'funcoes', rotulo: 'Funções' }
       ], {
         valorPadrao: abaGer,
         onChange: (k) => {
           abaGer = k;
-          ['pessoal', 'tags', 'grupos', 'operadores'].forEach(kk => {
+          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes'].forEach(kk => {
             const el = $('#ger' + kk[0].toUpperCase() + kk.slice(1));
             if (el) el.classList.toggle('oculto', kk !== abaGer);
           });
           if (abaGer === 'tags') carregarCats();
           if (abaGer === 'pessoal') atualizarSelectsCatalogos();
+          if (abaGer === 'funcoes') carregarFuncoesMembros();
         }
       });
     }
     ligarToggles($('#app'));
+
+    /* --- onda C2 (05/10): aba FUNÇÕES — designação de membros por função ---
+       GET /api/grupo/funcoes/membros (escopo do grupo da sessão) + POST/DELETE.
+       1 titular por função é garantia do backend (índice parcial único, 409). */
+    async function carregarFuncoesMembros() {
+      const tb = $('#tabFun');
+      if (!tb) return;
+      tb.innerHTML = '<tr><td colspan="3"><span class="carregando">…</span></td></tr>';
+      try {
+        const linhas = await api('/api/grupo/funcoes/membros');
+        const porFuncao = {};
+        (linhas || []).forEach(l => {
+          (porFuncao[l.funcao_id] = porFuncao[l.funcao_id] || { funcao_id: l.funcao_id, funcao_nome: l.funcao_nome, membros: [] }).membros.push(l);
+        });
+        const ids = Object.keys(porFuncao).sort((a, b) => String(porFuncao[a].funcao_nome).localeCompare(String(porFuncao[b].funcao_nome)));
+        if (!ids.length) { tb.innerHTML = '<tr><td colspan="3"><span class="vazio">nenhuma função no catálogo</span></td></tr>'; return; }
+        const opContas = contas.filter(c => c.grupo_id === eu.grupo_id && c.ativo)
+          .map(c => `<option value="${c.id}">${esc(c.nome_guerra || c.login)} (${esc(c.login)})</option>`).join('');
+        tb.innerHTML = ids.map(fid => {
+          const f = porFuncao[fid];
+          const membros = f.membros.filter(m => m.membro_id > 0);
+          const titular = membros.find(m => m.titularidade === 'titular');
+          const auxiliares = membros.filter(m => m.titularidade === 'auxiliar');
+          const linhaTit = titular
+            ? `<b>👑 ${esc(titular.nome_guerra || titular.login)}</b> <button class="acao-linha" data-remfun="${titular.membro_id}">remover</button>`
+            : '<span style="color:var(--tx3)">sem titular</span>';
+          const linhasAux = auxiliares.map(m => `<div style="margin-top:4px">${esc(m.nome_guerra || m.login)} <button class="acao-linha" data-remfun="${m.membro_id}">remover</button></div>`).join('');
+          return `<tr>
+            <td><b>${esc(f.funcao_nome)}</b></td>
+            <td>${linhaTit}${auxiliares.length ? '<div style="margin-top:6px;border-top:1px dashed var(--borda);padding-top:4px">' + linhasAux + '</div>' : ''}</td>
+            <td>
+              <div class="form-linha" style="gap:6px;align-items:center;flex-wrap:wrap">
+                <select data-seluser="${f.funcao_id}" style="min-width:170px"><option value="">— conta —</option>${opContas}</select>
+                <select data-seltit="${f.funcao_id}"><option value="titular">titular</option><option value="auxiliar">auxiliar</option></select>
+                <button class="primario" data-addfun="${f.funcao_id}" style="font-size:12px;padding:4px 12px">Designar</button>
+              </div>
+            </td></tr>`;
+        }).join('');
+        tb.querySelectorAll('[data-addfun]').forEach(bt => {
+          bt.onclick = async () => {
+            const fID = +bt.dataset.addfun;
+            const selU = tb.querySelector(`[data-seluser="${fID}"]`);
+            const selT = tb.querySelector(`[data-seltit="${fID}"]`);
+            if (!selU.value) { toast('Escolha a conta', 'erro'); return; }
+            const r = await processar(() => api('/api/grupo/funcoes/membros', { method: 'POST', body: JSON.stringify({ funcao_id: fID, usuario_id: +selU.value, titularidade: selT.value }) }), 'Designando…');
+            if (r.ok) carregarFuncoesMembros();
+          };
+        });
+        tb.querySelectorAll('[data-remfun]').forEach(bt => {
+          bt.onclick = async () => {
+            const r = await processar(() => api('/api/grupo/funcoes/membros/' + bt.dataset.remfun, { method: 'DELETE' }), 'Removendo designação…');
+            if (r.ok) carregarFuncoesMembros();
+          };
+        });
+      } catch (e) {
+        tb.innerHTML = '<tr><td colspan="3"><span class="vazio">Falha ao carregar funções.</span></td></tr>';
+      }
+    }
+    if (abaGer === 'funcoes') carregarFuncoesMembros();
 
     // Eventos da Árvore e Cards de Grupos para Gerente (#gerGrupos)
     const gerGrp = $('#gerGrupos');

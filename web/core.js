@@ -595,7 +595,11 @@ definirUsuario(usuario);
   let itens;
   if (papel === 'admin') {
     // Correção Diretor 05/10: o admin TEM o dashboard de admin na sidebar.
+    // Onda C2 (05/10): MURAL DE AVISOS no TOPO de todos os papéis — o admin
+    // agora lê e participa dos murais de todos os grupos (visão global).
+    const svgAvisosAdm = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
     itens = [
+      ['#/avisos', 'MURAL DE AVISOS', svgAvisosAdm],
       ['#/admin', 'PAINEL ADMIN', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>'],
       ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'],
       ['#/mensagens', 'EMAIL INTERNO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true]
@@ -614,21 +618,21 @@ definirUsuario(usuario);
     const svgGer = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
     if (papel === 'operador') {
       itens = [
-        ['#/hoje', 'CONFERÊNCIA', svgConf],
-        ['#/avisos', 'MURAL DE AVISOS', svgAvisos]
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
+        ['#/hoje', 'CONFERÊNCIA', svgConf]
       ];
     } else if (papel === 'chefe_setor') {
       itens = [
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
-        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
         ['#/mensagens', 'EMAIL INTERNO', svgMsg, true]
       ];
     } else if (papel === 'gerente') {
       itens = [
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/mensagens', 'EMAIL INTERNO', svgMsg, true],
-        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
         ['#/grupos', 'GERENCIAR GRUPO', svgGer],
         ['#/relatorios', 'RELATÓRIOS', svgRel]
