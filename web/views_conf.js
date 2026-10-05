@@ -369,6 +369,10 @@
     // ordem 04/10: NOVA CONFERÊNCIA é ato de GERENTE (conferência iniciada por
     // gerente de grupo); chefe de setor apenas lança presenças na conferência aberta.
     const ehGerente = (window.ME && window.ME.papel) === 'gerente';
+    // fix: ehEnc definido ANTES do uso — `ehGerente || ehEnc` só avaliava ehEnc
+    // para NÃO-gerente (chefe) e explodia com ReferenceError ("ehEnc is not
+    // defined"), deixando a tela eterna em "Carregando…" para chefe/operador.
+    const ehEnc = !!(window.ehEncarregado && window.ehEncarregado());
     $('#app').innerHTML = `<h2>Conferências</h2>${abasTela}${seletor}
       <div class="cartao" style="margin-bottom:10px">
         <div class="campo" style="margin:0">
