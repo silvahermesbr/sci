@@ -299,6 +299,8 @@ func (a *App) hDriveArquivoPropriedades(w http.ResponseWriter, r *http.Request) 
 		"pasta_id":       pastaID,
 		"pasta_nome":     pastaNome,
 		"grupo_id":       grupoID,
+		"funcao_id":      funcaoID,
+		"funcao_nome":    funcaoNome,
 		"acessos":        acessos,
 	})
 }

@@ -109,6 +109,15 @@
         }
         const res = await api(url);
 
+        // Onda 05/10 (drive POR FUNÇÃO): ids possesso da(s) função(s) exercida(s)
+        // → badge "da função" no cartão. Fetch tolerante: usuário sem função
+        // exercida continua renderizando normalmente.
+        let funcaoIDs = [];
+        try {
+          const rFun = await api('/api/drive/da_funcao');
+          funcaoIDs = (rFun.funcao_ids || []).map(x => +x);
+        } catch (_) { funcaoIDs = []; }
+
         // Botão Retornar à pasta anterior
         const btnRetornar = document.getElementById('btRetornarPastaDrive');
         if (btnRetornar) {
@@ -184,8 +193,9 @@
                     </div>
                   </div>
                   <div class="pasta-meta">
-                    <span>${p.qtd_itens || 0} item(ns)</span>
-                    ${p.compartilhada ? '<span class="badge-comp" title="Compartilhada">👥</span>' : ''}
+                  <span>${p.qtd_itens || 0} item(ns)</span>
+                  ${funcaoIDs.includes(+p.id) ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d" title="Possesso da função que você exerce">da função</span>' : ''}
+                  ${p.compartilhada ? '<span class="badge-comp" title="Compartilhada">👥</span>' : ''}
                   </div>
                 </div>
               `).join('')}
@@ -208,6 +218,7 @@
                     <div class="arquivo-nome" title="${esc(a.nome_original)}">${esc(a.nome_original)}</div>
                     <div class="arquivo-subinfo">
                       <span>${esc(a.autor_nome)}</span>
+                      ${funcaoIDs.includes(+a.id) ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d" title="Possesso da função que você exerce">da função</span>' : ''}
                       ${a.compartilhado ? '<span class="badge-comp" title="Compartilhado">👥</span>' : ''}
                     </div>
                   </div>
@@ -658,6 +669,7 @@
             <tr><td style="color:var(--tx3)">Enviado por</td><td>${esc(p.autor_nome || '—')}</td></tr>
             <tr><td style="color:var(--tx3)">Tamanho</td><td>${formatarTamanho(p.tamanho)}</td></tr>
             <tr><td style="color:var(--tx3)">Local</td><td>${esc(p.pasta_nome || 'Raiz do Meu Drive')}</td></tr>
+            ${p.funcao_id ? `<tr><td style="color:var(--tx3)">Função</td><td><span class="badge-mini" style="background:var(--ambar);color:#1a1a0d">da função</span> ${esc(p.funcao_nome || ('Função #' + p.funcao_id))}</td></tr>` : ''}
           </tbody>
         </table>
         <h4 style="margin:0 0 6px;font-size:13px;color:var(--tx2)">Quem tem acesso</h4>

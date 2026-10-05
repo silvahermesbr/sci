@@ -279,11 +279,15 @@
         return;
       }
 
-      const html = msgs.map(m => {
-        const lida = !!m.lida_em;
+      // Onda 05/10 (caixa da função): itens possesso da função (da_funcao=true)
+      // agrupados na própria seção "Caixa da Função" no TOPO — sem duplicação
+      // (a API já entrega cada item uma única vez) e sem arquivamento
+      // (destID NULL; trava server-side). Cartão da função c/ estilo próprio.
+      const cartaoMsg = (m, daFuncao) => {
+        const lida = daFuncao ? true : !!m.lida_em;
         const rem = m.remetente || {};
         const nomeRem = formatarNomeRemetente(rem.nome_completo, rem.nome_guerra);
-        const funcaoRem = rem.funcao_nome || 'Função Organizacional';
+        const funcaoRem = daFuncao ? (rem.nome_exibicao || rem.funcao_nome || 'Caixa da Função') : (rem.funcao_nome || 'Função Organizacional');
         const papelRem = (rem.papel || '').toUpperCase() + (rem.grupo_nome ? ' — ' + rem.grupo_nome : ' — Global');
 
         let badgeDespacho = '';
@@ -303,7 +307,7 @@
         }
 
         return `
-          <div class="msg-card ${lida ? 'lida' : 'nao-lida'}" data-msgid="${m.id}" style="cursor:pointer">
+          <div class="msg-card ${daFuncao ? 'da-funcao lida' : (lida ? 'lida' : 'nao-lida')}" data-msgid="${m.id}" style="cursor:pointer;${daFuncao ? 'border-left:3px solid var(--ambar)' : ''}">
             <div class="msg-card-status">
               <span class="msg-dot ${lida ? 'lida' : ''}"></span>
             </div>
@@ -321,9 +325,25 @@
             </div>
           </div>
         `;
-      }).join('');
+      };
 
-      cont.innerHTML = `<div class="msg-lista-wrapper">${html}</div>`;
+      const daFuncao = msgs.filter(m => m.da_funcao);
+      const pessoais = msgs.filter(m => !m.da_funcao);
+      let secaoFuncao = '';
+      if (daFuncao.length > 0) {
+        secaoFuncao = `
+          <div style="display:flex;align-items:center;gap:8px;margin:2px 0 8px">
+            <span style="font-size:13px;font-weight:700;color:var(--ambar)">📋 Caixa da Função (${daFuncao.length})</span>
+            <small style="color:var(--tx3);font-size:11px">possesso da função — permanece na troca de titular; não arquivável</small>
+          </div>
+          <div class="msg-lista-wrapper" style="margin-bottom:18px">${daFuncao.map(m => cartaoMsg(m, true)).join('')}</div>
+        `;
+      }
+      const secaoPessoal = pessoais.length > 0
+        ? `<div class="msg-lista-wrapper">${pessoais.map(m => cartaoMsg(m, false)).join('')}</div>`
+        : '';
+
+      cont.innerHTML = secaoFuncao + secaoPessoal;
 
       cont.querySelectorAll('.msg-card').forEach(card => {
         card.onclick = () => {
