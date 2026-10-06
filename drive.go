@@ -303,7 +303,7 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 		// Pastas compartilhadas
 		pRows, err := a.st.db.Query(`
 			SELECT DISTINCT dp.id, dp.nome, dp.pai_id, dp.grupo_id, dp.criado_em,
-			       COALESCE(u.nome_guerra, u.login, '—'),
+			       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'),
 			       dc.pode_editar
 			FROM drive_compartilhamentos dc
 			JOIN drive_pastas dp ON dp.id = dc.pasta_id
@@ -326,7 +326,7 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 		// Arquivos compartilhados
 		aRows, errA := a.st.db.Query(`
 			SELECT DISTINCT da.id, da.pasta_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
-			       COALESCE(u.nome_guerra, u.login, '—'),
+			       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'),
 			       dc.pode_editar
 			FROM drive_compartilhamentos dc
 			JOIN drive_arquivos da ON da.id = dc.arquivo_id
@@ -352,7 +352,7 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 		if pastaID == 0 {
 			pQuery = `
 				SELECT dp.id, dp.nome, dp.pai_id, dp.grupo_id, dp.criado_em,
-				       COALESCE(u.nome_guerra, u.login, '—'),
+				       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'),
 				       (SELECT COUNT(*) FROM drive_pastas sp WHERE sp.pai_id = dp.id) + 
 				       (SELECT COUNT(*) FROM drive_arquivos sa WHERE sa.pasta_id = dp.id) AS qtd_itens,
 				       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.pasta_id = dp.id) AS qtd_comp,
@@ -370,7 +370,7 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 		} else {
 			pQuery = `
 				SELECT dp.id, dp.nome, dp.pai_id, dp.grupo_id, dp.criado_em,
-				       COALESCE(u.nome_guerra, u.login, '—'),
+				       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'),
 				       (SELECT COUNT(*) FROM drive_pastas sp WHERE sp.pai_id = dp.id) + 
 				       (SELECT COUNT(*) FROM drive_arquivos sa WHERE sa.pasta_id = dp.id) AS qtd_itens,
 				       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.pasta_id = dp.id) AS qtd_comp,
@@ -411,7 +411,7 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 		if pastaID == 0 {
 			aQuery = `
 				SELECT da.id, da.pasta_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
-				       COALESCE(u.nome_guerra, u.login, '—'),
+				       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'),
 				       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.arquivo_id = da.id) AS qtd_comp,
 				       da.autor_usuario_id, da.grupo_id
 				FROM drive_arquivos da
@@ -427,7 +427,7 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 		} else {
 			aQuery = `
 				SELECT da.id, da.pasta_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
-				       COALESCE(u.nome_guerra, u.login, '—'),
+				       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'),
 				       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.arquivo_id = da.id) AS qtd_comp,
 				       da.autor_usuario_id, da.grupo_id
 				FROM drive_arquivos da

@@ -540,7 +540,7 @@ definirUsuario(usuario);
           ${usuario && usuario.foto_base64 ? `<img src="${usuario.foto_base64}" class="sidebar-avatar-img" alt="Foto">` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`}
         </div>
         <div class="sidebar-usuario-info">
-          <div class="sidebar-usuario-nome">${esc(usuario ? (usuario.nome_guerra || usuario.login) : '')}</div>
+          <div class="sidebar-usuario-nome">${esc(usuario ? (usuario.nome_guerra || usuario.nome_completo || '—') : '')}</div>
           <div class="sidebar-usuario-cargo">${esc(usuario && usuario.funcao_nome ? usuario.funcao_nome : rotuloPapel(papel))}</div>
         </div>
         <div class="sidebar-sino-wrapper">

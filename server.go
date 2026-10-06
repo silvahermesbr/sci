@@ -838,7 +838,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		qSetores := `
 			SELECT s.id, s.nome, COALESCE(s.sigla, ''),
 			       COALESCE(cs.status, 'nao_iniciada'),
-			       cs.concluido_por, COALESCE(u.nome_guerra, u.login, ''), cs.concluido_em,
+			       cs.concluido_por, COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), cs.concluido_em,
 			       COUNT(DISTINCT p.id) AS total_efetivo,
 			       COUNT(DISTINCT CASE WHEN pr.verificado = 1 THEN p.id ELSE NULL END) AS total_verificados
 			FROM setores s
@@ -1650,7 +1650,7 @@ func (a *App) hRegistrosBusca(w http.ResponseWriter, r *http.Request) {
 		}
 		q := `
 		SELECT f.data, f.id, p.nome_guerra, COALESCE(tt.nome,''), t.comentario,
-		       COALESCE(NULLIF(u.nome_guerra,''), u.login), t.criado_em, t.tag_id
+		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), t.criado_em, t.tag_id
 		FROM comentarios t
 		JOIN tags tt ON tt.id = t.tag_id
 		JOIN conferencias f ON f.id = t.conferencia_id
@@ -1820,7 +1820,7 @@ func (a *App) hPessoaComentarios(w http.ResponseWriter, r *http.Request) {
 	}
 	q := `
 		SELECT c.id, c.conferencia_id, COALESCE(t.nome,''), c.comentario,
-		       COALESCE(NULLIF(u.nome_guerra,''), u.login), c.criado_em
+		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), c.criado_em
 		FROM comentarios c
 		LEFT JOIN tags t ON t.id = c.tag_id
 		LEFT JOIN usuarios u ON u.id = c.operador_id
@@ -1852,7 +1852,7 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	escopo := escopoDoUsuario(u)
 	q := `
 		SELECT c.id, c.data, COALESCE(c.hora,''), COALESCE(c.local,''), c.status,
-		       COALESCE(NULLIF(u.nome_guerra,''), u.login), c.criado_em, c.fechada_em,
+		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), c.criado_em, c.fechada_em,
 		       (SELECT COUNT(*) FROM presencas p WHERE p.conferencia_id = c.id) AS lanc,
 		       COALESCE(c.grupo_id,0), COALESCE((SELECT g.nome FROM grupos g WHERE g.id = c.grupo_id),'—'),
 		       c.arquivada_em,
@@ -2861,7 +2861,7 @@ func (a *App) hPessoaPDF(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rowsC, errC := a.st.db.Query(`
-		SELECT mc.id, mi.nome, mi.codigo_patrimonio, mc.data_saida, COALESCE(u.nome_guerra, u.login)
+		SELECT mc.id, mi.nome, mi.codigo_patrimonio, mc.data_saida, COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—')
 		FROM material_cautelas mc
 		JOIN material_itens mi ON mi.id = mc.item_id
 		JOIN usuarios u ON u.id = mc.responsavel_entrega_id
@@ -2941,7 +2941,7 @@ func (a *App) hMaterialCautelaReciboPDF(w http.ResponseWriter, r *http.Request) 
 	             mi.nome, mi.codigo_patrimonio, COALESCE(mi.numero_serie, '—'), mi.grupo_id,
 	             COALESCE(cat.nome, 'Geral'), COALESCE(mi.nivel_sensibilidade, 'padrao'),
 	             p.nome_guerra, p.nome_completo, COALESCE(s.nome, 'Indefinido'), COALESCE(fu.nome, 'Indefinida'), COALESCE(g.nome, 'Geral'),
-	             COALESCE(ue.nome_guerra, ue.login), COALESCE(ur.nome_guerra, COALESCE(ur.login, '—'))
+	             COALESCE(NULLIF(ue.nome_guerra,''), NULLIF(ue.nome_completo,''), '—'), COALESCE(NULLIF(ur.nome_guerra,''), NULLIF(ur.nome_completo,''), '—')
 	      FROM material_cautelas mc
 	      JOIN material_itens mi ON mi.id = mc.item_id
 	      LEFT JOIN material_categorias cat ON cat.id = mi.categoria_id
@@ -8236,8 +8236,8 @@ func (a *App) hSetorSugestoesList(w http.ResponseWriter, r *http.Request) {
 	statusFiltro := strings.TrimSpace(r.URL.Query().Get("status"))
 
 	q := `SELECT s.id, s.grupo_id, COALESCE(g.nome, ''), s.setor_tipo, s.autor_id,
-	             COALESCE(u_aut.nome_guerra, u_aut.login), s.tipo_acao, s.dados_json,
-	             s.status, s.aprovado_por, COALESCE(u_apr.nome_guerra, u_apr.login, ''),
+	             COALESCE(NULLIF(u_aut.nome_guerra,''), NULLIF(u_aut.nome_completo,''), '—'), s.tipo_acao, s.dados_json,
+	             s.status, s.aprovado_por, COALESCE(NULLIF(u_apr.nome_guerra,''), NULLIF(u_apr.nome_completo,''), '—'),
 	             COALESCE(s.aprovado_em, ''), COALESCE(s.justificativa, ''), s.criado_em
 	      FROM setor_sugestoes s
 	      JOIN grupos g ON g.id = s.grupo_id

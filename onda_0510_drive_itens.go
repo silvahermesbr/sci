@@ -116,7 +116,7 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 
 		pRows, err := a.st.db.Query(`
 			SELECT dp.id, dp.nome, dp.pai_id, dp.grupo_id, dp.criado_em,
-			       COALESCE(u2.nome_guerra, u2.login, '—'), MAX(dc.pode_editar)
+			       COALESCE(NULLIF(u2.nome_guerra,''), NULLIF(u2.nome_completo,''), '—'), MAX(dc.pode_editar)
 			FROM drive_compartilhamentos dc
 			JOIN drive_pastas dp ON dp.id = dc.pasta_id
 			LEFT JOIN usuarios u2 ON u2.id = dp.autor_usuario_id
@@ -139,7 +139,7 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 
 		aRows, errA := a.st.db.Query(`
 			SELECT da.id, da.pasta_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
-			       COALESCE(u2.nome_guerra, u2.login, '—'), MAX(dc.pode_editar)
+			       COALESCE(NULLIF(u2.nome_guerra,''), NULLIF(u2.nome_completo,''), '—'), MAX(dc.pode_editar)
 			FROM drive_compartilhamentos dc
 			JOIN drive_arquivos da ON da.id = dc.arquivo_id
 			LEFT JOIN usuarios u2 ON u2.id = da.autor_usuario_id
@@ -172,7 +172,7 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 
 		pRows, err := a.st.db.Query(`
 			SELECT dp.id, dp.nome, dp.pai_id, dp.grupo_id, dp.criado_em,
-			       COALESCE(u2.nome_guerra, u2.login, '—'),
+			       COALESCE(NULLIF(u2.nome_guerra,''), NULLIF(u2.nome_completo,''), '—'),
 			       (SELECT COUNT(*) FROM drive_pastas sp WHERE sp.pai_id = dp.id) +
 			       (SELECT COUNT(*) FROM drive_arquivos sa WHERE sa.pasta_id = dp.id) AS qtd_itens,
 			       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.pasta_id = dp.id) AS qtd_comp
@@ -216,7 +216,7 @@ func (a *App) hDriveItens(w http.ResponseWriter, r *http.Request) {
 
 		aRows, errA := a.st.db.Query(`
 			SELECT da.id, da.pasta_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
-			       COALESCE(u2.nome_guerra, u2.login, '—'),
+			       COALESCE(NULLIF(u2.nome_guerra,''), NULLIF(u2.nome_completo,''), '—'),
 			       (SELECT COUNT(*) FROM drive_compartilhamentos dc WHERE dc.arquivo_id = da.id) AS qtd_comp
 			FROM drive_arquivos da
 			LEFT JOIN usuarios u2 ON u2.id = da.autor_usuario_id

@@ -212,7 +212,7 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 		SELECT DISTINCT ce.id, ce.calendario_id, ce.titulo, COALESCE(ce.descricao, ''), ce.tipo, 
 		       COALESCE(c.cor, ce.cor),
 		       ce.data_inicio, ce.data_fim, ce.dia_inteiro, ce.grupo_id,
-		       COALESCE(g.nome, 'Geral'), COALESCE(u.nome_guerra, u.login, '—'),
+		       COALESCE(g.nome, 'Geral'), COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'),
 		       ce.autor_usuario_id
 		FROM calendario_eventos ce
 		LEFT JOIN calendarios c ON c.id = ce.calendario_id
@@ -341,7 +341,7 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 	if u.PapelAtivoID != nil {
 		dRows, errD := a.st.db.Query(`
 			SELECT m.id, m.assunto, substr(m.criada_em, 1, 10),
-			       (md.respondido_em IS NULL), COALESCE(u.nome_guerra, u.login, '—')
+			       (md.respondido_em IS NULL), COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—')
 			FROM mensagens m
 			JOIN mensagem_destinatarios md ON md.mensagem_id = m.id
 			LEFT JOIN usuarios u ON u.id = m.remetente_usuario_id
@@ -737,7 +737,7 @@ func (a *App) hCalendariosList(w http.ResponseWriter, r *http.Request) {
 	meus := []CalendarioItem{}
 	rowsM, err := a.st.db.Query(`
 		SELECT c.id, c.nome, c.cor, COALESCE(c.descricao, ''), c.autor_usuario_id,
-		       COALESCE(u.nome_guerra, u.login, '—'), c.grupo_id, COALESCE(g.nome, ''), c.criado_em
+		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), c.grupo_id, COALESCE(g.nome, ''), c.criado_em
 		FROM calendarios c
 		LEFT JOIN usuarios u ON u.id = c.autor_usuario_id
 		LEFT JOIN grupos g ON g.id = c.grupo_id
@@ -795,7 +795,7 @@ func (a *App) hCalendariosList(w http.ResponseWriter, r *http.Request) {
 
 	qComp := fmt.Sprintf(`
 		SELECT DISTINCT c.id, c.nome, c.cor, COALESCE(c.descricao, ''), c.autor_usuario_id,
-		       COALESCE(u.nome_guerra, u.login, '—'), c.grupo_id, COALESCE(g.nome, ''), c.criado_em,
+		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), c.grupo_id, COALESCE(g.nome, ''), c.criado_em,
 		       MAX(cc.pode_editar) as pode_ed, MAX(cc.forcar_inscricao) as forcada
 		FROM calendarios c
 		JOIN calendario_compartilhamentos cc ON cc.calendario_id = c.id

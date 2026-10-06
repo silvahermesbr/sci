@@ -216,7 +216,17 @@
 
   // Redefinir senha (admin usa confirmação; operadores do gerente, campo único)
   function modalSenha(id, login, comConfirmar, aoFim) {
-    const div = modal(`<div class="modal-inner"><h3>Redefinir senha — ${esc(login)}</h3>
+    // ITEM 2 (ordem Diretor 06/10): login é sensível — para não-admin o título
+    // resolve pelo nome de guerra/completo nas listas da view corrente (admUsuarios
+    // ou operadores do grupo); sem lista disponível, cai no login (nunca inventado).
+    let titulo = login;
+    if ((quem() || {}).papel !== 'admin') {
+      const alvo = (typeof lista !== 'undefined' && Array.isArray(lista) && lista.find(x => String(x.login) === String(login)))
+        || (typeof operadores !== 'undefined' && Array.isArray(operadores) && operadores.find(x => String(x.login) === String(login)))
+        || null;
+      if (alvo) titulo = alvo.nome_guerra || alvo.nome_completo || login;
+    }
+    const div = modal(`<div class="modal-inner"><h3>Redefinir senha — ${esc(titulo)}</h3>
       <div class="campo"><label>Nova senha (mín. 8)</label><input type="password" id="rN"></div>
       ${comConfirmar ? '<div class="campo"><label>Confirmar</label><input type="password" id="rC"></div>' : ''}
       <div class="modal-acoes"><button class="fantasma" id="rX">Cancelar</button>
@@ -236,7 +246,15 @@
 
   // Mover conta entre grupos (admin: quaisquer; gerente: backend limita à hierarquia)
   function modalMover(id, login, optsGrupos, aviso, aoFim) {
-    const div = modal(`<div class="modal-inner"><h3>Mover conta — ${esc(login)}</h3>
+    // ITEM 2: mesmo tratamento do modalSenha — não-admin vê nome, não login.
+    let tituloMv = login;
+    if ((quem() || {}).papel !== 'admin') {
+      const alvo = (typeof lista !== 'undefined' && Array.isArray(lista) && lista.find(x => String(x.login) === String(login)))
+        || (typeof operadores !== 'undefined' && Array.isArray(operadores) && operadores.find(x => String(x.login) === String(login)))
+        || null;
+      if (alvo) tituloMv = alvo.nome_guerra || alvo.nome_completo || login;
+    }
+    const div = modal(`<div class="modal-inner"><h3>Mover conta — ${esc(tituloMv)}</h3>
       <div class="campo"><label>Grupo de destino</label><select id="mG">${optsGrupos}</select></div>
       ${aviso ? `<p style="color:var(--tx2);font-size:12px">${aviso}</p>` : ''}
       <div class="modal-acoes"><button class="fantasma" id="mX">Cancelar</button>
@@ -328,6 +346,10 @@
     const funcoesLista = Array.isArray(funcoesRes) ? funcoesRes : (funcoesRes.funcoes || []);
     const setoresLista = (Array.isArray(setoresRes) ? setoresRes : []).filter(s => s.ativo !== false);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
+    // ITEM 2 (ordem Diretor 06/10): login é identificação SENSÍVEL — só o admin
+    // vê na UI. Gerente/encarregado/operador veem nome de guerra (ou completo).
+    const isAdminViewer = (quem() || {}).papel === 'admin';
+    const rotuloConta = u => esc(u.nome_guerra || u.nome_completo || (isAdminViewer ? u.login : '—'));
     const optsGrupos = `<option value="">— Sem grupo (Global / Atribuir depois) —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
 
     function formatarNomeUsuario(completo, guerra) {
@@ -356,7 +378,7 @@
         <div class="form-linha" style="margin-bottom:12px; gap:8px; flex-wrap:wrap">
           <div class="campo" style="flex:1; min-width:180px">
             <label>Buscar usuário</label>
-            <input id="fULogin" placeholder="Filtrar por login, nome de guerra ou completo…">
+            <input id="fULogin" placeholder="${isAdminViewer ? 'Filtrar por login, nome de guerra ou completo…' : 'Filtrar por nome…'}">
           </div>
           <div class="campo" style="min-width:160px">
             <label>Grupo</label>
@@ -391,7 +413,7 @@
               <tr>
                 <th style="width:38px; text-align:center">Foto</th>
                 <th>ID</th>
-                <th>Login</th>
+                <th>${isAdminViewer ? 'Login' : 'Guerra'}</th>
                 <th>Identificação Militar</th>
                 <th>Funções / Cadeiras Atribuídas</th>
                 <th>Status</th>
@@ -424,7 +446,7 @@
                       </div>
                     </td>
                     <td class="num">#${u.id}</td>
-                    <td><b>${esc(u.login)}</b></td>
+                    <td><b>${rotuloConta(u)}</b></td>
                     <td>
                       <div>${formatarNomeUsuario(u.nome_completo, u.nome_guerra)}</div>
                     </td>
@@ -462,11 +484,14 @@
       const papel = $('#fUPapel').value;
       const at = $('#fUAtivo').value;
       document.querySelectorAll('#tabU tbody tr[data-login]').forEach(tr => {
-        const loginMatches = tr.dataset.login.toLowerCase().includes(q) || tr.dataset.nomes.toLowerCase().includes(q);
+        // ITEM 2: filtro por NOME para todos; por login só quando o viewer é admin
+        // (data-login permanece como atributo interno — nada é exibido na tela).
+        const nomeMatches = tr.dataset.nomes.toLowerCase().includes(q);
+        const loginMatches = isAdminViewer && tr.dataset.login.toLowerCase().includes(q);
         const grupoMatches = !gid || tr.dataset.gid === gid;
         const papelMatches = !papel || tr.dataset.papeis.includes(papel);
         const ativoMatches = at === '' || tr.dataset.ativo === at;
-        tr.style.display = (loginMatches && grupoMatches && papelMatches && ativoMatches) ? '' : 'none';
+        tr.style.display = (nomeMatches || loginMatches) && grupoMatches && papelMatches && ativoMatches ? '' : 'none';
       });
     };
 
@@ -543,7 +568,7 @@
         <div class="modal" style="max-width:620px; max-height:90vh; overflow-y:auto">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px">
             <div>
-              <h3 style="margin:0 0 2px">👤 Perfil do Usuário — ${esc(u.login)}</h3>
+              <h3 style="margin:0 0 2px">👤 Perfil do Usuário — ${esc(u.nome_guerra || u.nome_completo || (isAdminViewer ? u.login : '—'))}</h3>
               <p style="color:var(--tx2);font-size:12px;margin:0">ID #${u.id} · Papel: <b>${rotuloPapel(u.papel)}</b></p>
             </div>
             <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
@@ -689,7 +714,7 @@
           <div class="form-linha" style="margin-bottom:8px">
             <div class="campo" style="flex:1">
               <label>Nº Identificação (CPF/ID) *</label>
-              <input id="nuLogin" placeholder="ex.: 000.000.000-00">
+              <input id="nuLogin" placeholder="${isAdminViewer ? 'ex.: 000.000.000-00' : 'gerado pelo sistema a partir do nome'}">
             </div>
             <div class="campo" style="flex:1">
               <label>Senha Inicial (opcional)</label>
@@ -779,11 +804,20 @@
 
       div.querySelector('#nuX').onclick = () => div.fechar && div.fechar();
       div.querySelector('#nuGo').onclick = async () => {
-        const login = div.querySelector('#nuLogin').value.trim();
-        const senha = div.querySelector('#nuSenha').value;
         const completo = div.querySelector('#nuCompleto').value.trim();
         const guerra = div.querySelector('#nuGuerra').value.trim();
         const papel = selP.value;
+        // ITEM 2 (ordem Diretor 06/10): o campo de identificação não é digitado
+        // nem exibido para não-admin — o sistema deriva o login do nome de guerra
+        // (acentos/espaços normalizados). O admin continua digitando o seu.
+        let login;
+        if (isAdminViewer) {
+          login = div.querySelector('#nuLogin').value.trim();
+        } else {
+          login = guerra.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+            .replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'conta' + Date.now();
+        }
+        const senha = div.querySelector('#nuSenha').value;
         // ordem 04/10: padrão é SEM grupo (admin vincula depois se quiser);
         // gerente continua exigindo unidade.
         const grupoId = +div.querySelector('#nuGrupo').value || null;
@@ -836,9 +870,10 @@
     }
 
     function modalAtribuirPapel(uid, login) {
+      const tituloConta = isAdminViewer ? esc(login) : esc((lista.find(x => x.id === +uid) || {}).nome_guerra || 'usuário');
       const html = `
         <div class="modal" style="max-width:480px">
-          <h3 style="margin-top:0">Atribuir Função / Cadeira — ${esc(login)}</h3>
+          <h3 style="margin-top:0">Atribuir Função / Cadeira — ${tituloConta}</h3>
           <p style="color:var(--tx2);font-size:13px;margin-bottom:14px">Permita que este usuário acumule funções adicionais em grupos específicos.</p>
 
           <div class="form-linha" style="margin-bottom:10px">
@@ -964,7 +999,7 @@
     function modalEditarNomes(uid, login, nomeGuerraAtual, nomeCompletoAtual) {
       const html = `
         <div class="modal" style="max-width:440px">
-          <h3 style="margin-top:0">Editar Identificação — ${esc(login)}</h3>
+          <h3 style="margin-top:0">Editar Identificação — ${isAdminViewer ? esc(login) : esc(nomeGuerraAtual || nomeCompletoAtual || 'usuário')}</h3>
           <p style="color:var(--tx2);font-size:13px;margin-bottom:14px">O nome curto/de guerra aparecerá destacado nas assinaturas e caixas postais.</p>
 
           <div class="campo" style="margin-bottom:10px">
