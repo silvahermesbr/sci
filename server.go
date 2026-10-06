@@ -316,6 +316,7 @@ func (a *App) rotas() {
 	m.Handle("DELETE /api/catalogo/{t}/{id}", a.guardaGestaoPessoal(a.hCatalogoDel))
 	m.Handle("PATCH /api/catalogo/{t}/{id}/pai", a.guardaGestaoPessoal(a.hCatalogoReparentar)) // hierarquia (v9.16)
 	m.Handle("PATCH /api/catalogo/{t}/{id}", a.guardaGestaoPessoal(a.hCatalogoEditar))
+	m.Handle("DELETE /api/setores/{id}", a.auth(false, a.hSetorExcluir)) // ordem 06/10 item 8c: exclusão com remanejamento
 
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
 	m.Handle("POST /api/pessoas", a.guardaGestaoPessoal(a.hPessoasAdd))

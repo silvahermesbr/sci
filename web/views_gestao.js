@@ -14,6 +14,109 @@
   let abaAdmin = 'dashboard'; // sub-aba corrente do painel admin (persiste na sessão)
   let abaGer = 'pessoal';    // sub-aba corrente do Gerenciar
 
+  /* ---------- ordem 06/10 (item 10): controles de TABELA — ordenação + paginação ----------
+     window.tblOrdenar / window.tblPaginar (também via window.tabelaControles). Estado por
+     tabela (chave em memória do módulo). Aplicar DEPOIS de o tbody ter as linhas renderizadas:
+       tblOrdenar('agregado', table, tbody, [ {sel:'td:nth-child(1)', tipo:'txt'}, ... ]);
+       tblPaginar('chefes', table, tbody, 20, tituloEl?);
+     - tipo 'num': comparação numérica (ids/quantidades); tipo 'txt': localeCompare pt-BR;
+     - clique no TH alterna asc/desc com indicador ▲/▼ (th.sorted-asc / th.sorted-desc);
+     - paginação 20/página com controles ‹ 1/N › na div .tbl-pag (inserida após a .rolagem);
+     - NÃO usar nos RELATÓRIOS (ordenação hierárquica cravada pelo Diretor). */
+  const TBL_ESTADO = {}; // chave → { col, asc } | { pag }
+
+  function tblHeaders(table) { return [...table.querySelectorAll('thead th')]; }
+  function tblLinhas(tbody) { return [...tbody.querySelectorAll('tr')]; }
+  const eLinhaVazio = tr => tr.querySelector('.vazio, .carregando') !== null;
+  function tblOrdenarPor(chave, table, tbody, col, tipo, asc) {
+    const linhas = tblLinhas(tbody).filter(tr => !eLinhaVazio(tr) && !tr.classList.contains('conf-toggle-detalhe'));
+    const valDe = tr => {
+      const td = tr.children[col];
+      if (!td) return '';
+      if (tipo === 'num') {
+        const t = parseFloat((td.dataset.v !== undefined ? td.dataset.v : td.textContent).replace(/[^\d.,-]/g, '').replace(',', '.'));
+        return isNaN(t) ? '' : t;
+      }
+      return td.textContent.trim();
+    };
+    linhas.sort((a, b) => {
+      const va = valDe(a), vb = valDe(b);
+      let r;
+      if (tipo === 'num') r = (parseFloat(va) || 0) - (parseFloat(vb) || 0);
+      else r = String(va).localeCompare(String(vb), 'pt', { sensitivity: 'base' }) || String(va).localeCompare(String(vb));
+      return asc ? r : -r;
+    });
+    linhas.forEach(tr => tbody.appendChild(tr));
+    tblHeaders(table).forEach((th, i) => {
+      th.classList.remove('sorted-asc', 'sorted-desc');
+      if (i === col) th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
+    });
+    (TBL_ESTADO[chave] = TBL_ESTADO[chave] || {}).col = col;
+    TBL_ESTADO[chave].asc = asc;
+    TBL_ESTADO[chave].tipo = tipo;
+    TBL_ESTADO[chave].pag = 1; // reordenar volta à primeira página
+  }
+  function tblPaginarPara(chave, table, tbody, tamPag, estado) {
+    const todas = tblLinhas(tbody).filter(tr => !eLinhaVazio(tr) && !tr.classList.contains('conf-toggle-detalhe'));
+    const total = todas.length;
+    const pags = Math.max(1, Math.ceil(total / tamPag));
+    estado.pag = Math.min(Math.max(1, estado.pag || 1), pags);
+    todas.forEach((tr, i) => {
+      const naPag = Math.floor(i / tamPag) === (estado.pag - 1);
+      tr.style.display = naPag ? '' : 'none';
+    });
+    let div = table.parentElement.parentElement.querySelector('.tbl-pag[data-tbl="' + chave + '"]');
+    if (!div) {
+      div = document.createElement('div');
+      div.className = 'tbl-pag';
+      div.dataset.tbl = chave;
+      const cartao = table.closest('.cartao') || table.parentElement.parentElement;
+      cartao.appendChild(div);
+    }
+    if (total <= tamPag) { div.innerHTML = '<span class="tbl-pag-info">' + total + ' registro(s)</span>'; return; }
+    div.innerHTML =
+      '<button type="button" class="tbl-pag-bt" data-pg="prev" ' + (estado.pag <= 1 ? 'disabled' : '') + '>‹</button>' +
+      '<span class="tbl-pag-info">' + estado.pag + '/' + pags + ' · ' + total + '</span>' +
+      '<button type="button" class="tbl-pag-bt" data-pg="next" ' + (estado.pag >= pags ? 'disabled' : '') + '>›</button>';
+    div.querySelectorAll('[data-pg]').forEach(bt => {
+      bt.onclick = () => { estado.pag += (bt.dataset.pg === 'next' ? 1 : -1); tblPaginarPara(chave, table, tbody, tamPag, estado); };
+    });
+    (TBL_ESTADO[chave] = TBL_ESTADO[chave] || {}).pag = estado.pag;
+  }
+  function tblOrdenar(chave, table, tbody, cols) {
+    if (!table || !tbody) return;
+    const est = TBL_ESTADO[chave] || (TBL_ESTADO[chave] = {});
+    tblHeaders(table).forEach((th, i) => {
+      const cfg = (cols || [])[i]; // posicional: {tipo:'num'|'txt'} ou null (coluna sem ordenar, ex. Ações)
+      if (!cfg) return;
+      th.style.cursor = 'pointer';
+      th.title = th.title || 'Clique para ordenar';
+      if (th.dataset.tblOrdLigado) return;
+      th.dataset.tblOrdLigado = '1';
+      th.addEventListener('click', () => {
+        const e2 = TBL_ESTADO[chave] || (TBL_ESTADO[chave] = {});
+        const asc = !(e2.col === i && e2.asc);
+        tblOrdenarPor(chave, table, tbody, i, cfg.tipo || 'txt', asc);
+        if (e2._repag) e2._repag();
+      });
+    });
+    if (est.col !== undefined) tblOrdenarPor(chave, table, tbody, est.col, est.tipo || 'txt', est.asc);
+  }
+  function tblPaginar(chave, table, tbody, tamPag) {
+    if (!table || !tbody) return;
+    tamPag = tamPag || 20;
+    const est = TBL_ESTADO[chave] || (TBL_ESTADO[chave] = {});
+    est._repag = () => tblPaginarPara(chave, table, tbody, tamPag, est);
+    tblPaginarPara(chave, table, tbody, tamPag, est);
+  }
+  window.tblOrdenar = tblOrdenar;
+  window.tblPaginar = tblPaginar;
+  window.tabelaControles = (chave, table, tbody, cols, tamPag) => {
+    tblOrdenar(chave, table, tbody, cols);
+    if (tamPag) tblPaginar(chave, table, tbody, tamPag);
+  };
+
+
   /* ---------- blocos compartilhados ---------- */
 
   // abrirModal (core) insere o .modal-mask no body e devolve o elemento; aqui só
@@ -2021,7 +2124,7 @@
     const linhasP = (pessoas.pessoas || []).map(p =>
       `<tr data-p='${esc(JSON.stringify(p))}'><td><input type="checkbox" class="chkP" data-id="${p.id}"></td>
        <td class="num">#${p.id}</td><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
-       <td>${esc(p.setor || 'INDEFINIDO')}</td>
+       <td>${esc(p.setor || 'SEM SETOR')}</td>
        <td>${esc(p.funcao || 'INDEFINIDO')}</td>
        <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
        <td><button class="acao-linha" data-edit="${p.id}">editar</button>
@@ -2130,6 +2233,21 @@
         <div class="rolagem"><table><thead><tr><th>Setor</th><th>Unidade</th><th class="num">Pessoal ativo</th><th class="num">Contas ativas</th><th>Chefe</th></tr></thead>
         <tbody id="tabAgreg"><tr><td colspan="5"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
+      <div id="gerSetores" class="${abaGer === 'setores' ? '' : 'oculto'}">
+        <!-- ordem 06/10 (item 8): modo SETORES do Gerenciar — EDITAR por setor
+             (nome / chefe / excluir com confirmação dupla) + NOVO SETOR. -->
+        <div class="cartao">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px">
+            <div>
+              <h3 style="margin:0 0 4px">🏢 Setores — Gestão</h3>
+              <p style="color:var(--tx2); font-size:12.5px; margin:0">EDITAR abre as ações do setor: ALTERAR NOME, NOMEAR CHEFE (candidatos = pessoas do setor) e EXCLUIR (remaneja o pessoal para SEM SETOR; setor com histórico de conferências não é apagado — desative).</p>
+            </div>
+            <button class="primario" id="btNovoSetor" style="min-height:38px">➕ NOVO SETOR</button>
+          </div>
+          <div class="rolagem"><table><thead><tr><th>Setor</th><th>Sigla</th><th>Unidade</th><th>Chefe atual</th><th></th></tr></thead>
+          <tbody id="tabSetores"><tr><td colspan="5"><span class="carregando">…</span></td></tr></tbody></table></div>
+        </div>
+      </div>
       <div id="gerOperadores" class="${abaGer === 'operadores' ? '' : 'oculto'}">
         <!-- ordem 04/10: gerente NÃO cria operador — seleciona CHEFES DE SETOR
              (aba Pessoal não cobre: isso fica no modal de usuário do admin) e são
@@ -2173,12 +2291,13 @@
         { valor: 'operadores', rotulo: 'Operadores' },
         { valor: 'funcoes', rotulo: 'Funções' },
         { valor: 'chefes', rotulo: 'Chefes' },
+        { valor: 'setores', rotulo: 'Setores (Gestão)' },
         { valor: 'agregado', rotulo: 'Setores (Visão Agregada)' }
       ], {
         valorPadrao: abaGer,
         onChange: (k) => {
           abaGer = k;
-          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes', 'agregado'].forEach(kk => {
+          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes', 'agregado', 'setores'].forEach(kk => {
             const el = $('#ger' + kk[0].toUpperCase() + kk.slice(1));
             if (el) el.classList.toggle('oculto', kk !== abaGer);
           });
@@ -2187,6 +2306,7 @@
           if (abaGer === 'funcoes') carregarFuncoesMembros();
           if (abaGer === 'chefes') carregarChefes();
           if (abaGer === 'agregado') carregarAgregadoSetores();
+          if (abaGer === 'setores') carregarModoSetores();
         }
       });
     }
@@ -2228,6 +2348,24 @@
     });
 
     ligarToggles($('#app'));
+
+    /* --- ordem 06/10 (item 10): controles de tabela nas listas do GERENCIA ---
+       Banco de pessoal: ordenar em todas as colunas + paginação 20/página.
+       Operadores: idem (trivial — mesma chamada). Demais abas plugam o helper
+       nos próprios loaders (funcoes/chefes/agregado/setores). Relatórios NÃO. */
+    const tabPTbl = document.querySelector('#gerPessoal table');
+    if (tabPTbl) {
+      window.tabelaControles('ger-pessoal', tabPTbl, $('#tabP'), [
+        null, { tipo: 'num' }, { tipo: 'txt' }, { tipo: 'txt' },
+        { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, null
+      ], 20);
+    }
+    const tabOpTbl = document.querySelector('#gerOperadores table');
+    if (tabOpTbl) {
+      window.tabelaControles('ger-operadores', tabOpTbl, tabOpTbl.querySelector('tbody'), [
+        { tipo: 'num' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, null
+      ], 20);
+    }
 
     /* --- onda C2 (05/10): aba FUNÇÕES — designação de membros por função ---
        GET /api/grupo/funcoes/membros (escopo do grupo da sessão) + POST/DELETE.
@@ -2282,6 +2420,9 @@
             if (r.ok) carregarFuncoesMembros();
           };
         });
+        // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Função / Designados / Designar)
+        const tabFunTbl = document.querySelector('#gerFuncoes table');
+        if (tabFunTbl) window.tblOrdenar('ger-funcoes', tabFunTbl, tb, [{ tipo: 'txt' }, { tipo: 'txt' }]);
       } catch (e) {
         tb.innerHTML = '<tr><td colspan="3"><span class="vazio">Falha ao carregar funções.</span></td></tr>';
       }
@@ -2289,6 +2430,140 @@
     if (abaGer === 'funcoes') carregarFuncoesMembros();
     if (abaGer === 'chefes') carregarChefes();
     if (abaGer === 'agregado') carregarAgregadoSetores();
+    if (abaGer === 'setores') carregarModoSetores();
+
+    /* --- ordem 06/10 (item 8): modo SETORES do Gerenciar ---
+       Listagem com botão EDITAR por setor (modal com 3 ações: ALTERAR NOME via
+       PATCH /api/catalogo/setores/{id}; NOMEAR CHEFE via POST /api/grupos/{id}/
+       nomear_chefe {usuario_id, setor_id} — candidatos = pessoas do setor;
+       EXCLUIR via DELETE /api/setores/{id} com confirmação dupla) e NOVO SETOR
+       no topo (POST /api/catalogo/setores). */
+    async function carregarModoSetores() {
+      const tb = $('#tabSetores');
+      if (!tb) return;
+      tb.innerHTML = '<tr><td colspan="5"><span class="carregando">…</span></td></tr>';
+      try {
+        const [setoresG, pessoalR, contasR] = await Promise.all([
+          api('/api/catalogo/setores'), api('/api/pessoas'), api('/api/usuarios')]);
+        const listaS = (setoresG || []).filter(s => s.ativo !== false);
+        const gid = eu.grupo_id;
+        const doGrupo = (contasR || []).filter(c => c.grupo_id === gid && c.ativo);
+        const chefeDeSetor = {};
+        doGrupo.forEach(c => {
+          (c.papeis || []).forEach(p => {
+            if (p.papel === 'chefe_setor' && c.setor_id) chefeDeSetor[c.setor_id] = c;
+          });
+        });
+        if (!listaS.length) {
+          tb.innerHTML = '<tr><td colspan="5"><span class="vazio">nenhum setor no catálogo — use NOVO SETOR</span></td></tr>';
+        } else {
+          tb.innerHTML = listaS.map(s => {
+            const ch = chefeDeSetor[s.id];
+            return `<tr>
+            <td><b>${esc(s.nome)}</b></td>
+            <td>${s.sigla ? '<code style="font-size:11px">' + esc(s.sigla) + '</code>' : '<span style="color:var(--tx3)">—</span>'}</td>
+            <td>${esc((grupos.find(g => g.id === s.grupo_id) || {}).nome || '—')}</td>
+            <td>${ch
+              ? `<span class="alerta-ok">👑 ${esc(ch.nome_guerra || ch.login)}</span>`
+              : '<span style="color:var(--tx3)">sem chefe</span>'}</td>
+            <td><button class="acao-linha" data-edsetor="${s.id}" data-nome="${esc(s.nome)}" data-sigla="${esc(s.sigla || '')}">EDITAR</button></td>
+          </tr>`;
+          }).join('');
+          // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Setor/Sigla/Unidade/Chefe)
+          const tabStTbl = document.querySelector('#gerSetores table');
+          if (tabStTbl) window.tblOrdenar('ger-setores', tabStTbl, tb,
+            [{ tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }]);
+        }
+        // ligar EDITAR em cada setor (mesmo com lista vazia não há botões — ok)
+        tb.querySelectorAll('[data-edsetor]').forEach(bt => {
+          bt.onclick = () => modalEditarSetor(+bt.dataset.edsetor, bt.dataset.nome, bt.dataset.sigla || '');
+        });
+      } catch (e) {
+        tb.innerHTML = '<tr><td colspan="5"><span class="vazio">Falha ao carregar setores.</span></td></tr>';
+      }
+    }
+
+    // modal EDITAR do setor: 3 ações (nome / chefe / excluir com dupla confirmação)
+    function modalEditarSetor(sID, sNome, sSigla) {
+      const div = modal(`<div class="modal-inner">
+        <h3>🏢 Editar setor — ${esc(sNome)}</h3>
+        <div class="form-linha">
+          <div class="campo"><label>ALTERAR NOME</label><input id="esNome" value="${esc(sNome)}"></div>
+          <div class="campo" style="width:130px"><label>Sigla</label><input id="esSigla" value="${esc(sSigla)}"></div>
+        </div>
+        <div class="campo"><label>NOMEAR CHEFE — candidatos: pessoal do setor</label>
+          <select id="esChefe"><option value="">— selecionar —</option></select>
+          <small id="esChefeInfo" style="color:var(--tx2);font-size:11.5px">carregando candidatos…</small></div>
+        <div class="modal-acoes" style="justify-content:space-between; flex-wrap:wrap; gap:8px">
+          <button class="perigo" id="esExc">🗑 EXCLUIR SETOR</button>
+          <div style="display:flex; gap:8px">
+            <button class="fantasma" id="esX">Fechar</button>
+            <button class="primario" id="esGo">Salvar alterações</button>
+          </div>
+        </div></div>`);
+      if (!div) return;
+      // candidatos a chefe: pessoas do setor com conta ativa no grupo
+      (async () => {
+        const sel = div.querySelector('#esChefe');
+        try {
+          const pessoal = await api('/api/pessoas');
+          const doSetor = (pessoal.pessoas || []).filter(p => p.setor_id === sID && p.status === 'ativo');
+          const contasL = await api('/api/usuarios');
+          const contaPorPessoa = {};
+          (contasL || []).forEach(c => { if (c.pessoa_id) contaPorPessoa[c.pessoa_id] = c; });
+          const cand = doSetor.filter(p => {
+            const c = contaPorPessoa[p.id];
+            return c && c.grupo_id === eu.grupo_id && c.ativo;
+          });
+          sel.innerHTML = '<option value="">— selecionar —</option>' + cand.map(p => {
+            const c = contaPorPessoa[p.id];
+            return `<option value="${c.id}">${esc(p.nome_guerra || p.nome_completo)} (${esc(c.login)})</option>`;
+          }).join('');
+          div.querySelector('#esChefeInfo').textContent = cand.length
+            ? cand.length + ' candidato(s) com conta ativa no grupo'
+            : 'nenhuma pessoa do setor tem conta ativa no grupo — cadastre em Pessoal ou pelo admin';
+        } catch (e) {
+          div.querySelector('#esChefeInfo').textContent = 'falha ao carregar candidatos';
+        }
+      })();
+      div.querySelector('#esX').onclick = () => div.fechar && div.fechar();
+      // ALTERAR NOME (PATCH catálogo existente)
+      div.querySelector('#esGo').onclick = async () => {
+        const nome = div.querySelector('#esNome').value.trim();
+        const sigla = div.querySelector('#esSigla').value.trim();
+        if (!nome) { toast('Informe o nome', 'erro'); return; }
+        const r = await processar(() => api('/api/catalogo/setores/' + sID, { method: 'PATCH', body: JSON.stringify({ nome, sigla }) }), 'Salvando setor…');
+        if (r.ok) {
+          toast('Setor atualizado');
+          div.fechar && div.fechar();
+          setoresCat = funcoesCat = null;
+          window.ViewGrupos();
+        }
+      };
+      // NOMEAR CHEFE (endpoint existente da onda escalas)
+      div.querySelector('#esChefe').addEventListener('change', async () => {
+        const uid = +div.querySelector('#esChefe').value;
+        if (!uid) return;
+        const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/nomear_chefe', { method: 'POST', body: JSON.stringify({ usuario_id: uid, setor_id: sID }) }), 'Nomeando chefe…');
+        if (r.ok) {
+          toast('Chefe nomeado');
+          div.fechar && div.fechar();
+          window.ViewGrupos();
+        }
+      });
+      // EXCLUIR SETOR — confirmação dupla padrão do sistema
+      div.querySelector('#esExc').onclick = async () => {
+        if (!(await confirmar(`Excluir o setor "${sNome}"? O pessoal dele passará para SEM SETOR.`))) return;
+        if (!(await confirmar(`TEM CERTEZA? Excluir "${sNome}" NÃO tem volta (setor com histórico de conferências não pode ser excluído — desative).`))) return;
+        div.fechar && div.fechar();
+        const r = await processar(() => api('/api/setores/' + sID, { method: 'DELETE' }), 'Excluindo setor…');
+        if (r.ok) {
+          toast(`Setor excluído — ${(r.resultado && r.resultado.pessoas_remanejadas) || 0} pessoa(s) e ${(r.resultado && r.resultado.contas_remanejadas) || 0} conta(s) foram para SEM SETOR`);
+          setoresCat = funcoesCat = null;
+          window.ViewGrupos();
+        }
+      };
+    }
 
     /* --- onda itens79 (item 9): aba SETORES — visão agregada do escopo ---
        GET /api/setores/agregado (admin vê tudo; gerente vê próprio grupo +
@@ -2314,6 +2589,10 @@
             ? `<span class="alerta-ok">👑 ${esc(s.chefe_nome)}</span>`
             : '<span style="color:var(--tx3)">sem chefe</span>'}</td>
         </tr>`).join('');
+        // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Setor/Unidade/Pessoal/Contas/Chefe)
+        const tabAgrTbl = document.querySelector('#gerAgregado table');
+        if (tabAgrTbl) window.tblOrdenar('ger-agregado', tabAgrTbl, tb,
+          [{ tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'num' }, { tipo: 'num' }, { tipo: 'txt' }]);
       } catch (e) {
         tb.innerHTML = '<tr><td colspan="5"><span class="vazio">Falha ao carregar a visão agregada de setores.</span></td></tr>';
       }
@@ -2371,6 +2650,9 @@
             if (r.ok) carregarChefes();
           };
         });
+        // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Setor / Chefe atual / Nomear)
+        const tabChTbl = document.querySelector('#gerChefes table');
+        if (tabChTbl) window.tblOrdenar('ger-chefes', tabChTbl, tb, [{ tipo: 'txt' }, { tipo: 'txt' }]);
       } catch (e) {
         tb.innerHTML = '<tr><td colspan="3"><span class="vazio">Falha ao carregar chefes.</span></td></tr>';
       }
@@ -2841,6 +3123,32 @@
     document.querySelectorAll('#gerOperadores [data-mv]').forEach(b => b.onclick = () =>
       modalMover(b.dataset.mv, b.dataset.login, optsMoverGer,
         'Permitido apenas entre o seu grupo e seus subordinados.', () => window.ViewGrupos()));
+    // ordem 06/10 (item 8b): NOVO SETOR no topo do modo Setores (POST catálogo existente)
+    const btNovoSetor = $('#btNovoSetor');
+    if (btNovoSetor) btNovoSetor.onclick = () => {
+      const div = modal(`<div class="modal-inner" style="max-width:420px">
+        <h3>🏢 NOVO SETOR</h3>
+        <div class="campo"><label>Nome do setor *</label><input id="nsNome" placeholder="ex.: Seção de Comunicação Social"></div>
+        <div class="campo"><label>Sigla (opcional)</label><input id="nsSigla" placeholder="ex.: SCCOM"></div>
+        <div class="modal-acoes">
+          <button class="fantasma" id="nsX">Cancelar</button>
+          <button class="primario" id="nsGo">Criar setor</button></div></div>`);
+      if (!div) return;
+      div.querySelector('#nsNome').focus();
+      div.querySelector('#nsX').onclick = () => div.fechar && div.fechar();
+      div.querySelector('#nsGo').onclick = async () => {
+        const nome = div.querySelector('#nsNome').value.trim();
+        const sigla = div.querySelector('#nsSigla').value.trim();
+        if (!nome) { toast('Informe o nome do setor', 'erro'); return; }
+        const r = await processar(() => api('/api/catalogo/setores', { method: 'POST', body: JSON.stringify({ nome, sigla }) }), 'Criando setor…');
+        if (r.ok) {
+          toast('Setor criado');
+          div.fechar && div.fechar();
+          setoresCat = funcoesCat = null;
+          window.ViewGrupos();
+        }
+      };
+    };
     document.querySelectorAll('[data-senha]').forEach(b => b.onclick = () =>
       modalSenha(b.dataset.senha, b.dataset.login, false, () => {}));
     document.querySelectorAll('[data-exc]').forEach(b => b.onclick = async () => {

@@ -785,6 +785,12 @@ definirUsuario(res.usuario);
   if (btMob) {
     btMob.onclick = (ev) => {
       ev.stopPropagation();
+      // Item 13 (ordem 06/10): drawer reanexado ao document.body ao abrir —
+      // dentro do <header>/<div> com transform/overflow o stacking context come
+      // o z-index e o drawer nasce por baixo (pitfall já provado neste repo).
+      // Guardamos o pai original para devolver a sidebar ao fechar (desktop intocado).
+      if (!sidebar.__paiOriginal) sidebar.__paiOriginal = sidebar.parentNode;
+      if (sidebar.parentNode !== document.body) document.body.appendChild(sidebar);
       sidebar.classList.toggle('aberto-mobile');
     };
   }
@@ -804,6 +810,10 @@ definirUsuario(res.usuario);
       }
       const sb = $('#sidebar');
       if (sb && sb.classList.contains('aberto-mobile') && !sb.contains(ev.target) && (!btMob || !btMob.contains(ev.target))) {
+        // item 13: ao fechar, devolve a sidebar ao layout (veja toggle acima)
+        const layoutSidebar = document.getElementById('layoutApp');
+        if (sb.__paiOriginal && sb.parentNode !== sb.__paiOriginal) sb.__paiOriginal.appendChild(sb);
+        else if (!sb.__paiOriginal && layoutSidebar && sb.parentNode !== layoutSidebar) layoutSidebar.appendChild(sb);
         sb.classList.remove('aberto-mobile');
       }
     });
