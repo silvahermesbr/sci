@@ -445,7 +445,7 @@
     if (modoTela === 'arquivo') {
       qs = '?arq=1';
     } else {
-      const p = window.__perConfSel || { m: 'semana', dia: dataLocal(hojeD) };
+      const p = window.__perConfSel || { m: 'dia', dia: dataLocal(hojeD) };
       window.__perConfSel = p; // garante inicialização imediata
       const sem = d => { const dd = new Date(d + 'T12:00:00'); const dow = (dd.getDay() + 6) % 7; const i = new Date(dd.getTime() - dow * 864e5); return [dataLocal(i), dataLocal(new Date(i.getTime() + 6 * 864e5))]; };
       if (p.m === 'dia') qs = '?de=' + p.dia + '&ate=' + p.dia;
@@ -506,7 +506,7 @@
       <div id="abasHojeDD" style="min-width:190px"></div></div>`;
     let seletor = '';
     if (modoTela !== 'arquivo') {
-      const p = window.__perConfSel || { m: 'semana', dia: dataLocal(hojeD) };
+      const p = window.__perConfSel || { m: 'dia', dia: dataLocal(hojeD) };
       if (!p.dia) p.dia = dataLocal(hojeD);
       seletor = `<div class="cartao" style="margin-bottom:10px">
         <div class="form-linha" style="align-items:center;gap:10px">
@@ -549,7 +549,7 @@
     if (ehChefeSetor) renderPainelOperadoresChefe();
     const pc = $('#perConfEntrada');
     if (pc) {
-      const p = window.__perConfSel || (window.__perConfSel = { m: 'semana', dia: dataLocal(hojeD) });
+      const p = window.__perConfSel || (window.__perConfSel = { m: 'dia', dia: dataLocal(hojeD) });
       const inp = () => {
         if (p.m === 'livre') pc.innerHTML = `<div class="campo"><label>De — até</label><div style="display:flex;gap:6px"><input type="date" id="pcDe" value="${p.de || ''}"><input type="date" id="pcAte" value="${p.ate || ''}"></div></div>`;
         else pc.innerHTML = `<div class="campo"><label>${p.m === 'ano' ? 'Ano (qualquer dia do ano)' : p.m === 'mes' ? 'Mês (qualquer dia do mês)' : p.m === 'dia' ? 'Dia' : 'Semana (qualquer dia dela)'}</label><input type="date" id="pcDia" value="${p.dia || dataLocal(hojeD)}"></div>`;
