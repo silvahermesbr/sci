@@ -223,8 +223,11 @@ func (a *App) escalaDaConferencia(id int64) []map[string]any {
 func (a *App) hGrupoNomearChefe(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
-	if u.Papel != "gerente" || escopo <= 0 {
-		jsonErro(w, http.StatusForbidden, "apenas gerentes nomeiam chefe de setor")
+	// ordem 06/10: encarregado/auxiliar de pessoal também nomeiam — SÓ no
+	// PRÓPRIO grupo (gerente mantém subordinados; função de pessoal não).
+	podeNomear := (u.Papel == "gerente" && escopo > 0) || (u.Papel != "admin" && a.podeGestaoPessoal(u) && escopo > 0)
+	if !podeNomear {
+		jsonErro(w, http.StatusForbidden, "apenas gerente ou encarregado/auxiliar de pessoal nomeiam chefe de setor")
 		return
 	}
 	gid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -267,13 +270,15 @@ func (a *App) hGrupoNomearChefe(w http.ResponseWriter, r *http.Request) {
 }
 
 // hGrupoDestituirChefe: POST /api/grupos/{id}/destituir_chefe {usuario_id}
-// só gerente do PRÓPRIO grupo; remove a linha chefe_setor do grupo (setor fica
-// livre — usuarios.setor_id NÃO é mexido aqui).
+// gerente do PRÓPRIO grupo; ordem 06/10: encarregado/auxiliar de pessoal
+// também (só no PRÓPRIO grupo). Remove a linha chefe_setor do grupo (setor
+// fica livre — usuarios.setor_id NÃO é mexido aqui).
 func (a *App) hGrupoDestituirChefe(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
-	if u.Papel != "gerente" || escopo <= 0 {
-		jsonErro(w, http.StatusForbidden, "apenas gerentes destituem chefe de setor")
+	podeDestituir := (u.Papel == "gerente" && escopo > 0) || (u.Papel != "admin" && a.podeGestaoPessoal(u) && escopo > 0)
+	if !podeDestituir {
+		jsonErro(w, http.StatusForbidden, "apenas gerente ou encarregado/auxiliar de pessoal destituem chefe de setor")
 		return
 	}
 	gid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)

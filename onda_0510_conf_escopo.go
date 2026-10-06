@@ -77,9 +77,10 @@ func setorDoUsuario(a *App, u *Usuario) *int64 {
 	return nil
 }
 
-// podeVerTodoSetor: gerente e ENCARREGADO enxergam/lançam o grupo inteiro.
+// podeVerTodoSetor: gerente, ENCARREGADO e AUXILIAR de pessoal enxergam/lançam
+// o grupo inteiro.
 func podeVerTodoSetor(a *App, u *Usuario) bool {
-	return u != nil && (u.Papel == "gerente" || a.ehEncarregado(u))
+	return u != nil && (u.Papel == "gerente" || a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u))
 }
 
 // papelConfAutorizado: conjunto que passa nos middlewares confAuth/confMarcarAuth
@@ -92,7 +93,8 @@ func (a *App) papelConfAutorizado(u *Usuario) bool {
 	case "gerente", "operador", "chefe_setor":
 		return true
 	}
-	return a.ehEncarregado(u)
+	// ordem 06/10 (item 15): auxiliar de pessoal espelha o encarregado.
+	return a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u)
 }
 
 // authConfCom: middleware das áreas de conferência — papeis permitidos + encarregado
@@ -108,7 +110,8 @@ func (a *App) authConfCom(papeis []string, prox http.HandlerFunc) http.Handler {
 			}
 		}
 		if !permitido && u.Papel != "admin" {
-			permitido = a.ehEncarregado(u)
+			// ordem 06/10: auxiliar de pessoal espelha o encarregado
+			permitido = a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u)
 		}
 		if !permitido {
 			http.Error(w, `{"erro":"papel sem acesso a esta área"}`, http.StatusForbidden)
