@@ -706,30 +706,47 @@
     const semC = !C.c;
     const ehChefe = window.ME && (window.ME.papel === 'chefe_setor' || window.ME.papel === 'operador');
     const f = (filtro || '').trim().toLowerCase();
+    // ordem 06/10 (item 9): militares SEM setor agrupados sob 'SEM SETOR',
+    // posicionado PRIMEIRO (acima de todos os setores, que seguem alfabéticos).
+    const SEM_SETOR = 'SEM SETOR';
     const porSetor = {};
     C.pessoas
       .filter(p => !f || (p.nome_guerra || '').toLowerCase().includes(f) || (p.nome_completo || '').toLowerCase().includes(f))
-      .forEach(p => { (porSetor[p.setor || 'INDEFINIDO'] = porSetor[p.setor || 'INDEFINIDO'] || []).push(p); });
+      .forEach(p => { (porSetor[p.setor || SEM_SETOR] = porSetor[p.setor || SEM_SETOR] || []).push(p); });
     // ordem dentro do setor (v9.14.1): sem check primeiro, depois alfabética
     const ordemCheck = (a, b) => (C.verif.has(a.id) - C.verif.has(b.id))
       || (a.nome_guerra || '').localeCompare(b.nome_guerra || '', 'pt', { sensitivity: 'base' });
     for (const s of Object.keys(porSetor)) porSetor[s].sort(ordemCheck);
     let listas = '';
     let dashboardSetoresHTML = '';
-    if (!semC && C.setoresStatus && C.setoresStatus.length > 0) {
+    // ordem 06/10 (item 9): card "SEM SETOR" sintetizado no dashboard, em PRIMEIRO
+    if (!semC && ((C.setoresStatus && C.setoresStatus.length > 0) || C.pessoas.some(p => !p.setor))) {
+      const semSetorPessoas = C.pessoas.filter(p => !p.setor);
+      const listaSetoresDash = (C.setoresStatus || []).slice();
+      if (semSetorPessoas.length > 0) {
+        const vSem = semSetorPessoas.filter(x => C.verif.has(x.id)).length;
+        listaSetoresDash.unshift({ setor_id: 0, setor_nome: 'Militares sem setor', setor_sigla: 'SEM SETOR', status: 'sem_setor', total_efetivo: semSetorPessoas.length, total_pessoas: semSetorPessoas.length, total_verificados: vSem, verificados: vSem });
+      }
       const concCount = C.setoresStatus.filter(s => s.status === 'concluida').length;
       const andamCount = C.setoresStatus.filter(s => s.status === 'em_andamento').length;
       const naoIniCount = C.setoresStatus.filter(s => s.status === 'nao_iniciada').length;
-      
-      const cards = C.setoresStatus.map(s => {
+
+      const cards = listaSetoresDash.map(s => {
         const isMeuSetor = ehChefe && window.ME.setor_id === s.setor_id;
         const podeGerenciar = !ehChefe || isMeuSetor;
-        
+
         let statusBadge = '';
         let bordaCor = 'var(--borda)';
         let bgCor = 'rgba(255,255,255,0.02)';
-        
-        if (s.status === 'concluida') {
+
+        if (s.status === 'sem_setor') {
+          // ordem 06/10 (item 9): card SEM SETOR — sem botão, sem status setorial
+          bordaCor = 'rgba(148, 163, 184, 0.4)';
+          bgCor = 'rgba(148, 163, 184, 0.06)';
+          statusBadge = `<span style="display:inline-flex;align-items:center;gap:4px;color:#94a3b8;font-weight:600;font-size:11.5px">
+            <span style="font-size:14px">➖</span> Sem setor
+          </span>`;
+        } else if (s.status === 'concluida') {
           bordaCor = 'rgba(16, 185, 129, 0.4)';
           bgCor = 'rgba(16, 185, 129, 0.06)';
           statusBadge = `<span style="display:inline-flex;align-items:center;gap:4px;color:#10b981;font-weight:600;font-size:11.5px">
@@ -750,7 +767,7 @@
         }
 
         let acaoBtn = '';
-        if (podeGerenciar) {
+        if (podeGerenciar && s.status !== 'sem_setor') {
           if (s.status === 'concluida') {
             acaoBtn = `<button type="button" class="fantasma bt-setor-acao" data-acao="reabrir" data-sid="${s.setor_id}" style="min-height:28px;padding:2px 8px;font-size:11px">↺ Reabrir</button>`;
           } else {
@@ -798,7 +815,10 @@
       `;
     }
 
-    for (const setor of Object.keys(porSetor).sort()) {
+    // ordem 06/10 (item 9): SEM SETOR primeiro; demais setores em ordem alfabética
+    const ordemSetores = Object.keys(porSetor).sort((a, b) =>
+      (a === SEM_SETOR ? -1 : b === SEM_SETOR ? 1 : a.localeCompare(b, 'pt', { sensitivity: 'base' })));
+    for (const setor of ordemSetores) {
       const pessoasSetor = porSetor[setor];
       const sObj = (C.setoresStatus || []).find(x => (x.setor_nome || '').toLowerCase() === setor.toLowerCase() || (x.setor_sigla || '').toLowerCase() === setor.toLowerCase() || (pessoasSetor[0] && x.setor_id === pessoasSetor[0].setor_id));
       let setorBadgeHeader = '';
