@@ -1772,8 +1772,6 @@ func (a *App) gerarEscalaDiaPDF(d EscalaDiaPDF) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-
-
 // ---------- RELATÓRIO DETALHADO (ordem SCI 06/10 — Frente D) ----------
 // SIMPLES = o mesmo conteúdo do relatório geral (gerarRelatorioPDF).
 // DETALHADO = página 1 idêntica ao simples + UMA FOLHA NOVA POR GRUPO
@@ -1837,11 +1835,7 @@ SELECT f.data,
        pr.situacao,
        CASE WHEN pr.situacao = 'justificada' THEN COALESCE(d.nome,'') ELSE '' END,
        COALESCE(pr.observacao,''),
-       COALESCE(t.nome,''),
-       (SELECT COUNT(*) FROM presencas pr2
-          JOIN conferencias f2 ON f2.id = pr2.conferencia_id
-         WHERE pr2.pessoa_id = pr.pessoa_id
-           AND f2.data <= f.data) AS ord_interno
+       COALESCE(t.nome,'')
 FROM presencas pr
 JOIN conferencias f ON f.id = pr.conferencia_id
 JOIN pessoas p ON p.id = pr.pessoa_id
@@ -1868,10 +1862,12 @@ ORDER BY f.data, f.hora,
 			&r.Destino, &r.Observacao, &r.Tag); err != nil {
 			return nil, err
 		}
-		r.Data = fmtDataBR(r.Data + "T00:00:00Z")[:10] // dd/mm/aaaa, fuso de Brasília
+		r.Data = fmtDataBR(r.Data + "T12:00:00Z")[:10] // dd/mm/aaaa — meio-dia UTC = mesmo dia em BRT
 		if hora != "" {
-			if t, errT := time.Parse("15:04:05", hora); errT == nil {
-				r.Hora = t.In(time.FixedZone("BRT", -3*3600)).Format("15:04")
+			// hora é "time-of-day" local da conferência (não timestamp): exibe
+			// HH:MM sem operação de fuso — nunca um Format cru de timestamp.
+			if partes := strings.Split(hora, ":"); len(partes) >= 2 {
+				r.Hora = partes[0] + ":" + partes[1]
 			} else {
 				r.Hora = hora
 			}
@@ -1883,8 +1879,9 @@ ORDER BY f.data, f.hora,
 
 // folhasDetalhado: monta as folhas do modo detalhado — grupo do escopo primeiro
 // (com coluna SETOR), depois cada subordinado ATIVO (transitivo, vínculo
-// bilateral) em folha própria.
-func (a *App) folhasDetalhado(de, ate string, escopo int64) []detalhadoGrupo {
+// bilateral) em folha própria. Erro de consulta PROPAGA — relatório
+// silenciosamente incompleto é falha grave.
+func (a *App) folhasDetalhado(de, ate string, escopo int64) ([]detalhadoGrupo, error) {
 	folhas := []detalhadoGrupo{}
 	ids := []int64{escopo}
 	nomeProprio := ""
@@ -1903,17 +1900,18 @@ func (a *App) folhasDetalhado(de, ate string, escopo int64) []detalhadoGrupo {
 	// 1º bloco: grupo próprio — pool de 1 conexão: rows drenadas p/ slice
 	// ANTES do próximo bloco de queries (QueryRow de nome já consumido acima).
 	reg, err := a.registrosDetalhadoGrupo(de, ate, ids)
-	if err == nil {
-		folhas[0].Registros = reg
+	if err != nil {
+		return nil, err
 	}
+	folhas[0].Registros = reg
 	for _, sid := range subs {
 		regSub, errSub := a.registrosDetalhadoGrupo(de, ate, []int64{sid})
 		if errSub != nil {
-			continue
+			return nil, errSub
 		}
 		folhas = append(folhas, detalhadoGrupo{Nome: nomes[sid], Proprio: false, Registros: regSub})
 	}
-	return folhas
+	return folhas, nil
 }
 
 // detalhadoTabelaGrupo: desenha cabeçalho + linhas de UM grupo, repetindo o
@@ -1987,16 +1985,20 @@ func (a *App) relatorioDetalhado(de, ate, modo string, escopo int64) ([]byte, er
 		}
 		return buf.Bytes(), nil
 	}
-	folhas := a.folhasDetalhado(de, ate, escopo)
+	folhas, err := a.folhasDetalhado(de, ate, escopo)
+	if err != nil {
+		return nil, err
+	}
 	for _, g := range folhas {
 		pdf.AddPage() // UMA FOLHA NOVA POR GRUPO — sempre, mesmo grupo sem lançamentos
 		// Cabeçalho de folha: nome do grupo + período
 		pdf.SetFont("Helvetica", "B", 10)
 		pdf.SetTextColor(15, 23, 42)
-		pdf.Cell(0, 6, cp1252Traduz.Replace(fmt.Sprintf("%s — PERIODO: %s A %s", g.Nome, fmtDataBR(de+"T00:00:00Z")[:10], fmtDataBR(ate+"T00:00:00Z")[:10])))
+		pdf.Cell(0, 6, cp1252Traduz.Replace(fmt.Sprintf("%s — PERIODO: %s A %s", g.Nome, fmtDataBR(de + "T12:00:00Z")[:10], fmtDataBR(ate + "T12:00:00Z")[:10])))
 		pdf.Ln(8)
 		a.detalhadoTabelaGrupo(pdf, g)
 	}
+
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
 		return nil, err
