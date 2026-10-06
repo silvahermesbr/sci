@@ -648,6 +648,27 @@
         tr.style.display = !q || tr.dataset.cid === q || text.includes(q) ? '' : 'none';
       });
     };
+    // ordem 06/10 (item 10c): ORDENAR POR nas listas de conferências (#/hoje) via
+    // helper compartilhado (window.* definido em views_gestao.js) — APENAS o
+    // plug nas tabelas; sem paginação aqui (listas de período costumam ser curtas).
+    const cfgConf = [{ tipo: 'num' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'num' }, null];
+    if (typeof window.tblOrdenar === 'function') {
+      const tabsConf = document.querySelectorAll('#app .cartao .rolagem table');
+      if (modoTela === 'arquivo') {
+        if (tabsConf[0]) window.tblOrdenar('conf-arquivo', tabsConf[0], tabsConf[0].querySelector('tbody'), cfgConf);
+      } else {
+        // tabelas na ordem: Abertas (0) e Fechadas (1); a 1ª .cartao é o seletor de
+        // período (sem .rolagem), a 2ª é a pesquisa — por isso o seletor pega só as
+        // .cartao que contêm tabela.
+        let idx = 0;
+        tabsConf.forEach(t => {
+          if (idx <= 1) {
+            window.tblOrdenar(idx === 0 ? 'conf-abertas' : 'conf-fechadas', t, t.querySelector('tbody'), cfgConf);
+            idx++;
+          }
+        });
+      }
+    }
   };
 
   /* --- CONFERÊNCIA (edição): #/conferencia — aberta em andamento --- */
