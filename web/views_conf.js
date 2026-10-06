@@ -336,6 +336,7 @@
      ========================================================================== */
   let poolTimer = null;
   let poolInFlight = false;
+  let poolObserver = null;
 
   const confPoolingFetch = async () => {
     const qs = CONF_ID ? '?id=' + CONF_ID : '';
@@ -346,6 +347,7 @@
 
   function confPoolingStop() {
     if (poolTimer) { clearInterval(poolTimer); poolTimer = null; }
+    if (poolObserver) { poolObserver.disconnect(); poolObserver = null; }
     document.removeEventListener('visibilitychange', confPoolingVis);
   }
   function confPoolingVis() {
@@ -416,6 +418,18 @@
     confPoolingStop(); // idempotente: nunca dois timers
     poolTimer = setInterval(confPoolingTick, 2000);
     document.addEventListener('visibilitychange', confPoolingVis);
+    // teardown garantido: se o DOM da conferência sair do #app por QUALQUER via
+    // (top-nav, hashchange de fora, recarga da view — não só btVoltar/descartar/
+    // fechar), o timer morre. Mesmo padrão do observer de telemetria (views_gestao).
+    try {
+      const appEl = document.getElementById('app');
+      if (appEl) {
+        poolObserver = new MutationObserver(() => {
+          if (!document.getElementById('confDash')) confPoolingStop();
+        });
+        poolObserver.observe(appEl, { childList: true, subtree: true });
+      }
+    } catch (e) {}
   }
 
   /* --- LISTAS (v9.14): #/hoje mostra SÓ as listas de conferências; a conferência
