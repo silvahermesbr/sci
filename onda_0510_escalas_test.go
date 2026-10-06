@@ -259,3 +259,62 @@ func TestX8OperadorNaoDesigna(t *testing.T) {
 		t.Fatalf("X8: operador designa → 403, veio %d %v", rr.Code, res)
 	}
 }
+
+// TestX9ChefeUnicoPorSetor (ordem 06/10, item 1): nomear chefe 2x no MESMO setor —
+// o anterior é demitido AUTOMATICAMENTE na mesma transação: só 1 linha
+// chefe_setor para aquele setor; o antigo não mantém o papel; o novo responde
+// como chefe (sessão com papel ativo chefe_setor). O novo chefe assume com
+// usuarios.setor_id = S (pré-condição do modelo: papel não tem coluna de setor;
+// o setor corrente do usuário é que liga a linha chefe_setor ao setor).
+func TestX9ChefeUnicoPorSetor(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+	gid, setorA, _, _, _, uidOpA, uidOpB := escalasSetup(t, app, st)
+	ckGer := vinculaGrupoDoLogin(t, app, st, "ger_esc", gid)
+
+	// 1ª nomeação: opA vira chefe do setor A
+	rr, res := doJSONReq(app, "POST", "/api/grupos/"+i64(gid)+"/nomear_chefe", map[string]any{"usuario_id": uidOpA, "setor_id": setorA}, ckGer)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("X9a: 1ª nomeação → 200, veio %d %v", rr.Code, res)
+	}
+	// 2ª nomeação: opB substitui opA NO MESMO setor
+	rr, res = doJSONReq(app, "POST", "/api/grupos/"+i64(gid)+"/nomear_chefe", map[string]any{"usuario_id": uidOpB, "setor_id": setorA}, ckGer)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("X9b: 2ª nomeação (substituição) → 200, veio %d %v", rr.Code, res)
+	}
+
+	// (i) o ANTIGO não mantém o papel
+	var papelAntigo int
+	if err := app.st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'chefe_setor'`, uidOpA, gid).Scan(&papelAntigo); err != nil || papelAntigo != 0 {
+		t.Fatalf("X9c: chefe antigo manteve o papel (n=%d err=%v)", papelAntigo, err)
+	}
+	// (ii) o NOVO tem o papel E está vinculado ao setor
+	var papelNovo int
+	if err := app.st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'chefe_setor'`, uidOpB, gid).Scan(&papelNovo); err != nil || papelNovo != 1 {
+		t.Fatalf("X9d: papel chefe_setor do novo não gravado (n=%d err=%v)", papelNovo, err)
+	}
+	var setorNovo *int64
+	if err := app.st.db.QueryRow(`SELECT setor_id FROM usuarios WHERE id = ?`, uidOpB).Scan(&setorNovo); err != nil || setorNovo == nil || *setorNovo != setorA {
+		t.Fatalf("X9e: novo chefe sem setor_id = setor A (err=%v)", err)
+	}
+	// (iii) apenas UMA linha chefe_setor aponta para o setor A no grupo
+	// (modelo: setor corrente em usuarios.setor_id — quem tem o setor tem o papel)
+	var totalSetor int
+	if err := app.st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis up
+		JOIN usuarios u ON u.id = up.usuario_id
+		WHERE up.papel = 'chefe_setor' AND up.grupo_id = ? AND u.setor_id = ? AND u.grupo_id = ?`, gid, setorA, gid).Scan(&totalSetor); err != nil || totalSetor != 1 {
+		t.Fatalf("X9f: esperado EXATAMENTE 1 chefe para o setor A, veio %d (err=%v)", totalSetor, err)
+	}
+
+	// (iv) o NOVO responde como chefe: sessão nova com papel ativo = chefe_setor
+	tokNovo, _, _ := st.CriarSessao(uidOpB, ttlSessao)
+	ckNovo := &http.Cookie{Name: cookieSessao, Value: tokNovo}
+	rr2, res2 := doJSONReq(app, "GET", "/api/me", nil, ckNovo)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("X9g: /api/me do novo chefe → 200, veio %d %v", rr2.Code, res2)
+	}
+	uMap, _ := res2["usuario"].(map[string]any)
+	if uMap == nil || uMap["papel"] != "chefe_setor" {
+		t.Fatalf("X9h: novo chefe responde com papel ativo errado: %v", res2)
+	}
+}

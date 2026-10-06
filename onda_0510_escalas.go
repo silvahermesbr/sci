@@ -218,8 +218,11 @@ func (a *App) escalaDaConferencia(id int64) []map[string]any {
 }
 
 // hGrupoNomearChefe: POST /api/grupos/{id}/nomear_chefe {usuario_id, setor_id}
-// só gerente do PRÓPRIO grupo (admin → 403). INSERT OR IGNORE em usuario_papeis
-// ('chefe_setor') + UPDATE usuarios.setor_id.
+// só gerente do PRÓPRIO grupo (admin → 403). Ordem 06/10 (item 1): chefe ÚNICO —
+// na MESMA transação, demite automaticamente o chefe anterior do setor (o papel
+// 'chefe_setor' não tem coluna de setor; o setor corrente do usuário está em
+// usuarios.setor_id, então o chefe antigo do setor S é quem tem usuarios.setor_id = S
+// com a linha chefe_setor do grupo) ANTES do INSERT do novo.
 func (a *App) hGrupoNomearChefe(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
@@ -254,12 +257,33 @@ func (a *App) hGrupoNomearChefe(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "setor inexistente")
 		return
 	}
-	if _, err := a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?,?, 'chefe_setor')`, req.UsuarioID, escopo); err != nil {
-		jsonErro(w, http.StatusInternalServerError, "falha ao nomear: "+err.Error())
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if _, err := a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, req.SetorID, req.UsuarioID); err != nil {
-		jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
+	defer tx.Rollback()
+	// chefe único (ordem 06/10): remove o papel chefe_setor de QUEM quer que
+	// esteja com este setor como setor corrente (o chefe anterior), exceto o
+	// próprio nomeado (re-nomear o mesmo chefe não pode apagar o papel dele
+	// antes do INSERT OR IGNORE — a UNIQUE (usuario_id, grupo_id, papel)
+	// ignoraria o re-INSERT e o chefe perderia o papel).
+	if _, e := tx.Exec(`DELETE FROM usuario_papeis WHERE papel = 'chefe_setor' AND grupo_id = ? AND usuario_id IN (
+			SELECT id FROM usuarios WHERE grupo_id = ? AND setor_id = ? AND id != ?
+		)`, escopo, escopo, req.SetorID, req.UsuarioID); e != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao demitir chefe anterior: "+e.Error())
+		return
+	}
+	if _, e := tx.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?,?, 'chefe_setor')`, req.UsuarioID, escopo); e != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao nomear: "+e.Error())
+		return
+	}
+	if _, e := tx.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, req.SetorID, req.UsuarioID); e != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+e.Error())
+		return
+	}
+	if e := tx.Commit(); e != nil {
+		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
 	}
 	a.st.Auditoria(&u.ID, "nomear_chefe", "usuarios", &req.UsuarioID, login+" → setor "+strconv.FormatInt(req.SetorID, 10), ipDe(r))
