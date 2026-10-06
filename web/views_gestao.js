@@ -2231,11 +2231,12 @@
       try {
         const [setoresG, contasR] = await Promise.all([api('/api/catalogo/setores'), api('/api/usuarios')]);
         const doGrupo = (contasR || []).filter(c => c.grupo_id === eu.grupo_id && c.ativo);
+        // ordem 06/10 (item 14): o COMANDO por setor vem do backend —
+        // chefe_usuario_id/chefe_nome em /api/catalogo/setores (chefe_setores).
+        // Um usuário pode chefiar VÁRIOS setores (mapa setor → chefe).
         const chefeDeSetor = {};
-        doGrupo.forEach(c => {
-          (c.papeis || []).forEach(p => {
-            if (p.papel === 'chefe_setor' && c.setor_id) chefeDeSetor[c.setor_id] = c;
-          });
+        (setoresG || []).forEach(s => {
+          if (s.chefe_usuario_id) chefeDeSetor[s.id] = { id: s.chefe_usuario_id, nome_guerra: s.chefe_nome, login: s.chefe_nome };
         });
         const listaS = (setoresG || []).filter(s => s.ativo !== false);
         if (!listaS.length) { tb.innerHTML = '<tr><td colspan="3"><span class="vazio">nenhum setor no catálogo</span></td></tr>'; return; }
@@ -2244,7 +2245,7 @@
           const ch = chefeDeSetor[s.id];
           const atual = ch
             ? `<b>👑 ${esc(ch.nome_guerra || ch.login)}</b> <small style="color:var(--tx2)">(${esc(ch.login)})</small>
-               <button class="acao-linha" data-destituir="${ch.id}" data-nome="${esc(ch.nome_guerra || ch.login)}" data-setor="${esc(s.nome)}">destituir</button>`
+               <button class="acao-linha" data-destituir="${ch.id}" data-setorid="${s.id}" data-nome="${esc(ch.nome_guerra || ch.login)}" data-setor="${esc(s.nome)}">destituir</button>`
             : '<span style="color:var(--tx3)">sem chefe</span>';
           return `<tr>
             <td><b>${esc(s.nome)}</b>${s.sigla ? ' <code style="font-size:11px">' + esc(s.sigla) + '</code>' : ''}</td>
@@ -2267,8 +2268,10 @@
         });
         tb.querySelectorAll('[data-destituir]').forEach(bt => {
           bt.onclick = async () => {
+            // ordem 06/10 (item 14): destitui SÓ o comando daquele setor — o chefe
+            // que comanda outros setores continua chefe (papel permanece).
             if (!(await confirmar(`Destituir ${bt.dataset.nome} como chefe de ${bt.dataset.setor}?`))) return;
-            const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/destituir_chefe', { method: 'POST', body: JSON.stringify({ usuario_id: +bt.dataset.destituir }) }), 'Destituindo chefe…');
+            const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/destituir_chefe', { method: 'POST', body: JSON.stringify({ usuario_id: +bt.dataset.destituir, setor_id: +bt.dataset.setorid }) }), 'Destituindo chefe…');
             if (r.ok) carregarChefes();
           };
         });

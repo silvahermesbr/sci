@@ -515,7 +515,22 @@ func (a *App) hMe(w http.ResponseWriter, r *http.Request) {
 	if setorID == nil && u.PessoaID != nil && *u.PessoaID > 0 {
 		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorID)
 	}
-	jsonOK(w, map[string]any{"usuario": u, "setor_id": setorID})
+	// Multi-chefia (ordem 06/10 item 14): setores COMANDADOS pelo usuário
+	// (fonte da verdade do comando p/ front). Vazio quando não é chefe.
+	setoresChefiados := []int64{}
+	if u.Papel == "chefe_setor" {
+		rows, e := a.st.db.Query(`SELECT setor_id FROM chefe_setores WHERE usuario_id = ? ORDER BY setor_id`, u.ID)
+		if e == nil {
+			for rows.Next() {
+				var sid int64
+				if rows.Scan(&sid) == nil {
+					setoresChefiados = append(setoresChefiados, sid)
+				}
+			}
+			rows.Close()
+		}
+	}
+	jsonOK(w, map[string]any{"usuario": u, "setor_id": setorID, "setores_chefiados": setoresChefiados})
 }
 
 func (a *App) hLogout(w http.ResponseWriter, r *http.Request) {
@@ -1143,8 +1158,8 @@ func (a *App) pessoasAtivas(escopo int64) []map[string]any {
 func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Local       string `json:"local"`
-		Nome        string `json:"nome"`        // ordem 04/10: modal NOVA CONFERÊNCIA pede nome
-		PrazoFinal  string `json:"prazo_final"` // horário-limite p/ pronto da conferência
+		Nome        string `json:"nome"`                   // ordem 04/10: modal NOVA CONFERÊNCIA pede nome
+		PrazoFinal  string `json:"prazo_final"`            // horário-limite p/ pronto da conferência
 		Encarregado *int64 `json:"encarregado_usuario_id"` // encarregado de pessoal
 	}
 	_ = decodificar(r, &req)
@@ -1396,9 +1411,13 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if u.Papel == "chefe_setor" {
+		// Multi-chefia (ordem 06/10 item 14): fonte = chefe_setores — o chefe
+		// comanda TODOS os setores onde tem linha; fallback pessoas.setor_id
+		// cobre conta chefe legada sem linha (conta com pessoa vinculada).
 		var setorChefe *int64
-		if u.SetorID != nil {
-			setorChefe = u.SetorID
+		var comandos int
+		if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND setor_id = ?`, u.ID, sid).Scan(&comandos); e == nil && comandos > 0 {
+			setorChefe = &sid
 		} else if u.PessoaID != nil {
 			_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorChefe)
 		}
@@ -1456,9 +1475,13 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if u.Papel == "chefe_setor" {
+		// Multi-chefia (ordem 06/10 item 14): fonte = chefe_setores — o chefe
+		// comanda TODOS os setores onde tem linha; fallback pessoas.setor_id
+		// cobre conta chefe legada sem linha (conta com pessoa vinculada).
 		var setorChefe *int64
-		if u.SetorID != nil {
-			setorChefe = u.SetorID
+		var comandos int
+		if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND setor_id = ?`, u.ID, sid).Scan(&comandos); e == nil && comandos > 0 {
+			setorChefe = &sid
 		} else if u.PessoaID != nil {
 			_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorChefe)
 		}
@@ -3285,12 +3308,24 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	extra := ""
+	// colunas extras por tabela: {expressão SQL, alias no JSON}
+	type colExtra struct{ expr, alias string }
+	extras := []colExtra{}
 	switch t {
 	case "setores":
-		extra = ", sigla"
+		// multi-chefia (ordem 06/10 item 14): o COMANDO por setor vem de
+		// chefe_setores — subselects correlacionados (1 chefe por setor, UNIQUE).
+		extras = append(extras,
+			colExtra{"sigla", "sigla"},
+			colExtra{"(SELECT cs.usuario_id FROM chefe_setores cs WHERE cs.setor_id = " + t + ".id LIMIT 1)", "chefe_usuario_id"},
+			colExtra{"(SELECT COALESCE(u.nome_guerra, u.login, '') FROM chefe_setores cs LEFT JOIN usuarios u ON u.id = cs.usuario_id WHERE cs.setor_id = " + t + ".id LIMIT 1)", "chefe_nome"},
+		)
 	case "tags":
-		extra = ", cor"
+		extras = append(extras, colExtra{"cor", "cor"})
+	}
+	extra := ""
+	for _, e := range extras {
+		extra += ", " + e.expr
 	}
 	var args []any
 	q := `WITH RECURSIVE cam(id, caminho) AS (
@@ -3320,8 +3355,8 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	out := []map[string]any{}
 	cols := []string{"id", "nome"}
-	if extra != "" {
-		cols = append(cols, strings.TrimPrefix(extra, ", "))
+	for _, e := range extras {
+		cols = append(cols, e.alias)
 	}
 	cols = append(cols, "pai_id", "ativo", "grupo_id", "antiguidade")
 	vals := make([]any, len(cols))
@@ -6178,11 +6213,11 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 	defer pRows.Close()
 
 	type postoDef struct {
-		tipoID   int64
-		hi, hf   string
-		qtd      int
-		pgMinID  *int64
-		pgMaxID  *int64
+		tipoID  int64
+		hi, hf  string
+		qtd     int
+		pgMinID *int64
+		pgMaxID *int64
 	}
 	var postos []postoDef
 	for pRows.Next() {
@@ -8703,18 +8738,17 @@ func (a *App) hConscienciaResumo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonOK(w, map[string]any{
-		"grupo_id":                  escopo,
-		"grupo_nome":                grupoPrincipalNome,
-		"data_hoje":                 hoje,
-		"data_ontem":                ontem,
-		"total_efetivo":             totalEfetivo,
-		"total_presentes_hoje":      totalPresentes,
-		"total_escalados_hoje":      totalEscaladosHoje,
-		"total_materiais":           totalMateriais,
-		"total_cautelas_ativas":     totalCautelasAbertas,
-		"conferencias_fechadas":     totalConferenciasFechadas,
-		"sugestoes_pendentes":       sugestoesPendentes,
-		"subordinados":              listaSub,
+		"grupo_id":              escopo,
+		"grupo_nome":            grupoPrincipalNome,
+		"data_hoje":             hoje,
+		"data_ontem":            ontem,
+		"total_efetivo":         totalEfetivo,
+		"total_presentes_hoje":  totalPresentes,
+		"total_escalados_hoje":  totalEscaladosHoje,
+		"total_materiais":       totalMateriais,
+		"total_cautelas_ativas": totalCautelasAbertas,
+		"conferencias_fechadas": totalConferenciasFechadas,
+		"sugestoes_pendentes":   sugestoesPendentes,
+		"subordinados":          listaSub,
 	})
 }
-

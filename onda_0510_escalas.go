@@ -13,6 +13,7 @@ package main
 // auditoria a.st.Auditoria com ipDe(r).
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ import (
 //   - gerente do grupo (escopo) → qualquer papel na escala, alvo = membro do grupo;
 //   - chefe_setor → SOMENTE papel 'operador', alvo do SEU setor;
 //   - operador/encarregado/admin → 403.
+//
 // Devolve (autorizado, papelDoDesignador). Escreve o erro HTTP quando reprova.
 func guardaEscala(a *App, w http.ResponseWriter, u *Usuario) (bool, string) {
 	if u == nil || u.Papel == "admin" {
@@ -218,11 +220,10 @@ func (a *App) escalaDaConferencia(id int64) []map[string]any {
 }
 
 // hGrupoNomearChefe: POST /api/grupos/{id}/nomear_chefe {usuario_id, setor_id}
-// só gerente do PRÓPRIO grupo (admin → 403). Ordem 06/10 (item 1): chefe ÚNICO —
-// na MESMA transação, demite automaticamente o chefe anterior do setor (o papel
-// 'chefe_setor' não tem coluna de setor; o setor corrente do usuário está em
-// usuarios.setor_id, então o chefe antigo do setor S é quem tem usuarios.setor_id = S
-// com a linha chefe_setor do grupo) ANTES do INSERT do novo.
+// só gerente do PRÓPRIO grupo (admin → 403). Ordem 06/10 (item 14, REVISÃO do
+// item 1): cada setor tem UM chefe (linha em chefe_setores), cada USUÁRIO pode
+// chefiar VÁRIOS — nomear o chefe do setor S substitui SÓ o comando daquele
+// setor; quem perde S mas comanda outro mantém o papel de sessão chefe_setor.
 func (a *App) hGrupoNomearChefe(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
@@ -268,14 +269,26 @@ func (a *App) hGrupoNomearChefe(w http.ResponseWriter, r *http.Request) {
 	// próprio nomeado (re-nomear o mesmo chefe não pode apagar o papel dele
 	// antes do INSERT OR IGNORE — a UNIQUE (usuario_id, grupo_id, papel)
 	// ignoraria o re-INSERT e o chefe perderia o papel).
-	if _, e := tx.Exec(`DELETE FROM usuario_papeis WHERE papel = 'chefe_setor' AND grupo_id = ? AND usuario_id IN (
-			SELECT id FROM usuarios WHERE grupo_id = ? AND setor_id = ? AND id != ?
-		)`, escopo, escopo, req.SetorID, req.UsuarioID); e != nil {
-		jsonErro(w, http.StatusInternalServerError, "falha ao demitir chefe anterior: "+e.Error())
-		return
-	}
 	if _, e := tx.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?,?, 'chefe_setor')`, req.UsuarioID, escopo); e != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao nomear: "+e.Error())
+		return
+	}
+	// Multi-chefia (ordem 06/10, item 14): o COMANDO do setor S é a linha em
+	// chefe_setores — SUBSTITUIÇÃO 1:1 (setor_id UNIQUE). O papel chefe_setor em
+	// usuario_papeis (acesso de sessão) permanece: quem perde S só deixa de
+	// comandar S; a purga do papel é automática em quem ficar SEM NENHUM comando.
+	if _, e := tx.Exec(`DELETE FROM chefe_setores WHERE setor_id = ?`, req.SetorID); e != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao liberar comando anterior: "+e.Error())
+		return
+	}
+	if _, e := tx.Exec(`INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)`, escopo, req.SetorID, req.UsuarioID); e != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+e.Error())
+		return
+	}
+	if _, e := tx.Exec(`DELETE FROM usuario_papeis WHERE papel = 'chefe_setor' AND grupo_id = ? AND usuario_id NOT IN (
+		SELECT usuario_id FROM chefe_setores WHERE grupo_id = ?
+	)`, escopo, escopo); e != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao purgar papéis sem comando: "+e.Error())
 		return
 	}
 	if _, e := tx.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, req.SetorID, req.UsuarioID); e != nil {
@@ -291,8 +304,10 @@ func (a *App) hGrupoNomearChefe(w http.ResponseWriter, r *http.Request) {
 }
 
 // hGrupoDestituirChefe: POST /api/grupos/{id}/destituir_chefe {usuario_id}
-// só gerente do PRÓPRIO grupo; remove a linha chefe_setor do grupo (setor fica
-// livre — usuarios.setor_id NÃO é mexido aqui).
+// só gerente do PRÓPRIO grupo; multi-chefia (ordem 06/10 item 14): apaga os
+// COMANDOS do usuário (chefe_setores do grupo); o PAPEL chefe_setor em
+// usuario_papeis (acesso de sessão) só sai se ele ficar SEM NENHUM comando.
+// usuarios.setor_id NÃO é mexido aqui.
 func (a *App) hGrupoDestituirChefe(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
@@ -311,6 +326,7 @@ func (a *App) hGrupoDestituirChefe(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		UsuarioID int64 `json:"usuario_id"`
+		SetorID   int64 `json:"setor_id"` // opcional (ordem 06/10 item 14): presente → derruba SÓ o comando daquele setor
 	}
 	if err := decodificar(r, &req); err != nil || req.UsuarioID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "dados inválidos")
@@ -319,6 +335,43 @@ func (a *App) hGrupoDestituirChefe(w http.ResponseWriter, r *http.Request) {
 	var login string
 	if e := a.st.db.QueryRow(`SELECT COALESCE(login,'') FROM usuarios WHERE id = ? AND grupo_id = ?`, req.UsuarioID, escopo).Scan(&login); e != nil {
 		jsonErro(w, http.StatusBadRequest, "usuário não pertence ao seu grupo")
+		return
+	}
+	// Multi-chefia (ordem 06/10, item 14): a fonte do comando é chefe_setores.
+	// Com setor_id: apaga SÓ o comando daquele setor — quem comanda outro segue
+	// chefe (papel chefe_setor fica). Sem setor_id (legado/X5): apaga TODOS os
+	// comandos do grupo; o papel chefe_setor só sai se ele ficar SEM NENHUM.
+	if req.SetorID > 0 {
+		var nomeSetor string
+		if e := a.st.db.QueryRow(`SELECT COALESCE(nome,'') FROM setores WHERE id = ?`, req.SetorID).Scan(&nomeSetor); e != nil || nomeSetor == "" {
+			jsonErro(w, http.StatusBadRequest, "setor inexistente")
+			return
+		}
+		resCmd, err := a.st.db.Exec(`DELETE FROM chefe_setores WHERE usuario_id = ? AND grupo_id = ? AND setor_id = ?`, req.UsuarioID, escopo, req.SetorID)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if n, _ := resCmd.RowsAffected(); n == 0 {
+			jsonErro(w, http.StatusNotFound, "este usuário não comanda este setor no grupo")
+			return
+		}
+		// papel de sessão só sai se ele ficar SEM NENHUM comando no grupo
+		var comandos int
+		if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND grupo_id = ?`, req.UsuarioID, escopo).Scan(&comandos); e == nil && comandos == 0 {
+			if _, err := a.st.db.Exec(`DELETE FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'chefe_setor'`, req.UsuarioID, escopo); err != nil {
+				jsonErro(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+		a.st.Auditoria(&u.ID, "destituir_chefe", "usuarios", &req.UsuarioID, fmt.Sprintf("setor_id=%d", req.SetorID), ipDe(r))
+		jsonOK(w, map[string]any{"ok": true})
+		return
+	}
+	// guarda do legado: sem setor_id, só destitui quem TEM comando (404 antes apagava só papel)
+	var temComando int
+	if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND grupo_id = ?`, req.UsuarioID, escopo).Scan(&temComando); e == nil && temComando == 0 {
+		jsonErro(w, http.StatusNotFound, "este usuário não é chefe de setor no grupo")
 		return
 	}
 	res, err := a.st.db.Exec(`DELETE FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'chefe_setor'`, req.UsuarioID, escopo)
@@ -330,6 +383,21 @@ func (a *App) hGrupoDestituirChefe(w http.ResponseWriter, r *http.Request) {
 	if n == 0 {
 		jsonErro(w, http.StatusNotFound, "este usuário não é chefe de setor no grupo")
 		return
+	}
+	// Multi-chefia (ordem 06/10, item 14): destituir apaga SÓ os COMANDOS do
+	// usuário (linhas em chefe_setores do grupo) — se ele ainda comanda outro
+	// setor, o papel chefe_setor (acesso de sessão) PERMANECE; sai só se ficar
+	// sem NENHUM comando no grupo.
+	if _, err := a.st.db.Exec(`DELETE FROM chefe_setores WHERE usuario_id = ? AND grupo_id = ?`, req.UsuarioID, escopo); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var comandos int
+	if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND grupo_id = ?`, req.UsuarioID, escopo).Scan(&comandos); e == nil && comandos == 0 {
+		if _, err := a.st.db.Exec(`DELETE FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'chefe_setor'`, req.UsuarioID, escopo); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	a.st.Auditoria(&u.ID, "destituir_chefe", "usuarios", &req.UsuarioID, login, ipDe(r))
 	jsonOK(w, map[string]any{"ok": true})

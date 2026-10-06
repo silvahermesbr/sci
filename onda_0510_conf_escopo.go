@@ -125,28 +125,50 @@ func (a *App) authConf(prox http.HandlerFunc) http.Handler {
 }
 
 // guardaSetorNaMarcar: regra de setor para hConferenciaMarcar — chefe_setor E
-// operador só militares do PRÓPRIO setor (u.SetorID → fallback pessoa.setor_id).
+// operador só militares do PRÓPRIO setor (chefe: linhas em chefe_setores —
+// multi-chefia 06/10; operador: u.SetorID → fallback pessoa.setor_id).
 // Gerente e encarregado não têm filtro (grupo inteiro). 403 com mensagem clara.
 func (a *App) guardaSetorNaMarcar(w http.ResponseWriter, u *Usuario, pessoaID int64) bool {
 	if podeVerTodoSetor(a, u) {
 		return true
 	}
-	var setorUsuario *int64
 	switch u.Papel {
-	case "chefe_setor", "operador":
-		setorUsuario = setorDoUsuario(a, u)
+	case "chefe_setor":
+		// Multi-chefia: comanda TODOS os setores onde tem linha; fallback =
+		// setor da pessoa vinculada (conta legada).
+		var pSetor *int64
+		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, pessoaID).Scan(&pSetor)
+		if pSetor == nil {
+			jsonErro(w, http.StatusForbidden, "militar sem setor — não é de comando do chefe")
+			return false
+		}
+		var comandos int
+		if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND setor_id = ?`, u.ID, *pSetor).Scan(&comandos); e == nil && comandos > 0 {
+			return true
+		}
+		if u.PessoaID != nil {
+			var setorPessoa *int64
+			_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorPessoa)
+			if setorPessoa != nil && pSetor != nil && *setorPessoa == *pSetor {
+				return true
+			}
+		}
+		jsonErro(w, http.StatusForbidden, "você só pode lançar presença para militares do seu próprio setor")
+		return false
+	case "operador":
+		setorUsuario := setorDoUsuario(a, u)
+		if setorUsuario == nil {
+			jsonErro(w, http.StatusForbidden, "sua conta não tem setor atribuído no cadastro — solicite ao gerente")
+			return false
+		}
+		var setorPessoa *int64
+		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, pessoaID).Scan(&setorPessoa)
+		if setorPessoa == nil || *setorPessoa != *setorUsuario {
+			jsonErro(w, http.StatusForbidden, "você só pode lançar presença para militares do seu próprio setor")
+			return false
+		}
+		return true
 	default:
 		return true // outros papeis autorizados sem filtro de setor
 	}
-	if setorUsuario == nil {
-		jsonErro(w, http.StatusForbidden, "sua conta não tem setor atribuído no cadastro — solicite ao gerente")
-		return false
-	}
-	var setorPessoa *int64
-	_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, pessoaID).Scan(&setorPessoa)
-	if setorPessoa == nil || *setorPessoa != *setorUsuario {
-		jsonErro(w, http.StatusForbidden, "você só pode lançar presença para militares do seu próprio setor")
-		return false
-	}
-	return true
 }

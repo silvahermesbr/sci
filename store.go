@@ -146,6 +146,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV34(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV35(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2268,4 +2271,55 @@ func (s *Store) migrarV34() error {
 	}
 
 	return s.marcarVersao(34)
+}
+
+// migrarV35 (ordem Diretor 06/10, item 14 — cada USUÁRIO pode chefiar VÁRIOS
+// setores): tabela chefe_setores separa COMANDO de ACESSO DE SESSÃO. Antes
+// (item 1, 5ae7ae6): 1 chefe por setor, inferido de usuario_papeis (papel de
+// sessão) + usuarios.setor_id (setor corrente único do usuário). Agora:
+//   - chefe_setores: fonta da verdade do COMANDO — setor_id UNIQUE (cada setor
+//     tem UM chefe), usuario_id repetível entre setores (multi-chefia);
+//   - usuario_papeis.papel='chefe_setor' vira SÓ o acesso de sessão: existe
+//     enquanto o usuário comanda ≥1 setor no grupo (purga em nomear/destituir).
+// BACKFILL do estado atual: para cada setor S, o usuário com papel chefe_setor
+// cujo usuarios.setor_id = S (modelo do item 1). Idempotente: CREATE TABLE IF
+// NOT EXISTS + INSERT OR IGNORE (UNIQUE setor_id deduplica re-execuções).
+func (s *Store) migrarV35() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 35`).Scan(&v)
+	if v == 35 {
+		return nil
+	}
+
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS chefe_setores (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			grupo_id   INTEGER NOT NULL REFERENCES grupos(id),
+			setor_id   INTEGER NOT NULL UNIQUE REFERENCES setores(id),
+			usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
+			nomeado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		)
+	`); err != nil {
+		return fmt.Errorf("migração v35 tabela chefe_setores: %w", err)
+	}
+
+	// BACKFILL re-executável (INSERT OR IGNORE): linha de papel com grupo NULL
+	// herda o grupo do próprio usuário (COALESCE).
+	if _, err := s.db.Exec(`
+		INSERT OR IGNORE INTO chefe_setores (grupo_id, setor_id, usuario_id)
+		SELECT COALESCE(up.grupo_id, u.grupo_id), u.setor_id, u.id
+		FROM usuario_papeis up
+		JOIN usuarios u ON u.id = up.usuario_id
+		WHERE up.papel = 'chefe_setor'
+		  AND u.setor_id IS NOT NULL
+		  AND COALESCE(up.grupo_id, u.grupo_id) IS NOT NULL
+	`); err != nil {
+		return fmt.Errorf("migração v35 backfill chefe_setores: %w", err)
+	}
+
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_chefe_setores_usuario ON chefe_setores(usuario_id)`); err != nil {
+		return fmt.Errorf("migração v35 índice chefe_setores: %w", err)
+	}
+
+	return s.marcarVersao(35)
 }
