@@ -2083,6 +2083,12 @@
         <div class="rolagem"><table><thead><tr><th>Setor</th><th>Chefe atual</th><th>Nomear</th></tr></thead>
         <tbody id="tabChefes"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
+      <div id="gerAgregado" class="${abaGer === 'agregado' ? '' : 'oculto'}">
+        <div class="cartao"><h3 style="margin-top:0">SETORES — Visão Agregada</h3>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Panorama por setor/seção do escopo (próprio grupo e subordinados): pessoal ativo no banco, contas ativas e chefe atual. Use a aba <b>Chefes</b> para nomear/destituir.</p>
+        <div class="rolagem"><table><thead><tr><th>Setor</th><th>Unidade</th><th class="num">Pessoal ativo</th><th class="num">Contas ativas</th><th>Chefe</th></tr></thead>
+        <tbody id="tabAgreg"><tr><td colspan="5"><span class="carregando">…</span></td></tr></tbody></table></div></div>
+      </div>
       <div id="gerOperadores" class="${abaGer === 'operadores' ? '' : 'oculto'}">
         <!-- ordem 04/10: gerente NÃO cria operador — seleciona CHEFES DE SETOR
              (aba Pessoal não cobre: isso fica no modal de usuário do admin) e são
@@ -2107,12 +2113,13 @@
         { valor: 'grupos', rotulo: 'Grupos' },
         { valor: 'operadores', rotulo: 'Operadores' },
         { valor: 'funcoes', rotulo: 'Funções' },
-        { valor: 'chefes', rotulo: 'Chefes' }
+        { valor: 'chefes', rotulo: 'Chefes' },
+        { valor: 'agregado', rotulo: 'Setores (Visão Agregada)' }
       ], {
         valorPadrao: abaGer,
         onChange: (k) => {
           abaGer = k;
-          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes'].forEach(kk => {
+          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes', 'agregado'].forEach(kk => {
             const el = $('#ger' + kk[0].toUpperCase() + kk.slice(1));
             if (el) el.classList.toggle('oculto', kk !== abaGer);
           });
@@ -2120,6 +2127,7 @@
           if (abaGer === 'pessoal') atualizarSelectsCatalogos();
           if (abaGer === 'funcoes') carregarFuncoesMembros();
           if (abaGer === 'chefes') carregarChefes();
+          if (abaGer === 'agregado') carregarAgregadoSetores();
         }
       });
     }
@@ -2184,6 +2192,36 @@
     }
     if (abaGer === 'funcoes') carregarFuncoesMembros();
     if (abaGer === 'chefes') carregarChefes();
+    if (abaGer === 'agregado') carregarAgregadoSetores();
+
+    /* --- onda itens79 (item 9): aba SETORES — visão agregada do escopo ---
+       GET /api/setores/agregado (admin vê tudo; gerente vê próprio grupo +
+       subordinados). Somente leitura: nomear/destituir segue na aba Chefes
+       (via canônica POST /api/grupos/{id}/nomear_chefe). */
+    async function carregarAgregadoSetores() {
+      const tb = $('#tabAgreg');
+      if (!tb) return;
+      tb.innerHTML = '<tr><td colspan="5"><span class="carregando">…</span></td></tr>';
+      try {
+        const r = await api('/api/setores/agregado');
+        const lista = r.setores || [];
+        if (!lista.length) {
+          tb.innerHTML = '<tr><td colspan="5"><span class="vazio">nenhum setor no escopo — crie em Tags › Estrutura Organizacional</span></td></tr>';
+          return;
+        }
+        tb.innerHTML = lista.map(s => `<tr>
+          <td><b>${esc(s.nome)}</b>${s.sigla ? ' <code style="font-size:11px">' + esc(s.sigla) + '</code>' : ''}</td>
+          <td>${esc(s.grupo_nome || '—')}</td>
+          <td class="num">${s.pessoas || 0}</td>
+          <td class="num">${s.contas || 0}</td>
+          <td>${s.tem_chefe
+            ? `<span class="alerta-ok">👑 ${esc(s.chefe_nome)}</span>`
+            : '<span style="color:var(--tx3)">sem chefe</span>'}</td>
+        </tr>`).join('');
+      } catch (e) {
+        tb.innerHTML = '<tr><td colspan="5"><span class="vazio">Falha ao carregar a visão agregada de setores.</span></td></tr>';
+      }
+    }
 
     /* --- onda Escalas (05/10): aba CHEFES — nomear/destituir chefe de setor --- */
     async function carregarChefes() {

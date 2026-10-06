@@ -17,7 +17,11 @@ import (
 )
 
 // criaUsuarioTeste insere usuário ativo com senha e papel — via SQL direto
-// (validarCredenciais lê usuarios.senha_hash/ativo/precisa_setup).
+// (validarCredenciais lê usuarios.senha_hash/ativo/precisa_setup). SEM linha
+// em usuario_papeis: a sessão sintetiza o papel NO LOGIN já com o grupo da
+// conta (CriarSessaoComPapel). Linha pré-criada grupo-NULL virava a PRIMEIRA
+// linha (ORDER BY id) e prendia a sessão num papel sem escopo — 403 em
+// G1/G3 e efetivo vazio (regressão provada na suíte completa).
 func criaUsuarioTeste(t *testing.T, st *Store, login, senha, papel string) {
 	t.Helper()
 	hash, err := hashSenha(senha)

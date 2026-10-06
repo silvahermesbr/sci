@@ -144,7 +144,7 @@ func (a *App) hSetoresAgregado(w http.ResponseWriter, r *http.Request) {
 	if escopo > 0 {
 		ids = append([]int64{escopo}, a.gruposSubordinadosAtivos(escopo)...)
 	} else {
-		rows, err := a.st.db.Query(`SELECT id FROM grupos WHERE ativo = 1`)
+		rows, err := a.st.db.Query(`SELECT id FROM grupos`)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
@@ -175,7 +175,13 @@ func (a *App) hSetoresAgregado(w http.ResponseWriter, r *http.Request) {
 		       (SELECT COUNT(*) FROM usuarios us2
 		         JOIN usuario_papeis up2 ON up2.usuario_id = us2.id
 		           AND up2.papel = 'chefe_setor' AND up2.grupo_id = s.grupo_id
-		         WHERE us2.setor_id = s.id AND us2.ativo = 1)
+		         WHERE us2.setor_id = s.id AND us2.ativo = 1),
+		       COALESCE((SELECT COALESCE(NULLIF(cus.nome_guerra, ''), cus.login, '')
+		         FROM usuarios cus
+		         JOIN usuario_papeis cup ON cup.usuario_id = cus.id
+		           AND cup.papel = 'chefe_setor' AND cup.grupo_id = s.grupo_id
+		         WHERE cus.setor_id = s.id AND cus.ativo = 1
+		         ORDER BY cus.id LIMIT 1), '')
 		FROM setores s
 		LEFT JOIN grupos g ON g.id = s.grupo_id
 		WHERE s.ativo = 1 AND s.grupo_id IN (` + ph + `)
@@ -186,27 +192,31 @@ func (a *App) hSetoresAgregado(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	setores := []map[string]any{}
+	// pool = 1 conexão (SetMaxOpenConns): TUDO numa única query (chefe vem por
+	// subselect correlacionado no SELECT) — QueryRow dentro do Next() deadlocka
+	// no pool, e cursor aberto segura a única conexão.
+	type linhaSetor struct {
+		id, paiID, grupoID, qtdPessoas, qtdContas, qtdChefes int64
+		nome, sigla, grupoNome, chefeNome                    string
+	}
+	var linhas []linhaSetor
 	for rows.Next() {
-		var id, paiID, grupoID, qtdPessoas, qtdContas, qtdChefes int64
-		var nome, sigla, grupoNome string
-		if rows.Scan(&id, &nome, &sigla, &paiID, &grupoID, &grupoNome,
-			&qtdPessoas, &qtdContas, &qtdChefes) == nil {
-			var chefeNome string
-			_ = a.st.db.QueryRow(`
-				SELECT COALESCE(NULLIF(us.nome_guerra, ''), us.login, '')
-				FROM usuarios us
-				JOIN usuario_papeis up ON up.usuario_id = us.id
-				 AND up.papel = 'chefe_setor' AND up.grupo_id = s.grupo_id
-				WHERE us.setor_id = ? AND us.ativo = 1
-				ORDER BY us.id LIMIT 1`, id).Scan(&chefeNome)
-			setores = append(setores, map[string]any{
-				"id": id, "nome": nome, "sigla": sigla, "pai_id": paiID,
-				"grupo_id": grupoID, "grupo_nome": grupoNome,
-				"pessoas": qtdPessoas, "contas": qtdContas,
-				"chefe_nome": chefeNome, "tem_chefe": chefeNome != "",
-			})
+		var l linhaSetor
+		if rows.Scan(&l.id, &l.nome, &l.sigla, &l.paiID, &l.grupoID, &l.grupoNome,
+			&l.qtdPessoas, &l.qtdContas, &l.qtdChefes, &l.chefeNome) == nil {
+			linhas = append(linhas, l)
 		}
+	}
+	rows.Close()
+
+	setores := []map[string]any{}
+	for _, l := range linhas {
+		setores = append(setores, map[string]any{
+			"id": l.id, "nome": l.nome, "sigla": l.sigla, "pai_id": l.paiID,
+			"grupo_id": l.grupoID, "grupo_nome": l.grupoNome,
+			"pessoas": l.qtdPessoas, "contas": l.qtdContas,
+			"chefe_nome": l.chefeNome, "tem_chefe": l.chefeNome != "",
+		})
 	}
 
 	// contas do escopo p/ os dropdowns do painel (nomear a partir da visão)
