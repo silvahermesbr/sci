@@ -1969,6 +1969,46 @@ func (a *App) detalhadoTabelaGrupo(pdf *fpdf.Fpdf, g detalhadoGrupo) {
 	}
 }
 
+// relatorioDetalhadoMulti: variante para o ADMIN (escopo global) — mesmas
+// páginas de resumo, folha PRÓPRIA para cada grupo ativo informado (um por
+// folha, modelo do Diretor), sem coluna SETOR (nenhum é "grupo do escopo").
+func (a *App) relatorioDetalhadoMulti(de, ate, modo string, ids []int64) ([]byte, error) {
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("nenhum grupo informado")
+	}
+	b := a.montarBundle(de, ate, 0) // 0 = visão global (todas as grupos)
+	sub := fmt.Sprintf("Período: %s a %s · Efetivo Pronto: %.1f%%", b.De, b.Ate, b.PctPronto)
+	pdf := a.novoPDF("P", "RELATÓRIO GERAL DE EFETIVO & CONFERÊNCIAS", sub, "")
+	a.relatorioSimplesRender(pdf, b) // página 1 = resumo idêntico ao SIMPLES
+	if modo != "detalhado" {
+		var buf bytes.Buffer
+		if err := pdf.Output(&buf); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+	for _, gid := range ids {
+		reg, err := a.registrosDetalhadoGrupo(de, ate, []int64{gid})
+		if err != nil {
+			return nil, err
+		}
+		var nome string
+		_ = a.st.db.QueryRow(`SELECT COALESCE(nome,'') FROM grupos WHERE id = ?`, gid).Scan(&nome)
+		pdf.AddPage() // UMA FOLHA NOVA POR GRUPO — sempre
+		pdf.SetFont("Helvetica", "B", 10)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.Cell(0, 6, cp1252Traduz.Replace(fmt.Sprintf("%s — PERIODO: %s A %s", nome, fmtDataBR(de+"T12:00:00Z")[:10], fmtDataBR(ate+"T12:00:00Z")[:10])))
+		pdf.Ln(8)
+		a.detalhadoTabelaGrupo(pdf, detalhadoGrupo{Nome: nome, Proprio: false, Registros: reg})
+	}
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // relatorioDetalhado: ponto de entrada do PDF por período com modos.
 func (a *App) relatorioDetalhado(de, ate, modo string, escopo int64) ([]byte, error) {
 	if escopo <= 0 {

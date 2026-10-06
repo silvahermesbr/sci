@@ -2884,7 +2884,37 @@ func (a *App) hRelatorioDetalhadoPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if esc <= 0 {
-		jsonErro(w, http.StatusBadRequest, "relatório detalhado exige grupo do escopo")
+		// Admin (escopo global): TODAS as grupos, uma folha cada
+		// (modelo do Diretor: folha por grupo). Monta a lista aqui e segue.
+		rows, qerr := a.st.db.Query(`SELECT id FROM grupos ORDER BY id`)
+		if qerr != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao listar grupos")
+			return
+		}
+		var ids []int64
+		for rows.Next() {
+			var gid int64
+			if rows.Scan(&gid) == nil {
+				ids = append(ids, gid)
+			}
+		}
+		rows.Close()
+		if len(ids) == 0 {
+			jsonErro(w, http.StatusBadRequest, "nenhum grupo ativo no sistema")
+			return
+		}
+		pdf, err := a.relatorioDetalhadoMulti(de, ate, modo, ids)
+		if err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao gerar PDF: "+err.Error())
+			return
+		}
+		a.st.Auditoria(&u.ID, "exportar", "relatorio_detalhado", nil, de+" a "+ate+" modo="+modo+" admin-global", ipDe(r))
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Content-Type", "application/pdf")
+		w.Header().Set("Content-Disposition",
+			fmt.Sprintf("inline; filename=SCI_relatorio_%s_%s.pdf", de, ate))
+		_, _ = w.Write(pdf)
 		return
 	}
 	pdf, err := a.relatorioDetalhado(de, ate, modo, esc)

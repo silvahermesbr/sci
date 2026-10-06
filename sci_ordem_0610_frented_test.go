@@ -363,10 +363,15 @@ func TestFrenteDGuardas(t *testing.T) {
 	if rr.Code != http.StatusForbidden {
 		t.Errorf("grupo rival: esperado 403, obtido %d", rr.Code)
 	}
-	// 400 admin sem grupo (escopo global não gera folha por grupo)
-	rr = doRawReqH(app, "GET", "/api/relatorio/detalhado.pdf?modo=simples", nil, "", tokAdmin)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("admin sem grupo: esperado 400, obtido %d", rr.Code)
+	// 200 admin sem grupo: escopo global gera resumo + UMA FOLHA POR GRUPO ativo
+	// (modelo do Diretor; gap fechado pela CEO na integração)
+	rr = doRawReqH(app, "GET", "/api/relatorio/detalhado.pdf?modo=detalhado&de=2026-10-01&ate=2026-10-31", nil, "", tokAdmin)
+	if rr.Code != http.StatusOK || len(rr.Body.Bytes()) < 4 || string(rr.Body.Bytes()[:4]) != "%PDF" {
+		t.Fatalf("admin global: esperado 200 PDF, obtido %d (%s)", rr.Code, rr.Body.String())
+	}
+	txtAdmin := extrairTextoPDF(t, rr.Body.Bytes())
+	if !strings.Contains(txtAdmin, "GRUPO:") || !strings.Contains(txtAdmin, "Cia Gama") {
+		t.Errorf("admin global sem folhas por grupo (GRUPO:/Cia Gama)")
 	}
 	// grupo do próprio escopo segue OK
 	rr = doRawReqH(app, "GET", "/api/relatorio/detalhado.pdf?modo=simples&grupo="+strconv.FormatInt(gidAlfa, 10), nil, "", tokGer)
