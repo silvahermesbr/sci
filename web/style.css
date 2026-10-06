@@ -2616,22 +2616,37 @@ th.sorted-desc {
 
 /* Responsividade Mobile e Tablet */
 @media (max-width: 900px) {
+  /* Item 13 (ordem 06/10): sidebar/drawer adequada à TELA — altura limitada ao
+     viewport (dvh com fallback svh) e a SIDEBAR INTEIRA rola dentro dela
+     (header, usuário, nav e rodapé com logout). Nada de pino/sticky: o logout
+     fica alcançável ROLANDO (revisão do Diretor). Drawer é reanexado ao body
+     pelo core.js ao abrir (stacking); sem transform aqui, a visibilidade é só
+     a classe .aberto-mobile. */
   .sidebar {
     position: fixed;
     top: 0;
     left: 0;
-    bottom: 0;
-    transform: translateX(-100%);
+    bottom: auto;
+    height: auto;
+    max-height: 100dvh;
+    max-height: 100svh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     box-shadow: 10px 0 30px rgba(0,0,0,0.5);
   }
   .sidebar.aberto-mobile {
-    transform: translateX(0);
+    box-shadow: 10px 0 30px rgba(0,0,0,0.5);
   }
   .viewport {
     padding: 0 0 60px 0 !important;
   }
   .viewport-mobile-bar {
     display: flex;
+    height: 44px;          /* item 13: header mobile mais baixo (52 → 44) */
+    padding: 0 12px;
+  }
+  .viewport-mobile-bar .sidebar-logo {
+    font-size: 13.5px;
   }
   .abas {
     flex-wrap: nowrap !important;
