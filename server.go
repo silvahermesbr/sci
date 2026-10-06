@@ -356,6 +356,7 @@ func (a *App) rotas() {
 
 	m.Handle("GET /api/relatorio", a.auth(false, a.hRelatorioJSON))
 	m.Handle("GET /api/relatorio.pdf", a.auth(false, a.hRelatorioPDF))
+	m.Handle("GET /api/relatorio/detalhado.pdf", a.auth(false, a.hRelatorioDetalhadoPDF))
 	m.Handle("GET /api/export/{t}", a.auth(false, a.hExportCSV))
 	m.Handle("GET /api/export", a.auth(false, a.hExportarDados))
 	m.Handle("GET /api/notificacoes", a.auth(false, a.hNotificacoesHub))
@@ -2857,6 +2858,41 @@ func (a *App) hRelatorioPDF(w http.ResponseWriter, r *http.Request) {
 	}
 	a.st.Auditoria(&u.ID, "exportar", "relatorio", nil, de+" a "+ate, ipDe(r))
 	// v9.15.2 (ordem Tenente): relatório SEMPRE on demand — proibir cache do navegador
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("inline; filename=SCI_relatorio_%s_%s.pdf", de, ate))
+	_, _ = w.Write(pdf)
+}
+
+// hRelatorioDetalhadoPDF (ordem SCI 06/10 — Frente D): PDF por período com
+// modo SIMPLES (resumo, igual ao legado) ou DETALHADO (resumo + uma folha por
+// grupo: grupo do escopo com coluna SETOR, subordinados em folha própria).
+// Rota: GET /api/relatorio/detalhado.pdf?de=&ate=&modo=simples|detalhado[&grupo=]
+func (a *App) hRelatorioDetalhadoPDF(w http.ResponseWriter, r *http.Request) {
+	modo := r.URL.Query().Get("modo")
+	if modo != "simples" && modo != "detalhado" {
+		jsonErro(w, http.StatusBadRequest, "modo inválido (simples|detalhado)")
+		return
+	}
+	de, ate := a.periodoPadrao(r)
+	u := usuarioDoCtx(r)
+	esc, ok := a.escopoRelatorio(r, u)
+	if !ok {
+		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
+		return
+	}
+	if esc <= 0 {
+		jsonErro(w, http.StatusBadRequest, "relatório detalhado exige grupo do escopo")
+		return
+	}
+	pdf, err := a.relatorioDetalhado(de, ate, modo, esc)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao gerar PDF: "+err.Error())
+		return
+	}
+	a.st.Auditoria(&u.ID, "exportar", "relatorio_detalhado", nil, de+" a "+ate+" modo="+modo, ipDe(r))
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Content-Type", "application/pdf")
