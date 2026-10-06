@@ -81,13 +81,17 @@ func (a *App) funcaoIDPorNome(grupoID *int64, agulha string) *int64 {
 
 // podeGestaoPessoal: quem gere pessoal — ADMIN e GERENTE sempre (os handlers
 // validam o escopo de cada um) ou encarregado/auxiliar de pessoal COM grupo na
-// sessão.
+// sessão. PAPEL DO SISTEMA MANDA (anti-escalação, 4a4fbc2): operador/
+// chefe_setor não ganham poderes por função renomeada no catálogo.
 func (a *App) podeGestaoPessoal(u *Usuario) bool {
 	if u == nil {
 		return false
 	}
 	if u.Papel == "admin" || u.Papel == "gerente" {
 		return true
+	}
+	if u.Papel == "operador" || u.Papel == "chefe_setor" {
+		return false
 	}
 	if esc := escopoDoUsuario(u); esc <= 0 {
 		return false

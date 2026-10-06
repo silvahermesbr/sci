@@ -621,6 +621,12 @@ func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	solicitante := usuarioDoCtx(r)
+	// ordem 06/10: senha de conta é poder credencial — SÓ admin e gerente
+	// (antes: qualquer conta autenticada passava; buraco de escalação fechado).
+	if solicitante.Papel != "admin" && solicitante.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "senha de conta é redefinida pelo gerente ou administrador")
+		return
+	}
 	if solicitante.Papel == "gerente" {
 		var alvoPapel string
 		var alvoGrupo int64

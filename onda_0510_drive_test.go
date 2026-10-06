@@ -251,6 +251,12 @@ func TestDrivePropriedades(t *testing.T) {
 	defer cleanup()
 
 	gid, ckGer := montaDrive(t, app, st)
+	// item 2 (ec8f1cb): autor exibe nome_guerra→nome_completo (login NUNCA).
+	// O teste pedia o login 'gerdr' — contrato antigo; dá nome de guerra ao
+	// autor e cobra por ele (a prova do JOIN continua de pé).
+	if _, err := st.db.Exec(`UPDATE usuarios SET nome_guerra = 'Ger Dr' WHERE login = 'gerdr'`); err != nil {
+		t.Fatalf("nome de guerra do autor: %v", err)
+	}
 	arqID := criaArquivoDriveEm(t, st, gid, "Relatorio_Diario_De_Operacao_Edicao_Extremamente_Longa.pdf", "arq_prop", "gerdr", nil)
 
 	// Grants: para o operador (usuário) e para o próprio grupo.
@@ -275,8 +281,8 @@ func TestDrivePropriedades(t *testing.T) {
 	if res["nome_original"] != "Relatorio_Diario_De_Operacao_Edicao_Extremamente_Longa.pdf" {
 		t.Fatalf("nome COMPLETO obrigatório, veio %v", res["nome_original"])
 	}
-	if res["autor_nome"] != "gerdr" {
-		t.Fatalf("autor via JOIN usuarios, veio %v", res["autor_nome"])
+	if res["autor_nome"] != "Ger Dr" {
+		t.Fatalf("autor via JOIN usuarios (nome de guerra, item 2), veio %v", res["autor_nome"])
 	}
 	if tsz, _ := res["tamanho"].(float64); int64(tsz) != 2048 {
 		t.Fatalf("tamanho, veio %v", res["tamanho"])
