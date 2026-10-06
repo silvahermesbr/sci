@@ -251,6 +251,48 @@
   /* --- salvamento parcial (v9.13): grava o estado de 1 militar na conferência aberta --- */
   let CONF_ID = null; // conferência aberta sendo editada (várias simultâneas v9.14.2)
   let marcaTimer = {}, marcaPend = {};
+
+  /* === Ciclo 2 — DASHBOARD DE CONTAGENS =====================================
+     confContagens: conta situações sobre C.pessoas × C.est (sem_linha = militar
+     sem lançamento na conferência; nao_verificado = linha explícita do servidor).
+     confDashRender: patch cirúrgico — só o <b> de cada chip muda, NUNCA
+     innerHTML do painel inteiro. Faixa usa .resumo/.caixa da casa (sem CSS novo).
+     ========================================================================== */
+  function confContagens() {
+    const n = { presente: 0, atraso: 0, falta: 0, justificada: 0, nao_verificado: 0, sem_linha: 0 };
+    for (const p of (C ? C.pessoas : [])) {
+      const s = C.est[p.id];
+      if (s === undefined || s === null || n[s] === undefined) n.sem_linha++;
+      else n[s]++;
+    }
+    return n;
+  }
+  const confChipHTML = (k, n, label, cor) =>
+    `<div class="caixa" id="confDash-${k}" style="padding:8px 6px"><b style="color:${cor};font-size:20px">${n}</b><span style="font-size:11px">${label}</span></div>`;
+
+  function confDashHTML() {
+    if (!C || !C.c) return '';
+    const n = confContagens();
+    return `<div class="resumo" id="confDash" style="margin-bottom:14px;grid-template-columns:repeat(auto-fit,minmax(105px,1fr))">
+      ${confChipHTML('presente', n.presente, 'Presentes', 'var(--verde-claro)')}
+      ${confChipHTML('atraso', n.atraso, 'Atrasos', 'var(--ambar-txt)')}
+      ${confChipHTML('falta', n.falta, 'Faltas', 'var(--verm)')}
+      ${confChipHTML('justificada', n.justificada, 'Justificadas', '#60a5fa')}
+      ${confChipHTML('nao_verificado', n.nao_verificado, 'N.V.', 'var(--tx2)')}
+      ${confChipHTML('sem_linha', n.sem_linha, 'Não conferidas', 'var(--tx3)')}
+    </div>`;
+  }
+
+  function confDashRender() {
+    const faixa = document.getElementById('confDash');
+    if (!faixa) return; // fora da view de conferência: não faz nada
+    const n = confContagens();
+    for (const [k, v] of Object.entries(n)) {
+      const b = faixa.querySelector('#confDash-' + k + ' b');
+      if (b && b.textContent !== String(v)) b.textContent = String(v);
+    }
+  }
+
   const marcarParcial = (pid, situacao, destinoId, observacao, verificado) => {
     if (!C.c) return;
     const currentConfId = CONF_ID;
@@ -261,6 +303,7 @@
       delete marcaPend[pid];
       try { await api('/api/conferencia/marcar' + (currentConfId ? '?id=' + currentConfId : ''), { method: 'POST', body: JSON.stringify({ pessoa_id: pid, ...corpo }) }); }
       catch (e) { toast('Falha ao salvar estado parcial', 'erro'); }
+      confDashRender(); // ciclo 2: dashboard acompanha qualquer toque local
     }, 350);
   };
   /* ordem Tenente 30/09: RASCUNHO PERMANENTE — abre na terça à noite, fecha a página,
@@ -711,6 +754,7 @@
          <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span></div>`;
     $('#app').innerHTML = `<div style="margin-bottom:10px"><button class="fantasma" id="btVoltar" style="min-height:38px">← Retornar</button></div>
       <h2 style="margin-top:0">Conferência de pessoal</h2>${banner}
+      ${confDashHTML()}
       ${dashboardSetoresHTML}
       <div class="barra-fixa">
         <input id="busca" placeholder="buscar nome…">
