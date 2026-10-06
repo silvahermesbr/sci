@@ -319,12 +319,14 @@
 
   /* --- ADMIN › usuários: Gestão Completa de Contas, Nomes e Multi-Funções --- */
   async function admUsuarios() {
-    const [lista, grupos, funcoesRes] = await Promise.all([
+    const [lista, grupos, funcoesRes, setoresRes] = await Promise.all([
       api('/api/usuarios'),
       api('/api/grupos'),
-      api('/api/catalogo/funcoes').catch(() => [])
+      api('/api/catalogo/funcoes').catch(() => []),
+      api('/api/catalogo/setores').catch(() => [])
     ]);
     const funcoesLista = Array.isArray(funcoesRes) ? funcoesRes : (funcoesRes.funcoes || []);
+    const setoresLista = (Array.isArray(setoresRes) ? setoresRes : []).filter(s => s.ativo !== false);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
     const optsGrupos = `<option value="">— Sem grupo (Global / Atribuir depois) —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
 
@@ -732,6 +734,13 @@
             </div>
           </div>
 
+          <div class="form-linha" id="nuLinhaSetor" style="margin-bottom:8px; display:none">
+            <div class="campo" style="flex:1">
+              <label>Setor / Seção (escopo do chefe de setor)</label>
+              <select id="nuSetor"><option value="">— Nenhum —</option>${setoresLista.map(s => `<option value="${s.id}">${esc(s.nome)}${s.sigla ? ' (' + esc(s.sigla) + ')' : ''}</option>`).join('')}</select>
+            </div>
+          </div>
+
           <div id="nuAjudaPapel" style="font-size:12px; color:var(--tx2); background:var(--painel2); border:1px solid var(--borda); border-radius:6px; padding:10px; margin-bottom:14px">
             ℹ️ <b>Hierarquia (ordem 04/10):</b> contas criadas pelo admin nascem SEM grupo. O gerente designa os chefes de setor; cada chefe seleciona os operadores do seu setor.
           </div>
@@ -747,10 +756,12 @@
 
       const selP = div.querySelector('#nuPapel');
       const grpField = div.querySelector('#nuCampoGrupo');
+      const linhaSetor = div.querySelector('#nuLinhaSetor');
       const ajuda = div.querySelector('#nuAjudaPapel');
 
       selP.onchange = () => {
         const p = selP.value;
+        if (linhaSetor) linhaSetor.style.display = (p === 'chefe_setor') ? 'flex' : 'none';
         if (p === 'admin') {
           grpField.style.display = 'none';
           ajuda.innerHTML = 'ℹ️ <b>Administrador:</b> Acesso irrestrito a configurações globais, backup e governança da estrutura.';
@@ -777,6 +788,11 @@
         // gerente continua exigindo unidade.
         const grupoId = +div.querySelector('#nuGrupo').value || null;
         const funcaoId = +div.querySelector('#nuFuncao').value || null;
+        // onda itens79: setor vai no create quando papel = chefe_setor (hUsuariosAdd
+        // JÁ grava usuarios.setor_id — server.go:4604). chefe sem setor pode escolher
+        // depois; se selecionado, manda o id do catálogo.
+        const setorSel = div.querySelector('#nuSetor');
+        const setorId = (papel === 'chefe_setor' && setorSel && setorSel.value) ? (+setorSel.value || null) : null;
 
         if (!login || !completo || !guerra) {
           toast('Preencha os campos obrigatórios (*)', 'erro');
@@ -799,7 +815,8 @@
               senha,
               papel,
               grupo_id: grupoId,
-              funcao_id: funcaoId
+              funcao_id: funcaoId,
+              setor_id: setorId
             })
           });
           if (res && res.id) {
@@ -840,6 +857,13 @@
             </div>
           </div>
 
+          <div class="form-linha" id="apLinhaSetor" style="margin-bottom:10px; display:none">
+            <div class="campo" style="flex:1">
+              <label>Setor / Seção (obrigatório p/ chefe de setor)</label>
+              <select id="apSetor"><option value="">— Nenhum —</option>${setoresLista.map(s => `<option value="${s.id}" data-grupo="${s.grupo_id == null ? '' : s.grupo_id}">${esc(s.nome)}${s.sigla ? ' (' + esc(s.sigla) + ')' : ''}</option>`).join('')}</select>
+            </div>
+          </div>
+
           <div class="campo" style="margin-bottom:12px">
             <label>Posto / Graduação (Opcional)</label>
             <select id="apFuncao">
@@ -863,10 +887,34 @@
 
       const selP = div.querySelector('#apPapel');
       const grpField = div.querySelector('#apCampoGrupo');
+      const linhaSetor = div.querySelector('#apLinhaSetor');
+      const selSetor = div.querySelector('#apSetor');
+      const selGrupo = div.querySelector('#apGrupo');
       const ajuda = div.querySelector('#apAjuda');
+
+      // onda itens79: a linha de setor aparece só p/ chefe_setor e as opções
+      // filtram pelo grupo escolhido (ou globais, grupo NULL). O backend
+      // (hUsuarioPapelAdd) valida de novo — 400 se o setor não é do grupo.
+      const filtrarSetores = () => {
+        if (!selSetor) return;
+        const gid = selGrupo.value;
+        selSetor.querySelectorAll('option[data-grupo]').forEach(op => {
+          const gOp = op.dataset.grupo;
+          op.style.display = (!gid || gOp === '' || gOp === gid) ? '' : 'none';
+        });
+        if (selSetor.selectedOptions[0] && selSetor.selectedOptions[0].style.display === 'none') {
+          selSetor.value = '';
+        }
+      };
+      if (selGrupo) selGrupo.onchange = filtrarSetores;
 
       selP.onchange = () => {
         const p = selP.value;
+        if (linhaSetor) {
+          const mostrar = (p === 'chefe_setor');
+          linhaSetor.style.display = mostrar ? 'flex' : 'none';
+          if (mostrar) filtrarSetores();
+        }
         if (p === 'admin') {
           grpField.style.display = 'none';
           ajuda.innerHTML = '🌐 <b>Administrador:</b> Acesso global ao sistema.';
@@ -887,6 +935,9 @@
         const papel = selP.value;
         const grupoId = +div.querySelector('#apGrupo').value || null;
         const funcaoId = +div.querySelector('#apFuncao').value || null;
+        // onda itens79: chefe_setor pode nascer já com o setor (conveniência do
+        // formulário; nomear_chefe continua sendo a via canônica).
+        const setorId = (papel === 'chefe_setor' && selSetor && selSetor.value) ? (+selSetor.value || null) : null;
 
         if (papel !== 'admin' && !grupoId) {
           toast('Selecione o grupo para esta função', 'erro');
@@ -899,7 +950,8 @@
             body: JSON.stringify({
               papel,
               grupo_id: grupoId,
-              funcao_id: funcaoId
+              funcao_id: funcaoId,
+              setor_id: setorId
             })
           });
           toast('Nova função atribuída com sucesso!');
@@ -2031,6 +2083,12 @@
         <div class="rolagem"><table><thead><tr><th>Setor</th><th>Chefe atual</th><th>Nomear</th></tr></thead>
         <tbody id="tabChefes"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
+      <div id="gerAgregado" class="${abaGer === 'agregado' ? '' : 'oculto'}">
+        <div class="cartao"><h3 style="margin-top:0">SETORES — Visão Agregada</h3>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Panorama por setor/seção do escopo (próprio grupo e subordinados): pessoal ativo no banco, contas ativas e chefe atual. Use a aba <b>Chefes</b> para nomear/destituir.</p>
+        <div class="rolagem"><table><thead><tr><th>Setor</th><th>Unidade</th><th class="num">Pessoal ativo</th><th class="num">Contas ativas</th><th>Chefe</th></tr></thead>
+        <tbody id="tabAgreg"><tr><td colspan="5"><span class="carregando">…</span></td></tr></tbody></table></div></div>
+      </div>
       <div id="gerOperadores" class="${abaGer === 'operadores' ? '' : 'oculto'}">
         <!-- ordem 04/10: gerente NÃO cria operador — seleciona CHEFES DE SETOR
              (aba Pessoal não cobre: isso fica no modal de usuário do admin) e são
@@ -2055,12 +2113,13 @@
         { valor: 'grupos', rotulo: 'Grupos' },
         { valor: 'operadores', rotulo: 'Operadores' },
         { valor: 'funcoes', rotulo: 'Funções' },
-        { valor: 'chefes', rotulo: 'Chefes' }
+        { valor: 'chefes', rotulo: 'Chefes' },
+        { valor: 'agregado', rotulo: 'Setores (Visão Agregada)' }
       ], {
         valorPadrao: abaGer,
         onChange: (k) => {
           abaGer = k;
-          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes'].forEach(kk => {
+          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes', 'agregado'].forEach(kk => {
             const el = $('#ger' + kk[0].toUpperCase() + kk.slice(1));
             if (el) el.classList.toggle('oculto', kk !== abaGer);
           });
@@ -2068,6 +2127,7 @@
           if (abaGer === 'pessoal') atualizarSelectsCatalogos();
           if (abaGer === 'funcoes') carregarFuncoesMembros();
           if (abaGer === 'chefes') carregarChefes();
+          if (abaGer === 'agregado') carregarAgregadoSetores();
         }
       });
     }
@@ -2132,6 +2192,36 @@
     }
     if (abaGer === 'funcoes') carregarFuncoesMembros();
     if (abaGer === 'chefes') carregarChefes();
+    if (abaGer === 'agregado') carregarAgregadoSetores();
+
+    /* --- onda itens79 (item 9): aba SETORES — visão agregada do escopo ---
+       GET /api/setores/agregado (admin vê tudo; gerente vê próprio grupo +
+       subordinados). Somente leitura: nomear/destituir segue na aba Chefes
+       (via canônica POST /api/grupos/{id}/nomear_chefe). */
+    async function carregarAgregadoSetores() {
+      const tb = $('#tabAgreg');
+      if (!tb) return;
+      tb.innerHTML = '<tr><td colspan="5"><span class="carregando">…</span></td></tr>';
+      try {
+        const r = await api('/api/setores/agregado');
+        const lista = r.setores || [];
+        if (!lista.length) {
+          tb.innerHTML = '<tr><td colspan="5"><span class="vazio">nenhum setor no escopo — crie em Tags › Estrutura Organizacional</span></td></tr>';
+          return;
+        }
+        tb.innerHTML = lista.map(s => `<tr>
+          <td><b>${esc(s.nome)}</b>${s.sigla ? ' <code style="font-size:11px">' + esc(s.sigla) + '</code>' : ''}</td>
+          <td>${esc(s.grupo_nome || '—')}</td>
+          <td class="num">${s.pessoas || 0}</td>
+          <td class="num">${s.contas || 0}</td>
+          <td>${s.tem_chefe
+            ? `<span class="alerta-ok">👑 ${esc(s.chefe_nome)}</span>`
+            : '<span style="color:var(--tx3)">sem chefe</span>'}</td>
+        </tr>`).join('');
+      } catch (e) {
+        tb.innerHTML = '<tr><td colspan="5"><span class="vazio">Falha ao carregar a visão agregada de setores.</span></td></tr>';
+      }
+    }
 
     /* --- onda Escalas (05/10): aba CHEFES — nomear/destituir chefe de setor --- */
     async function carregarChefes() {

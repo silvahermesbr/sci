@@ -59,6 +59,7 @@
           <div class="drive-tabs">
             <button type="button" class="btn-tab-drive ativo" id="tabMeuDrive">Meu Drive</button>
             <button type="button" class="btn-tab-drive" id="tabCompDrive">Compartilhados Comigo</button>
+            ${u.papel === 'gerente' ? '<button type="button" class="btn-tab-drive" id="tabArquivoGrupo">Arquivo do Grupo</button>' : ''}
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button type="button" class="btn-acao-drive primario" id="btUploadDrive">
@@ -297,6 +298,73 @@
       pastaAtualID = 0;
       carregarItens();
     };
+
+    // Onda itens79 (item 7): "Arquivo do Grupo" — visão agregada (SÓ gerente;
+    // o botão só existe para gerente). METADADOS apenas: abrir/pastas não
+    // navega daqui — o download de cada arquivo segue o guarda normal
+    // (checarAcessoArquivo). Sem cópia física, sem mover nada.
+    const tabArq = document.getElementById('tabArquivoGrupo');
+    if (tabArq) {
+      const containerArq = () => document.getElementById('driveCorpo');
+      tabArq.onclick = async () => {
+        tabArq.classList.add('ativo');
+        tabMeu.classList.remove('ativo');
+        tabComp.classList.remove('ativo');
+        const container = containerArq();
+        if (!container) return;
+        container.innerHTML = '<div class="carregando">Consolidando arquivo do grupo…</div>';
+        try {
+          const r = await api('/api/drive/arquivo_grupo');
+          const bcEl = document.getElementById('driveBreadcrumbs');
+          if (bcEl) bcEl.innerHTML = '<span class="crumb-item ativo">Arquivo do Grupo</span>';
+          const btnRet = document.getElementById('btRetornarPastaDrive');
+          if (btnRet) btnRet.style.display = 'none';
+          const pastas = r.pastas || [];
+          const arqs = r.arquivos || [];
+          if (pastas.length === 0 && arqs.length === 0) {
+            container.innerHTML = `<div class="drive-vazio">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <h4>Arquivo Vazio</h4>
+              <p>Nenhuma pasta ou arquivo no corpus do grupo (incluindo subordinados).</p>
+            </div>`;
+            return;
+          }
+          const linhaP = p => `<tr>
+            <td>📁 <b>${esc(p.nome)}</b></td>
+            <td>${esc(p.grupo_nome || '—')}</td>
+            <td>${p.funcao_nome ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d">' + esc(p.funcao_nome) + '</span>' : '—'}</td>
+            <td>${esc(p.autor_nome || '—')}</td>
+            <td class="num">${p.qtd_itens || 0}</td>
+            <td>${fmtData(p.criado_em)}</td>
+          </tr>`;
+          const linhaA = a2 => `<tr>
+            <td>${iconeArquivo(a2.tipo, a2.nome_original)} <a href="/api/drive/download/${a2.id}" target="_blank" style="color:var(--tx)">${esc(a2.nome_original)}</a></td>
+            <td>${esc(a2.grupo_nome || '—')}</td>
+            <td>${a2.funcao_nome ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d">' + esc(a2.funcao_nome) + '</span>' : '—'}</td>
+            <td>${esc(a2.autor_nome || '—')}</td>
+            <td class="num">${formatarTamanho(a2.tamanho)}</td>
+            <td>${fmtData(a2.criado_em)}</td>
+          </tr>`;
+          container.innerHTML = `
+            <div style="margin-bottom:10px;color:var(--tx2);font-size:12.5px">
+              Visão agregada de <b>${r.grupos}</b> unidade(s) — ${r.total_pastas} pasta(s), ${r.total_arquivos} arquivo(s).
+              Abertura e edição continuam sujeitas à permissão de cada item (leitura de estrutura; conteúdo segue o guarda normal).
+            </div>
+            ${pastas.length ? `<div class="drive-secao-titulo">Pastas (${pastas.length})</div>
+            <div class="rolagem"><table>
+              <thead><tr><th>Pasta</th><th>Unidade</th><th>Função</th><th>Autor</th><th class="num">Itens</th><th>Criada em</th></tr></thead>
+              <tbody>${pastas.map(linhaP).join('')}</tbody>
+            </table></div>` : ''}
+            ${arqs.length ? `<div class="drive-secao-titulo" style="margin-top:16px">Arquivos (${arqs.length})</div>
+            <div class="rolagem"><table>
+              <thead><tr><th>Arquivo</th><th>Unidade</th><th>Função</th><th>Autor</th><th class="num">Tamanho</th><th>Enviado em</th></tr></thead>
+              <tbody>${arqs.map(linhaA).join('')}</tbody>
+            </table></div>` : ''}`;
+        } catch (e) {
+          container.innerHTML = '<div class="vazio">Falha ao carregar o arquivo do grupo.</div>';
+        }
+      };
+    }
 
     // Campo de Busca
     const inpBusca = document.getElementById('driveBusca');

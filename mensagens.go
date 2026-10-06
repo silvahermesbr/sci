@@ -70,6 +70,7 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 		GrupoID      *int64 `json:"grupo_id"`
 		Papel        string `json:"papel"`
 		FuncaoID     *int64 `json:"funcao_id"`
+		SetorID      *int64 `json:"setor_id"` // onda itens79: setor do chefe_setor no ato da atribuição
 		NomeExibicao string `json:"nome_exibicao"`
 	}
 	if err := decodificar(r, &req); err != nil {
@@ -141,16 +142,50 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Onda itens79 (item 9): chefe_setor pode nascer JÁ com o setor — validação
+	// PRÉ-insert (setor inválido não pode deixar linha órfã atrás). Re-atribuição
+	// (papel já existe: UNIQUE usuario+grupo+papel) = TROCA DE SETOR idempotente —
+	// atualiza usuarios.setor_id e responde 200, nunca 400 fake.
+	setorReq := int64(0)
+	if papel == "chefe_setor" && req.SetorID != nil && *req.SetorID > 0 {
+		if req.GrupoID == nil || !a.setorIDValidoNoGrupo(*req.SetorID, *req.GrupoID) {
+			jsonErro(w, http.StatusBadRequest, "setor não pertence ao grupo do papel")
+			return
+		}
+		setorReq = *req.SetorID
+	}
+
 	res, err := a.st.db.Exec(`
 		INSERT INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id, nome_exibicao)
 		VALUES (?, ?, ?, ?, ?)`,
 		usuarioID, req.GrupoID, papel, req.FuncaoID, strings.TrimSpace(req.NomeExibicao))
 	if err != nil {
+		if setorReq > 0 && req.GrupoID != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
+			var pid int64
+			if e := a.st.db.QueryRow(`SELECT id FROM usuario_papeis
+				WHERE usuario_id = ? AND grupo_id = ? AND papel = 'chefe_setor'`,
+				usuarioID, *req.GrupoID).Scan(&pid); e == nil {
+				if _, err := a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, setorReq, usuarioID); err != nil {
+					jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
+					return
+				}
+				a.st.Auditoria(&u.ID, "adicionar_papel", "usuario_papeis", &pid,
+					fmt.Sprintf("usuario_id=%d papel=%s grupo_id=%v (troca de setor -> %d)", usuarioID, papel, *req.GrupoID, setorReq), ipDe(r))
+				jsonOK(w, map[string]any{"ok": true, "id": pid})
+				return
+			}
+		}
 		jsonErro(w, http.StatusBadRequest, "não foi possível adicionar papel (já cadastrado?): "+err.Error())
 		return
 	}
 
 	id, _ := res.LastInsertId()
+	if setorReq > 0 {
+		if _, err := a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, setorReq, usuarioID); err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
+			return
+		}
+	}
 	if req.FuncaoID != nil {
 		var pID *int64
 		_ = a.st.db.QueryRow(`SELECT pessoa_id FROM usuarios WHERE id = ?`, usuarioID).Scan(&pID)
