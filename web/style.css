@@ -2298,6 +2298,63 @@ input[type="checkbox"] {
   position: relative;
 }
 
+/* ==========================================================================
+   40b. Controles de tabela — ordenação (ordem 06/10, item 10) + paginação
+   ========================================================================== */
+
+/* indicador ▲/▼ no cabeçalho ordenável (classe aplica o helper window.tblOrdenar) */
+th.sorted-asc::after,
+th.sorted-desc::after {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 10px;
+  vertical-align: middle;
+  opacity: 0.85;
+}
+th.sorted-asc::after { content: '▲'; }
+th.sorted-desc::after { content: '▼'; }
+th.sorted-asc,
+th.sorted-desc {
+  color: var(--verde-claro);
+}
+
+/* barra de paginação ‹ 1/N › (inserida pelo helper window.tblPaginar) */
+.tbl-pag {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 8px 2px 0;
+}
+.tbl-pag-info {
+  font-size: 12px;
+  color: var(--tx2);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.tbl-pag-bt {
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--borda);
+  border-radius: 7px;
+  background: var(--painel2);
+  color: var(--tx);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+.tbl-pag-bt:hover:not(:disabled) {
+  border-color: var(--verde);
+  color: var(--verde-claro);
+}
+.tbl-pag-bt:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+
 .viewport-mobile-bar {
   display: none;
   align-items: center;
