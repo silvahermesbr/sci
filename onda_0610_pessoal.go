@@ -1,22 +1,22 @@
 package main
 
-// onda_0610_pessoal.go — itens 3 e 15 da ordem do Diretor 06/10:
+// onda_0610_pessoal.go — item 3 da ordem do Diretor 06/10 (SCI-BUGS-0610):
 //   • ENCARREGADO DE PESSOAL (função cujo nome contém "encarregado", mesmo sem
-//     papel do sistema) passa a GERENCIAR PESSOAL no ESCOPO do próprio grupo:
-//     listar/criar/editar contas do grupo, banco de pessoal (pessoas) e
-//     catálogos de setores/funções do grupo (POST/PATCH).
-//     AUXILIAR DE PESSOAL (item 15) tem os MESMOS poderes e as MESMAS
-//     restrições (detecção: nome da função contém "auxiliar").
-//   • NÃO ganha poderes de admin: NUKE/MODO_RESERVA/backup/import, excluir
-//     grupo/conferência arquivada, criar gerente. Criação de conta fica
-//     limitada a operador/chefe_setor do PRÓPRIO grupo (mesma regra forçada
-//     do gerente). Senha de conta (hUsuarioSenha) continua gerente/admin.
+//     papel do sistema) e AUXILIAR DE PESSOAL (item 15, nome contém "auxiliar")
+//     GEREM PESSOAL no ESCOPO do próprio grupo: listar/criar/editar contas do
+//     grupo, banco de pessoal (pessoas), catálogos de setores/funções do grupo
+//     (POST/PATCH/DELETE/reparentar) e designação de membros de função.
+//   • NÃO ganham poderes de admin: NUKE/MODO_RESERVA/backup/import, excluir
+//     grupo/conferência arquivada, criar gerente/admin. Criação de conta fica
+//     limitada a operador/chefe_setor do PRÓPRIO grupo. Senha de conta
+//     (hUsuarioSenha) continua gerente/admin.
 //   • SEM migração de schema (zero tabela nova): detecção é pelo NOME da
 //     função (funcao do usuário → fallback função da pessoa vinculada).
 //
-// Detecção do encarregado REUSA ehEncarregado (onda_0510_conf_escopo.go) —
-// nada reinventado. Admin segue 403-papel onde já é hoje: o cheque explícito
-// de admin de cada handler continua ANTES deste guarda.
+// ADMIN entra em tudo onde já entrava: podeGestaoPessoal(admin) = true — o
+// guarda das rotas roda ANTES do handler, então negar admin aqui é barrar
+// quem sempre foi dono dessas rotas (regressão corrigida nesta versão).
+// Detecção reusa ehEncarregado (onda_0510_conf_escopo.go) — nada reinventado.
 
 import (
 	"net/http"
@@ -79,23 +79,15 @@ func (a *App) funcaoIDPorNome(grupoID *int64, agulha string) *int64 {
 	return nil
 }
 
-// podeGestaoPessoal: GERENTE (qualquer escopo — os handlers validam o próprio),
-// OU encarregado/auxiliar de pessoal COM grupo na sessão. Admin devolve false
-// de propósito: onde o admin já era aceito, o cheque de admin roda antes.
+// podeGestaoPessoal: quem gere pessoal — ADMIN e GERENTE sempre (os handlers
+// validam o escopo de cada um) ou encarregado/auxiliar de pessoal COM grupo na
+// sessão.
 func (a *App) podeGestaoPessoal(u *Usuario) bool {
 	if u == nil {
 		return false
 	}
-	if u.Papel == "gerente" {
+	if u.Papel == "admin" || u.Papel == "gerente" {
 		return true
-	}
-	if u.Papel == "admin" {
-		return false
-	}
-	// papel do sistema MANDA: operador/chefe_setor não ganham poderes de
-	// gestão por função renomeada no catálogo (anti-escalação de privilégio).
-	if u.Papel == "operador" || u.Papel == "chefe_setor" {
-		return false
 	}
 	if esc := escopoDoUsuario(u); esc <= 0 {
 		return false
@@ -103,13 +95,15 @@ func (a *App) podeGestaoPessoal(u *Usuario) bool {
 	return a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u)
 }
 
-// guardaGestaoPessoal: middleware das rotas de pessoal que hoje exigem
-// gerente/admin — admin continua 403-papel (regra da ordem), operador/comum
-// também. Encarregado/auxiliar passam e o handler aplica o escopo do grupo.
+// guardaGestaoPessoal: middleware das rotas de gestão de pessoal — admin e
+// gerente passam sempre; encarregado/auxiliar de pessoal passam e o handler
+// aplica o escopo do grupo; operador/chefe_setor/comum → 403.
+// ATENÇÃO: NÃO aplicar em GET /api/usuarios — a listagem de contas é lida por
+// TODOS os papeis (v9.4: operador/chefe lêem o próprio grupo; as telas de
+// designação de conferência, calendário e drive dependem disso).
 func (a *App) guardaGestaoPessoal(prox http.HandlerFunc) http.Handler {
 	return a.auth(false, func(w http.ResponseWriter, r *http.Request) {
-		u := usuarioDoCtx(r)
-		if !a.podeGestaoPessoal(u) {
+		if !a.podeGestaoPessoal(usuarioDoCtx(r)) {
 			jsonErro(w, http.StatusForbidden, "gestão de pessoal é do gerente ou do encarregado/auxiliar de pessoal")
 			return
 		}

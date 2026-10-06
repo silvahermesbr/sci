@@ -1961,7 +1961,13 @@
   let setoresCat = null, funcoesCat = null; // cache compartilhado (v9.16.9)
   window.ViewGrupos = async function () {
     const eu = quem();
-    if (!eu || eu.papel !== 'gerente') { location.hash = '#/hoje'; return; }
+    // ordem 06/10 (P4): encarregado/auxiliar de pessoal também gerenciam —
+    // mesmas abas; ações restritivas dentro delas são filtradas por gestorPessoal
+    // (senha de conta segue gerente/admin no servidor).
+    if (!eu || (eu.papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal()))) { location.hash = '#/hoje'; return; }
+    // ordem 06/10: quem chega aqui sem papel do sistema é encarregado/auxiliar —
+    // o servidor nega exclusão de catálogo/pessoa, senha e mover; o front esconde.
+    const souFuncaoPessoal = eu.papel !== 'gerente';
     navAtiva('#/grupos');
     $('#app').innerHTML = '<div class="carregando">…</div>';
     const [grupos, arvore, pessoas, setores, funcoes, contas] = await Promise.all([
@@ -2020,7 +2026,7 @@
        <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
        <td><button class="acao-linha" data-edit="${p.id}">editar</button>
        <button class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button>
-       <button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button></td></tr>`).join('');
+       ${souFuncaoPessoal ? '' : `<button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button>`}</td></tr>`).join('');
 
     const optsMoverGer = `<option value="">— destino (dentro da sua hierarquia) —</option>` +
       grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
@@ -2036,7 +2042,7 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
             <label style="font-size:13px"><input type="checkbox" id="chkTodosP"> todos</label>
             <button class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
-            <button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>
+            ${souFuncaoPessoal ? '' : '<button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>'}
             <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span></div>
           <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Posto / Graduação</th><th>Ativo</th><th></th></tr></thead>
           <tbody id="tabP">${linhasP || '<tr><td colspan="8"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
@@ -2130,14 +2136,32 @@
              os chefes que designam operadores dentre as contas do seu setor. -->
         <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
         <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">O gerente não cria operadores. Fluxo da hierarquia: <b>gerente</b> designa os <b>chefes de setor</b> → cada <b>chefe</b> seleciona os operadores dentre as contas do SEU setor (aba de gestão do chefe).</p>
+        ${souFuncaoPessoal ? `
+        <!-- ordem 06/10 (item 3): encarregado/auxiliar CRIAM contas de operador/chefe
+             de setor do próprio grupo (POST /api/usuarios); gerente segue sem criar
+             operador (fluxo da hierarquia acima). -->
+        <div class="cartao" style="margin-bottom:12px;background:var(--painel2)">
+          <h4 style="margin:0 0 8px;font-size:13px">Designar conta do grupo</h4>
+          <p style="color:var(--tx2);font-size:12px;margin:0 0 8px">Cria a conta com login derivado do nome de guerra (senha padrão <code>sci</code> — troca obrigatória no 1º acesso). <b>Só operador ou chefe de setor do próprio grupo.</b></p>
+          <div class="form-linha" style="align-items:flex-end">
+            <div class="campo" style="flex:1;min-width:140px"><label>Nome de guerra *</label><input id="encNg" placeholder="ex.: SILVA"></div>
+            <div class="campo" style="flex:2;min-width:180px"><label>Nome completo *</label><input id="encNc" placeholder="ex.: José da Silva"></div>
+            <div class="campo" style="width:150px"><label>Função na conta</label>
+              <select id="encPapel"><option value="operador">Operador</option><option value="chefe_setor">Chefe de setor</option></select>
+            </div>
+            <button class="primario" id="encCriar" style="min-height:40px">Criar conta</button>
+          </div>
+        </div>` : ''}
         <div class="campo" style="margin-bottom:8px"><label>Filtrar operadores</label><input id="fOp" placeholder="buscar login…"></div>
         <div class="rolagem" style="margin-top:10px"><table><thead><tr><th>ID</th><th>Login</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
         <tbody>${operadores.map(o => `
           <tr data-login="${esc(o.login)}"><td class="num">#${o.id}</td><td><b>${esc(o.login)}</b></td><td>${o.ativo ? 'ativa' : 'desativada'}</td><td>${fmtData(o.criado_em)}</td>
-          <td><button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
+          <td>${souFuncaoPessoal
+            ? `<button class="acao-linha" data-editu="${o.id}" data-login="${esc(o.login)}" data-ng="${esc(o.nome_guerra || '')}" data-nc="${esc(o.nome_completo || '')}">editar</button>`
+            : `<button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
           <button class="acao-linha" data-mv="${o.id}" data-login="${esc(o.login)}">mover</button>
-          <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button></td></tr>`).join('')
-          || '<tr><td colspan="5"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div></div>
+          <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button>`}</td></tr>`).join('')
+          || '<tr><td colspan="5"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div>
       </div>`;
 
     /* --- alternância de sub-abas (ordem 04/10: dropdown estilizado) --- */
@@ -2166,6 +2190,43 @@
         }
       });
     }
+
+    /* --- ordem 06/10 (item 3): encarregado/auxiliar criam contas do grupo --- */
+    const btEncCriar = $('#encCriar');
+    if (btEncCriar) {
+      btEncCriar.onclick = async () => {
+        const ng = ($('#encNg') && $('#encNg').value.trim()) || '';
+        const nc = ($('#encNc') && $('#encNc').value.trim()) || '';
+        const papelConta = ($('#encPapel') && $('#encPapel').value) || 'operador';
+        if (!ng || !nc) { toast('Nome de guerra e nome completo são obrigatórios', 'erro'); return; }
+        // mesmo derivador do item 2: login vem do nome de guerra (não-admin)
+        const login = ng.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'conta' + Date.now();
+        const r = await processar(() => api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, papel: papelConta }) }), 'Criando conta…');
+        if (r.ok) {
+          try {
+            const rid = r.resultado && r.resultado.id;
+            if (rid) {
+              await api(`/api/usuarios/${rid}`, { method: 'PATCH', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc }) });
+            }
+          } catch (e) {}
+          toast('Conta criada — senha padrão sci (troca no 1º acesso)');
+          window.ViewGrupos();
+        }
+      };
+    }
+    /* --- ordem 06/10: edição de nomes da conta pela função de pessoal --- */
+    document.querySelectorAll('[data-editu]').forEach(b => {
+      b.onclick = async () => {
+        const novoNg = prompt('Nome de guerra:', b.dataset.ng || '');
+        if (novoNg === null) return;
+        const novoNc = prompt('Nome completo:', b.dataset.nc || '');
+        if (novoNc === null) return;
+        const r = await processar(() => api(`/api/usuarios/${b.dataset.editu}`, { method: 'PATCH', body: JSON.stringify({ nome_guerra: novoNg.trim(), nome_completo: novoNc.trim() }) }), 'Salvando conta…');
+        if (r.ok) window.ViewGrupos();
+      };
+    });
+
     ligarToggles($('#app'));
 
     /* --- onda C2 (05/10): aba FUNÇÕES — designação de membros por função ---
@@ -2412,8 +2473,10 @@
     const refreshSel = () => {
       const n = selCount();
       $('#nSel').textContent = n;
-      $('#nSel2').textContent = n;
-      $('#btExcLote').disabled = n === 0;
+      const nSel2 = $('#nSel2'); // ausente p/ função de pessoal (sem excluir em lote)
+      if (nSel2) nSel2.textContent = n;
+      const btExc = $('#btExcLote');
+      if (btExc) btExc.disabled = n === 0;
       $('#btEditLote').disabled = n === 0;
     };
     document.querySelectorAll('.chkP').forEach(ch => ch.onchange = refreshSel);
@@ -2421,7 +2484,8 @@
       document.querySelectorAll('.chkP').forEach(ch => { ch.checked = $('#chkTodosP').checked; });
       refreshSel();
     };
-    $('#btExcLote').onclick = async () => {
+    const btExcLoteEl = $('#btExcLote');
+    if (btExcLoteEl) btExcLoteEl.onclick = async () => {
       const ids = [...document.querySelectorAll('.chkP:checked')].map(c => +c.dataset.id);
       if (!ids.length) return;
       if (!(await confirmar(`Excluir ${ids.length} militar(es)? (com histórico de conferência virarão inativos)`))) return;
@@ -2586,7 +2650,7 @@
               <div style="display:flex; align-items:center; gap:6px">
                 ${podeGerenciar ? `
                   <button class="acao-linha" style="font-size:11.5px; padding:2px 8px" data-editcat="${t}" data-cid="${x.id}" data-nome="${esc(x.nome)}" data-cor="${esc(x.cor || '')}" data-sigla="${esc(x.sigla || '')}">editar</button>
-                  <button class="acao-linha perigo" style="font-size:11.5px; padding:2px 8px" data-delcat="${t}" data-cid="${x.id}">excluir</button>
+                  ${souFuncaoPessoal ? '' : `<button class="acao-linha perigo" style="font-size:11.5px; padding:2px 8px" data-delcat="${t}" data-cid="${x.id}">excluir</button>`}
                 ` : `
                   <span style="color:var(--tx3); font-size:11.5px; display:inline-flex; align-items:center; gap:3px">
                     🔒 ${esc(nomeOrigem || 'Superior')}

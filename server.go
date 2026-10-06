@@ -312,8 +312,8 @@ func (a *App) rotas() {
 	m.Handle("GET /api/setores/agregado", a.auth(false, a.hSetoresAgregado))
 	m.Handle("GET /api/drive/arquivo_grupo", a.auth(false, a.hDriveArquivoGrupo))
 	m.Handle("POST /api/catalogo/{t}", a.guardaGestaoPessoal(a.hCatalogoAdd))
-	m.Handle("DELETE /api/catalogo/{t}/{id}", a.auth(false, a.hCatalogoDel))
-	m.Handle("PATCH /api/catalogo/{t}/{id}/pai", a.auth(false, a.hCatalogoReparentar))
+	m.Handle("DELETE /api/catalogo/{t}/{id}", a.guardaGestaoPessoal(a.hCatalogoDel))
+	m.Handle("PATCH /api/catalogo/{t}/{id}/pai", a.guardaGestaoPessoal(a.hCatalogoReparentar)) // hierarquia (v9.16)
 	m.Handle("PATCH /api/catalogo/{t}/{id}", a.guardaGestaoPessoal(a.hCatalogoEditar))
 
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
@@ -324,9 +324,11 @@ func (a *App) rotas() {
 	m.Handle("GET /api/pessoas/{id}/pdf", a.auth(false, a.hPessoaPDF))
 	m.Handle("DELETE /api/grupos/{id}", a.auth(true, a.hGrupoExcluir)) // v9.7: só admin, só grupo vazio
 
-	m.Handle("GET /api/usuarios", a.guardaGestaoPessoal(a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4); encarregado/auxiliar: do próprio grupo (ordem 06/10)
-	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
-	m.Handle("POST /api/usuarios", a.guardaGestaoPessoal(a.hUsuariosAdd))
+	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente: próprio+subordinados (04/10); operador/chefe: próprio grupo (v9.4) — leitura p/ TODOS os papeis (telas de designação); escrever é do guarda
+	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria
+	// chefe_setor; chefe_setor promove operador; encarregado/auxiliar criam
+	// operador/chefe do próprio grupo) — guarda de rota aqui quebraria o chefe.
+	m.Handle("POST /api/usuarios", a.auth(false, a.hUsuariosAdd))
 	m.Handle("GET /api/operadores-do-setor", a.auth(false, a.hOperadoresDoSetor))
 	m.Handle("POST /api/operadores-do-setor", a.auth(false, a.hOperadoresDoSetor))
 	m.Handle("PATCH /api/usuarios/{id}", a.guardaGestaoPessoal(a.hUsuarioEdit))
@@ -681,8 +683,13 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	solicitante := usuarioDoCtx(r)
 	// ordem 06/10: encarregado/auxiliar de pessoal editam contas — mas SÓ as de
-	// operador/chefe_setor do PRÓPRIO grupo (nunca gerente/admin).
-	if solicitante.Papel != "admin" && solicitante.Papel != "gerente" && a.podeGestaoPessoal(solicitante) {
+	// operador/chefe_setor do PRÓPRIO grupo (nunca gerente/admin). Fix ordem
+	// 06/10: conta comum (sem papel) NÃO passa mais reto — era escalação.
+	if solicitante.Papel != "admin" && solicitante.Papel != "gerente" {
+		if !a.podeGestaoPessoal(solicitante) {
+			jsonErro(w, http.StatusForbidden, "usuário sem permissão para editar outros usuários")
+			return
+		}
 		var alvoPapel string
 		var alvoGrupo int64
 		if err := a.st.db.QueryRow(`SELECT papel, COALESCE(grupo_id,0) FROM usuarios WHERE id = ?`, id).Scan(&alvoPapel, &alvoGrupo); err != nil {
@@ -691,6 +698,11 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
 			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar só edita membros do próprio grupo")
+			return
+		}
+		// ordem 06/10: função de pessoal NÃO move conta de grupo (só admin)
+		if req.GrupoID != nil {
+			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar não altera o grupo da conta")
 			return
 		}
 	}
@@ -707,6 +719,12 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
 			jsonErro(w, http.StatusForbidden, "gerente só edita membros do próprio grupo")
+			return
+		}
+		// ordem 06/10 (paridade com o encarregado): gerente não move conta de
+		// grupo — regra já implícita no escopo; agora explícita (só admin).
+		if req.GrupoID != nil {
+			jsonErro(w, http.StatusForbidden, "gerente não altera o grupo da conta")
 			return
 		}
 	}
@@ -1998,8 +2016,10 @@ func (a *App) hCatalogoReparentar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	if u == nil || u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
+	// ordem 06/10: gerente/encarregado/auxiliar gerenciam catálogos (o escopo
+	// específico do item vem logo abaixo — herdados são somente leitura)
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !a.podeGestaoPessoal(u)) {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
 	esc := escopoDoUsuario(u)
@@ -3436,7 +3456,9 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+	// ordem 06/10: gerente/encarregado/auxiliar gerenciam catálogos (o escopo
+	// específico do item vem logo abaixo — herdados são somente leitura)
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !a.podeGestaoPessoal(u)) {
 		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
@@ -3875,6 +3897,13 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
+	// ordem 06/10: leitura para TODOS os papeis do sistema (telas de designação),
+	// mas conta SEM papel do sistema e SEM grupo não lê a lista de contas —
+	// era escalação (via -1 via "mostrar tudo" + hash de senhas).
+	if escopo <= 0 && u.Papel != "admin" {
+		jsonErro(w, http.StatusForbidden, "sua conta não tem grupo definido — solicite ao gerente")
+		return
+	}
 	// ordem 04/10 (Grupos): gerente vê o PRÓPRIO grupo + GRUPOS SUBORDINADOS
 	// (admin continua vendo todos). Operador/chefe seguem só no próprio grupo.
 	var subordinados []int64
@@ -3924,7 +3953,9 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 				"data_nascimento": dataNasc, "tipo_sanguineo": tipoSang,
 				"telefone": tel, "email": email, "endereco": endereco, "foto_base64": foto,
 			}
-			if u.Papel != "operador" {
+			// ordem 06/10: hash de senhas só para papeis do sistema (operador e
+			// contas sem papel — encarregado/auxiliar/comum — não recebem)
+			if u.Papel == "admin" || u.Papel == "gerente" || u.Papel == "chefe_setor" {
 				item["senhas"] = json.RawMessage(senhas)
 			}
 			out = append(out, item)

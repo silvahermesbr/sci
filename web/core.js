@@ -40,15 +40,25 @@ window.formatarTamanhoBytes = formatarTamanhoBytes;
 
 /* ---------- usuário da sessão ---------- */
 let ME = null;
+// ordem 06/10 (P4): função de pessoal no cliente — encarregado OU auxiliar
+// (nome normalizado, sem acentos). Espelha ehEncarregado/ehAuxiliarDePessoal.
+function funcaoEhPessoal(u, agulha) {
+  if (!u || typeof u.funcao_nome !== 'string') return false;
+  return u.funcao_nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(agulha);
+}
 function definirUsuario(u) {
   // Onda 05/10 (ordem Diretor): encarregado de pessoal (função c/ "encarregado",
   // sem papel do sistema) atua na CONFERÊNCIA — papel-conf derivado no cliente.
-  if (u && !u.papel && typeof u.funcao_nome === 'string' &&
-      u.funcao_nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes('encarregado')) {
+  // Ordem 06/10 (item 15): AUXILIAR DE PESSOAL recebe a MESMA derivação —
+  // mesmos módulos, mesmos poderes de gestão de pessoal (o servidor valida
+  // cada função à parte; aqui é só chave de navegação).
+  if (u && !u.papel && (funcaoEhPessoal(u, 'encarregado') || funcaoEhPessoal(u, 'auxiliar'))) {
     u.papel = 'encarregado';
   }
   ME = u; window.SCI_ME = u; window.ME = u;
   window.ehEncarregado = () => (ME && ME.papel === 'encarregado');
+  // ordem 06/10 (P4): gerente OU encarregado OU auxiliar de pessoal
+  window.gestorPessoal = () => !!(ME && (ME.papel === 'gerente' || ME.papel === 'encarregado'));
 }
 window.definirUsuario = definirUsuario;
 
@@ -645,10 +655,15 @@ definirUsuario(usuario);
     } else if (window.ehEncarregado && window.ehEncarregado()) {
       // Onda 05/10 (ordem Diretor): ENCARREGADO DE PESSOAL (sem papel do sistema)
       // atua na CONFERÊNCIA com escopo de grupo (mesma conferência do grupo).
-      itens = [
+      // Ordem 06/10 (itens 3+15): AUXILIAR DE PESSOAL espelha o encarregado
+      // (derivação em definirUsuario) e ambos ganham GERENCIAR GRUPO (P4) —
+      // as ações de pessoal da view são liberadas por gestorPessoal().
+      const itensFuncao = [
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>']
       ];
+      itensFuncao.splice(1, 0, ['#/grupos', 'GERENCIAR GRUPO', svgGer]);
+      itens = itensFuncao;
     } else {
       // P0 onda 05/10 — conta SEM função do sistema: só Meu Perfil
       // (login → aviso de módulo indisponível; nada mais é visível).
@@ -679,13 +694,16 @@ definirUsuario(usuario);
     const html = papeis.map(p => {
       const ehAtivo = usuario.papel_ativo_id === p.id;
       const rot = rotuloPapel(p.papel);
-      const grp = p.grupo_nome ? p.grupo_nome : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
-      const func = p.funcao_nome ? ` · ${p.funcao_nome}` : '';
+      // ordem 06/10 (P3): TÍTULO = nome do grupo/setor, SUBTÍTULO = função.
+      // Sem grupo: admin = Global; demais = Sem grupo. Sem função no papel:
+      // o subtítulo mostra o rótulo do papel (nunca linha vazia).
+      const titulo = p.grupo_nome ? p.grupo_nome : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
+      const subtitulo = p.funcao_nome ? p.funcao_nome : rot;
       return `
         <div class="menu-contexto-item ${ehAtivo ? 'ativo' : ''}" data-papelid="${p.id}">
           <div style="min-width:0">
-            <div style="font-weight:700">${esc(rot)}${esc(func)}</div>
-            <div style="font-size:11px;color:var(--tx3)">${esc(grp)}</div>
+            <div style="font-weight:700">${esc(titulo)}</div>
+            <div style="font-size:11px;color:var(--tx3)">${esc(subtitulo)}</div>
           </div>
           ${ehAtivo ? '<span style="font-size:12px">✓</span>' : ''}
         </div>
@@ -1000,7 +1018,9 @@ function rotear() {
   // chefe de setor não tem relatórios.
   if (h === '#/drive' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
   if (h === '#/mensagens' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
-  if (h === '#/relatorios' && papel !== 'gerente') { chamarView('ViewSemModulo'); return; }
+  // ordem 06/10 (P4): relatórios liberados ao encarregado/auxiliar de pessoal
+  // (o servidor já aceita a função nos dados do grupo; mesmo escopo do gerente)
+  if (h === '#/relatorios' && papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal() && papel === 'encarregado')) { chamarView('ViewSemModulo'); return; }
   // Fix P0: a onda apagou os cases de #/hoje e #/mensagens do router — gerente e
   // operador caíam no fallback (app em branco). Re-ligados (ViewMensagens aceita sub-aba).
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
@@ -1022,7 +1042,10 @@ function rotear() {
     return;
   }
   if (h === '#/grupos') {
-    if (papel === 'gerente') chamarView('ViewGrupos');
+    // ordem 06/10 (P4): GERENCIAR passa a aceitar encarregado/auxiliar de
+    // pessoal (mínimo escopo — é a única rota nova liberada; #/admin segue
+    // exclusiva do admin).
+    if (papel === 'gerente' || (papel === 'encarregado' && window.gestorPessoal && window.gestorPessoal())) chamarView('ViewGrupos');
     else irPara(rotaInicial());
     return;
   }
