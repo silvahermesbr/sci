@@ -287,6 +287,7 @@ func (a *App) rotas() {
 	m.Handle("GET /api/relatorio/tags", a.auth(false, a.hTagsDisponiveis))
 	m.Handle("GET /api/pessoas/{id}/ficha", a.auth(false, a.hPessoaFicha))
 	m.Handle("GET /api/conferencia/hoje", a.auth(false, a.hConferenciaHoje))
+	m.Handle("GET /api/conferencia/estado", a.auth(false, a.hConferenciaEstado))
 	m.Handle("POST /api/conferencia/iniciar", confAuth(a.hConferenciaIniciar))
 	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
 	m.Handle("POST /api/conferencia/marcar", confMarcarAuth(a.hConferenciaMarcar))

@@ -349,10 +349,44 @@
     return r.json();
   };
 
+  // P4 (ordem 06/10, item 4): HASH DE ESTADO por setor — tick de 2s consulta
+  // /api/conferencia/estado (SHA-1 por setor no servidor). Hash igual = ZERO
+  // mutação de DOM (nem fetch pesado de hoje); mudou = busca o payload e aplica
+  // SÓ o setor alterado (animação ~300ms). Fetch PRÓPRIO silencioso (nunca
+  // api(): sem overlay/toast/redirect; falha = console.debug).
+  const confEstadoFetch = async () => {
+    const qs = CONF_ID ? '?id=' + CONF_ID : '';
+    const r = await fetch('/api/conferencia/estado' + qs, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error('estado ' + r.status);
+    return r.json();
+  };
+  const confHashesIguais = (a, b) =>
+    !!a && !!b && a.hash_geral === b.hash_geral &&
+    (a.setores || []).length === (b.setores || []).length &&
+    (a.setores || []).every((s, i) => s.setor_id === b.setores[i].setor_id && s.hash === b.setores[i].hash);
+  let confUltimoEstado = null; // último hash conhecido (null = primeiro tick)
+
+  // aplica SÓ o setor alterado: patch cirúrgico nos .pessoa do grupo + badge do
+  // cabeçalho + refresh dos contadores; animação de atualização ~300ms.
+  const confAnimarSetor = setorNome => {
+    const grps = document.querySelectorAll('#lista .grupo-setor');
+    for (const g of grps) {
+      const h4 = g.querySelector('h4');
+      if (h4 && (h4.textContent || '').trim().startsWith(setorNome)) {
+        g.style.transition = 'opacity 0.3s ease';
+        g.style.opacity = '0.35';
+        setTimeout(() => { g.style.opacity = '1'; }, 300);
+        return true;
+      }
+    }
+    return false;
+  };
+
   function confPoolingStop() {
     if (poolTimer) { clearInterval(poolTimer); poolTimer = null; }
     if (poolObserver) { poolObserver.disconnect(); poolObserver = null; }
     document.removeEventListener('visibilitychange', confPoolingVis);
+    confUltimoEstado = null; // P4: próximo confPoolingStart re-aprende o hash (teardown idempotente)
   }
   function confPoolingVis() {
     if (document.visibilityState === 'visible') confPoolingTick(); // voltou pra aba: tick imediato
@@ -361,10 +395,27 @@
   async function confPoolingTick() {
     if (poolInFlight || !C || !C.c) return;
     poolInFlight = true;
-    let d = null;
-    try { d = await confPoolingFetch(); }
+    let est = null;
+    try { est = await confEstadoFetch(); }
     catch (e) { console.debug('[pool-conf] falha de rede (silencioso):', e && e.message); }
     finally { poolInFlight = false; }
+    if (!est || !C || !C.c) return; // falhou / saiu da view durante o fetch
+    // P4: hash IGUAL ao último conhecido → ZERO mutação de DOM (o diff pesado
+    // só existe quando o servidor realmente mudou).
+    if (confUltimoEstado && confHashesIguais(confUltimoEstado, est)) return;
+    const estadoAnterior = confUltimoEstado;
+    confUltimoEstado = est;
+    if (!est.hash_geral) { confPoolingStop(); window.ViewConferencia(); return; } // conferência sumiu/fechou
+    // hash mudou: busca o payload completo (fonte de verdade) e aplica
+    let d = null;
+    poolInFlight = true;
+    try { d = await confPoolingFetch(); }
+    catch (e) {
+      poolInFlight = false;
+      console.debug('[pool-conf] falha de rede (silencioso):', e && e.message);
+      return;
+    }
+    poolInFlight = false;
     if (!d || !d.conferencia) return;
     if (!C || !C.c) return; // saiu da view durante o fetch
     // conferência mudou (fechada por outro operador / troca de ID): recarga completa
@@ -378,9 +429,19 @@
     // pendência local: militar sendo digitado/gravado agora não é sobreposto pelo servidor
     const pendente = pid => marcaPend[pid] || marcaTimer[pid];
 
+    // P4: setores cujo hash mudou (só eles ganham patch + animação)
+    const hashesAntes = {};
+    for (const s of (estadoAnterior ? estadoAnterior.setores : [])) hashesAntes[s.setor_id] = s.hash;
+    const setoresMudaram = new Set();
+    for (const s of (est.setores || [])) {
+      if (hashesAntes[s.setor_id] !== undefined && hashesAntes[s.setor_id] !== s.hash) setoresMudaram.add(+s.setor_id);
+    }
+
     // aplica DIFERENÇAS por militar (patch cirúrgico, sem innerHTML total)
     let mudouLista = false;
+    const pessoasDoSetor = {};
     for (const p of C.pessoas) {
+      if (p.setor_id != null) (pessoasDoSetor[p.setor_id] = pessoasDoSetor[p.setor_id] || []).push(p);
       if (pendente(p.id)) continue;
       const k = String(p.id);
       const sv = estServ[k];
@@ -412,7 +473,15 @@
     C.c.estados = estServ;
     if (d.setores_status) C.setoresStatus = d.setores_status;
     if (mudouLista && !focoNoPainel && !modalAberto) {
+      // P4: mudança localizada num setor conhecido → re-render dirigido + flash
+      // apenas no grupo alterado (re-render único preserva invariante: sem
+      // atualização parcial de DOM que desalinhe handlers); mudança espalhada →
+      // re-render integral como antes.
+      const setorAlvo = setoresMudaram.size === 1 ? setoresMudaram.values().next().value : null;
+      const nomeAlvo = setorAlvo != null && pessoasDoSetor[setorAlvo] && pessoasDoSetor[setorAlvo][0]
+        ? (pessoasDoSetor[setorAlvo][0].setor || '') : null;
       confRender($('#busca') ? $('#busca').value : '');
+      if (nomeAlvo) confAnimarSetor(nomeAlvo);
     } else {
       confDashRender(); // contagens acompanham mesmo com foco/modal aberto
     }
