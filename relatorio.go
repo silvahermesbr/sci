@@ -303,9 +303,23 @@ func pdfTabelaLinha(pdf *fpdf.Fpdf, valores []string, larguras []float64, alinha
 }
 
 func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
-	T := cp1252Traduz.Replace
 	sub := fmt.Sprintf("Período: %s a %s · Efetivo Pronto: %.1f%%", b.De, b.Ate, b.PctPronto)
 	pdf := a.novoPDF("P", "RELATÓRIO GERAL DE EFETIVO & CONFERÊNCIAS", sub, "")
+	a.relatorioSimplesRender(pdf, b)
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// relatorioSimplesRender: conteúdo da página 1 do relatório por período
+// (resumo, gráficos e tabela por antiguidade) — compartilhado pelo modo
+// SIMPLES (gerarRelatorioPDF) e pela 1ª folha do DETALHADO (relatorioDetalhado),
+// garantindo página 1 IDÊNTICA nos dois modos (ordem SCI 06/10 — Frente D).
+func (a *App) relatorioSimplesRender(pdf *fpdf.Fpdf, b Bundle) {
+	T := cp1252Traduz.Replace
 
 	// ---- resumo do período ----
 	pdf.SetFont("Helvetica", "B", 9)
@@ -525,12 +539,6 @@ func (a *App) gerarRelatorioPDF(b Bundle) ([]byte, error) {
 	pdf.SetFont("Helvetica", "", 7)
 	pdf.SetTextColor(120, 120, 120)
 	pdf.Cell(0, 5, T("SCI — Sistema de Controle Interno · documento gerado automaticamente · dados-fonte: sci.db"))
-
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // gerarConferenciaPDF: relatório PRÓPRIO de uma conferência — só para conferências FECHADAS.
@@ -1765,3 +1773,233 @@ func (a *App) gerarEscalaDiaPDF(d EscalaDiaPDF) ([]byte, error) {
 }
 
 
+
+// ---------- RELATÓRIO DETALHADO (ordem SCI 06/10 — Frente D) ----------
+// SIMPLES = o mesmo conteúdo do relatório geral (gerarRelatorioPDF).
+// DETALHADO = página 1 idêntica ao simples + UMA FOLHA NOVA POR GRUPO
+// (AddPage por grupo) com o registro linha a linha: data/hora, militar,
+// situação, destino, observação, tag e — para pessoal do PRÓPRIO grupo — a
+// coluna SETOR (seção). Cada grupo SUBORDINADO começa em folha própria.
+
+// sitRotuloDetalhado: rótulo legível da situação no registro detalhado.
+func sitRotuloDetalhado(s string) string {
+	switch s {
+	case "presente":
+		return "Presente"
+	case "atraso":
+		return "Atraso"
+	case "falta":
+		return "Falta"
+	case "justificada":
+		return "Justificada"
+	case "nao_verificado":
+		return "NAO VERIF."
+	}
+	return s
+}
+
+// detalhadoRegistro: uma linha do registro detalhado já pronta para a tabela.
+type detalhadoRegistro struct {
+	Data       string // dd/mm/aaaa
+	Hora       string // hh:mm (In(loc), nunca Format cru)
+	Nome       string // nome de guerra (ou completo, conforme cadastro)
+	Setor      string // seção — só exibida para pessoal do PRÓPRIO grupo
+	Situacao   string
+	Destino    string
+	Observacao string
+	Tag        string
+}
+
+// detalhadoGrupo: folha(s) de um grupo no modo detalhado.
+type detalhadoGrupo struct {
+	Nome      string
+	Proprio   bool // grupo do escopo → exibe coluna SETOR
+	Registros []detalhadoRegistro
+}
+
+// registrosDetalhadoGrupo: lançamentos do período para UM conjunto de grupos
+// (grupo próprio +, em chamadas separadas, cada subordinado), um registro por
+// linha de presença. Consulta AUXILIAR única — pool de 1 conexão: sem join na
+// view agregada, subselect correlacionado no ORDER BY, rows drenadas p/ slice
+// antes de qualquer outra query.
+func (a *App) registrosDetalhadoGrupo(de, ate string, grupoIDs []int64) ([]detalhadoRegistro, error) {
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(grupoIDs)), ",")
+	args := make([]any, 0, len(grupoIDs)+2)
+	for _, id := range grupoIDs {
+		args = append(args, id)
+	}
+	args = append(args, de, ate)
+	q := `
+SELECT f.data,
+       COALESCE(f.hora,''),
+       COALESCE(NULLIF(p.nome_completo,''), p.nome_guerra),
+       COALESCE(NULLIF(s.sigla,''), s.nome, 'INDEFINIDO'),
+       pr.situacao,
+       CASE WHEN pr.situacao = 'justificada' THEN COALESCE(d.nome,'') ELSE '' END,
+       COALESCE(pr.observacao,''),
+       COALESCE(t.nome,''),
+       (SELECT COUNT(*) FROM presencas pr2
+          JOIN conferencias f2 ON f2.id = pr2.conferencia_id
+         WHERE pr2.pessoa_id = pr.pessoa_id
+           AND f2.data <= f.data) AS ord_interno
+FROM presencas pr
+JOIN conferencias f ON f.id = pr.conferencia_id
+JOIN pessoas p ON p.id = pr.pessoa_id
+LEFT JOIN setores s ON s.id = p.setor_id
+LEFT JOIN destinos d ON d.id = pr.destino_id
+LEFT JOIN tags t ON t.id = pr.tag_id
+WHERE p.grupo_id IN (` + ph + `) AND f.data BETWEEN ? AND ?
+ORDER BY f.data, f.hora,
+         (SELECT COUNT(*) FROM presencas pr2
+            JOIN conferencias f2 ON f2.id = pr2.conferencia_id
+           WHERE pr2.pessoa_id = pr.pessoa_id
+             AND f2.data <= f.data),
+         p.nome_guerra COLLATE NOCASE`
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []detalhadoRegistro{}
+	for rows.Next() {
+		var r detalhadoRegistro
+		var hora string
+		if err := rows.Scan(&r.Data, &hora, &r.Nome, &r.Setor, &r.Situacao,
+			&r.Destino, &r.Observacao, &r.Tag); err != nil {
+			return nil, err
+		}
+		r.Data = fmtDataBR(r.Data + "T00:00:00Z")[:10] // dd/mm/aaaa, fuso de Brasília
+		if hora != "" {
+			if t, errT := time.Parse("15:04:05", hora); errT == nil {
+				r.Hora = t.In(time.FixedZone("BRT", -3*3600)).Format("15:04")
+			} else {
+				r.Hora = hora
+			}
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// folhasDetalhado: monta as folhas do modo detalhado — grupo do escopo primeiro
+// (com coluna SETOR), depois cada subordinado ATIVO (transitivo, vínculo
+// bilateral) em folha própria.
+func (a *App) folhasDetalhado(de, ate string, escopo int64) []detalhadoGrupo {
+	folhas := []detalhadoGrupo{}
+	ids := []int64{escopo}
+	nomeProprio := ""
+	_ = a.st.db.QueryRow(`SELECT COALESCE(nome,'') FROM grupos WHERE id = ?`, escopo).Scan(&nomeProprio)
+	folhas = append(folhas, detalhadoGrupo{Nome: nomeProprio, Proprio: true})
+
+	// subordinados: nome + registros por grupo, um bloco de queries por vez
+	subs := a.gruposSubordinadosAtivos(escopo)
+	nomes := map[int64]string{}
+	for _, sid := range subs {
+		var n string
+		_ = a.st.db.QueryRow(`SELECT COALESCE(nome,'') FROM grupos WHERE id = ?`, sid).Scan(&n)
+		nomes[sid] = n
+	}
+
+	// 1º bloco: grupo próprio — pool de 1 conexão: rows drenadas p/ slice
+	// ANTES do próximo bloco de queries (QueryRow de nome já consumido acima).
+	reg, err := a.registrosDetalhadoGrupo(de, ate, ids)
+	if err == nil {
+		folhas[0].Registros = reg
+	}
+	for _, sid := range subs {
+		regSub, errSub := a.registrosDetalhadoGrupo(de, ate, []int64{sid})
+		if errSub != nil {
+			continue
+		}
+		folhas = append(folhas, detalhadoGrupo{Nome: nomes[sid], Proprio: false, Registros: regSub})
+	}
+	return folhas
+}
+
+// detalhadoTabelaGrupo: desenha cabeçalho + linhas de UM grupo, repetindo o
+// cabeçalho nas folhas de continuação. Tabelas SEMPRE P&B (ordem 28/09).
+func (a *App) detalhadoTabelaGrupo(pdf *fpdf.Fpdf, g detalhadoGrupo) {
+	T := cp1252Traduz.Replace
+	rotulo := "GRUPO: " + g.Nome
+	if g.Proprio {
+		rotulo += "  (GRUPO DO ESCOPO)"
+	}
+	pdf.SetFont("Helvetica", "B", 9.5)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.Cell(0, 6, T(rotulo))
+	pdf.Ln(7)
+
+	cab := []string{"Data", "Hora", "Militar", "Situação", "Destino", "Observação", "Tag"}
+	larg := []float64{20, 13, 42, 22, 24, 45, 16}
+	if g.Proprio {
+		// pessoal do próprio grupo: coluna SETOR (seção) cabível
+		cab = []string{"Data", "Hora", "Militar", "Setor", "Situação", "Destino", "Observação", "Tag"}
+		larg = []float64{18, 12, 36, 22, 20, 22, 36, 16}
+	}
+	alinh := []string{"C", "C", "L", "C", "C", "L", "L", "C"}
+	if g.Proprio {
+		alinh = []string{"C", "C", "L", "C", "C", "L", "L", "C"}
+	}
+	pdfTabelaCabecalho(pdf, cab, larg)
+	if len(g.Registros) == 0 {
+		pdf.SetFont("Helvetica", "I", 8)
+		pdf.SetTextColor(100, 116, 139)
+		msg := "Sem lançamentos no período."
+		if g.Proprio {
+			msg = "Sem lançamentos no período para o grupo do escopo."
+		}
+		pdf.CellFormat(0, 6, T(msg), "1", 1, "C", false, 0, "")
+		return
+	}
+	for i, r := range g.Registros {
+		if pdf.GetY() > 262 {
+			pdf.AddPage()
+			// repetição do cabeçalho do grupo + da tabela nas folhas de continuação
+			pdf.SetFont("Helvetica", "B", 9.5)
+			pdf.SetTextColor(30, 41, 59)
+			pdf.Cell(0, 6, T(rotulo+" (continuação)"))
+			pdf.Ln(7)
+			pdfTabelaCabecalho(pdf, cab, larg)
+		}
+		vals := []string{r.Data, r.Hora, T(r.Nome), sitRotuloDetalhado(r.Situacao),
+			T(r.Destino), T(r.Observacao), T(r.Tag)}
+		if g.Proprio {
+			vals = []string{r.Data, r.Hora, T(r.Nome), T(r.Setor),
+				sitRotuloDetalhado(r.Situacao), T(r.Destino), T(r.Observacao), T(r.Tag)}
+		}
+		pdfTabelaLinha(pdf, vals, larg, alinh, i%2 == 1)
+	}
+}
+
+// relatorioDetalhado: ponto de entrada do PDF por período com modos.
+func (a *App) relatorioDetalhado(de, ate, modo string, escopo int64) ([]byte, error) {
+	if escopo <= 0 {
+		return nil, fmt.Errorf("modo detalhado exige grupo do escopo")
+	}
+	b := a.montarBundle(de, ate, escopo)
+	sub := fmt.Sprintf("Período: %s a %s · Efetivo Pronto: %.1f%%", b.De, b.Ate, b.PctPronto)
+	pdf := a.novoPDF("P", "RELATÓRIO GERAL DE EFETIVO & CONFERÊNCIAS", sub, "")
+	a.relatorioSimplesRender(pdf, b) // página 1 = resumo idêntico ao SIMPLES
+	if modo != "detalhado" {
+		var buf bytes.Buffer
+		if err := pdf.Output(&buf); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+	folhas := a.folhasDetalhado(de, ate, escopo)
+	for _, g := range folhas {
+		pdf.AddPage() // UMA FOLHA NOVA POR GRUPO — sempre, mesmo grupo sem lançamentos
+		// Cabeçalho de folha: nome do grupo + período
+		pdf.SetFont("Helvetica", "B", 10)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.Cell(0, 6, cp1252Traduz.Replace(fmt.Sprintf("%s — PERIODO: %s A %s", g.Nome, fmtDataBR(de+"T00:00:00Z")[:10], fmtDataBR(ate+"T00:00:00Z")[:10])))
+		pdf.Ln(8)
+		a.detalhadoTabelaGrupo(pdf, g)
+	}
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
