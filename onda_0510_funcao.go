@@ -138,7 +138,7 @@ func (a *App) hDriveItensDaFuncao(w http.ResponseWriter, r *http.Request) {
 
 	pastas := []map[string]any{}
 	pRows, err := a.st.db.Query(`
-		SELECT dp.id, dp.nome, COALESCE(u2.nome_guerra, u2.login, '—')
+		SELECT dp.id, dp.nome, COALESCE(NULLIF(u2.nome_guerra,''), NULLIF(u2.nome_completo,''), '—')
 		FROM drive_pastas dp
 		LEFT JOIN usuarios u2 ON u2.id = dp.autor_usuario_id
 		WHERE dp.funcao_id IN (`+marcas+`)
@@ -156,7 +156,7 @@ func (a *App) hDriveItensDaFuncao(w http.ResponseWriter, r *http.Request) {
 
 	arquivos := []map[string]any{}
 	aRows, errA := a.st.db.Query(`
-		SELECT da.id, da.pasta_id, da.nome_original, COALESCE(u2.nome_guerra, u2.login, '—')
+		SELECT da.id, da.pasta_id, da.nome_original, COALESCE(NULLIF(u2.nome_guerra,''), NULLIF(u2.nome_completo,''), '—')
 		FROM drive_arquivos da
 		LEFT JOIN usuarios u2 ON u2.id = da.autor_usuario_id
 		WHERE da.funcao_id IN (`+marcas+`)

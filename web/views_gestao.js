@@ -216,7 +216,17 @@
 
   // Redefinir senha (admin usa confirmação; operadores do gerente, campo único)
   function modalSenha(id, login, comConfirmar, aoFim) {
-    const div = modal(`<div class="modal-inner"><h3>Redefinir senha — ${esc(login)}</h3>
+    // ITEM 2 (ordem Diretor 06/10): login é sensível — para não-admin o título
+    // resolve pelo nome de guerra/completo nas listas da view corrente (admUsuarios
+    // ou operadores do grupo); sem lista disponível, cai no login (nunca inventado).
+    let titulo = login;
+    if ((quem() || {}).papel !== 'admin') {
+      const alvo = (typeof lista !== 'undefined' && Array.isArray(lista) && lista.find(x => String(x.login) === String(login)))
+        || (typeof operadores !== 'undefined' && Array.isArray(operadores) && operadores.find(x => String(x.login) === String(login)))
+        || null;
+      if (alvo) titulo = alvo.nome_guerra || alvo.nome_completo || login;
+    }
+    const div = modal(`<div class="modal-inner"><h3>Redefinir senha — ${esc(titulo)}</h3>
       <div class="campo"><label>Nova senha (mín. 8)</label><input type="password" id="rN"></div>
       ${comConfirmar ? '<div class="campo"><label>Confirmar</label><input type="password" id="rC"></div>' : ''}
       <div class="modal-acoes"><button class="fantasma" id="rX">Cancelar</button>
@@ -236,7 +246,15 @@
 
   // Mover conta entre grupos (admin: quaisquer; gerente: backend limita à hierarquia)
   function modalMover(id, login, optsGrupos, aviso, aoFim) {
-    const div = modal(`<div class="modal-inner"><h3>Mover conta — ${esc(login)}</h3>
+    // ITEM 2: mesmo tratamento do modalSenha — não-admin vê nome, não login.
+    let tituloMv = login;
+    if ((quem() || {}).papel !== 'admin') {
+      const alvo = (typeof lista !== 'undefined' && Array.isArray(lista) && lista.find(x => String(x.login) === String(login)))
+        || (typeof operadores !== 'undefined' && Array.isArray(operadores) && operadores.find(x => String(x.login) === String(login)))
+        || null;
+      if (alvo) tituloMv = alvo.nome_guerra || alvo.nome_completo || login;
+    }
+    const div = modal(`<div class="modal-inner"><h3>Mover conta — ${esc(tituloMv)}</h3>
       <div class="campo"><label>Grupo de destino</label><select id="mG">${optsGrupos}</select></div>
       ${aviso ? `<p style="color:var(--tx2);font-size:12px">${aviso}</p>` : ''}
       <div class="modal-acoes"><button class="fantasma" id="mX">Cancelar</button>
@@ -328,6 +346,10 @@
     const funcoesLista = Array.isArray(funcoesRes) ? funcoesRes : (funcoesRes.funcoes || []);
     const setoresLista = (Array.isArray(setoresRes) ? setoresRes : []).filter(s => s.ativo !== false);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
+    // ITEM 2 (ordem Diretor 06/10): login é identificação SENSÍVEL — só o admin
+    // vê na UI. Gerente/encarregado/operador veem nome de guerra (ou completo).
+    const isAdminViewer = (quem() || {}).papel === 'admin';
+    const rotuloConta = u => esc(u.nome_guerra || u.nome_completo || (isAdminViewer ? u.login : '—'));
     const optsGrupos = `<option value="">— Sem grupo (Global / Atribuir depois) —</option>` + grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
 
     function formatarNomeUsuario(completo, guerra) {
@@ -356,7 +378,7 @@
         <div class="form-linha" style="margin-bottom:12px; gap:8px; flex-wrap:wrap">
           <div class="campo" style="flex:1; min-width:180px">
             <label>Buscar usuário</label>
-            <input id="fULogin" placeholder="Filtrar por login, nome de guerra ou completo…">
+            <input id="fULogin" placeholder="${isAdminViewer ? 'Filtrar por login, nome de guerra ou completo…' : 'Filtrar por nome…'}">
           </div>
           <div class="campo" style="min-width:160px">
             <label>Grupo</label>
@@ -391,7 +413,7 @@
               <tr>
                 <th style="width:38px; text-align:center">Foto</th>
                 <th>ID</th>
-                <th>Login</th>
+                <th>${isAdminViewer ? 'Login' : 'Guerra'}</th>
                 <th>Identificação Militar</th>
                 <th>Funções / Cadeiras Atribuídas</th>
                 <th>Status</th>
@@ -424,7 +446,7 @@
                       </div>
                     </td>
                     <td class="num">#${u.id}</td>
-                    <td><b>${esc(u.login)}</b></td>
+                    <td><b>${rotuloConta(u)}</b></td>
                     <td>
                       <div>${formatarNomeUsuario(u.nome_completo, u.nome_guerra)}</div>
                     </td>
@@ -462,11 +484,14 @@
       const papel = $('#fUPapel').value;
       const at = $('#fUAtivo').value;
       document.querySelectorAll('#tabU tbody tr[data-login]').forEach(tr => {
-        const loginMatches = tr.dataset.login.toLowerCase().includes(q) || tr.dataset.nomes.toLowerCase().includes(q);
+        // ITEM 2: filtro por NOME para todos; por login só quando o viewer é admin
+        // (data-login permanece como atributo interno — nada é exibido na tela).
+        const nomeMatches = tr.dataset.nomes.toLowerCase().includes(q);
+        const loginMatches = isAdminViewer && tr.dataset.login.toLowerCase().includes(q);
         const grupoMatches = !gid || tr.dataset.gid === gid;
         const papelMatches = !papel || tr.dataset.papeis.includes(papel);
         const ativoMatches = at === '' || tr.dataset.ativo === at;
-        tr.style.display = (loginMatches && grupoMatches && papelMatches && ativoMatches) ? '' : 'none';
+        tr.style.display = (nomeMatches || loginMatches) && grupoMatches && papelMatches && ativoMatches ? '' : 'none';
       });
     };
 
@@ -543,7 +568,7 @@
         <div class="modal" style="max-width:620px; max-height:90vh; overflow-y:auto">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px">
             <div>
-              <h3 style="margin:0 0 2px">👤 Perfil do Usuário — ${esc(u.login)}</h3>
+              <h3 style="margin:0 0 2px">👤 Perfil do Usuário — ${esc(u.nome_guerra || u.nome_completo || (isAdminViewer ? u.login : '—'))}</h3>
               <p style="color:var(--tx2);font-size:12px;margin:0">ID #${u.id} · Papel: <b>${rotuloPapel(u.papel)}</b></p>
             </div>
             <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
@@ -689,7 +714,7 @@
           <div class="form-linha" style="margin-bottom:8px">
             <div class="campo" style="flex:1">
               <label>Nº Identificação (CPF/ID) *</label>
-              <input id="nuLogin" placeholder="ex.: 000.000.000-00">
+              <input id="nuLogin" placeholder="${isAdminViewer ? 'ex.: 000.000.000-00' : 'gerado pelo sistema a partir do nome'}">
             </div>
             <div class="campo" style="flex:1">
               <label>Senha Inicial (opcional)</label>
@@ -779,11 +804,20 @@
 
       div.querySelector('#nuX').onclick = () => div.fechar && div.fechar();
       div.querySelector('#nuGo').onclick = async () => {
-        const login = div.querySelector('#nuLogin').value.trim();
-        const senha = div.querySelector('#nuSenha').value;
         const completo = div.querySelector('#nuCompleto').value.trim();
         const guerra = div.querySelector('#nuGuerra').value.trim();
         const papel = selP.value;
+        // ITEM 2 (ordem Diretor 06/10): o campo de identificação não é digitado
+        // nem exibido para não-admin — o sistema deriva o login do nome de guerra
+        // (acentos/espaços normalizados). O admin continua digitando o seu.
+        let login;
+        if (isAdminViewer) {
+          login = div.querySelector('#nuLogin').value.trim();
+        } else {
+          login = guerra.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+            .replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'conta' + Date.now();
+        }
+        const senha = div.querySelector('#nuSenha').value;
         // ordem 04/10: padrão é SEM grupo (admin vincula depois se quiser);
         // gerente continua exigindo unidade.
         const grupoId = +div.querySelector('#nuGrupo').value || null;
@@ -836,9 +870,10 @@
     }
 
     function modalAtribuirPapel(uid, login) {
+      const tituloConta = isAdminViewer ? esc(login) : esc((lista.find(x => x.id === +uid) || {}).nome_guerra || 'usuário');
       const html = `
         <div class="modal" style="max-width:480px">
-          <h3 style="margin-top:0">Atribuir Função / Cadeira — ${esc(login)}</h3>
+          <h3 style="margin-top:0">Atribuir Função / Cadeira — ${tituloConta}</h3>
           <p style="color:var(--tx2);font-size:13px;margin-bottom:14px">Permita que este usuário acumule funções adicionais em grupos específicos.</p>
 
           <div class="form-linha" style="margin-bottom:10px">
@@ -964,7 +999,7 @@
     function modalEditarNomes(uid, login, nomeGuerraAtual, nomeCompletoAtual) {
       const html = `
         <div class="modal" style="max-width:440px">
-          <h3 style="margin-top:0">Editar Identificação — ${esc(login)}</h3>
+          <h3 style="margin-top:0">Editar Identificação — ${isAdminViewer ? esc(login) : esc(nomeGuerraAtual || nomeCompletoAtual || 'usuário')}</h3>
           <p style="color:var(--tx2);font-size:13px;margin-bottom:14px">O nome curto/de guerra aparecerá destacado nas assinaturas e caixas postais.</p>
 
           <div class="campo" style="margin-bottom:10px">
@@ -1926,7 +1961,13 @@
   let setoresCat = null, funcoesCat = null; // cache compartilhado (v9.16.9)
   window.ViewGrupos = async function () {
     const eu = quem();
-    if (!eu || eu.papel !== 'gerente') { location.hash = '#/hoje'; return; }
+    // ordem 06/10 (P4): encarregado/auxiliar de pessoal também gerenciam —
+    // mesmas abas; ações restritivas dentro delas são filtradas por gestorPessoal
+    // (senha de conta segue gerente/admin no servidor).
+    if (!eu || (eu.papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal()))) { location.hash = '#/hoje'; return; }
+    // ordem 06/10: quem chega aqui sem papel do sistema é encarregado/auxiliar —
+    // o servidor nega exclusão de catálogo/pessoa, senha e mover; o front esconde.
+    const souFuncaoPessoal = eu.papel !== 'gerente';
     navAtiva('#/grupos');
     $('#app').innerHTML = '<div class="carregando">…</div>';
     const [grupos, arvore, pessoas, setores, funcoes, contas] = await Promise.all([
@@ -1985,7 +2026,7 @@
        <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
        <td><button class="acao-linha" data-edit="${p.id}">editar</button>
        <button class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button>
-       <button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button></td></tr>`).join('');
+       ${souFuncaoPessoal ? '' : `<button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button>`}</td></tr>`).join('');
 
     const optsMoverGer = `<option value="">— destino (dentro da sua hierarquia) —</option>` +
       grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
@@ -2001,7 +2042,7 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
             <label style="font-size:13px"><input type="checkbox" id="chkTodosP"> todos</label>
             <button class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
-            <button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>
+            ${souFuncaoPessoal ? '' : '<button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>'}
             <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span></div>
           <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Posto / Graduação</th><th>Ativo</th><th></th></tr></thead>
           <tbody id="tabP">${linhasP || '<tr><td colspan="8"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
@@ -2095,14 +2136,32 @@
              os chefes que designam operadores dentre as contas do seu setor. -->
         <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
         <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">O gerente não cria operadores. Fluxo da hierarquia: <b>gerente</b> designa os <b>chefes de setor</b> → cada <b>chefe</b> seleciona os operadores dentre as contas do SEU setor (aba de gestão do chefe).</p>
+        ${souFuncaoPessoal ? `
+        <!-- ordem 06/10 (item 3): encarregado/auxiliar CRIAM contas de operador/chefe
+             de setor do próprio grupo (POST /api/usuarios); gerente segue sem criar
+             operador (fluxo da hierarquia acima). -->
+        <div class="cartao" style="margin-bottom:12px;background:var(--painel2)">
+          <h4 style="margin:0 0 8px;font-size:13px">Designar conta do grupo</h4>
+          <p style="color:var(--tx2);font-size:12px;margin:0 0 8px">Cria a conta com login derivado do nome de guerra (senha padrão <code>sci</code> — troca obrigatória no 1º acesso). <b>Só operador ou chefe de setor do próprio grupo.</b></p>
+          <div class="form-linha" style="align-items:flex-end">
+            <div class="campo" style="flex:1;min-width:140px"><label>Nome de guerra *</label><input id="encNg" placeholder="ex.: SILVA"></div>
+            <div class="campo" style="flex:2;min-width:180px"><label>Nome completo *</label><input id="encNc" placeholder="ex.: José da Silva"></div>
+            <div class="campo" style="width:150px"><label>Função na conta</label>
+              <select id="encPapel"><option value="operador">Operador</option><option value="chefe_setor">Chefe de setor</option></select>
+            </div>
+            <button class="primario" id="encCriar" style="min-height:40px">Criar conta</button>
+          </div>
+        </div>` : ''}
         <div class="campo" style="margin-bottom:8px"><label>Filtrar operadores</label><input id="fOp" placeholder="buscar login…"></div>
         <div class="rolagem" style="margin-top:10px"><table><thead><tr><th>ID</th><th>Login</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
         <tbody>${operadores.map(o => `
           <tr data-login="${esc(o.login)}"><td class="num">#${o.id}</td><td><b>${esc(o.login)}</b></td><td>${o.ativo ? 'ativa' : 'desativada'}</td><td>${fmtData(o.criado_em)}</td>
-          <td><button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
+          <td>${souFuncaoPessoal
+            ? `<button class="acao-linha" data-editu="${o.id}" data-login="${esc(o.login)}" data-ng="${esc(o.nome_guerra || '')}" data-nc="${esc(o.nome_completo || '')}">editar</button>`
+            : `<button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
           <button class="acao-linha" data-mv="${o.id}" data-login="${esc(o.login)}">mover</button>
-          <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button></td></tr>`).join('')
-          || '<tr><td colspan="5"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div></div>
+          <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button>`}</td></tr>`).join('')
+          || '<tr><td colspan="5"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div>
       </div>`;
 
     /* --- alternância de sub-abas (ordem 04/10: dropdown estilizado) --- */
@@ -2131,6 +2190,43 @@
         }
       });
     }
+
+    /* --- ordem 06/10 (item 3): encarregado/auxiliar criam contas do grupo --- */
+    const btEncCriar = $('#encCriar');
+    if (btEncCriar) {
+      btEncCriar.onclick = async () => {
+        const ng = ($('#encNg') && $('#encNg').value.trim()) || '';
+        const nc = ($('#encNc') && $('#encNc').value.trim()) || '';
+        const papelConta = ($('#encPapel') && $('#encPapel').value) || 'operador';
+        if (!ng || !nc) { toast('Nome de guerra e nome completo são obrigatórios', 'erro'); return; }
+        // mesmo derivador do item 2: login vem do nome de guerra (não-admin)
+        const login = ng.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+          .replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'conta' + Date.now();
+        const r = await processar(() => api('/api/usuarios', { method: 'POST', body: JSON.stringify({ login, papel: papelConta }) }), 'Criando conta…');
+        if (r.ok) {
+          try {
+            const rid = r.resultado && r.resultado.id;
+            if (rid) {
+              await api(`/api/usuarios/${rid}`, { method: 'PATCH', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc }) });
+            }
+          } catch (e) {}
+          toast('Conta criada — senha padrão sci (troca no 1º acesso)');
+          window.ViewGrupos();
+        }
+      };
+    }
+    /* --- ordem 06/10: edição de nomes da conta pela função de pessoal --- */
+    document.querySelectorAll('[data-editu]').forEach(b => {
+      b.onclick = async () => {
+        const novoNg = prompt('Nome de guerra:', b.dataset.ng || '');
+        if (novoNg === null) return;
+        const novoNc = prompt('Nome completo:', b.dataset.nc || '');
+        if (novoNc === null) return;
+        const r = await processar(() => api(`/api/usuarios/${b.dataset.editu}`, { method: 'PATCH', body: JSON.stringify({ nome_guerra: novoNg.trim(), nome_completo: novoNc.trim() }) }), 'Salvando conta…');
+        if (r.ok) window.ViewGrupos();
+      };
+    });
+
     ligarToggles($('#app'));
 
     /* --- onda C2 (05/10): aba FUNÇÕES — designação de membros por função ---
@@ -2380,8 +2476,10 @@
     const refreshSel = () => {
       const n = selCount();
       $('#nSel').textContent = n;
-      $('#nSel2').textContent = n;
-      $('#btExcLote').disabled = n === 0;
+      const nSel2 = $('#nSel2'); // ausente p/ função de pessoal (sem excluir em lote)
+      if (nSel2) nSel2.textContent = n;
+      const btExc = $('#btExcLote');
+      if (btExc) btExc.disabled = n === 0;
       $('#btEditLote').disabled = n === 0;
     };
     document.querySelectorAll('.chkP').forEach(ch => ch.onchange = refreshSel);
@@ -2389,7 +2487,8 @@
       document.querySelectorAll('.chkP').forEach(ch => { ch.checked = $('#chkTodosP').checked; });
       refreshSel();
     };
-    $('#btExcLote').onclick = async () => {
+    const btExcLoteEl = $('#btExcLote');
+    if (btExcLoteEl) btExcLoteEl.onclick = async () => {
       const ids = [...document.querySelectorAll('.chkP:checked')].map(c => +c.dataset.id);
       if (!ids.length) return;
       if (!(await confirmar(`Excluir ${ids.length} militar(es)? (com histórico de conferência virarão inativos)`))) return;
@@ -2554,7 +2653,7 @@
               <div style="display:flex; align-items:center; gap:6px">
                 ${podeGerenciar ? `
                   <button class="acao-linha" style="font-size:11.5px; padding:2px 8px" data-editcat="${t}" data-cid="${x.id}" data-nome="${esc(x.nome)}" data-cor="${esc(x.cor || '')}" data-sigla="${esc(x.sigla || '')}">editar</button>
-                  <button class="acao-linha perigo" style="font-size:11.5px; padding:2px 8px" data-delcat="${t}" data-cid="${x.id}">excluir</button>
+                  ${souFuncaoPessoal ? '' : `<button class="acao-linha perigo" style="font-size:11.5px; padding:2px 8px" data-delcat="${t}" data-cid="${x.id}">excluir</button>`}
                 ` : `
                   <span style="color:var(--tx3); font-size:11.5px; display:inline-flex; align-items:center; gap:3px">
                     🔒 ${esc(nomeOrigem || 'Superior')}

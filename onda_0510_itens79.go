@@ -56,7 +56,7 @@ func (a *App) hDriveArquivoGrupo(w http.ResponseWriter, r *http.Request) {
 	pRows, err := a.st.db.Query(`
 		SELECT dp.id, dp.nome, COALESCE(dp.funcao_id, 0),
 		       COALESCE(f.nome, ''), COALESCE(g.nome, ''),
-		       COALESCE(NULLIF(u2.nome_guerra, ''), u2.login, '—'),
+		       COALESCE(NULLIF(u2.nome_guerra, ''), NULLIF(u2.nome_completo, ''), '—'),
 		       dp.criado_em,
 		       (SELECT COUNT(*) FROM drive_pastas sp WHERE sp.pai_id = dp.id) +
 		       (SELECT COUNT(*) FROM drive_arquivos sa WHERE sa.pasta_id = dp.id)
@@ -86,7 +86,7 @@ func (a *App) hDriveArquivoGrupo(w http.ResponseWriter, r *http.Request) {
 		SELECT da.id, COALESCE(da.pasta_id, 0), da.nome_original, da.tipo, da.tamanho,
 		       COALESCE(da.funcao_id, 0),
 		       COALESCE(f.nome, ''), COALESCE(g.nome, ''),
-		       COALESCE(NULLIF(u2.nome_guerra, ''), u2.login, '—'),
+		       COALESCE(NULLIF(u2.nome_guerra, ''), NULLIF(u2.nome_completo, ''), '—'),
 		       da.criado_em
 		FROM drive_arquivos da
 		LEFT JOIN funcoes f ON f.id = da.funcao_id

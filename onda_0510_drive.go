@@ -226,7 +226,7 @@ func (a *App) hDriveArquivoPropriedades(w http.ResponseWriter, r *http.Request) 
 
 	err = a.st.db.QueryRow(`
 		SELECT da.pasta_id, da.grupo_id, da.nome_original, da.tipo, da.tamanho, da.criado_em,
-		       COALESCE(NULLIF(u.nome_guerra, ''), u.login, '—')
+		       COALESCE(NULLIF(u.nome_guerra, ''), NULLIF(u.nome_completo, ''), '—')
 		FROM drive_arquivos da
 		LEFT JOIN usuarios u ON u.id = da.autor_usuario_id
 		WHERE da.id = ?

@@ -312,25 +312,27 @@ func (a *App) rotas() {
 	m.Handle("GET /api/catalogo/{t}", a.auth(false, a.hCatalogoList))
 	m.Handle("GET /api/setores/agregado", a.auth(false, a.hSetoresAgregado))
 	m.Handle("GET /api/drive/arquivo_grupo", a.auth(false, a.hDriveArquivoGrupo))
-	m.Handle("POST /api/catalogo/{t}", a.auth(false, a.hCatalogoAdd))
-	m.Handle("DELETE /api/catalogo/{t}/{id}", a.auth(false, a.hCatalogoDel))
-	m.Handle("PATCH /api/catalogo/{t}/{id}/pai", a.auth(false, a.hCatalogoReparentar))
-	m.Handle("PATCH /api/catalogo/{t}/{id}", a.auth(false, a.hCatalogoEditar))
+	m.Handle("POST /api/catalogo/{t}", a.guardaGestaoPessoal(a.hCatalogoAdd))
+	m.Handle("DELETE /api/catalogo/{t}/{id}", a.guardaGestaoPessoal(a.hCatalogoDel))
+	m.Handle("PATCH /api/catalogo/{t}/{id}/pai", a.guardaGestaoPessoal(a.hCatalogoReparentar)) // hierarquia (v9.16)
+	m.Handle("PATCH /api/catalogo/{t}/{id}", a.guardaGestaoPessoal(a.hCatalogoEditar))
 
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
-	m.Handle("POST /api/pessoas", a.auth(false, a.hPessoasAdd))
-	m.Handle("PATCH /api/pessoas/{id}", a.auth(false, a.hPessoasEdit))
+	m.Handle("POST /api/pessoas", a.guardaGestaoPessoal(a.hPessoasAdd))
+	m.Handle("PATCH /api/pessoas/{id}", a.guardaGestaoPessoal(a.hPessoasEdit))
 	m.Handle("DELETE /api/pessoas/{id}", a.auth(false, a.hPessoaExcluir)) // v9.7: admin/gerente excluem (com histórico → desativa)
 	m.Handle("GET /api/pessoas/{id}/qr", a.auth(false, a.hPessoaQRCode))
 	m.Handle("GET /api/pessoas/{id}/pdf", a.auth(false, a.hPessoaPDF))
 	m.Handle("DELETE /api/grupos/{id}", a.auth(true, a.hGrupoExcluir)) // v9.7: só admin, só grupo vazio
 
-	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente/operador: do próprio grupo (v9.4)
-	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria operador do próprio grupo)
+	m.Handle("GET /api/usuarios", a.auth(false, a.hUsuariosList)) // admin: todas; gerente: próprio+subordinados (04/10); operador/chefe: próprio grupo (v9.4) — leitura p/ TODOS os papeis (telas de designação); escrever é do guarda
+	// criação é validada DENTRO do handler (admin cria qualquer; gerente cria
+	// chefe_setor; chefe_setor promove operador; encarregado/auxiliar criam
+	// operador/chefe do próprio grupo) — guarda de rota aqui quebraria o chefe.
 	m.Handle("POST /api/usuarios", a.auth(false, a.hUsuariosAdd))
 	m.Handle("GET /api/operadores-do-setor", a.auth(false, a.hOperadoresDoSetor))
 	m.Handle("POST /api/operadores-do-setor", a.auth(false, a.hOperadoresDoSetor))
-	m.Handle("PATCH /api/usuarios/{id}", a.auth(false, a.hUsuarioEdit))
+	m.Handle("PATCH /api/usuarios/{id}", a.guardaGestaoPessoal(a.hUsuarioEdit))
 	m.Handle("DELETE /api/usuarios/{id}", a.auth(false, a.hUsuarioExcluir))   // R6; gerente só operador do próprio grupo (v9.4)
 	m.Handle("POST /api/usuarios/{id}/senha", a.auth(false, a.hUsuarioSenha)) // admin: qualquer; gerente: operador do próprio grupo (v9.4)
 	m.Handle("GET /api/usuarios/{id}/foto", a.auth(false, a.hUsuarioFotoGet))
@@ -531,7 +533,10 @@ func (a *App) hMe(w http.ResponseWriter, r *http.Request) {
 			rows.Close()
 		}
 	}
-	jsonOK(w, map[string]any{"usuario": u, "setor_id": setorID, "setores_chefiados": setoresChefiados})
+	// ordem 06/10 (P3): nome do GRUPO da sessão — o dropdown de contexto do
+	// front usa como título da linha; PapeisDoUsuario já traz grupo_nome por
+	// papel, aqui é o do papel ATIVO (última leitura, sem custo extra).
+	jsonOK(w, map[string]any{"usuario": u, "setor_id": setorID, "setores_chefiados": setoresChefiados, "grupo_nome": u.GrupoNome})
 }
 
 func (a *App) hLogout(w http.ResponseWriter, r *http.Request) {
@@ -632,6 +637,12 @@ func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	solicitante := usuarioDoCtx(r)
+	// ordem 06/10: senha de conta é poder credencial — SÓ admin e gerente
+	// (antes: qualquer conta autenticada passava; buraco de escalação fechado).
+	if solicitante.Papel != "admin" && solicitante.Papel != "gerente" {
+		jsonErro(w, http.StatusForbidden, "senha de conta é redefinida pelo gerente ou administrador")
+		return
+	}
 	if solicitante.Papel == "gerente" {
 		var alvoPapel string
 		var alvoGrupo int64
@@ -693,6 +704,30 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	solicitante := usuarioDoCtx(r)
+	// ordem 06/10: encarregado/auxiliar de pessoal editam contas — mas SÓ as de
+	// operador/chefe_setor do PRÓPRIO grupo (nunca gerente/admin). Fix ordem
+	// 06/10: conta comum (sem papel) NÃO passa mais reto — era escalação.
+	if solicitante.Papel != "admin" && solicitante.Papel != "gerente" {
+		if !a.podeGestaoPessoal(solicitante) {
+			jsonErro(w, http.StatusForbidden, "usuário sem permissão para editar outros usuários")
+			return
+		}
+		var alvoPapel string
+		var alvoGrupo int64
+		if err := a.st.db.QueryRow(`SELECT papel, COALESCE(grupo_id,0) FROM usuarios WHERE id = ?`, id).Scan(&alvoPapel, &alvoGrupo); err != nil {
+			jsonErro(w, http.StatusNotFound, "usuário inexistente")
+			return
+		}
+		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
+			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar só edita membros do próprio grupo")
+			return
+		}
+		// ordem 06/10: função de pessoal NÃO move conta de grupo (só admin)
+		if req.GrupoID != nil {
+			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar não altera o grupo da conta")
+			return
+		}
+	}
 	if solicitante.Papel == "operador" || solicitante.Papel == "chefe_setor" {
 		jsonErro(w, http.StatusForbidden, "usuário sem permissão para editar outros usuários")
 		return
@@ -706,6 +741,12 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
 			jsonErro(w, http.StatusForbidden, "gerente só edita membros do próprio grupo")
+			return
+		}
+		// ordem 06/10 (paridade com o encarregado): gerente não move conta de
+		// grupo — regra já implícita no escopo; agora explícita (só admin).
+		if req.GrupoID != nil {
+			jsonErro(w, http.StatusForbidden, "gerente não altera o grupo da conta")
 			return
 		}
 	}
@@ -854,7 +895,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		qSetores := `
 			SELECT s.id, s.nome, COALESCE(s.sigla, ''),
 			       COALESCE(cs.status, 'nao_iniciada'),
-			       cs.concluido_por, COALESCE(u.nome_guerra, u.login, ''), cs.concluido_em,
+			       cs.concluido_por, COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), cs.concluido_em,
 			       COUNT(DISTINCT p.id) AS total_efetivo,
 			       COUNT(DISTINCT CASE WHEN pr.verificado = 1 THEN p.id ELSE NULL END) AS total_verificados
 			FROM setores s
@@ -1173,8 +1214,9 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	}
 	// Onda 05/10 (ordem Diretor): conferência é iniciada por GERENTE DE GRUPO
 	// ou ENCARREGADO DE PESSOAL (função) — mesmo escopo (grupo).
-	if u.Papel != "gerente" && !a.ehEncarregado(u) {
-		jsonErro(w, http.StatusForbidden, "a conferência é iniciada pelo gerente ou pelo encarregado de pessoal")
+	// Ordem 06/10 (item 15): AUXILIAR DE PESSOAL espelha o encarregado.
+	if u.Papel != "gerente" && !a.ehEncarregado(u) && !a.ehAuxiliarDePessoal(u) {
+		jsonErro(w, http.StatusForbidden, "a conferência é iniciada pelo gerente ou pelo encarregado/auxiliar de pessoal")
 		return
 	}
 	if u.GrupoID == nil {
@@ -1669,7 +1711,7 @@ func (a *App) hRegistrosBusca(w http.ResponseWriter, r *http.Request) {
 		}
 		q := `
 		SELECT f.data, f.id, p.nome_guerra, COALESCE(tt.nome,''), t.comentario,
-		       COALESCE(NULLIF(u.nome_guerra,''), u.login), t.criado_em, t.tag_id
+		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), t.criado_em, t.tag_id
 		FROM comentarios t
 		JOIN tags tt ON tt.id = t.tag_id
 		JOIN conferencias f ON f.id = t.conferencia_id
@@ -1839,7 +1881,7 @@ func (a *App) hPessoaComentarios(w http.ResponseWriter, r *http.Request) {
 	}
 	q := `
 		SELECT c.id, c.conferencia_id, COALESCE(t.nome,''), c.comentario,
-		       COALESCE(NULLIF(u.nome_guerra,''), u.login), c.criado_em
+		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), c.criado_em
 		FROM comentarios c
 		LEFT JOIN tags t ON t.id = c.tag_id
 		LEFT JOIN usuarios u ON u.id = c.operador_id
@@ -1871,7 +1913,7 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	escopo := escopoDoUsuario(u)
 	q := `
 		SELECT c.id, c.data, COALESCE(c.hora,''), COALESCE(c.local,''), c.status,
-		       COALESCE(NULLIF(u.nome_guerra,''), u.login), c.criado_em, c.fechada_em,
+		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), c.criado_em, c.fechada_em,
 		       (SELECT COUNT(*) FROM presencas p WHERE p.conferencia_id = c.id) AS lanc,
 		       COALESCE(c.grupo_id,0), COALESCE((SELECT g.nome FROM grupos g WHERE g.id = c.grupo_id),'—'),
 		       c.arquivada_em,
@@ -1999,8 +2041,10 @@ func (a *App) hCatalogoReparentar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	if u == nil || u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente")
+	// ordem 06/10: gerente/encarregado/auxiliar gerenciam catálogos (o escopo
+	// específico do item vem logo abaixo — herdados são somente leitura)
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !a.podeGestaoPessoal(u)) {
+		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
 	esc := escopoDoUsuario(u)
@@ -2098,7 +2142,7 @@ func (a *App) hCatalogoEditar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !a.podeGestaoPessoal(u)) {
 		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
@@ -2880,7 +2924,7 @@ func (a *App) hPessoaPDF(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rowsC, errC := a.st.db.Query(`
-		SELECT mc.id, mi.nome, mi.codigo_patrimonio, mc.data_saida, COALESCE(u.nome_guerra, u.login)
+		SELECT mc.id, mi.nome, mi.codigo_patrimonio, mc.data_saida, COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—')
 		FROM material_cautelas mc
 		JOIN material_itens mi ON mi.id = mc.item_id
 		JOIN usuarios u ON u.id = mc.responsavel_entrega_id
@@ -2960,7 +3004,7 @@ func (a *App) hMaterialCautelaReciboPDF(w http.ResponseWriter, r *http.Request) 
 	             mi.nome, mi.codigo_patrimonio, COALESCE(mi.numero_serie, '—'), mi.grupo_id,
 	             COALESCE(cat.nome, 'Geral'), COALESCE(mi.nivel_sensibilidade, 'padrao'),
 	             p.nome_guerra, p.nome_completo, COALESCE(s.nome, 'Indefinido'), COALESCE(fu.nome, 'Indefinida'), COALESCE(g.nome, 'Geral'),
-	             COALESCE(ue.nome_guerra, ue.login), COALESCE(ur.nome_guerra, COALESCE(ur.login, '—'))
+	             COALESCE(NULLIF(ue.nome_guerra,''), NULLIF(ue.nome_completo,''), '—'), COALESCE(NULLIF(ur.nome_guerra,''), NULLIF(ur.nome_completo,''), '—')
 	      FROM material_cautelas mc
 	      JOIN material_itens mi ON mi.id = mc.item_id
 	      LEFT JOIN material_categorias cat ON cat.id = mi.categoria_id
@@ -3390,7 +3434,7 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	nome := strings.TrimSpace(req.Nome)
 	u := usuarioDoCtx(r)
-	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !a.podeGestaoPessoal(u)) {
 		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
@@ -3449,7 +3493,9 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+	// ordem 06/10: gerente/encarregado/auxiliar gerenciam catálogos (o escopo
+	// específico do item vem logo abaixo — herdados são somente leitura)
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !a.podeGestaoPessoal(u)) {
 		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
@@ -3557,7 +3603,12 @@ func (a *App) hPessoaExcluir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "pessoa inexistente")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 {
+	if esc := escopoDoUsuario(u); u.Papel != "admin" {
+		if esc <= 0 {
+			jsonErro(w, http.StatusForbidden, "sem grupo definido no cadastro")
+			return
+		}
+		// ordem 06/10: gerente/encarregado/auxiliar excluem SÓ do próprio grupo
 		if grupoID == nil || *grupoID != esc {
 			jsonErro(w, http.StatusForbidden, "pessoa de outro grupo")
 			return
@@ -3745,18 +3796,26 @@ func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	// REGRA (28/09): admin e gerente cadastram; gerente SEMPRE no próprio grupo
+	// REGRA (28/09, estendida ordem 06/10): admin/gerente/encarregado/auxiliar
+	// de pessoal cadastram; gerente/encarregado/auxiliar SEMPRE no próprio grupo
 	var grupoID *int64
-	if u.Papel == "admin" {
+	switch {
+	case u.Papel == "admin":
 		grupoID = req.GrupoID // admin escolhe o grupo (ou NULL = sem grupo)
-	} else if u.Papel == "gerente" {
+	case u.Papel == "gerente":
 		if u.GrupoID == nil {
 			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
 			return
 		}
 		grupoID = u.GrupoID
-	} else {
-		jsonErro(w, http.StatusForbidden, "somente admin e gerente cadastram pessoal")
+	case a.podeGestaoPessoal(u): // encarregado OU auxiliar de pessoal
+		if u.GrupoID == nil {
+			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar sem grupo definido")
+			return
+		}
+		grupoID = u.GrupoID
+	default:
+		jsonErro(w, http.StatusForbidden, "somente admin, gerente e encarregado/auxiliar de pessoal cadastram pessoal")
 		return
 	}
 	// v9.7: safeguard anti-duplicata — mesma pessoa (guerra+completo, case-insensitive,
@@ -3807,8 +3866,16 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	// REGRA (28/09): gerente só edita pessoal DO PRÓPRIO grupo (admin edita tudo)
-	if esc := escopoDoUsuario(u); esc > 0 {
+	// ordem 06/10: gerente/encarregado/auxiliar só editam pessoal DO PRÓPRIO
+	// grupo (admin edita tudo) — escopo explícito também para quem entra pelo
+	// guardaGestaoPessoal (conta sem papel do sistema).
+	var gidEscopo *int64 // grupo da pessoa (nil = sem grupo)
+	if u.Papel != "admin" {
+		esc := escopoDoUsuario(u)
+		if esc <= 0 {
+			jsonErro(w, http.StatusForbidden, "sem grupo definido no cadastro")
+			return
+		}
 		var gid *int64
 		if err = a.st.db.QueryRow(`SELECT grupo_id FROM pessoas WHERE id = ?`, id).Scan(&gid); err != nil {
 			jsonErro(w, http.StatusNotFound, "pessoa inexistente")
@@ -3818,6 +3885,22 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusForbidden, "pessoa de outro grupo")
 			return
 		}
+		gidEscopo = gid
+	} else {
+		_ = a.st.db.QueryRow(`SELECT grupo_id FROM pessoas WHERE id = ?`, id).Scan(&gidEscopo)
+	}
+	// função atual da pessoa — base da regra de nomeação (item 15)
+	var funcaoAntiga *int64
+	_ = a.st.db.QueryRow(`SELECT funcao_id FROM pessoas WHERE id = ?`, id).Scan(&funcaoAntiga)
+	// ordem 06/10 (item 15): QUEM NOMEIA função — gerente/admin qualquer;
+	// encarregado/auxiliar só definir/desfazer a "auxiliar de pessoal" do
+	// próprio grupo (reenvio da mesma função passa: edição de campos).
+	if req.FuncaoID != nil && *req.FuncaoID <= 0 {
+		req.FuncaoID = nil
+	}
+	if permitido, motivo := a.atribuiFuncaoPessoal(u, gidEscopo, req.FuncaoID, funcaoAntiga); !permitido {
+		jsonErro(w, http.StatusForbidden, motivo)
+		return
 	}
 	// admin pode mover a pessoa de grupo na edição; gerente nunca altera grupo
 	if u.Papel == "admin" {
@@ -3851,6 +3934,13 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
+	// ordem 06/10: leitura para TODOS os papeis do sistema (telas de designação),
+	// mas conta SEM papel do sistema e SEM grupo não lê a lista de contas —
+	// era escalação (via -1 via "mostrar tudo" + hash de senhas).
+	if escopo <= 0 && u.Papel != "admin" {
+		jsonErro(w, http.StatusForbidden, "sua conta não tem grupo definido — solicite ao gerente")
+		return
+	}
 	// ordem 04/10 (Grupos): gerente vê o PRÓPRIO grupo + GRUPOS SUBORDINADOS
 	// (admin continua vendo todos). Operador/chefe seguem só no próprio grupo.
 	var subordinados []int64
@@ -3900,7 +3990,9 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 				"data_nascimento": dataNasc, "tipo_sanguineo": tipoSang,
 				"telefone": tel, "email": email, "endereco": endereco, "foto_base64": foto,
 			}
-			if u.Papel != "operador" {
+			// ordem 06/10: hash de senhas só para papeis do sistema (operador e
+			// contas sem papel — encarregado/auxiliar/comum — não recebem)
+			if u.Papel == "admin" || u.Papel == "gerente" || u.Papel == "chefe_setor" {
 				item["senhas"] = json.RawMessage(senhas)
 			}
 			out = append(out, item)
@@ -4204,10 +4296,12 @@ func (a *App) hMoverConta(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "conta admin não é movida")
 		return
 	}
-	dentroDaArvore := func(g int64) bool { return g == *u.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*u.GrupoID), g) }
-	if u.Papel == "gerente" {
-		if u.GrupoID == nil {
-			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
+	dentroDaArvore := func(g int64) bool { return u.GrupoID != nil && (g == *u.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*u.GrupoID), g)) }
+	// Fix ordem 06/10: só ADMIN e GERENTE movem contas — antes, operador/comum
+	// passavam reto aqui e moviam qualquer conta para qualquer grupo.
+	if u.Papel != "admin" {
+		if u.Papel != "gerente" || u.GrupoID == nil {
+			jsonErro(w, http.StatusForbidden, "somente admin e gerente movem contas")
 			return
 		}
 		if !dentroDaArvore(origem) || !dentroDaArvore(req.GrupoID) {
@@ -4566,6 +4660,20 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "operador não cria contas")
 		return
 	}
+	// ordem 06/10: ENCARREGADO/AUXILIAR DE PESSOAL (sem papel do sistema) criam
+	// contas, mas só operador/chefe_setor do PRÓPRIO grupo — criar gerente/admin
+	// é poder de gerente/admin.
+	if u.Papel != "admin" && u.Papel != "gerente" && a.podeGestaoPessoal(u) {
+		if papel != "operador" && papel != "chefe_setor" {
+			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar de pessoal só designa operador ou chefe de setor do próprio grupo")
+			return
+		}
+		if u.GrupoID == nil {
+			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar sem grupo definido")
+			return
+		}
+		req.GrupoID = u.GrupoID // força o próprio grupo, ignore o que vier no corpo
+	}
 	if u.Papel != "admin" {
 		if u.GrupoID == nil {
 			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
@@ -4584,6 +4692,9 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			req.GrupoID = u.GrupoID
+		case a.podeGestaoPessoal(u):
+			// encarregado/auxiliar: já validado acima (só operador/chefe_setor
+			// do próprio grupo — grupo já forçado). Passa.
 		default:
 			jsonErro(w, http.StatusForbidden, "sem permissão para criar contas")
 			return
@@ -8267,8 +8378,8 @@ func (a *App) hSetorSugestoesList(w http.ResponseWriter, r *http.Request) {
 	statusFiltro := strings.TrimSpace(r.URL.Query().Get("status"))
 
 	q := `SELECT s.id, s.grupo_id, COALESCE(g.nome, ''), s.setor_tipo, s.autor_id,
-	             COALESCE(u_aut.nome_guerra, u_aut.login), s.tipo_acao, s.dados_json,
-	             s.status, s.aprovado_por, COALESCE(u_apr.nome_guerra, u_apr.login, ''),
+	             COALESCE(NULLIF(u_aut.nome_guerra,''), NULLIF(u_aut.nome_completo,''), '—'), s.tipo_acao, s.dados_json,
+	             s.status, s.aprovado_por, COALESCE(NULLIF(u_apr.nome_guerra,''), NULLIF(u_apr.nome_completo,''), '—'),
 	             COALESCE(s.aprovado_em, ''), COALESCE(s.justificativa, ''), s.criado_em
 	      FROM setor_sugestoes s
 	      JOIN grupos g ON g.id = s.grupo_id

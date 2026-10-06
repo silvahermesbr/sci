@@ -71,14 +71,18 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 
 // hFuncaoMembrosSet: POST /api/grupo/funcoes/membros
 // {funcao_id, usuario_id, titularidade: titular|auxiliar}
-// Validações: gerente com grupo na sessão; função existente no catálogo;
-// usuário ATIVO do PRÓPRIO grupo (usuarios.grupo_id); 1 titular por
-// (função, grupo) via índice parcial único — segundo titular → 409.
+// Validações: gerente OU função de pessoal (encarregado/auxiliar — ordem
+// 06/10) com grupo na sessão; função existente no catálogo; usuário ATIVO do
+// PRÓPRIO grupo (usuarios.grupo_id); 1 titular por (função, grupo) via índice
+// parcial único — segundo titular → 409.
 func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
-	if u.Papel != "gerente" || escopo <= 0 {
-		jsonErro(w, http.StatusForbidden, "apenas gerentes designam membros de função")
+	// ordem 06/10: função de pessoal designa no PRÓPRIO grupo; admin segue
+	// fora (global não designa membro de grupo).
+	ehFuncaoPessoal := u.Papel != "admin" && (a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u))
+	if escopo <= 0 || (u.Papel != "gerente" && !ehFuncaoPessoal) {
+		jsonErro(w, http.StatusForbidden, "apenas gerente ou encarregado/auxiliar de pessoal designam membros de função")
 		return
 	}
 	var req struct {
@@ -123,13 +127,14 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 }
 
 // hFuncaoMembrosDel: DELETE /api/grupo/funcoes/membros/{id}
-// id = funcao_membros.id. Gerente só apaga designação DO PRÓPRIO grupo
-// (filtro grupo_id no WHERE; 404 se não é dele).
+// id = funcao_membros.id. Gerente OU função de pessoal (ordem 06/10) apaga
+// designação DO PRÓPRIO grupo (filtro grupo_id no WHERE; 404 se não é dele).
 func (a *App) hFuncaoMembrosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
-	if u.Papel != "gerente" || escopo <= 0 {
-		jsonErro(w, http.StatusForbidden, "apenas gerentes designam membros de função")
+	ehFuncaoPessoal := u.Papel != "admin" && (a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u))
+	if escopo <= 0 || (u.Papel != "gerente" && !ehFuncaoPessoal) {
+		jsonErro(w, http.StatusForbidden, "apenas gerente ou encarregado/auxiliar de pessoal designam membros de função")
 		return
 	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
