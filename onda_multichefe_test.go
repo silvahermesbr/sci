@@ -265,3 +265,48 @@ func TestX13MigracaoV35Backfill(t *testing.T) {
 		t.Fatalf("X13b: re-execução duplicou comandos (%d)", n)
 	}
 }
+
+// X15 (ordem 0610 item 12, NOVA DOUTRINA): FECHAR a conferência é ato de
+// GERENTE (ou encarregado de pessoal) — operador e chefe_setor → 403.
+func TestX15FecharSoGerenteEEncarregado(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+	gid, _, _, _, uidCh, ckGer := multiChefeSetup(t, app, st)
+
+	// conferência aberta do grupo (ato do gerente)
+	var cid int64
+	if rr, res := doJSONReq(app, "POST", "/api/conferencia/iniciar", map[string]any{"local": "X15"}, ckGer); rr.Code != http.StatusOK {
+		t.Fatalf("X15 setup: iniciar → 200, veio %d %v", rr.Code, res)
+	} else if v, ok := res["id"].(float64); !ok {
+		t.Fatalf("X15 setup: id da conferência ausente: %v", res)
+	} else {
+		cid = int64(v)
+	}
+	var pid int64
+	if err := st.db.QueryRow(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('X15 P', 'X15 Pessoa', ?, 'ativo') RETURNING id`, gid).Scan(&pid); err != nil {
+		t.Fatalf("pessoa: %v", err)
+	}
+	lanc := func() map[string]any {
+		return map[string]any{"id": cid, "lancamentos": []map[string]any{{"pessoa_id": pid, "situacao": "presente", "verificado": true}}}
+	}
+	sessaoDe := func(uid int64) *http.Cookie {
+		tok, _, _ := st.CriarSessao(uid, ttlSessao)
+		return &http.Cookie{Name: cookieSessao, Value: tok}
+	}
+	var uidOp int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'op_multi'`).Scan(&uidOp); err != nil {
+		t.Fatalf("id op: %v", err)
+	}
+	// OPERADOR → 403
+	if rr, _ := doJSONReq(app, "POST", "/api/conferencia/fechar", lanc(), sessaoDe(uidOp)); rr.Code != http.StatusForbidden {
+		t.Fatalf("X15a: operador fechando → 403, veio %d", rr.Code)
+	}
+	// CHEFE DE SETOR → 403
+	if rr, _ := doJSONReq(app, "POST", "/api/conferencia/fechar", lanc(), sessaoDe(uidCh)); rr.Code != http.StatusForbidden {
+		t.Fatalf("X15b: chefe_setor fechando → 403, veio %d", rr.Code)
+	}
+	// GERENTE → 200
+	if rr, res := doJSONReq(app, "POST", "/api/conferencia/fechar", lanc(), ckGer); rr.Code != http.StatusOK {
+		t.Fatalf("X15c: gerente fechando → 200, veio %d %v", rr.Code, res)
+	}
+}

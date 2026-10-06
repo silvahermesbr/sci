@@ -1280,7 +1280,15 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 }
 
 // hConferenciaFechar: grava os lançamentos e fecha (fechada_em = agora).
+// Ordem 06/10 (item 12, NOVA DOUTRINA): FECHAR a conferência do grupo é ato de
+// GERENTE ou ENCARREGADO DE PESSOAL — operador e chefe_setor → 403 (o chefe
+// conclui/reabre o SEU setor; o operador lança presença). Admin segue proibido.
 func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if u.Papel != "gerente" && !a.ehEncarregado(u) {
+		jsonErro(w, http.StatusForbidden, "fechar a conferência é ato do gerente ou do encarregado de pessoal")
+		return
+	}
 	var req struct {
 		ID          int64           `json:"id"`
 		Lancamentos []lancamentoReq `json:"lancamentos"`
@@ -1305,7 +1313,6 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	u := usuarioDoCtx(r)
 	// REGRA (28/09): só quem pertence ao grupo da conferência a fecha
 	if esc := escopoDoUsuario(u); esc > 0 {
 		var gid *int64
