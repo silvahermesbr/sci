@@ -124,6 +124,33 @@ func (a *App) authConf(prox http.HandlerFunc) http.Handler {
 	return a.authConfCom([]string{"gerente", "operador"}, prox)
 }
 
+// chefeComandaSetor: o papel chefe_setor comanda o setor S? Fonte da verdade =
+// chefe_setores (multi-chefia 06/10). Fallbacks da CONTA LEGADA (chefe criado
+// antes da v35, sem linha em chefe_setores): u.SetorID — o MESMO setor corrente
+// que hMe devolve ao front — e o setor da pessoa vinculada. Sem os fallbacks o
+// chefe legado via o botão "FECHAR MEU SETOR" liberado (hMe usa u.SetorID) e
+// tomava 403 do próprio servidor (regressão 06/10, S4b/TestV15).
+func (a *App) chefeComandaSetor(u *Usuario, setorID int64) bool {
+	if u == nil || setorID <= 0 {
+		return false
+	}
+	var comandos int
+	if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND setor_id = ?`, u.ID, setorID).Scan(&comandos); e == nil && comandos > 0 {
+		return true
+	}
+	if u.SetorID != nil && *u.SetorID == setorID {
+		return true
+	}
+	if u.PessoaID != nil && *u.PessoaID > 0 {
+		var s *int64
+		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&s)
+		if s != nil && *s == setorID {
+			return true
+		}
+	}
+	return false
+}
+
 // guardaSetorNaMarcar: regra de setor para hConferenciaMarcar — chefe_setor E
 // operador só militares do PRÓPRIO setor (chefe: linhas em chefe_setores —
 // multi-chefia 06/10; operador: u.SetorID → fallback pessoa.setor_id).
@@ -134,24 +161,16 @@ func (a *App) guardaSetorNaMarcar(w http.ResponseWriter, u *Usuario, pessoaID in
 	}
 	switch u.Papel {
 	case "chefe_setor":
-		// Multi-chefia: comanda TODOS os setores onde tem linha; fallback =
-		// setor da pessoa vinculada (conta legada).
+		// Multi-chefia: comanda TODOS os setores onde tem linha; fallbacks da
+		// conta legada = u.SetorID (mesma resolução do hMe) e pessoa vinculada.
 		var pSetor *int64
 		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, pessoaID).Scan(&pSetor)
 		if pSetor == nil {
 			jsonErro(w, http.StatusForbidden, "militar sem setor — não é de comando do chefe")
 			return false
 		}
-		var comandos int
-		if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND setor_id = ?`, u.ID, *pSetor).Scan(&comandos); e == nil && comandos > 0 {
+		if a.chefeComandaSetor(u, *pSetor) {
 			return true
-		}
-		if u.PessoaID != nil {
-			var setorPessoa *int64
-			_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorPessoa)
-			if setorPessoa != nil && pSetor != nil && *setorPessoa == *pSetor {
-				return true
-			}
 		}
 		jsonErro(w, http.StatusForbidden, "você só pode lançar presença para militares do seu próprio setor")
 		return false

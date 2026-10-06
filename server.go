@@ -1419,16 +1419,10 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 
 	if u.Papel == "chefe_setor" {
 		// Multi-chefia (ordem 06/10 item 14): fonte = chefe_setores — o chefe
-		// comanda TODOS os setores onde tem linha; fallback pessoas.setor_id
-		// cobre conta chefe legada sem linha (conta com pessoa vinculada).
-		var setorChefe *int64
-		var comandos int
-		if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND setor_id = ?`, u.ID, sid).Scan(&comandos); e == nil && comandos > 0 {
-			setorChefe = &sid
-		} else if u.PessoaID != nil {
-			_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorChefe)
-		}
-		if setorChefe == nil || *setorChefe != sid {
+		// comanda TODOS os setores onde tem linha; fallbacks da conta legada
+		// (chefeComandaSetor): u.SetorID (mesma resolução do hMe) e pessoa
+		// vinculada.
+		if !a.chefeComandaSetor(u, sid) {
 			jsonErro(w, http.StatusForbidden, "chefe de setor só pode concluir seu próprio setor")
 			return
 		}
@@ -1483,16 +1477,10 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 
 	if u.Papel == "chefe_setor" {
 		// Multi-chefia (ordem 06/10 item 14): fonte = chefe_setores — o chefe
-		// comanda TODOS os setores onde tem linha; fallback pessoas.setor_id
-		// cobre conta chefe legada sem linha (conta com pessoa vinculada).
-		var setorChefe *int64
-		var comandos int
-		if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND setor_id = ?`, u.ID, sid).Scan(&comandos); e == nil && comandos > 0 {
-			setorChefe = &sid
-		} else if u.PessoaID != nil {
-			_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&setorChefe)
-		}
-		if setorChefe == nil || *setorChefe != sid {
+		// comanda TODOS os setores onde tem linha; fallbacks da conta legada
+		// (chefeComandaSetor): u.SetorID (mesma resolução do hMe) e pessoa
+		// vinculada.
+		if !a.chefeComandaSetor(u, sid) {
 			jsonErro(w, http.StatusForbidden, "chefe de setor só pode reabrir seu próprio setor")
 			return
 		}

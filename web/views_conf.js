@@ -291,6 +291,10 @@
       const b = faixa.querySelector('#confDash-' + k + ' b');
       if (b && b.textContent !== String(v)) b.textContent = String(v);
     }
+    // P3 (ordem 06/10): contador VERIFICADO/TOTAL do TOPO acompanha o pooling
+    // mesmo sem re-render da lista (o do pooling só atualiza por confRender).
+    const topo = document.getElementById('confContTopo');
+    if (topo) topo.innerHTML = contSpan();
   }
 
   const marcarParcial = (pid, situacao, destinoId, observacao, verificado) => {
@@ -875,12 +879,39 @@
         <div class="lista-pessoa">${itensHTML}</div>
       </div>`;
     }
+    // ordem 06/10 (P3 — itens 11+12): contador VERIFICADO/TOTAL + ação NO TOPO,
+    // colados ao alerta ABERTA. Gerente/encarregado fecham a CONFERÊNCIA;
+    // operador/chefe_setor fecham o PRÓPRIO SETOR (endpoint de concluir setor;
+    // sem setor → botão desabilitado com tooltip). Doutrina "fechar só na barra
+    // fixa inferior" REVOGADA pelo Diretor.
+    const contSpan = () => `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
+    const acoesTopo = () => {
+      // P2 (ordem 06/10): fechar CONFERÊNCIA = gerente + encarregado de pessoal
+      // (papel-conf derivado no core.js). Admin segue PROIBIDO (403 no backend) —
+      // não ganha botão, só aviso. Papel explícito, NÃO !ehChefe (incluía admin).
+      const papelT = (window.ME && window.ME.papel) || '';
+      const ehGerEnc = papelT === 'gerente' || papelT === 'encarregado';
+      // P3: operador/chefe fecha o PRÓPRIO setor — mesma expressão de escopoSetor
+      // em ViewConferencia (usuarios.setor_id → fallback pessoa vinculada).
+      const meuSetor = window.ME ? (window.ME.setor_id || window.ME.pessoa_setor_id) : null;
+      if (ehGerEnc) {
+        return `<button class="perigo" id="btFecharTopo" style="min-height:40px">✕ FECHAR CONFERÊNCIA</button>`;
+      }
+      if (papelT === 'admin') {
+        return `<span style="font-size:11.5px;color:var(--tx3)">fechamento: gerente/encarregado</span>`;
+      }
+      return `<button class="primario" id="btFecharSetorTopo" style="min-height:40px" ${meuSetor ? '' : 'disabled title="sua conta não tem setor atribuído — solicite ao gerente"'}>✓ FECHAR MEU SETOR</button>`;
+    };
     const banner = semC
       ? `<div class="cartao"><p style="color:var(--tx2)">Nenhuma conferência aberta. Ao iniciar, a data e o horário de Brasília são registrados automaticamente.</p>
          ${!ehChefe ? `<div style="display:flex;gap:8px;align-items:end;margin-top:10px">
            <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div>` : '<p style="color:var(--tx3);font-size:12px;margin-top:8px">Aguarde o Gerente ou Operador iniciar a conferência do grupo.</p>'}</div>`
       : `<div class="cartao">
-         <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span></div>`;
+         <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span>
+         <div id="confTopoBarra" style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:10px;padding-top:10px;border-top:1px solid var(--borda);flex-wrap:wrap">
+           <span id="confContTopo" style="font-size:12.5px;color:var(--tx2)">${contSpan()}</span>
+           ${acoesTopo()}
+         </div></div>`;
     $('#app').innerHTML = `<div style="margin-bottom:10px"><button class="fantasma" id="btVoltar" style="min-height:38px">← Retornar</button></div>
       <h2 style="margin-top:0">Conferência de pessoal</h2>${banner}
       ${confDashHTML()}
@@ -894,11 +925,13 @@
       <div style="display:flex;justify-content:flex-end;margin-top:28px;padding-top:14px;border-top:1px solid var(--borda)">
         <button class="perigo" id="btDescartar" style="min-height:40px">🗑 Descartar conferência</button>
       </div>` : ''}`;
-    const contSpan = () => `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
     const atualizar = () => {
       // v9.15.1: NÃO recriar a barra (perdia foco a cada dígito) — só o contador muda
       const cont = document.querySelector('.barra-fixa .cont');
       if (cont) cont.innerHTML = contSpan();
+      // P3: contador do topo acompanha (mesmo conteúdo)
+      const topo = document.getElementById('confContTopo');
+      if (topo) topo.innerHTML = contSpan();
     };
     let buscaTimer = null;
     const ligarBarra = () => {
@@ -915,6 +948,34 @@
       };
       const btF = $('#btFecharBarra');
       if (btF) btF.onclick = confFechar;
+      // P3: FECHAR CONFERÊNCIA no topo (gerente/encarregado) — mesmo confFechar
+      const btFT = document.getElementById('btFecharTopo');
+      if (btFT) btFT.onclick = confFechar;
+      // P3 (ordem 06/10): FECHAR MEU SETOR no topo — operador/chefe concluir
+      // o PRÓPRIO setor (endpoint existente) e recarregar a view. Setor já
+      // concluído → botão vira estado (sem POST redundante).
+      const btFS = document.getElementById('btFecharSetorTopo');
+      if (btFS) btFS.onclick = async () => {
+        const meuSetor = window.ME ? (window.ME.setor_id || window.ME.pessoa_setor_id) : null;
+        if (!meuSetor || !C.c) return;
+        const sObj = (C.setoresStatus || []).find(x => x.setor_id === meuSetor);
+        if (sObj && sObj.status === 'concluida') { toast('Seu setor já está concluído nesta conferência', 'erro'); return; }
+        const vTot = sObj ? (sObj.total_verificados ?? sObj.verificados ?? 0) : 0;
+        const eTot = sObj ? (sObj.total_efetivo ?? sObj.total_pessoas ?? 0) : 0;
+        if (vTot < eTot) {
+          const pendentes = eTot - vTot;
+          if (!confirm(`Atenção: Existem ${pendentes} militares do seu setor ainda não verificados.\nDeseja realmente fechar (concluir) a conferência do seu setor?`)) {
+            return;
+          }
+        }
+        try {
+          await api(`/api/conferencia/${C.c.id}/setor/${meuSetor}/concluir`, { method: 'POST' });
+          toast('Conferência do seu setor concluída com sucesso!');
+          await window.ViewConferencia();
+        } catch (e) {
+          toast('Erro: ' + (e.message || e), 'erro');
+        }
+      };
     };
     atualizar();
     /* situação por DROP-DOWN — mudança de situação NÃO dá check automático (check é manual) */
@@ -996,6 +1057,8 @@
     });
     atualizar(); // contador de verificados acompanha o re-render (v9.15.2)
     ligarBarra(); // v9.16.5b: barra é recriada no innerHTML — religar FECHAR e busca
+    // P3 (ordem 06/10): os handlers do TOPO (btFecharTopo/btFecharSetorTopo) são
+    // ligados DENTRO de ligarBarra — re-criados a cada re-render (innerHTML total).
   }
 
 
