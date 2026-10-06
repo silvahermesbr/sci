@@ -325,6 +325,99 @@
   };
   window.addEventListener('beforeunload', descarregarPendentes);
   window.addEventListener('pagehide', descarregarPendentes);
+
+  /* === Ciclo 2 — POOLING 2s =================================================
+     Fetch PRÓPRIO (nunca api(): sem overlay/toast/redirect; falha = console.debug).
+     Regras: foco dentro do painel da conferência ou modal aberto → NÃO re-renderiza
+     a lista (só dashboard); militar com marcaPend/marcaTimer ativo NÃO é sobreposto;
+     aplica só DIFERENÇAS entre payload e C.est/C.verif (patch por militar); C.c/
+     C.est/C.verif atualizados com o payload fresco. Timer é limpo ao sair da view
+     (confPoolingStop) — sem timer órfão. visibilitychange dá tick imediato ao voltar.
+     ========================================================================== */
+  let poolTimer = null;
+  let poolInFlight = false;
+
+  const confPoolingFetch = async () => {
+    const qs = CONF_ID ? '?id=' + CONF_ID : '';
+    const r = await fetch('/api/conferencia/hoje' + qs, { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) throw new Error('pool ' + r.status);
+    return r.json();
+  };
+
+  function confPoolingStop() {
+    if (poolTimer) { clearInterval(poolTimer); poolTimer = null; }
+    document.removeEventListener('visibilitychange', confPoolingVis);
+  }
+  function confPoolingVis() {
+    if (document.visibilityState === 'visible') confPoolingTick(); // voltou pra aba: tick imediato
+  }
+
+  async function confPoolingTick() {
+    if (poolInFlight || !C || !C.c) return;
+    poolInFlight = true;
+    let d = null;
+    try { d = await confPoolingFetch(); }
+    catch (e) { console.debug('[pool-conf] falha de rede (silencioso):', e && e.message); }
+    finally { poolInFlight = false; }
+    if (!d || !d.conferencia) return;
+    if (!C || !C.c) return; // saiu da view durante o fetch
+    // conferência mudou (fechada por outro operador / troca de ID): recarga completa
+    if (d.conferencia.id !== C.c.id || d.conferencia.status !== 'aberta') { confPoolingStop(); window.ViewConferencia(); return; }
+    // foco dentro do painel ou modal aberto: lista intocada (só dashboard)
+    const focoNoPainel = document.activeElement && document.activeElement.closest && !!document.activeElement.closest('#lista');
+    const modalAberto = !!document.querySelector('.modal-mask');
+    const estServ = d.conferencia.estados || {};
+    const verifServ = new Set(Object.entries(estServ).filter(([, v]) => v.verificado).map(([pid]) => +pid));
+
+    // pendência local: militar sendo digitado/gravado agora não é sobreposto pelo servidor
+    const pendente = pid => marcaPend[pid] || marcaTimer[pid];
+
+    // aplica DIFERENÇAS por militar (patch cirúrgico, sem innerHTML total)
+    let mudouLista = false;
+    for (const p of C.pessoas) {
+      if (pendente(p.id)) continue;
+      const k = String(p.id);
+      const sv = estServ[k];
+      const sitNova = sv ? sv.situacao : undefined;
+      const verifNova = verifServ.has(p.id);
+      const sitVelha = C.est[p.id];
+      const verifVelha = C.verif.has(p.id);
+      const destVelho = C.dest[p.id];
+      const destNovo = sv ? (sv.destino_id ?? null) : null;
+      if (sitNova === sitVelha && verifNova === verifVelha && destNovo === destVelho) continue;
+      mudouLista = true;
+      if (sitNova === undefined) delete C.est[p.id]; else C.est[p.id] = sitNova;
+      C.dest[p.id] = destNovo;
+      if (verifNova) C.verif.add(p.id); else C.verif.delete(p.id);
+      const el = document.querySelector('#lista .pessoa[data-id="' + p.id + '"]');
+      if (el) {
+        const sel = el.querySelector('.sel-situacao');
+        if (sel && document.activeElement !== sel) {
+          const tem = sel.querySelector('option[value="' + sitNova + '"]');
+          if (tem) sel.value = sitNova;
+          else if (sitNova === undefined && !sel.disabled) sel.selectedIndex = 0; // NÃO VERIFICADO
+        }
+        const chk = el.querySelector('.chk');
+        if (chk && chk.checked !== verifNova) chk.checked = verifNova;
+        el.classList.toggle('verificado', verifNova);
+      }
+    }
+    // C.c e setores_status com o payload fresco (fonte de verdade = servidor)
+    C.c.estados = estServ;
+    if (d.setores_status) C.setoresStatus = d.setores_status;
+    if (mudouLista && !focoNoPainel && !modalAberto) {
+      confRender($('#busca') ? $('#busca').value : '');
+    } else {
+      confDashRender(); // contagens acompanham mesmo com foco/modal aberto
+    }
+  }
+
+  function confPoolingStart() {
+    confPoolingStop(); // idempotente: nunca dois timers
+    poolTimer = setInterval(confPoolingTick, 2000);
+    document.addEventListener('visibilitychange', confPoolingVis);
+  }
+
   /* --- LISTAS (v9.14): #/hoje mostra SÓ as listas de conferências; a conferência
      em si fica em #/conferencia (botão Abrir). Abertas editáveis; fechadas = PDF. --- */
   window.ViewHoje = async function (modoTela) {
@@ -578,13 +671,15 @@
     }
     C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados, escaladosOntem, setoresStatus: d.setores_status || [] };
     confRender();
-    $('#btVoltar').onclick = () => { location.hash = '#/hoje'; };
+    confPoolingStart(); // ciclo 2: pooling 2s enquanto a conferência estiver na tela
+    $('#btVoltar').onclick = () => { confPoolingStop(); location.hash = '#/hoje'; };
     const btDesc = $('#btDescartar');
     if (btDesc) {
       btDesc.onclick = async () => {
         if (!(await confirmar(`DESCARTAR a conferência #${C.c.id}? O estado parcial gravado será apagado. Esta ação não pode ser desfeita.`))) return;
         try {
           await api('/api/conferencia/' + C.c.id, { method: 'DELETE' });
+          confPoolingStop(); // ciclo 2: sem timer órfão ao descartar
           toast('Conferência descartada');
           location.hash = '#/hoje';
           location.reload();
@@ -1020,6 +1115,7 @@
     }));
     try {
       const r = await api('/api/conferencia/fechar', { method: 'POST', body: JSON.stringify({ id: C.c.id, lancamentos: lanc }) });
+      confPoolingStop(); // ciclo 2: sem timer órfão ao fechar
       toast(`Conferência fechada — ${r.gravados} lançamentos gravados`);
       location.hash = '#/hoje'; // volta para as listas
       location.reload(); // recarga completa da página
