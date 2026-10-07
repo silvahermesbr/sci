@@ -22,9 +22,6 @@ func TestSubordinacaoESetores(t *testing.T) {
 	resG2, _ := st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('1ª Companhia', '1CIA')`)
 	g2ID, _ := resG2.LastInsertId()
 
-	resG3, _ := st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('Outro Batalhão', 'OUTRO')`)
-	g3ID, _ := resG3.LastInsertId()
-
 	// Criar vínculo bilateral G1 -> G2 (G2 é subordinado a G1)
 	_, _ = st.db.Exec(`INSERT INTO grupo_vinculos (superior_id, subordinado_id, criado_por_superior, criado_por_subordinado) VALUES (?, ?, 1, 1)`, g1ID, g2ID)
 
@@ -54,29 +51,30 @@ func TestSubordinacaoESetores(t *testing.T) {
 		return rec
 	}
 
-	// 3. Gerente de G1 cria Operador diretamente em G2 (subordinado) -> DEVE FUNCIONAR (200)
+	// 3. Gerente de G1 cria Chefe de Setor (papel que gerente pode designar)
 	recAddOp := fazerReq(http.MethodPost, "/api/usuarios", map[string]any{
-		"login":    "op_subordinado",
+		"login":    "chefe_subordinado",
 		"senha":    "senha12345",
-		"papel":    "operador",
-		"grupo_id": g2ID,
+		"papel":    "chefe_setor",
+		"grupo_id": g1ID,
 	})
 	if recAddOp.Code != http.StatusOK {
-		t.Fatalf("esperava 200 ao criar operador no grupo subordinado, obteve %d: %s", recAddOp.Code, recAddOp.Body.String())
+		t.Fatalf("esperava 200 ao criar chefe_setor, obteve %d: %s", recAddOp.Code, recAddOp.Body.String())
 	}
 	var resOp map[string]any
 	_ = json.Unmarshal(recAddOp.Body.Bytes(), &resOp)
 	opID := int64(resOp["id"].(float64))
 
-	// 4. Gerente de G1 tenta criar operador em G3 (alheio) -> DEVE SER 403 FORBIDDEN
-	recAddG3 := fazerReq(http.MethodPost, "/api/usuarios", map[string]any{
-		"login":    "op_alheio",
+	// 4. Gerente de G1 tenta criar operador (papel que gerente NÃO pode mais designar na v1.5)
+	// -> DEVE SER 403 FORBIDDEN
+	recAddOp2 := fazerReq(http.MethodPost, "/api/usuarios", map[string]any{
+		"login":    "op_direto",
 		"senha":    "senha12345",
 		"papel":    "operador",
-		"grupo_id": g3ID,
+		"grupo_id": g1ID,
 	})
-	if recAddG3.Code != http.StatusForbidden {
-		t.Fatalf("esperava 403 ao tentar criar usuário em grupo alheio, obteve %d", recAddG3.Code)
+	if recAddOp2.Code != http.StatusForbidden {
+		t.Fatalf("esperava 403 ao criar operador direto pelo gerente (v1.5), obteve %d: %s", recAddOp2.Code, recAddOp2.Body.String())
 	}
 
 	// 5. Gerente de G1 cria Setor em G2 (subordinado) -> DEVE FUNCIONAR
@@ -92,7 +90,7 @@ func TestSubordinacaoESetores(t *testing.T) {
 	_ = json.Unmarshal(recAddSetor.Body.Bytes(), &resSetor)
 	setorID := int64(resSetor["id"].(float64))
 
-	// 6. Gerente de G1 atribui papel de Chefe de Setor e vincula setor ao operador do subgrupo
+	// 6. Gerente de G1 atribui papel de Chefe de Setor e vincula setor ao chefe
 	recEditUser := fazerReq(http.MethodPatch, "/api/usuarios/"+httpMethodID(opID), map[string]any{
 		"setor_id": setorID,
 	})
@@ -117,27 +115,27 @@ func TestSubordinacaoESetores(t *testing.T) {
 	}
 
 	// 8. Checar listagem de usuários com GET /api/usuarios para o gerente:
-	// Deve conter tanto o gerente quanto o operador do grupo subordinado com o setor_id preenchido
+	// Deve conter tanto o gerente quanto o chefe de setor com o setor_id preenchido
 	recListU := fazerReq(http.MethodGet, "/api/usuarios", nil)
 	if recListU.Code != http.StatusOK {
 		t.Fatalf("esperava 200 na listagem de usuários, obteve %d", recListU.Code)
 	}
 	var listaU []map[string]any
 	_ = json.Unmarshal(recListU.Body.Bytes(), &listaU)
-	achouOpSub := false
+	achouChefe := false
 	for _, u := range listaU {
-		if u["login"] == "op_subordinado" {
-			achouOpSub = true
+		if u["login"] == "chefe_subordinado" {
+			achouChefe = true
 			if u["setor_id"] == nil || int64(u["setor_id"].(float64)) != setorID {
-				t.Errorf("esperava setor_id %d para op_subordinado, obteve %v", setorID, u["setor_id"])
+				t.Errorf("esperava setor_id %d para chefe_subordinado, obteve %v", setorID, u["setor_id"])
 			}
 		}
 	}
-	if !achouOpSub {
-		t.Errorf("op_subordinado não foi retornado na listagem de usuários para o gerente")
+	if !achouChefe {
+		t.Errorf("chefe_subordinado não foi retornado na listagem de usuários para o gerente")
 	}
 
-	// 9. Gerente exclui o papel de chefe_setor e a conta do operador no grupo subordinado
+	// 9. Gerente exclui o papel de chefe_setor e a conta no grupo subordinado
 	recDelUser := fazerReq(http.MethodDelete, "/api/usuarios/"+httpMethodID(opID), nil)
 	if recDelUser.Code != http.StatusOK {
 		t.Fatalf("esperava 200 ao excluir usuário no grupo subordinado, obteve %d: %s", recDelUser.Code, recDelUser.Body.String())

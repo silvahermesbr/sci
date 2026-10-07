@@ -1107,10 +1107,17 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		`, confID, *pSetorID)
 	}
 
-	a.st.Auditoria(&u.ID, "marcar_parcial", "presencas", &confID,
-		"pessoa "+fmt.Sprintf("%d", req.PessoaID)+" → "+req.Situacao, ipDe(r))
-	jsonOK(w, map[string]any{"ok": true, "gravado": true, "conferencia_id": confID})
-}
+		a.st.Auditoria(&u.ID, "marcar_parcial", "presencas", &confID,
+			"pessoa "+fmt.Sprintf("%d", req.PessoaID)+" → "+req.Situacao, ipDe(r))
+		// v1.5 SSE: notifica clientes conectados à conferência sobre a mudança
+		a.confHub.Broadcast(confID, map[string]any{
+			"tipo":       "marcar",
+			"pessoa_id":  req.PessoaID,
+			"situacao":   req.Situacao,
+			"verificado": req.Verificado,
+		})
+		jsonOK(w, map[string]any{"ok": true, "gravado": true, "conferencia_id": confID})
+	}
 
 // hEfetivoAtual (v9.15, ordem Tenente 29/09): estado ATUAL de cada militar = estado na ÚLTIMA
 // conferência em que foi lançado (não agregação de período). Usado no dashboard de relatórios
@@ -1448,10 +1455,14 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	a.st.Auditoria(&u.ID, "fechar", "conferencias", &req.ID,
-		fmt.Sprintf("lancamentos=%d", gravados), ipDe(r))
-	a.backupAssincrono("fechar") // zero-perda: cópia consistente a cada fechamento
-	jsonOK(w, map[string]any{"conferencia_id": req.ID, "gravados": gravados})
+		a.st.Auditoria(&u.ID, "fechar", "conferencias", &req.ID,
+			fmt.Sprintf("lancamentos=%d", gravados), ipDe(r))
+		a.backupAssincrono("fechar") // zero-perda: cópia consistente a cada fechamento
+		a.confHub.Broadcast(req.ID, map[string]any{
+		"tipo":      "fechada",
+		"gravados":  gravados,
+	})
+		jsonOK(w, map[string]any{"conferencia_id": req.ID, "gravados": gravados})
 }
 
 // hConferenciaSetorConcluir: conclui a conferência setorial (status = 'concluida')
