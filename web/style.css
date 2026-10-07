@@ -2633,8 +2633,15 @@ th.sorted-desc {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     box-shadow: 10px 0 30px rgba(0,0,0,0.5);
+    /* Fix: fechada = FORA da tela (o burger é quem a traz). visibility corta
+       clique/foco/tab na barra invisível; a transition de transform já existe
+       na regra base e anima a entrada. */
+    transform: translateX(-105%);
+    visibility: hidden;
   }
   .sidebar.aberto-mobile {
+    transform: translateX(0);
+    visibility: visible;
     box-shadow: 10px 0 30px rgba(0,0,0,0.5);
   }
   .viewport {

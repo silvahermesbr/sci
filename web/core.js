@@ -811,9 +811,11 @@ definirUsuario(res.usuario);
       const sb = $('#sidebar');
       if (sb && sb.classList.contains('aberto-mobile') && !sb.contains(ev.target) && (!btMob || !btMob.contains(ev.target))) {
         // item 13: ao fechar, devolve a sidebar ao layout (veja toggle acima)
+        // item 14: devolve na POSIÇÃO ORIGINAL (1º filho do flex) — appendChild
+        // jogaria a sidebar para depois da viewport e ela apareceria à DIREITA.
         const layoutSidebar = document.getElementById('layoutApp');
-        if (sb.__paiOriginal && sb.parentNode !== sb.__paiOriginal) sb.__paiOriginal.appendChild(sb);
-        else if (!sb.__paiOriginal && layoutSidebar && sb.parentNode !== layoutSidebar) layoutSidebar.appendChild(sb);
+        if (sb.__paiOriginal && sb.parentNode !== sb.__paiOriginal) sb.__paiOriginal.insertBefore(sb, sb.__paiOriginal.firstChild);
+        else if (!sb.__paiOriginal && layoutSidebar && sb.parentNode !== layoutSidebar) layoutSidebar.insertBefore(sb, layoutSidebar.firstChild);
         sb.classList.remove('aberto-mobile');
       }
     });
