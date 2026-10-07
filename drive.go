@@ -130,16 +130,16 @@ func (a *App) checarAcessoArquivo(u *Usuario, arquivoID int64, precisaEdicao boo
 	}
 
 	meta := map[string]any{
-		"id":              arquivoID,
-		"pasta_id":        pastaID,
-		"grupo_id":        grupoID,
-		"nome_original":   nomeOriginal,
-		"nome_armazenado": nomeArmazenado,
-		"tipo":            tipo,
-		"tamanho":         tamanho,
+		"id":               arquivoID,
+		"pasta_id":         pastaID,
+		"grupo_id":         grupoID,
+		"nome_original":    nomeOriginal,
+		"nome_armazenado":  nomeArmazenado,
+		"tipo":             tipo,
+		"tamanho":          tamanho,
 		"autor_usuario_id": autorUsuarioID,
-		"autor_papel_id":  autorPapelID,
-		"criado_em":       criadoEm,
+		"autor_papel_id":   autorPapelID,
+		"criado_em":        criadoEm,
 	}
 
 	if u.Papel == "admin" {
@@ -260,27 +260,27 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type PastaItem struct {
-		ID             int64  `json:"id"`
-		Nome           string `json:"nome"`
-		PaiID          *int64 `json:"pai_id"`
-		GrupoID        int64  `json:"grupo_id"`
-		AutorNome      string `json:"autor_nome"`
-		CriadoEm       string `json:"criado_em"`
-		QtdItens       int    `json:"qtd_itens"`
-		Compartilhada  bool   `json:"compartilhada"`
-		PodeEditar     bool   `json:"pode_editar"`
+		ID            int64  `json:"id"`
+		Nome          string `json:"nome"`
+		PaiID         *int64 `json:"pai_id"`
+		GrupoID       int64  `json:"grupo_id"`
+		AutorNome     string `json:"autor_nome"`
+		CriadoEm      string `json:"criado_em"`
+		QtdItens      int    `json:"qtd_itens"`
+		Compartilhada bool   `json:"compartilhada"`
+		PodeEditar    bool   `json:"pode_editar"`
 	}
 
 	type ArquivoItem struct {
-		ID             int64  `json:"id"`
-		PastaID        *int64 `json:"pasta_id"`
-		NomeOriginal   string `json:"nome_original"`
-		Tipo           string `json:"tipo"`
-		Tamanho        int64  `json:"tamanho"`
-		CriadoEm       string `json:"criado_em"`
-		AutorNome      string `json:"autor_nome"`
-		Compartilhado  bool   `json:"compartilhado"`
-		PodeEditar     bool   `json:"pode_editar"`
+		ID            int64  `json:"id"`
+		PastaID       *int64 `json:"pasta_id"`
+		NomeOriginal  string `json:"nome_original"`
+		Tipo          string `json:"tipo"`
+		Tamanho       int64  `json:"tamanho"`
+		CriadoEm      string `json:"criado_em"`
+		AutorNome     string `json:"autor_nome"`
+		Compartilhado bool   `json:"compartilhado"`
+		PodeEditar    bool   `json:"pode_editar"`
 	}
 
 	pastas := []PastaItem{}
@@ -308,7 +308,7 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 			FROM drive_compartilhamentos dc
 			JOIN drive_pastas dp ON dp.id = dc.pasta_id
 			LEFT JOIN usuarios u ON u.id = dp.autor_usuario_id
-			WHERE (` + filtroComp + `)
+			WHERE (`+filtroComp+`)
 			ORDER BY dp.nome ASC
 		`, qArgs...)
 		if err == nil {
@@ -331,7 +331,7 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 			FROM drive_compartilhamentos dc
 			JOIN drive_arquivos da ON da.id = dc.arquivo_id
 			LEFT JOIN usuarios u ON u.id = da.autor_usuario_id
-			WHERE (` + filtroComp + `)
+			WHERE (`+filtroComp+`)
 			ORDER BY da.criado_em DESC
 		`, qArgs...)
 		if errA == nil {
@@ -460,11 +460,11 @@ func (a *App) hDriveItensLegado(w http.ResponseWriter, r *http.Request) {
 	podeEditarAtual, _, _ := a.checarAcessoPasta(u, pastaID, true)
 
 	jsonOK(w, map[string]any{
-		"pasta_id":         pastaID,
-		"breadcrumbs":      breadcrumbs,
-		"pastas":           pastas,
-		"arquivos":         arquivos,
-		"pode_editar":      podeEditarAtual,
+		"pasta_id":          pastaID,
+		"breadcrumbs":       breadcrumbs,
+		"pastas":            pastas,
+		"arquivos":          arquivos,
+		"pode_editar":       podeEditarAtual,
 		"so_compartilhados": soCompartilhados,
 	})
 }
@@ -855,11 +855,11 @@ func (a *App) hDriveCompartilhar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		PastaID       *int64 `json:"pasta_id"`
-		ArquivoID     *int64 `json:"arquivo_id"`
-		AlvoTipo      string `json:"alvo_tipo"` // "grupo", "usuario", "papel"
-		AlvoID        int64  `json:"alvo_id"`
-		PodeEditar    bool   `json:"pode_editar"`
+		PastaID    *int64 `json:"pasta_id"`
+		ArquivoID  *int64 `json:"arquivo_id"`
+		AlvoTipo   string `json:"alvo_tipo"` // "grupo", "usuario", "papel"
+		AlvoID     int64  `json:"alvo_id"`
+		PodeEditar bool   `json:"pode_editar"`
 	}
 	if err := decodificar(r, &req); err != nil || (req.PastaID == nil && req.ArquivoID == nil) || req.AlvoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "parâmetros de compartilhamento inválidos")
@@ -1065,4 +1065,28 @@ func (a *App) hDriveCompartilhamentosDel(w http.ResponseWriter, r *http.Request)
 
 	a.st.Auditoria(&u.ID, "drive_revogar_compartilhamento", "drive_compartilhamentos", &id, "", ipDe(r))
 	jsonOK(w, map[string]any{"ok": true})
+}
+
+// ---------- rotas rotasDrive ----------
+func (a *App) rotasDrive() {
+	m := a.mux
+
+	// Módulo de Drive Local (v1.2 Fase 3)
+	m.Handle("GET /api/drive/itens", a.auth(false, a.hDriveItens))
+	m.Handle("GET /api/drive/da_funcao", a.auth(false, a.hDriveItensDaFuncao))
+	m.Handle("GET /api/drive/seletor", a.auth(false, a.hDriveSeletor))
+	m.Handle("POST /api/drive/pastas", a.auth(false, a.hDrivePastasAdd))
+	m.Handle("PATCH /api/drive/pastas/{id}", a.auth(false, a.hDrivePastasEdit))
+	m.Handle("DELETE /api/drive/pastas/{id}", a.auth(false, a.hDrivePastasDel))
+	m.Handle("POST /api/drive/upload", a.auth(false, a.hDriveUpload))
+	m.Handle("GET /api/drive/download/{id}", a.auth(false, a.hDriveDownload))
+	m.Handle("POST /api/drive/arquivos/{id}/mover", a.auth(false, a.hDriveArquivoMover))
+	m.Handle("POST /api/drive/arquivos/{id}/copiar", a.auth(false, a.hDriveArquivoCopiar))
+	m.Handle("GET /api/drive/arquivos/{id}/propriedades", a.auth(false, a.hDriveArquivoPropriedades))
+	m.Handle("PATCH /api/drive/arquivos/{id}", a.auth(false, a.hDriveArquivosEdit))
+	m.Handle("DELETE /api/drive/arquivos/{id}", a.auth(false, a.hDriveArquivosDel))
+	m.Handle("POST /api/drive/compartilhar", a.auth(false, a.hDriveCompartilhar))
+	m.Handle("GET /api/drive/compartilhamentos", a.auth(false, a.hDriveCompartilhamentosList))
+	m.Handle("DELETE /api/drive/compartilhamentos/{id}", a.auth(false, a.hDriveCompartilhamentosDel))
+	m.Handle("GET /api/drive/arquivo_grupo", a.auth(false, a.hDriveArquivoGrupo))
 }

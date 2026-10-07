@@ -253,14 +253,14 @@ func (a *App) hCalendarioVisao(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type EscalaVisao struct {
-		TurnoID     int64           `json:"turno_id"`
-		DataInicio  string          `json:"data_inicio"`
-		DataFim     string          `json:"data_fim"`
-		TipoNome    string          `json:"tipo_nome"`
-		GrupoNome   string          `json:"grupo_nome"`
-		Observacao  string          `json:"observacao"`
-		Militares   []EscalaMilitar `json:"militares"`
-		TotalEfetivo int            `json:"total_efetivo"`
+		TurnoID      int64           `json:"turno_id"`
+		DataInicio   string          `json:"data_inicio"`
+		DataFim      string          `json:"data_fim"`
+		TipoNome     string          `json:"tipo_nome"`
+		GrupoNome    string          `json:"grupo_nome"`
+		Observacao   string          `json:"observacao"`
+		Militares    []EscalaMilitar `json:"militares"`
+		TotalEfetivo int             `json:"total_efetivo"`
 	}
 
 	escalas := []EscalaVisao{}
@@ -1087,4 +1087,22 @@ func (a *App) hCalendariosCompartilhamentosList(w http.ResponseWriter, r *http.R
 	}
 
 	jsonOK(w, map[string]any{"compartilhamentos": itens})
+}
+
+// ---------- rotas rotasCalendario ----------
+func (a *App) rotasCalendario() {
+	m := a.mux
+
+	// Módulo de Calendário Operacional & Mesh (v1.2 Fase 3 / Nextcloud dynamic calendars)
+	m.Handle("GET /api/calendarios", a.auth(false, a.hCalendariosList))
+	m.Handle("POST /api/calendarios", a.auth(false, a.hCalendariosAdd))
+	m.Handle("DELETE /api/calendarios/{id}", a.auth(false, a.hCalendariosDel))
+	m.Handle("POST /api/calendarios/{id}/compartilhar", a.auth(false, a.hCalendariosCompartilhar))
+	m.Handle("GET /api/calendarios/{id}/compartilhamentos", a.auth(false, a.hCalendariosCompartilhamentosList))
+	m.Handle("GET /api/calendario/visao", a.auth(false, a.hCalendarioVisao))
+	m.Handle("POST /api/calendario/eventos", a.auth(false, a.hCalendarioEventosSave))
+	m.Handle("DELETE /api/calendario/eventos/{id}", a.auth(false, a.hCalendarioEventosDel))
+	m.Handle("POST /api/calendario/compartilhar", a.auth(false, a.hCalendarioCompartilhar))
+	m.Handle("GET /api/calendario/compartilhamentos", a.auth(false, a.hCalendarioCompartilhamentosList))
+	m.Handle("DELETE /api/calendario/compartilhamentos/{id}", a.auth(false, a.hCalendarioCompartilhamentosDel))
 }
