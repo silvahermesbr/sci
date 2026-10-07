@@ -405,7 +405,10 @@
     if (confUltimoEstado && confHashesIguais(confUltimoEstado, est)) return;
     const estadoAnterior = confUltimoEstado;
     confUltimoEstado = est;
-    if (!est.hash_geral) { confPoolingStop(); window.ViewConferencia(); return; } // conferência sumiu/fechou
+    // hash_geral null ou undefined = conferência sumiu/inexistente → sai da view.
+    // hash_geral "" (vazio) é estado válido: sinaliza 'sem setores ativos', NÃO
+    // reinicia a view (evita loop infinito de "Carregando efetivo…").
+    if (est.hash_geral === null || est.hash_geral === undefined) { confPoolingStop(); location.hash = '#/hoje'; return; }
     // hash mudou: busca o payload completo (fonte de verdade) e aplica
     let d = null;
     poolInFlight = true;

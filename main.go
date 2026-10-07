@@ -16,9 +16,11 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v35 = ordem 06/10 item 14: chefe_setores — multi-chefia por usuário).
+// (v36 = integração feat/v1.5-evolucao: material por setor, responsáveis,
+// garagem/viaturas com padrinhos, anexos por item, comentários,
+// conferência diária de material e pronto).
 // Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 35
+const versaoSchemaBinario = 36
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio

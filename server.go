@@ -37,6 +37,7 @@ type App struct {
 	mux       *http.ServeMux
 	horaLocal *time.Location
 	omTitulo  string
+	confHub   *HubConferencia
 }
 
 func NovaApp(st *Store) *App {
@@ -48,7 +49,7 @@ func NovaApp(st *Store) *App {
 	if titulo == "" {
 		titulo = "SCI — RELATÓRIO DE PRESENÇA"
 	}
-	a := &App{st: st, lim: NovoLimiter(), mux: http.NewServeMux(), horaLocal: loc, omTitulo: titulo}
+	a := &App{st: st, lim: NovoLimiter(), mux: http.NewServeMux(), horaLocal: loc, omTitulo: titulo, confHub: NovoHubConferencia()}
 	a.rotas()
 	a.iniciarWatchdogSLA()
 	return a
@@ -421,6 +422,26 @@ func (a *App) rotas() {
 	m.Handle("GET /api/material/cautelas/{id}/anexos", reservaAuth(a.hMaterialAnexoList))
 	m.Handle("GET /api/material/anexos/{id}", reservaAuth(a.hMaterialAnexoGet))
 	m.Handle("DELETE /api/material/anexos/{id}", reservaAuth(a.hMaterialAnexoDel))
+
+	// Material v1.5 (feat/v1.5-evolucao): responsáveis, anexos por item, comentários, conferência diária
+	m.Handle("GET /api/material/responsaveis", reservaAuth(a.hMaterialResponsaveisList))
+	m.Handle("POST /api/material/responsaveis", reservaAuth(a.hMaterialResponsaveisSave))
+	m.Handle("GET /api/material/itens/{id}/anexos", reservaAuth(a.hMaterialItemAnexosList))
+	m.Handle("POST /api/material/itens/{id}/anexos", reservaAuth(a.hMaterialItemAnexoAdd))
+	m.Handle("GET /api/material/item-anexos/{anexo_id}", reservaAuth(a.hMaterialItemAnexoGet))
+	m.Handle("DELETE /api/material/item-anexos/{anexo_id}", reservaAuth(a.hMaterialItemAnexoDel))
+	m.Handle("GET /api/material/itens/{id}/comentarios", reservaAuth(a.hMaterialItemComentariosList))
+	m.Handle("POST /api/material/itens/{id}/comentarios", reservaAuth(a.hMaterialItemComentarioAdd))
+	m.Handle("GET /api/material/conferencias", reservaAuth(a.hMaterialConferenciasList))
+	m.Handle("POST /api/material/conferencias", reservaAuth(a.hMaterialConferenciasList))
+	m.Handle("POST /api/material/conferencias/iniciar", reservaAuth(a.hMaterialConferenciaIniciar))
+	m.Handle("GET /api/material/conferencias/{id}", reservaAuth(a.hMaterialConferenciaGet))
+	m.Handle("POST /api/material/conferencias/{id}/bipar", reservaAuth(a.hMaterialConferenciaBipar))
+	m.Handle("POST /api/material/conferencias/{id}/fechar", reservaAuth(a.hMaterialConferenciaFechar))
+	m.Handle("GET /api/material/conferencias/{id}/pronto.pdf", a.auth(false, a.hMaterialConferenciaPDF))
+
+	// Conferência: stream SSE em tempo real (feat/v1.5-evolucao)
+	m.Handle("GET /api/conferencia/{id}/stream", a.auth(false, a.hConferenciaStream))
 
 	// Workflow Setorial (v1.5) — Sugestões e Aprovações por Chefe de Setor
 	m.Handle("GET /api/setores/sugestoes", a.auth(false, a.hSetorSugestoesList))

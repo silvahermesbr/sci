@@ -101,7 +101,15 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
 			return
 		}
-		req.GrupoID = u.GrupoID
+		dentroDaArvore := func(g int64) bool { return g == *u.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*u.GrupoID), g) }
+		if req.GrupoID != nil && *req.GrupoID != *u.GrupoID {
+			if !dentroDaArvore(*req.GrupoID) {
+				jsonErro(w, http.StatusForbidden, "gerente só pode atribuir papel no próprio grupo ou em subordinados")
+				return
+			}
+		} else {
+			req.GrupoID = u.GrupoID
+		}
 	}
 	if papel == "admin" {
 		req.GrupoID = nil
@@ -231,7 +239,8 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 		var pGrupoID *int64
 		var pPapel string
 		err := a.st.db.QueryRow(`SELECT grupo_id, papel FROM usuario_papeis WHERE id = ? AND usuario_id = ?`, papelID, usuarioID).Scan(&pGrupoID, &pPapel)
-		if err != nil || pPapel != "operador" || pGrupoID == nil || u.GrupoID == nil || *pGrupoID != *u.GrupoID {
+		dentroDaArvore := func(g int64) bool { return g == *u.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*u.GrupoID), g) }
+		if err != nil || (pPapel != "operador" && pPapel != "chefe_setor") || pGrupoID == nil || u.GrupoID == nil || !dentroDaArvore(*pGrupoID) {
 			jsonErro(w, http.StatusForbidden, "permissão insuficiente para remover este papel")
 			return
 		}

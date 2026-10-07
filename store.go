@@ -149,6 +149,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV35(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV36(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2322,4 +2325,120 @@ func (s *Store) migrarV35() error {
 	}
 
 	return s.marcarVersao(35)
+}
+
+// migrarV36 (feat/v1.5-evolucao): material por setor, responsáveis,
+// garagem/viaturas com padrinhos, anexos por item, comentários,
+// conferência diária de material e pronto.
+func (s *Store) migrarV36() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 36`).Scan(&v)
+	if v == 36 {
+		return nil
+	}
+
+	// 1. Coluna setor_id em material_itens
+	if !s.colunaExiste("material_itens", "setor_id") {
+		if _, err := s.db.Exec(`ALTER TABLE material_itens ADD COLUMN setor_id INTEGER REFERENCES setores(id)`); err != nil {
+			return fmt.Errorf("migração v36 alter material_itens setor_id: %w", err)
+		}
+		_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_material_itens_setor ON material_itens(setor_id)`)
+	}
+
+	// 2. Coluna setor_id em material_cautelas
+	if !s.colunaExiste("material_cautelas", "setor_id") {
+		if _, err := s.db.Exec(`ALTER TABLE material_cautelas ADD COLUMN setor_id INTEGER REFERENCES setores(id)`); err != nil {
+			return fmt.Errorf("migração v36 alter material_cautelas setor_id: %w", err)
+		}
+	}
+
+	// 3. Tabela grupo_setor_responsaveis: Encarregado e Auxiliar de Material por Grupo/Setor
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS grupo_setor_responsaveis (
+		grupo_id INTEGER NOT NULL REFERENCES grupos(id) ON DELETE CASCADE,
+		setor_id INTEGER REFERENCES setores(id) ON DELETE CASCADE,
+		encarregado_id INTEGER REFERENCES pessoas(id) ON DELETE SET NULL,
+		auxiliar_encarregado_id INTEGER REFERENCES pessoas(id) ON DELETE SET NULL,
+		atualizado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+		UNIQUE(grupo_id, setor_id)
+	)`); err != nil {
+		return fmt.Errorf("migração v36 tabela grupo_setor_responsaveis: %w", err)
+	}
+
+	// 4. Tabela material_viaturas: Extensão para Viaturas
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_viaturas (
+		item_id INTEGER PRIMARY KEY REFERENCES material_itens(id) ON DELETE CASCADE,
+		placa TEXT,
+		renavam TEXT,
+		padrinho_titular_id INTEGER REFERENCES pessoas(id) ON DELETE SET NULL,
+		padrinho_substituto_id INTEGER REFERENCES pessoas(id) ON DELETE SET NULL,
+		hodometro_atual INTEGER NOT NULL DEFAULT 0,
+		combustivel_atual TEXT NOT NULL DEFAULT 'cheio',
+		atualizado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	)`); err != nil {
+		return fmt.Errorf("migração v36 tabela material_viaturas: %w", err)
+	}
+
+	// 5. Tabela material_item_anexos
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_item_anexos (
+		id INTEGER PRIMARY KEY,
+		item_id INTEGER NOT NULL REFERENCES material_itens(id) ON DELETE CASCADE,
+		nome_arquivo TEXT NOT NULL,
+		tipo_mime TEXT NOT NULL DEFAULT 'text/plain',
+		tamanho INTEGER NOT NULL DEFAULT 0,
+		dados_base64 TEXT NOT NULL,
+		criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	)`); err != nil {
+		return fmt.Errorf("migração v36 tabela material_item_anexos: %w", err)
+	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_item_anexos_item ON material_item_anexos(item_id)`)
+
+	// 6. Tabela material_item_comentarios
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_item_comentarios (
+		id INTEGER PRIMARY KEY,
+		item_id INTEGER NOT NULL REFERENCES material_itens(id) ON DELETE CASCADE,
+		operador_id INTEGER NOT NULL REFERENCES usuarios(id),
+		texto TEXT NOT NULL,
+		criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	)`); err != nil {
+		return fmt.Errorf("migração v36 tabela material_item_comentarios: %w", err)
+	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_item_comentarios_item ON material_item_comentarios(item_id)`)
+
+	// 7. Tabela material_conferencias
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_conferencias (
+		id INTEGER PRIMARY KEY,
+		grupo_id INTEGER NOT NULL REFERENCES grupos(id),
+		setor_id INTEGER REFERENCES setores(id),
+		data TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta', 'fechada', 'cancelada')),
+		aberta_por INTEGER NOT NULL REFERENCES usuarios(id),
+		aberta_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+		fechada_por INTEGER REFERENCES usuarios(id),
+		fechada_em TEXT,
+		encarregado_id INTEGER REFERENCES pessoas(id),
+		auxiliar_id INTEGER REFERENCES pessoas(id),
+		observacao TEXT
+	)`); err != nil {
+		return fmt.Errorf("migração v36 tabela material_conferencias: %w", err)
+	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_conf_grupo ON material_conferencias(grupo_id, data)`)
+
+	// 8. Tabela material_conferencia_itens
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_conferencia_itens (
+		id INTEGER PRIMARY KEY,
+		conferencia_id INTEGER NOT NULL REFERENCES material_conferencias(id) ON DELETE CASCADE,
+		item_id INTEGER NOT NULL REFERENCES material_itens(id),
+		status TEXT NOT NULL CHECK (status IN ('presente', 'acautelado', 'ausente', 'manutencao', 'baixado')),
+		quantidade_esperada INTEGER NOT NULL DEFAULT 1,
+		quantidade_conferida INTEGER NOT NULL DEFAULT 1,
+		conferido_por INTEGER REFERENCES usuarios(id),
+		conferido_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+		observacao TEXT,
+		UNIQUE(conferencia_id, item_id)
+	)`); err != nil {
+		return fmt.Errorf("migração v36 tabela material_conferencia_itens: %w", err)
+	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_conf_itens_conf ON material_conferencia_itens(conferencia_id)`)
+
+	return s.marcarVersao(36)
 }
