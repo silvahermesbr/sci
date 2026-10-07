@@ -1333,13 +1333,19 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 		// quem está sem ✅ (verificado=0 no corpo do front) grava NAO_VERIFICADO
 		// (pune no % de presença como tudo que não é presente). Destino cai fora:
 		// NÃO VERIFICADO não tem destino (lançamento efetivo não aconteceu).
-		if !l.Verificado {
-			l.Situacao = "nao_verificado"
-			l.DestinoID = nil
+		vInt := 0
+		if l.Verificado {
+			vInt = 1
+		} else {
+			// Se o militar não foi verificado e não tem situação específica ou era implícito presente, vira nao_verificado
+			if l.Situacao == "" || l.Situacao == "presente" {
+				l.Situacao = "nao_verificado"
+				l.DestinoID = nil
+			}
 		}
 		_, err = tx.Exec(`
-			INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, tag_id, observacao, marcado_por)
-			VALUES (?,?,?,?,?,?,?)
+			INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, tag_id, observacao, marcado_por, verificado)
+			VALUES (?,?,?,?,?,?,?,?)
 			ON CONFLICT (conferencia_id, pessoa_id) DO UPDATE SET
 			  situacao = excluded.situacao,
 			  destino_id = excluded.destino_id,
@@ -1347,8 +1353,9 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 			  observacao = excluded.observacao,
 			  marcado_por = excluded.marcado_por,
 			  alterado_por = excluded.marcado_por,
-			  alterado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-			req.ID, l.PessoaID, l.Situacao, l.DestinoID, l.TagID, l.Observacao, u.ID)
+			  alterado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+			  verificado = excluded.verificado`,
+			req.ID, l.PessoaID, l.Situacao, l.DestinoID, l.TagID, l.Observacao, u.ID, vInt)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, "lançamento falhou (nada gravado): "+err.Error())
 			return
@@ -2231,6 +2238,9 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 				"verificado": verificado == 1,
 			})
 			cont[sit]++
+			if verificado == 0 || sit == "nao_verificado" {
+				cont["nao_verificados"]++
+			}
 		}
 	}
 	cMap := map[string]any{
@@ -2246,6 +2256,7 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		"resumo": map[string]any{
 			"presentes": cont["presente"], "atrasos": cont["atraso"],
 			"faltas": cont["falta"], "justificadas": cont["justificada"],
+			"nao_verificados": cont["nao_verificados"],
 		},
 	}
 	jsonOK(w, res)
@@ -2266,7 +2277,8 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 		SELECT p.nome_guerra, COALESCE(NULLIF(s.sigla,''), s.nome, 'INDEFINIDO'), pr.situacao,
 		       CASE WHEN pr.situacao = 'justificada' THEN COALESCE(d.nome,'') ELSE '' END AS destino, COALESCE(pr.observacao,''), u.login,
 		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), '—'))),
-		       COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor')
+		       COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor'),
+		       COALESCE(pr.verificado, 0)
 		FROM presencas pr
 		JOIN pessoas p ON p.id = pr.pessoa_id
 		LEFT JOIN setores s ON s.id = p.setor_id
@@ -2290,7 +2302,8 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 	ord := 0
 	for rows.Next() {
 		var ng, setor, sit, destino, obs, por, funcao, camF, camS string
-		if rows.Scan(&ng, &setor, &sit, &destino, &obs, &por, &funcao, &camF, &camS) == nil {
+		var verificado int
+		if rows.Scan(&ng, &setor, &sit, &destino, &obs, &por, &funcao, &camF, &camS, &verificado) == nil {
 			switch sit {
 			case "presente":
 				resumo["presentes"]++
@@ -2302,6 +2315,9 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 				resumo["nao_verificados"]++
 			case "justificada":
 				resumo["justificadas"]++
+			}
+			if sit != "nao_verificado" && verificado == 0 {
+				resumo["nao_verificados"]++
 			}
 			if filtro == "faltas" && sit != "falta" {
 				continue
@@ -2416,14 +2432,14 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 	}
 	_ = a.st.db.QueryRow(`
 		WITH ultima_presenca AS (
-		  SELECT p.situacao,
+		  SELECT p.situacao, COALESCE(p.verificado, 0) as verificado,
 		         ROW_NUMBER() OVER(PARTITION BY p.pessoa_id ORDER BY f.data DESC, f.hora DESC, f.id DESC) as rn
 		  FROM presencas p JOIN conferencias f ON f.id = p.conferencia_id`+filtro+`
 		)
 		SELECT COUNT(*),
 		       COALESCE(SUM(situacao='presente'),0), COALESCE(SUM(situacao='atraso'),0),
 		       COALESCE(SUM(situacao='falta'),0), COALESCE(SUM(situacao='justificada'),0),
-		       COALESCE(SUM(situacao='nao_verificado'),0)
+		       COALESCE(SUM(situacao='nao_verificado' OR verificado=0),0)
 		FROM ultima_presenca WHERE rn = 1`,
 		args...).Scan(&b.TotalLanc, &b.Presentes, &b.Atrasos, &b.Faltas, &b.Justificadas, &b.NaoVerificados)
 	// "efetivo pronto" = presentes SEM ressalva (ordem do Tenente, 28/09)
@@ -2547,7 +2563,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		  SELECT f.id, cf.caminho || ' > ' || f.nome FROM funcoes f JOIN cam_funcao cf ON f.pai_id = cf.id
 		),
 		ultima_presenca AS (
-		  SELECT pr.pessoa_id, pr.situacao,
+		  SELECT pr.pessoa_id, pr.situacao, COALESCE(pr.verificado, 0) as verificado,
 		         ROW_NUMBER() OVER(PARTITION BY pr.pessoa_id ORDER BY f.data DESC, f.hora DESC, f.id DESC) as rn
 		  FROM presencas pr
 		  JOIN conferencias f ON f.id = pr.conferencia_id
@@ -2558,7 +2574,7 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 		       CASE WHEN upr.situacao = 'atraso' THEN 1 ELSE 0 END,
 		       CASE WHEN upr.situacao = 'falta' THEN 1 ELSE 0 END,
 		       CASE WHEN upr.situacao = 'justificada' THEN 1 ELSE 0 END,
-		       CASE WHEN upr.situacao = 'nao_verificado' THEN 1 ELSE 0 END,
+		       CASE WHEN upr.situacao = 'nao_verificado' OR upr.verificado = 0 THEN 1 ELSE 0 END,
 		       CASE WHEN upr.situacao IS NOT NULL THEN 1 ELSE 0 END,
 		       COALESCE(p.funcao_id, u2.funcao_id, up2.funcao_id),
 		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), ''))),
@@ -3835,6 +3851,11 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
+	var subsAtivos []int64
+	if u.Papel == "gerente" && escopo > 0 {
+		subsAtivos = a.gruposSubordinadosAtivos(escopo)
+	}
+
 	rows, err := a.st.db.Query(
 		`SELECT u.id, u.login, u.papel, u.pessoa_id, COALESCE(u.grupo_id,0), u.ativo, u.criado_em, u.senhas,
 		        COALESCE(u.nome_guerra,''), COALESCE(u.nome_completo,''),
@@ -3850,7 +3871,9 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+
 	out := []map[string]any{}
+
 	for rows.Next() {
 		var id, grupoID, setorID int64
 		var login, papel, criado, senhas, nomeGuerra, nomeCompleto string
@@ -3861,7 +3884,7 @@ func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 			&dataNasc, &tipoSang, &tel, &email, &endereco, &foto, &setorID) == nil {
 			// escopo: admin vê tudo; gerente vê o PRÓPRIO grupo e subordinados;
 			// operador só vê contas do próprio grupo, SEM dados de sessão/senha.
-			mostrar := escopo <= 0 || int64(escopo) == grupoID || (u.Papel == "gerente" && int64Contem(a.gruposSubordinadosAtivos(escopo), grupoID))
+			mostrar := escopo <= 0 || int64(escopo) == grupoID || (u.Papel == "gerente" && int64Contem(subsAtivos, grupoID))
 			if !mostrar {
 				continue
 			}

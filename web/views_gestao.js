@@ -741,7 +741,7 @@
           ajuda.innerHTML = '🔒 <b>Gerente (Função Única):</b> Comandante da unidade. Cada grupo só pode ter 1 gerente titular ativo.';
         } else if (p === 'chefe_setor') {
           grpField.style.display = 'block';
-          ajuda.innerHTML = '🏢 <b>Chefe de Setor:</b> Responsável pela conferência de faltas e presenças exclusivamente do seu próprio setor/efetivo.';
+          ajuda.innerHTML = '🏢 <b>Chefe de Setor:</b> Responsável pela conferência de faltas e presenças exclusivamente do seu próprio setor/efetivo. (Designe o setor na aba Setores ou no perfil pessoal do militar).';
         } else {
           grpField.style.display = 'block';
           ajuda.innerHTML = 'ℹ️ <b>Operador (Função Múltipla):</b> Acesso operacional diário às conferências e caixa de email compartilhada do grupo.';
@@ -853,7 +853,7 @@
           ajuda.innerHTML = '🔒 <b>Gerente (Função Única):</b> Cada grupo só pode ter 1 gerente titular ativo. Se o grupo já tiver gerente, a operação será recusada.';
         } else if (p === 'chefe_setor') {
           grpField.style.display = 'block';
-          ajuda.innerHTML = '🏢 <b>Chefe de Setor:</b> Permite ao usuário conduzir a conferência e marcar faltas/presenças de pessoas do seu setor.';
+          ajuda.innerHTML = '🏢 <b>Chefe de Setor:</b> Permite ao usuário conduzir a conferência e marcar faltas/presenças de pessoas do seu setor. (Designe o setor na aba Setores ou no perfil pessoal do militar).';
         } else {
           grpField.style.display = 'block';
           ajuda.innerHTML = '👥 <b>Operador (Função Múltipla):</b> O grupo pode comportar múltiplos operadores com acesso operacional compartilhado.';
@@ -1886,31 +1886,15 @@
       } catch (e) {}
     }
 
-    /* --- formulário de militar (criar/editar) + adição em lote --- */
-    const formPessoa = `
-      <div class="cartao"><h3 style="margin-top:0">Cadastrar / editar militar</h3>
-        <input type="hidden" id="pId">
-        <div class="form-linha"><div class="campo"><label>Nome de guerra</label><input id="pNg"></div>
-        <div class="campo"><label>Nome completo</label><input id="pNc"></div></div>
-        <div class="form-linha"><div class="campo"><label>Setor</label><select id="pSetor"><option value="">—</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-        <div class="campo"><label>Posto / Graduação</label><select id="pFuncao"><option value="">—</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-        <div class="campo"><label>Status</label><select id="pStatus"><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
-        <button class="primario" id="pSalvar">Salvar</button>
-        <h3 style="margin-top:16px">Adição em lote — cole as linhas e importe</h3>
-        <p style="color:var(--tx2);font-size:12px;margin:4px 0">Formato (1 por linha, separado por ponto-e-vírgula): <code>nome de guerra ; nome completo ; setor ; posto/graduação</code> — setor e posto/graduação são opcionais e devem já existir no catálogo.</p>
-        <textarea id="csv" rows="5" placeholder="SILVA;José da Silva;Comando;Motorista&#10;SOUSA;Maria de Sousa;Serviços&#10;PERES;Bruno Peres"></textarea>
-        <button class="acao-linha" id="csvGo" style="margin-top:8px">Importar linhas</button></div>`;
-
     /* --- banco de pessoal (checkbox por linha p/ operações em lote) --- */
     const linhasP = (pessoas.pessoas || []).map(p =>
-      `<tr data-p='${esc(JSON.stringify(p))}'><td><input type="checkbox" class="chkP" data-id="${p.id}"></td>
+      `<tr data-p='${esc(JSON.stringify(p))}' data-busca='${esc((p.nome_guerra + " " + (p.nome_completo||"") + " " + (p.setor||"") + " " + (p.funcao||"")).toLowerCase())}'><td><input type="checkbox" class="chkP" data-id="${p.id}"></td>
        <td class="num">#${p.id}</td><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
        <td>${esc(p.setor || 'INDEFINIDO')}</td>
        <td>${esc(p.funcao || 'INDEFINIDO')}</td>
        <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
        <td><button class="acao-linha" data-edit="${p.id}">editar</button>
-       <button class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button>
-       <button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button></td></tr>`).join('');
+       <button class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button></td></tr>`).join('');
 
     const optsMoverGer = `<option value="">— destino (dentro da sua hierarquia) —</option>` +
       grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
@@ -1923,8 +1907,20 @@
         <button data-g="grupos" class="${abaGer === 'grupos' ? 'ativo' : ''}">Grupos</button>
         <button data-g="operadores" class="${abaGer === 'operadores' ? 'ativo' : ''}">Operadores</button></div>
       <div id="gerPessoal" class="${abaGer === 'pessoal' ? '' : 'oculto'}">
-        ${formPessoa}
+        <div class="cartao" style="margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+          <div>
+            <h3 style="margin:0 0 4px">Gestão do Efetivo</h3>
+            <span style="color:var(--tx2);font-size:12px">Adicione militares individualmente ou importe listas completas em lote</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="primario" id="btCadastrarMilitar" style="min-height:38px">+ Cadastrar Militar</button>
+            <button class="secundario" id="btCadastrarLote" style="min-height:38px">📋 Cadastrar em Lote</button>
+          </div>
+        </div>
         <div class="cartao"><h3 style="margin-top:0">BANCO DE PESSOAL (${(pessoas.pessoas || []).length})</h3>
+          <div class="campo" style="margin-bottom:10px">
+            <input id="fPesPessoa" placeholder="Filtrar por nome de guerra, completo, posto/graduação ou setor…">
+          </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
             <label style="font-size:13px"><input type="checkbox" id="chkTodosP"> todos</label>
             <button class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
@@ -2070,54 +2066,173 @@
       });
     }
 
-    /* --- salvar militar (criar/editar) --- */
-    $('#pSalvar').onclick = async () => {
-      const corpo = { nome_guerra: $('#pNg').value.trim(), nome_completo: $('#pNc').value.trim(),
-        setor_id: +$('#pSetor').value || null, funcao_id: +$('#pFuncao').value || null, status: $('#pStatus').value };
-      if (!corpo.nome_guerra || !corpo.nome_completo) { toast('Nomes obrigatórios', 'erro'); return; }
-      const id = $('#pId').value;
-      const r = await processar(() => id
-        ? api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) })
-        : api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) }),
-        id ? 'Salvando alterações…' : 'Cadastrando militar…');
-      if (r.ok) window.ViewGrupos();
-    };
+    /* --- filtro de pesquisa por militar individual --- */
+    const fPes = $('#fPesPessoa');
+    if (fPes) {
+      fPes.oninput = () => {
+        const q = fPes.value.trim().toLowerCase();
+        document.querySelectorAll('#tabP tr[data-busca]').forEach(tr => {
+          const txt = tr.dataset.busca || '';
+          tr.style.display = !q || txt.includes(q) ? '' : 'none';
+        });
+      };
+    }
 
-    /* --- adição em lote --- */
-    $('#csvGo').onclick = async () => {
-      const linhas = $('#csv').value.split('\n').map(l => l.trim()).filter(Boolean);
-      if (!linhas.length) { toast('Cole ao menos uma linha', 'erro'); return; }
-      let ok = 0, falha = 0;
-      await processar(async () => {
-        for (const l of linhas) {
-          const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
-          let sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
-          if (st && !sid) {
-            try {
-              const resSt = await api('/api/catalogo/setores', { method: 'POST', body: JSON.stringify({ nome: st }) });
-              if (resSt && resSt.id) {
-                sid = resSt.id;
-                optSetores.push({ id: sid, nome: st, ativo: 1 });
-              }
-            } catch (e) {}
-          }
-          let fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
-          if (fn && !fid) {
-            try {
-              const resFn = await api('/api/catalogo/funcoes', { method: 'POST', body: JSON.stringify({ nome: fn }) });
-              if (resFn && resFn.id) {
-                fid = resFn.id;
-                optFuncoes.push({ id: fid, nome: fn, ativo: 1 });
-              }
-            } catch (e) {}
-          }
-          try { await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo' }) }); ok++; }
-          catch (e) { falha++; }
+    /* --- modal para cadastrar/editar militar (com botão excluir no modo editar) --- */
+    function modalMilitar(p = null) {
+      const ehEdicao = !!p;
+      const html = `
+        <div class="modal" style="max-width:540px;width:95%">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+            <h3 style="margin:0">${ehEdicao ? 'Editar Militar — ' + esc(p.nome_guerra) : 'Cadastrar Militar'}</h3>
+            <button class="acao-linha" id="mMilX">✕</button>
+          </div>
+          <input type="hidden" id="mpId" value="${p ? p.id : ''}">
+          <div class="form-linha" style="margin-bottom:10px">
+            <div class="campo" style="flex:1">
+              <label>Nome de Guerra *</label>
+              <input id="mpNg" value="${p ? esc(p.nome_guerra) : ''}" placeholder="ex.: SILVA">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Nome Completo *</label>
+              <input id="mpNc" value="${p ? esc(p.nome_completo || '') : ''}" placeholder="ex.: José da Silva">
+            </div>
+          </div>
+          <div class="form-linha" style="margin-bottom:10px">
+            <div class="campo" style="flex:1">
+              <label>Setor</label>
+              <select id="mpSetor">
+                <option value="">—</option>
+                ${optSetores.map(x => `<option value="${x.id}" ${p && p.setor_id === x.id ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Posto / Graduação</label>
+              <select id="mpFuncao">
+                <option value="">—</option>
+                ${optFuncoes.map(x => `<option value="${x.id}" ${p && p.funcao_id === x.id ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="campo" style="margin-bottom:16px">
+            <label>Status</label>
+            <select id="mpStatus">
+              <option value="ativo" ${!p || p.status === 'ativo' ? 'selected' : ''}>Ativo</option>
+              <option value="inativo" ${p && p.status === 'inativo' ? 'selected' : ''}>Inativo</option>
+            </select>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:14px;border-top:1px solid var(--borda);padding-top:12px">
+            <div>
+              ${ehEdicao ? `<button type="button" class="perigo" id="mpExcluir" style="min-height:36px">🗑 Excluir Militar</button>` : ''}
+            </div>
+            <div style="display:flex;gap:8px">
+              <button type="button" class="secundario" id="mpCancelar">Cancelar</button>
+              <button type="button" class="primario" id="mpSalvar">${ehEdicao ? 'Salvar Alterações' : 'Cadastrar'}</button>
+            </div>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+      if (!m) return;
+      m.querySelector('#mMilX').onclick = () => m.fechar && m.fechar();
+      m.querySelector('#mpCancelar').onclick = () => m.fechar && m.fechar();
+
+      if (ehEdicao) {
+        m.querySelector('#mpExcluir').onclick = async () => {
+          m.fechar && m.fechar();
+          await excPessoa(p.id, p.nome_guerra);
+        };
+      }
+
+      m.querySelector('#mpSalvar').onclick = async () => {
+        const corpo = {
+          nome_guerra: m.querySelector('#mpNg').value.trim(),
+          nome_completo: m.querySelector('#mpNc').value.trim(),
+          setor_id: +m.querySelector('#mpSetor').value || null,
+          funcao_id: +m.querySelector('#mpFuncao').value || null,
+          status: m.querySelector('#mpStatus').value
+        };
+        if (!corpo.nome_guerra || !corpo.nome_completo) {
+          toast('Nome de guerra e nome completo são obrigatórios', 'erro');
+          return;
         }
-      }, `Importando ${linhas.length} linha(s)…`);
-      toast(`${ok} importado(s)${falha ? ' · ' + falha + ' linha(s) com falha' : ''}`, falha && !ok ? 'erro' : 'ok');
-      if (ok) window.ViewGrupos();
-    };
+        const id = m.querySelector('#mpId').value;
+        m.fechar && m.fechar();
+        const r = await processar(() => id
+          ? api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) })
+          : api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) }),
+          id ? 'Salvando alterações…' : 'Cadastrando militar…');
+        if (r.ok) window.ViewGrupos();
+      };
+    }
+
+    /* --- modal para cadastrar em lote --- */
+    function modalLote() {
+      const html = `
+        <div class="modal" style="max-width:580px;width:95%">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <h3 style="margin:0">Cadastrar Militares em Lote</h3>
+            <button class="acao-linha" id="mLoteX">✕</button>
+          </div>
+          <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">
+            Cole as linhas dos militares a importar (1 por linha, separado por ponto-e-vírgula):<br>
+            <code>nome de guerra ; nome completo ; setor ; posto/graduação</code><br>
+            <span style="font-size:11.5px;color:var(--tx3)">Setor e Posto/Graduação são opcionais e são criados automaticamente se não existirem.</span>
+          </p>
+          <textarea id="csvModal" rows="6" placeholder="SILVA;José da Silva;Comando;Motorista&#10;SOUSA;Maria de Sousa;Serviços&#10;PERES;Bruno Peres" style="width:100%;box-sizing:border-box;margin-bottom:14px"></textarea>
+          <div class="modal-acoes">
+            <button class="secundario" id="mLoteCancelar">Cancelar</button>
+            <button class="primario" id="mLoteImportar">Importar Linhas</button>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+      if (!m) return;
+      m.querySelector('#mLoteX').onclick = () => m.fechar && m.fechar();
+      m.querySelector('#mLoteCancelar').onclick = () => m.fechar && m.fechar();
+      m.querySelector('#mLoteImportar').onclick = async () => {
+        const linhas = m.querySelector('#csvModal').value.split('\n').map(l => l.trim()).filter(Boolean);
+        if (!linhas.length) { toast('Cole ao menos uma linha para importar', 'erro'); return; }
+        m.fechar && m.fechar();
+        let ok = 0, falha = 0;
+        await processar(async () => {
+          for (const l of linhas) {
+            const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
+            let sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
+            if (st && !sid) {
+              try {
+                const resSt = await api('/api/catalogo/setores', { method: 'POST', body: JSON.stringify({ nome: st }) });
+                if (resSt && resSt.id) {
+                  sid = resSt.id;
+                  optSetores.push({ id: sid, nome: st, ativo: 1 });
+                }
+              } catch (e) {}
+            }
+            let fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
+            if (fn && !fid) {
+              try {
+                const resFn = await api('/api/catalogo/funcoes', { method: 'POST', body: JSON.stringify({ nome: fn }) });
+                if (resFn && resFn.id) {
+                  fid = resFn.id;
+                  optFuncoes.push({ id: fid, nome: fn, ativo: 1 });
+                }
+              } catch (e) {}
+            }
+            try {
+              await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo' }) });
+              ok++;
+            } catch (e) { falha++; }
+          }
+        }, `Importando ${linhas.length} linha(s)…`);
+        toast(`${ok} importado(s)${falha ? ' · ' + falha + ' linha(s) com falha' : ''}`, falha && !ok ? 'erro' : 'ok');
+        if (ok) window.ViewGrupos();
+      };
+    }
+
+    const btCadMilitar = $('#btCadastrarMilitar');
+    if (btCadMilitar) btCadMilitar.onclick = () => modalMilitar();
+    const btCadLote = $('#btCadastrarLote');
+    if (btCadLote) btCadLote.onclick = () => modalLote();
 
     /* --- exclusão de militar (individual + lote; com histórico → desativa) --- */
     const excPessoa = async (id, nome) => {
@@ -2128,7 +2243,6 @@
         window.ViewGrupos();
       }
     };
-    document.querySelectorAll('[data-excP]').forEach(b => b.onclick = () => excPessoa(b.dataset.excP, b.dataset.nome));
 
     const selCount = () => document.querySelectorAll('.chkP:checked').length;
     const refreshSel = () => {
@@ -2202,14 +2316,12 @@
       };
     };
 
-    /* --- editar militar (preenche o formulário do topo) --- */
+    /* --- editar militar (abre modal de edição com opção de exclusão) --- */
     document.querySelectorAll('#tabP tr[data-p]').forEach(tr => {
       tr.querySelector('[data-edit]').onclick = ev => {
         ev.stopPropagation();
         const p = JSON.parse(tr.dataset.p);
-        $('#pId').value = p.id; $('#pNg').value = p.nome_guerra; $('#pNc').value = p.nome_completo;
-        $('#pSetor').value = p.setor_id || ''; $('#pFuncao').value = p.funcao_id || ''; $('#pStatus').value = p.status;
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        modalMilitar(p);
       };
     });
 
@@ -2222,14 +2334,335 @@
       };
     });
 
+    /* --- aba SETORES: Subdivisões do Grupo e Chefes de Setor (v1.5) --- */
+    function modalNovoSetorUnificado() {
+      const coletarSubordinados = (no, acc = new Set()) => {
+        if (!no) return acc;
+        if (Array.isArray(no)) { no.forEach(n => coletarSubordinados(n, acc)); return acc; }
+        if (no.id && no.id !== eu.grupo_id) acc.add(no.id);
+        if (no.filhos) no.filhos.forEach(f => coletarSubordinados(f, acc));
+        return acc;
+      };
+      const subsIds = coletarSubordinados(arvore);
+      const gruposOpcoes = grupos.filter(g => g.id === eu.grupo_id || subsIds.has(g.id));
+      const usuariosElegiveis = contas.filter(c => c.ativo && (c.grupo_id === eu.grupo_id || subsIds.has(c.grupo_id)));
+
+      const html = `
+        <div class="modal" style="max-width:520px; width:95%">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
+            <h3 style="margin:0">🏢 Novo Setor da Unidade</h3>
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
+          </div>
+          <p style="color:var(--tx2); font-size:12.5px; margin-bottom:14px">
+            Cadastre uma nova subdivisão operacional para a unidade e designe o Chefe de Setor responsável.
+          </p>
+          
+          <div class="campo" style="margin-bottom:10px">
+            <label>Nome do Setor *</label>
+            <input id="nSetNome" placeholder="ex.: 1º Pelotão, Almoxarifado, Comando..." autofocus>
+          </div>
+
+          <div class="form-linha" style="margin-bottom:10px">
+            <div class="campo" style="flex:1">
+              <label>Sigla (Opcional)</label>
+              <input id="nSetSigla" placeholder="ex.: 1º PEL">
+            </div>
+            ${gruposOpcoes.length > 1 ? `
+              <div class="campo" style="flex:1">
+                <label>Unidade / Grupo</label>
+                <select id="nSetGrupo">
+                  ${gruposOpcoes.map(g => `<option value="${g.id}" ${g.id === eu.grupo_id ? 'selected' : ''}>${esc(g.nome)} ${g.id === eu.grupo_id ? '(Meu Grupo)' : '(Subordinado)'}</option>`).join('')}
+                </select>
+              </div>
+            ` : `<input type="hidden" id="nSetGrupo" value="${eu.grupo_id}">`}
+          </div>
+
+          <div class="campo" style="margin-bottom:14px">
+            <label>Chefe do Setor (Opcional)</label>
+            <select id="nSetChefe">
+              <option value="">— Sem chefe no momento —</option>
+              ${usuariosElegiveis.map(u => {
+                const rot = rotuloPapel(u.papel);
+                const gNome = (grupos.find(g => g.id === u.grupo_id) || {}).nome || '';
+                return `<option value="${u.id}">${esc(u.nome_guerra || u.login)} (${esc(u.login)}) · ${esc(rot)} [${esc(gNome)}]</option>`;
+              }).join('')}
+            </select>
+            <small style="color:var(--tx3); font-size:11.5px; display:block; margin-top:4px">
+              ℹ️ O chefe designado pode ser qualquer usuário pertencente ao grupo ou grupos subordinados. Ele receberá o papel de Chefe de Setor e será vinculado a esta partição.
+            </small>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:8px">
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+            <button class="primario" id="nSetSalvar">Criar Setor</button>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+      m.querySelector('#nSetSalvar').onclick = async () => {
+        const nome = m.querySelector('#nSetNome').value.trim();
+        const sigla = m.querySelector('#nSetSigla').value.trim();
+        const gidVal = m.querySelector('#nSetGrupo') ? +m.querySelector('#nSetGrupo').value : eu.grupo_id;
+        const chefeUid = m.querySelector('#nSetChefe').value;
+
+        if (!nome) {
+          toast('Nome do setor é obrigatório', 'erro');
+          return;
+        }
+
+        try {
+          const res = await api('/api/catalogo/setores', {
+            method: 'POST',
+            body: JSON.stringify({ nome, sigla, grupo_id: gidVal })
+          });
+          const novoSetorId = res && res.id;
+          if (novoSetorId && chefeUid) {
+            const uidNum = +chefeUid;
+            await api('/api/usuarios/' + uidNum, {
+              method: 'PATCH',
+              body: JSON.stringify({ setor_id: novoSetorId })
+            });
+            const uObj = contas.find(x => x.id === uidNum);
+            const jaTemPapel = uObj && (uObj.papel === 'chefe_setor' || (uObj.papeis && uObj.papeis.some(p => p.papel === 'chefe_setor')));
+            if (!jaTemPapel) {
+              await api('/api/usuarios/' + uidNum + '/papeis', {
+                method: 'POST',
+                body: JSON.stringify({ papel: 'chefe_setor', grupo_id: gidVal })
+              }).catch(() => {});
+            }
+          }
+          toast('Setor criado com sucesso!');
+          m.remove();
+          await atualizarSelectsCatalogos();
+          renderSetoresGerente();
+        } catch (e) {
+          toast(e.message || 'Falha ao criar setor', 'erro');
+        }
+      };
+    }
+
+    function modalEditarSetorUnificado(s, todasContas, pessoasLista, subsIds, mapGrupos, aoSalvar) {
+      const usuariosElegiveis = todasContas.filter(c => c.ativo && (c.grupo_id === eu.grupo_id || subsIds.has(c.grupo_id)));
+
+      const chefeAtual = todasContas.find(u => {
+        const temPapelChefe = u.papel === 'chefe_setor' || (u.papeis && u.papeis.some(p => p.papel === 'chefe_setor'));
+        if (!temPapelChefe) return false;
+        if (u.setor_id && u.setor_id === s.id) return true;
+        if (u.pessoa_id) {
+          const p = pessoasLista.find(px => px.id === u.pessoa_id);
+          if (p && (p.setor_id === s.id || p.setor === s.nome)) return true;
+        }
+        return false;
+      });
+
+      const efetivoNoSetor = pessoasLista.filter(p => p.setor_id === s.id || p.setor === s.nome).length;
+
+      const html = `
+        <div class="modal" style="max-width:520px; width:95%">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+            <h3 style="margin:0">⚙️ Editar Setor — ${esc(s.nome)}</h3>
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
+          </div>
+
+          <div style="background:var(--painel3); padding:10px 14px; border-radius:8px; border:1px solid var(--borda); margin-bottom:14px; font-size:12.5px; line-height:1.6">
+            <div>🏢 Setor ID: <b>#${s.id}</b> · Unidade: <b>${esc(mapGrupos[s.grupo_id] || ('Grupo #' + s.grupo_id))}</b></div>
+            <div>👥 Efetivo vinculado: <b style="color:var(--verde-claro)">${efetivoNoSetor} militar(es)</b></div>
+          </div>
+          
+          <div class="campo" style="margin-bottom:10px">
+            <label>Nome do Setor *</label>
+            <input id="edSetNome" value="${esc(s.nome)}">
+          </div>
+
+          <div class="campo" style="margin-bottom:10px">
+            <label>Sigla</label>
+            <input id="edSetSigla" value="${esc(s.sigla || '')}" placeholder="ex.: 1º PEL">
+          </div>
+
+          <div class="campo" style="margin-bottom:14px">
+            <label>Chefe do Setor</label>
+            <select id="edSetChefe">
+              <option value="">— Nenhum Chefe Designado —</option>
+              ${usuariosElegiveis.map(u => {
+                const rot = rotuloPapel(u.papel);
+                const gNome = mapGrupos[u.grupo_id] || ('Grupo #' + u.grupo_id);
+                const isSel = chefeAtual && chefeAtual.id === u.id;
+                return `<option value="${u.id}" ${isSel ? 'selected' : ''}>${esc(u.nome_guerra || u.login)} (${esc(u.login)}) · ${esc(rot)} [${esc(gNome)}]</option>`;
+              }).join('')}
+            </select>
+            <small style="color:var(--tx3); font-size:11.5px; display:block; margin-top:4px">
+              ℹ️ O chefe designado fechará as conferências deste setor para auxiliar o encarregado de pessoal.
+            </small>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; border-top:1px solid var(--borda); padding-top:12px">
+            <button type="button" class="acao-linha perigo" id="edSetExcluir">🗑️ Excluir Setor</button>
+            <div style="display:flex; gap:8px">
+              <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+              <button class="primario" id="edSetSalvar">Salvar Alterações</button>
+            </div>
+          </div>
+        </div>
+      `;
+      const m = modal(html);
+
+      m.querySelector('#edSetSalvar').onclick = async () => {
+        const novoNome = m.querySelector('#edSetNome').value.trim();
+        const novaSigla = m.querySelector('#edSetSigla').value.trim();
+        const novoChefeUid = m.querySelector('#edSetChefe').value;
+
+        if (!novoNome) {
+          toast('Nome do setor é obrigatório', 'erro');
+          return;
+        }
+
+        try {
+          await api('/api/catalogo/setores/' + s.id, {
+            method: 'PATCH',
+            body: JSON.stringify({ nome: novoNome, sigla: novaSigla })
+          });
+
+          const novoChefeIdNum = novoChefeUid ? +novoChefeUid : null;
+          const antigoChefeIdNum = chefeAtual ? chefeAtual.id : null;
+
+          if (novoChefeIdNum !== antigoChefeIdNum) {
+            if (novoChefeIdNum) {
+              await api('/api/usuarios/' + novoChefeIdNum, {
+                method: 'PATCH',
+                body: JSON.stringify({ setor_id: s.id })
+              });
+              const uObj = todasContas.find(x => x.id === novoChefeIdNum);
+              const jaTemPapel = uObj && (uObj.papel === 'chefe_setor' || (uObj.papeis && uObj.papeis.some(p => p.papel === 'chefe_setor')));
+              if (!jaTemPapel) {
+                await api('/api/usuarios/' + novoChefeIdNum + '/papeis', {
+                  method: 'POST',
+                  body: JSON.stringify({ papel: 'chefe_setor', grupo_id: s.grupo_id || eu.grupo_id })
+                }).catch(() => {});
+              }
+            }
+          }
+
+          toast('Setor atualizado com sucesso!');
+          m.remove();
+          await atualizarSelectsCatalogos();
+          if (aoSalvar) aoSalvar();
+        } catch (e) {
+          toast(e.message || 'Falha ao atualizar setor', 'erro');
+        }
+      };
+
+      m.querySelector('#edSetExcluir').onclick = async () => {
+        if (!(await confirmar(`Deseja realmente excluir o setor "${s.nome}"?`))) return;
+        try {
+          await api('/api/catalogo/setores/' + s.id, { method: 'DELETE' });
+          toast('Setor excluído com sucesso');
+          m.remove();
+          await atualizarSelectsCatalogos();
+          if (aoSalvar) aoSalvar();
+        } catch (e) {
+          toast(e.message || 'Falha ao excluir setor', 'erro');
+        }
+      };
+    }
+
+    async function renderSetoresGerente() {
+      const elLista = $('#listaCardsSetores');
+      if (!elLista) return;
+      elLista.innerHTML = '<div class="carregando">Carregando setores…</div>';
+      try {
+        const [setoresAtualizados, contasAtualizadas, pessoasAtualizadas] = await Promise.all([
+          api('/api/catalogo/setores'),
+          api('/api/usuarios'),
+          api('/api/pessoas')
+        ]);
+        
+        const coletarSubordinados = (no, acc = new Set()) => {
+          if (!no) return acc;
+          if (Array.isArray(no)) { no.forEach(n => coletarSubordinados(n, acc)); return acc; }
+          if (no.id && no.id !== eu.grupo_id) acc.add(no.id);
+          if (no.filhos) no.filhos.forEach(f => coletarSubordinados(f, acc));
+          return acc;
+        };
+        const subsIds = coletarSubordinados(arvore);
+        const mapGrupos = {};
+        (grupos || []).forEach(g => { mapGrupos[g.id] = g.nome; });
+
+        const setoresRelevantes = (setoresAtualizados || []).filter(s => s.grupo_id === eu.grupo_id || (s.grupo_id && subsIds.has(s.grupo_id)));
+        const pessoasLista = pessoasAtualizadas.pessoas || [];
+        const todasContas = contasAtualizadas || [];
+
+        if (setoresRelevantes.length === 0) {
+          elLista.innerHTML = '<div class="vazio" style="padding:24px; text-align:center">Nenhum setor cadastrado para esta unidade.<br><small style="color:var(--tx3)">Clique em <b>+ Novo Setor</b> para adicionar o primeiro setor.</small></div>';
+          return;
+        }
+
+        elLista.innerHTML = setoresRelevantes.map(s => {
+          const ehMeu = s.grupo_id === eu.grupo_id;
+          const nomeGrp = mapGrupos[s.grupo_id] || ('Grupo #' + s.grupo_id);
+          const tagOrigem = ehMeu ? '' : `<span style="font-size:11px; padding:2px 7px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3)">🌲 ${esc(nomeGrp)}</span>`;
+
+          const efetivoNoSetor = pessoasLista.filter(p => p.setor_id === s.id || p.setor === s.nome).length;
+
+          const chefes = todasContas.filter(u => {
+            const temPapelChefe = u.papel === 'chefe_setor' || (u.papeis && u.papeis.some(p => p.papel === 'chefe_setor'));
+            if (!temPapelChefe) return false;
+            if (u.setor_id && u.setor_id === s.id) return true;
+            if (u.pessoa_id) {
+              const p = pessoasLista.find(px => px.id === u.pessoa_id);
+              if (p && (p.setor_id === s.id || p.setor === s.nome)) return true;
+            }
+            return false;
+          });
+
+          const chefesTxt = chefes.length
+            ? chefes.map(c => `<span style="font-weight:600; color:var(--tx)">👤 ${esc(c.nome_guerra || c.login)}</span> <small style="color:var(--tx3)">(${esc(c.login)})</small>`).join(', ')
+            : `<span style="color:var(--verm-txt); font-weight:600">⚠️ Sem Chefe Designado</span>`;
+
+          return `
+            <div class="setor-card" style="background:var(--painel2); border:1px solid var(--borda); border-radius:8px; padding:12px 16px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; transition:border-color 0.2s">
+              <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; min-width:220px">
+                <span style="font-size:18px">🏢</span>
+                <div>
+                  <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+                    <b style="font-size:15px; color:var(--tx)">${esc(s.nome)}</b>
+                    ${s.sigla ? codigoChip(s.sigla) : ''}
+                    ${tagOrigem}
+                  </div>
+                  <div style="font-size:12px; color:var(--tx2); margin-top:2px">
+                    Chefe do Setor: ${chefesTxt}
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+                <div style="background:var(--painel3); border:1px solid var(--borda); border-radius:6px; padding:5px 12px; font-size:12.5px; display:flex; align-items:center; gap:6px">
+                  <span>👥 Efetivo:</span>
+                  <b style="color:var(--verde-claro)">${efetivoNoSetor}</b> <small style="color:var(--tx3)">militar(es)</small>
+                </div>
+                <button class="primario" style="font-size:12px; padding:5px 14px" data-editsetor="${s.id}">⚙️ Editar</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        elLista.querySelectorAll('[data-editsetor]').forEach(bt => {
+          bt.onclick = () => {
+            const sid = +bt.dataset.editsetor;
+            const sObj = setoresRelevantes.find(x => x.id === sid);
+            if (sObj) modalEditarSetorUnificado(sObj, todasContas, pessoasLista, subsIds, mapGrupos, renderSetoresGerente);
+          };
+        });
+      } catch (err) {
+        elLista.innerHTML = '<div class="vazio">Falha ao carregar setores.</div>';
+      }
+    }
+
     /* --- aba TAGS: Catálogos divididos em Pessoal e Material (v1.5) --- */
     const rotCat = {
       destinos: '📍 Destinos (Pessoal)',
       funcoes: '🎖️ Postos / Graduações (Pessoal)',
       tags: '🏷️ Situação do Material (Material)',
       material_tipos: '📦 Tipos de Material (Material)',
-      material_classes: '🎖️ Classes de Material (Material)',
-      setores: '🏢 Setores / Seções (Estrutura)'
+      material_classes: '🎖️ Classes de Material (Material)'
     };
     
     // Toggle de campos no form do topo
@@ -2238,16 +2671,14 @@
       cgTSel.onchange = () => {
         const val = cgTSel.value;
         const corWrap = $('#cgCorWrap');
-        const siglaWrap = $('#cgSiglaWrap');
         if (corWrap) corWrap.style.display = (val === 'tags' || val === 'material_tipos' || val === 'material_classes') ? 'block' : 'none';
-        if (siglaWrap) siglaWrap.style.display = val === 'setores' ? 'block' : 'none';
       };
     }
 
     const carregarCats = async () => {
       const cont = $('#catGer');
       if (!cont) return;
-      const tipos = ['destinos', 'funcoes', 'tags', 'material_tipos', 'material_classes', 'setores'];
+      const tipos = ['destinos', 'funcoes', 'tags', 'material_tipos', 'material_classes'];
       const meuGid = (window.ME && window.ME.grupo_id) || null;
       
       // Coletar IDs de grupos subordinados a partir da árvore
@@ -2369,13 +2800,12 @@
 
       /* --- handlers: editar / excluir / desativar --- */
       cont.querySelectorAll('[data-editcat]').forEach(b => b.onclick = () => {
-        const t = b.dataset.editcat, cid = b.dataset.cid, nome = b.dataset.nome, cor = b.dataset.cor, sigla = b.dataset.sigla;
+        const t = b.dataset.editcat, cid = b.dataset.cid, nome = b.dataset.nome, cor = b.dataset.cor;
         const div = modal(`
           <div class="modal-inner" style="max-width:440px">
             <h3 style="margin-top:0">Editar ${rotCat[t]}</h3>
             <div class="campo"><label>Nome</label><input id="edNome" value="${esc(nome)}"></div>
             ${t === 'tags' ? `<div class="campo"><label>Cor da Tag</label><input type="color" id="edCor" value="${esc(cor || '#10b981')}" style="width:100%; height:40px; padding:2px; cursor:pointer"></div>` : ''}
-            ${t === 'setores' ? `<div class="campo"><label>Sigla</label><input id="edSigla" value="${esc(sigla || '')}"></div>` : ''}
             <div class="modal-acoes">
               <button class="fantasma" id="edX">Cancelar</button>
               <button class="primario" id="edGo">Salvar Alterações</button>
@@ -2389,13 +2819,12 @@
           if (!novoNome) { toast('Informe o nome', 'erro'); return; }
           const corpo = { nome: novoNome };
           if (t === 'tags' && div.querySelector('#edCor')) corpo.cor = div.querySelector('#edCor').value;
-          if (t === 'setores' && div.querySelector('#edSigla')) corpo.sigla = div.querySelector('#edSigla').value.trim();
 
           const r = await processar(() => api(`/api/catalogo/${t}/${cid}`, { method: 'PATCH', body: JSON.stringify(corpo) }), 'Salvando alterações…');
           if (r.ok) {
             toast('Item atualizado com sucesso!');
             div.fechar();
-            if (t === 'setores' || t === 'funcoes') setoresCat = funcoesCat = null;
+            if (t === 'funcoes') funcoesCat = null;
             carregarCats();
           }
         };
@@ -2406,7 +2835,7 @@
         const r = await processar(() => api(`/api/catalogo/${b.dataset.delcat}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
         if (r.ok) {
           toast('Item excluído com sucesso');
-          if (b.dataset.delcat === 'setores' || b.dataset.delcat === 'funcoes') setoresCat = funcoesCat = null;
+          if (b.dataset.delcat === 'funcoes') funcoesCat = null;
           carregarCats();
         }
       });
@@ -2471,18 +2900,19 @@
       if (!nome) { toast('Informe o nome do item', 'erro'); return; }
       const payload = { nome };
       if (t === 'tags') payload.cor = $('#cgCor').value;
-      if (t === 'setores') payload.sigla = $('#cgSigla').value.trim();
 
       const r = await processar(() => api('/api/catalogo/' + t, { method: 'POST', body: JSON.stringify(payload) }), 'Adicionando item…');
       if (r.ok) {
         toast('Item adicionado com sucesso!');
         $('#cgN').value = '';
-        if ($('#cgSigla')) $('#cgSigla').value = '';
-        setoresCat = funcoesCat = null;
+        funcoesCat = null;
         carregarCats();
         atualizarSelectsCatalogos();
       }
     };
+    const btNovoSet = $('#btNovoSetor');
+    if (btNovoSet) btNovoSet.onclick = () => modalNovoSetorUnificado();
+    if (abaGer === 'setores') renderSetoresGerente();
     if (abaGer === 'tags') carregarCats(); else $('#gerTags').addEventListener('renderTags', carregarCats, { once: true });
 
     /* --- operadores: criar (acima da tabela) + senha/mover/excluir + filtro --- */

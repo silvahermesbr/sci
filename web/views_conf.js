@@ -85,6 +85,7 @@
             <div class="caixa"><b style="color:var(--ambar-txt)">${res.atrasos || 0}</b><span>Atrasos</span></div>
             <div class="caixa"><b style="color:var(--verm)">${res.faltas || 0}</b><span>Faltas</span></div>
             <div class="caixa"><b style="color:#60a5fa">${res.justificadas || 0}</b><span>Justificadas</span></div>
+            <div class="caixa"><b style="color:var(--tx2)">${res.nao_verificados || 0}</b><span>Não Verificados</span></div>
           </div>
           <div class="campo" style="margin-bottom:10px">
             <input id="fModalLanc" placeholder="Filtrar por nome de guerra, setor, posto/graduação ou observação…">
@@ -262,7 +263,7 @@
         if (smallInfo) {
           const p = C.pessoas.find(x => x.id === pid);
           if (p) {
-            smallInfo.innerHTML = `${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[pid] ? ' · 📝' : ''}${C.temComentario[pid] ? ' · 💬' : ''}`;
+            smallInfo.innerHTML = `${esc(p.funcao || '')}${C.obs[pid] ? (p.funcao ? ' · ' : '') + '📝' : ''}${C.temComentario[pid] ? ((p.funcao || C.obs[pid]) ? ' · ' : '') + '💬' : ''}`;
           }
         }
 
@@ -278,7 +279,10 @@
       // Atualizar contador de verificados na barra fixa
       const cont = document.querySelector('.barra-fixa .cont');
       if (cont) {
-        cont.innerHTML = `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
+        const total = C.pessoas.length;
+        const verif = C.verif.size;
+        const naoVerif = total - verif;
+        cont.innerHTML = `<b>${verif}/${total}</b> verificados <span style="opacity:0.85;margin-left:6px">(<b>${naoVerif}</b> não verificados)</span>`;
       }
     }
   }
@@ -619,7 +623,7 @@
 
         return divisorHTML + `<div class="pessoa ${ehVerif ? 'verificado' : ''}" data-id="${p.id}">
           <input type="checkbox" class="chk" data-id="${p.id}" ${ehVerif ? 'checked' : ''} title="verifiquei esta pessoa">
-          <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
+          <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.funcao || '')}${C.obs[p.id] ? (p.funcao ? ' · ' : '') + '📝' : ''}${C.temComentario[p.id] ? ((p.funcao || C.obs[p.id]) ? ' · ' : '') + '💬' : ''}</small></span>
           <select class="sel-situacao" data-id="${p.id}" title="situação">${sit === 'nao_verificado' ? '<option value="nao_verificado" disabled selected>NÃO VERIFICADO</option>' : ''}${SITUACOES.map(optSit).join('')}</select>
           ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
       }).join('');
@@ -643,14 +647,16 @@
       ${dashboardSetoresHTML}
       <div class="barra-fixa">
         <input id="busca" placeholder="buscar nome…">
+        <span class="cont">${contSpan()}</span>
         ${!ehChefe ? `<button class="primario" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>` : `<span style="font-size:12px;color:var(--tx2);font-weight:600">Área do Chefe de Setor</span>`}
       </div>
-      <div id="lista">${listas}</div>
-      ${!ehChefe ? `
-      <div style="display:flex;justify-content:flex-end;margin-top:28px;padding-top:14px;border-top:1px solid var(--borda)">
-        <button class="perigo" id="btDescartar" style="min-height:40px">🗑 Descartar conferência</button>
-      </div>` : ''}`;
-    const contSpan = () => `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
+      <div id="lista">${listas}</div>`;
+    const contSpan = () => {
+      const total = C.pessoas.length;
+      const verif = C.verif.size;
+      const naoVerif = total - verif;
+      return `<b>${verif}/${total}</b> verificados <span style="opacity:0.85;margin-left:6px">(<b>${naoVerif}</b> não verificados)</span>`;
+    };
     const atualizar = () => {
       // v9.15.1: NÃO recriar a barra (perdia foco a cada dígito) — só o contador muda
       const cont = document.querySelector('.barra-fixa .cont');
