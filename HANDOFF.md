@@ -95,7 +95,38 @@ go test -v -count=1 .
 
 ---
 
-## 🚀 Próximos Passos Sugeridos para a v1.1
+## 🚀 Próximos Passos Sugeridos para a v1.1 *(histórico — ver `ROADMAP.md` para o plano vigente)*
 1. **Geração de QR Code:** Criação de etiquetas para escaneamento rápido de cautelas via câmera de celular/tablet.
 2. **Relatório Gráfico de Escalas:** Visualização em calendário / timeline estilo Gantt.
 3. **Notificações Push / Webhooks:** Alertas de cautelas em atraso de devolução.
+
+---
+
+## 📍 Estado Atual — Handoff para a Equipe Principal (2026-10-06)
+
+**Branch:** `feat/v1.5-evolucao` (pushed para `origin`). Último commit: `0fdfb39`.
+**Verificação no commit:** `go vet .` ✅ · `go build -o sci.exe .` ✅ · `go test .` ✅ (suite completa).
+
+### ✅ Entregue nesta rodada (commits `08dab2c` → `0fdfb39`)
+- **Material v1.5:** carga por setor, garagem com fichas de viatura (comentários/anexos, padrinho titular e substituto), conferência diária de material e "prontos" em PDF.
+- **Gestão unificada de setores** pelo gerente e correção da contagem de verificados na conferência.
+- **Deadlock SQLite** em `hUsuariosList` corrigido (consulta aninhada dentro de `rows.Next()`).
+- **Bug — dropdown de funções só carregava após F5:** `validarCredenciais` (`auth.go`) não preenchia `Usuario.Papeis` no login; agora preenche via `PapeisDoUsuario`.
+- **Bug — gerente recebia "gerente só edita membros do próprio grupo ou subordinados"** ao designar chefe de setor: `hUsuarioEdit` (`server.go`) exigia alvo com papel base `operador`/`chefe_setor`. A regra agora é apenas de escopo (próprio grupo ou subordinados ativos).
+- **Menu lateral (`web/core.js`) reordenado:** Mural de Avisos → Relatórios → Mensagens → Drive → Conferência → Gerenciar Grupo (gerente) → Material.
+- **Módulos ocultos do menu:** Calendário, Escalas e Consciência Situacional (código e rotas preservados para versões futuras).
+
+### ⚠️ Pendências NÃO concluídas (solicitadas pelo usuário)
+| # | Item | Situação | Observações para quem assumir |
+|---|------|----------|-------------------------------|
+| P1 | **Aba "Funções" em Gerenciar Grupo** — atribuir usuários do grupo às funções *Encarregado de Pessoal* e *Encarregado de Material* (e auxiliares) | Não iniciado | Papéis são multi-contexto em `usuario_papeis` (`POST /api/usuarios/{id}/papeis`). Criar UI de seleção restrita a membros do grupo e validar no backend que o gerente só atribui dentro do próprio escopo. |
+| P2 | **Item "Pessoal" no menu** (Encarregado de Pessoal) entre Gerenciar Grupo e Material | Não iniciado | Hoje o Banco de Pessoal vive dentro de `#/grupos` (aba `gerPessoal`, `views_gestao.js`). Precisa de rota própria (ex.: `#/pessoal`) visível ao gerente e ao encarregado de pessoal. |
+| P3 | **Visibilidade do menu por função** — Relatórios (gerente), Conferência (gerente/enc. pessoal/chefe de setor/operadores), Material (enc. material/chefes de setor) | Parcial | O menu atual filtra apenas `admin` vs. demais, e `gerente` para Gerenciar Grupo. Falta filtrar por papel ativo conforme a especificação do usuário. |
+| P4 | **Modal de conferência transbordando** na Consciência Situacional (`window.abrirModalDetalhesConferencia`, `views_consciencia.js`) | Não corrigido | Módulo está oculto, mas a rota `#/consciencia` ainda é acessível por URL. Corrigir antes de reexibir (limitar largura/overflow do modal e da tabela interna). |
+| P5 | **Bloqueio de rotas ocultas** (`#/calendario`, `#/escalas`, `#/consciencia`) | Não feito | Só os itens de menu foram removidos; `rotear()` em `core.js` ainda as atende. Decidir se devem redirecionar para `rotaInicial()`. |
+| P6 | **Teste de regressão** para os dois bugs corrigidos (papéis no login; gerente editando membro com papel base ≠ operador) | Não escrito | Adicionar casos em `*_test.go` seguindo o padrão de `subordinacao_e_setores_test.go`. |
+
+### 🧠 Regras técnicas que a equipe precisa conhecer
+- **SQLite com `SetMaxOpenConns(1)`:** nunca execute `Query`/`QueryRow` enquanto um `*sql.Rows` estiver aberto — causa deadlock imediato. Colete IDs, feche `rows` e só então consulte.
+- **Cache-busting do frontend:** ao alterar arquivos em `web/`, incremente o `?v=` correspondente em `web/index.html`.
+- **Papel ativo vs. papel base:** `usuarios.papel` é o papel base; o contexto ativo vem de `sessoes.papel_ativo_id` → `usuario_papeis`. Validações de permissão devem usar o papel ativo do solicitante e o escopo de grupo do alvo.
