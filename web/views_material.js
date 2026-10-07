@@ -18,24 +18,27 @@
 
     const app = document.getElementById('app');
     const abas = [
-      ['balcao', '⚡ Balcão de Cautela Express'],
+      ['balcao', '⚡ Balcão Express'],
       ['inventario', '📦 Inventário & Carga'],
-      ['historico', '📜 Histórico de Cautelas & Anexos']
+      ['garagem', '🚘 Garagem & Frota'],
+      ['conferencia', '🎯 Check Diário (Pronto)'],
+      ['historico', '📜 Histórico de Cautelas']
     ];
 
     app.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin-bottom:16px">
         <div>
           <h2 style="margin:0 0 4px">Reserva de Material, Armaria & Cautelas</h2>
-          <p style="color:var(--tx2); font-size:13px; margin:0">Controle de carga, armamento, viaturas, chaves e cautelas com escaneamento de fichas.</p>
+          <p style="color:var(--tx2); font-size:13px; margin:0">Controle de carga por setor, viaturas, chaves, check diário e relatórios de pronto.</p>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="acao-linha" id="btResponsaveisMaterial" title="Definir Encarregado e Auxiliar de Material por Setor">👤 Encarregados</button>
           <button class="acao-linha" id="btImprimirInventario" style="color:var(--verde-claro)">📄 Imprimir Inventário</button>
           <button class="acao-linha" id="btAjudaScanner" title="Guia de uso de leitores de código e câmera">❓ Ajuda</button>
           <button class="acao-linha" id="btScannerMaterial">📷 Escanear QR / Código</button>
-          <button class="acao-linha" id="btNovoItemMaterial">+ Novo Item / Bem</button>
+          <button class="acao-linha" id="btNovoItemMaterial">+ Novo Item / Viatura</button>
           <button class="primario" id="btIniciarCautelaTopo" style="box-shadow: 0 4px 14px rgba(16,185,129,0.35)">
-            ⚡ Iniciar Nova Cautela
+            ⚡ Iniciar Cautela
           </button>
         </div>
       </div>
@@ -60,6 +63,7 @@
       };
     });
 
+    $('#btResponsaveisMaterial').onclick = () => modalGerenciarResponsaveis();
     $('#btImprimirInventario').onclick = () => window.open('/api/material/inventario/pdf', '_blank');
     $('#btAjudaScanner').onclick = () => modalAjudaScanner();
     $('#btScannerMaterial').onclick = () => modalScannerMaterial();
@@ -70,6 +74,8 @@
 
     if (abaMat === 'balcao') await renderBalcao();
     else if (abaMat === 'inventario') await renderInventario();
+    else if (abaMat === 'garagem') await renderGaragem();
+    else if (abaMat === 'conferencia') await renderConferenciasMaterial();
     else await renderHistorico();
   };
 
@@ -235,8 +241,12 @@
   /* ---------- Aba 2: Inventário Completo ---------- */
   async function renderInventario() {
     const cont = $('#matConteudo');
-    const [catsRes] = await Promise.all([api('/api/material/categorias')]);
+    const [catsRes, setoresRes] = await Promise.all([
+      api('/api/material/categorias'),
+      api('/api/catalogo/setores')
+    ]);
     const cats = catsRes.categorias || [];
+    const setores = (setoresRes.itens || []).filter(s => s.ativo);
 
     // Separar itens controlados (agrupados por modelo/nome) e convencionais
     const ctrlGrupos = {};
@@ -397,16 +407,23 @@
       <div class="cartao">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:12px">
           <div class="form-linha" style="flex:1; margin:0; flex-wrap:wrap; gap:8px">
-            <div class="campo" style="flex:2; min-width:200px; margin:0">
-              <input id="fBuscaInv" placeholder="Buscar por nome, patrimônio, série, sensibilidade…">
+            <div class="campo" style="flex:2; min-width:180px; margin:0">
+              <input id="fBuscaInv" placeholder="Buscar por nome, patrimônio, série, setor…">
             </div>
-            <div class="campo" style="flex:1; min-width:160px; margin:0">
+            <div class="campo" style="flex:1; min-width:150px; margin:0">
+              <select id="fSetorInv">
+                <option value="">Todos os Setores (Carga Global)</option>
+                <option value="0">Carga Geral da Unidade</option>
+                ${setores.map(s => `<option value="${s.id}">${esc(s.nome)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo" style="flex:1; min-width:150px; margin:0">
               <select id="fCatInv">
                 <option value="">Todas as categorias</option>
                 ${cats.map(c => `<option value="${c.nome}">${esc(c.nome)}</option>`).join('')}
               </select>
             </div>
-            <div class="campo" style="flex:1; min-width:160px; margin:0">
+            <div class="campo" style="flex:1; min-width:150px; margin:0">
               <select id="fStatusInv">
                 <option value="ativos">Itens Ativos (Ocultar Baixados)</option>
                 <option value="">Todos os Itens (inclusive baixados)</option>
@@ -433,6 +450,7 @@
                 <th>Patrimônio</th>
                 <th>Descrição do Item</th>
                 <th>Categoria</th>
+                <th>Setor (Carga)</th>
                 <th>Sensibilidade</th>
                 <th>Qtd / Série</th>
                 <th>Status</th>
@@ -486,10 +504,12 @@
       const q = ($('#fBuscaInv').value || '').trim().toLowerCase();
       const cat = ($('#fCatInv').value || '').trim().toLowerCase();
       const stFiltro = ($('#fStatusInv').value || '').trim();
+      const setorFiltro = ($('#fSetorInv') ? $('#fSetorInv').value : '').trim();
 
       document.querySelectorAll('#tabInventario tbody tr').forEach(tr => {
         const txt = tr.dataset.texto || '';
         const st = tr.dataset.status || '';
+        const sId = tr.dataset.setor || '';
 
         let okStatus = true;
         if (stFiltro === 'ativos') {
@@ -498,13 +518,19 @@
           okStatus = (st === stFiltro);
         }
 
-        const ok = okStatus && (!q || txt.includes(q)) && (!cat || txt.includes(cat));
+        let okSetor = true;
+        if (setorFiltro !== '') {
+          okSetor = (sId === setorFiltro);
+        }
+
+        const ok = okStatus && okSetor && (!q || txt.includes(q)) && (!cat || txt.includes(cat));
         tr.style.display = ok ? '' : 'none';
       });
       atualizarBotoesLote();
     };
 
     $('#fBuscaInv').oninput = filtrar;
+    if ($('#fSetorInv')) $('#fSetorInv').onchange = filtrar;
     $('#fCatInv').onchange = filtrar;
     $('#fStatusInv').onchange = filtrar;
     filtrar(); // Aplica filtro inicial (ocultando baixados por padrão)
@@ -1047,30 +1073,38 @@
   }
 
   async function modalNovoItem(itemEdicao, onConcluido, itemDuplicar = null) {
-    const catsRes = await api('/api/material/categorias');
+    const [catsRes, setoresRes, pessoasRes] = await Promise.all([
+      api('/api/material/categorias'),
+      api('/api/catalogo/setores'),
+      api('/api/pessoas')
+    ]);
     const cats = (catsRes.categorias || []).filter(c => c.ativo);
+    const setores = (setoresRes.itens || []).filter(s => s.ativo);
+    const pessoas = (pessoasRes.pessoas || []).filter(p => p.status === 'ativo')
+      .sort((a, b) => (a.nome_guerra || '').localeCompare(b.nome_guerra || '', 'pt-BR'));
 
     const base = itemEdicao || itemDuplicar || {};
+    const viatBase = base.viatura || {};
     const ehDuplicacao = !!itemDuplicar;
     const sensPadrao = base.sensibilidade || (base.nivel_sensibilidade === 'restrito' || base.nivel_sensibilidade === 'sensivel' ? 'controlado' : 'convencional');
     const qtdPadrao = sensPadrao === 'controlado' ? 1 : (base.quantidade || 1);
 
-    const tituloModal = itemEdicao ? 'Editar Item do Inventário' : (ehDuplicacao ? 'Duplicar Item (Novo Registro)' : 'Cadastrar Novo Item');
+    const tituloModal = itemEdicao ? 'Editar Item / Viatura' : (ehDuplicacao ? 'Duplicar Item (Novo Registro)' : 'Cadastrar Novo Item / Viatura');
 
     const html = `
-      <div class="modal" style="max-width:540px">
+      <div class="modal" style="max-width:580px; max-height:88vh; overflow-y:auto">
         <h3 style="margin-top:0">${tituloModal}</h3>
 
         <div class="form-linha" style="margin-bottom:8px">
           <div class="campo" style="flex:1">
-            <label>Nome / Descrição do Item *</label>
-            <input id="mItemNome" value="${esc(base.nome || '')}" placeholder="ex.: Fuzil 7,62mm FAL ou Cobertor de Lã">
+            <label>Nome / Descrição do Item ou Viatura *</label>
+            <input id="mItemNome" value="${esc(base.nome || '')}" placeholder="ex.: Viatura Marruá 3/4 Ton ou FAL 7,62mm">
           </div>
-          <div class="campo" style="max-width:200px">
+          <div class="campo" style="max-width:180px">
             <label>Sensibilidade *</label>
             <select id="mItemSensibilidade">
-              <option value="convencional" ${sensPadrao === 'convencional' ? 'selected' : ''}>Convencional (Quantitativo)</option>
-              <option value="controlado" ${sensPadrao === 'controlado' ? 'selected' : ''}>Controlado (Individual)</option>
+              <option value="convencional" ${sensPadrao === 'convencional' ? 'selected' : ''}>Convencional</option>
+              <option value="controlado" ${sensPadrao === 'controlado' ? 'selected' : ''}>Controlado</option>
             </select>
           </div>
         </div>
@@ -1083,8 +1117,15 @@
               ${cats.map(c => `<option value="${c.id}" ${base.categoria_id === c.id ? 'selected' : ''}>${esc(c.nome)}</option>`).join('')}
             </select>
           </div>
-          <div class="campo" id="cQtd" style="max-width:140px; display:${sensPadrao === 'convencional' ? 'block' : 'none'}">
-            <label>Quantidade *</label>
+          <div class="campo" style="flex:1">
+            <label>Setor Responsável (Carga)</label>
+            <select id="mItemSetor">
+              <option value="">Carga Geral da Unidade</option>
+              ${setores.map(s => `<option value="${s.id}" ${base.setor_id === s.id ? 'selected' : ''}>${esc(s.nome)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="campo" id="cQtd" style="max-width:100px; display:${sensPadrao === 'convencional' ? 'block' : 'none'}">
+            <label>Quantidade</label>
             <input id="mItemQtd" type="number" min="1" value="${qtdPadrao}">
           </div>
         </div>
@@ -1100,13 +1141,59 @@
           </div>
         </div>
 
+        <!-- Seção Específica para Viaturas / Garagem -->
+        <div id="blocoViatura" style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:10px; margin-bottom:10px">
+          <b style="font-size:12.5px; color:var(--azul-claro)">🚘 Dados de Frota / Garagem (Opcional)</b>
+          <div class="form-linha" style="margin:6px 0">
+            <div class="campo" style="flex:1">
+              <label>Placa da Viatura</label>
+              <input id="mItemPlaca" value="${esc(viatBase.placa || '')}" placeholder="ex.: EB-1234">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Renavam / Registro</label>
+              <input id="mItemRenavam" value="${esc(viatBase.renavam || '')}" placeholder="ex.: 00987654321">
+            </div>
+          </div>
+          <div class="form-linha" style="margin:6px 0">
+            <div class="campo" style="flex:1">
+              <label>Padrinho Titular (Membro do Pessoal)</label>
+              <select id="mItemPadTit">
+                <option value="">— Nenhum padrinho —</option>
+                ${pessoas.map(p => `<option value="${p.id}" ${viatBase.padrinho_titular_id === p.id ? 'selected' : ''}>${esc(p.nome_guerra)} (${esc(p.nome_completo)})</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Padrinho Substituto</label>
+              <select id="mItemPadSub">
+                <option value="">— Nenhum padrinho —</option>
+                ${pessoas.map(p => `<option value="${p.id}" ${viatBase.padrinho_substituto_id === p.id ? 'selected' : ''}>${esc(p.nome_guerra)} (${esc(p.nome_completo)})</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="form-linha" style="margin:6px 0">
+            <div class="campo" style="flex:1">
+              <label>Hodômetro Atual (km)</label>
+              <input type="number" id="mItemHodometro" value="${viatBase.hodometro_atual || 0}">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Nível de Combustível</label>
+              <select id="mItemCombustivel">
+                <option value="cheio" ${viatBase.combustivel_atual === 'cheio' ? 'selected' : ''}>Tanque Cheio</option>
+                <option value="3/4" ${viatBase.combustivel_atual === '3/4' ? 'selected' : ''}>3/4 do Tanque</option>
+                <option value="1/2" ${viatBase.combustivel_atual === '1/2' ? 'selected' : ''}>1/2 Tanque</option>
+                <option value="1/4" ${viatBase.combustivel_atual === '1/4' ? 'selected' : ''}>1/4 (Reserva)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div class="form-linha" style="margin-bottom:8px">
           <div class="campo" style="flex:1">
             <label>Status</label>
             <select id="mItemStatus">
-              <option value="disponivel" ${base.status === 'disponivel' || !base.status ? 'selected' : ''}>Disponível na Reserva</option>
-              <option value="manutencao" ${base.status === 'manutencao' ? 'selected' : ''}>Em Manutenção</option>
-              <option value="acautelado" ${base.status === 'acautelado' ? 'selected' : ''}>Acautelado</option>
+              <option value="disponivel" ${base.status === 'disponivel' || !base.status ? 'selected' : ''}>Disponível na Reserva / Garagem</option>
+              <option value="manutencao" ${base.status === 'manutencao' ? 'selected' : ''}>Em Manutenção / Oficina</option>
+              <option value="acautelado" ${base.status === 'acautelado' ? 'selected' : ''}>Acautelado / Em Missão</option>
               <option value="baixado" ${base.status === 'baixado' ? 'selected' : ''}>Baixado / Inativo</option>
             </select>
           </div>
@@ -1114,7 +1201,7 @@
 
         <div class="campo" style="margin-bottom:14px">
           <label>Observações Adicionais</label>
-          <input id="mItemObs" value="${esc(base.observacao || '')}" placeholder="ex.: Detalhes, acessórios inclusos, lote, etc.">
+          <input id="mItemObs" value="${esc(base.observacao || '')}" placeholder="ex.: Acessórios, ferramentas, histórico, etc.">
         </div>
 
         <div style="display:flex; justify-content:flex-end; gap:8px">
@@ -1150,11 +1237,19 @@
       const nome = m.querySelector('#mItemNome').value.trim();
       const cod = m.querySelector('#mItemCod').value.trim();
       const catId = +m.querySelector('#mItemCat').value || null;
+      const setorId = +m.querySelector('#mItemSetor').value || null;
       const serie = m.querySelector('#mItemSerie').value.trim();
       const status = m.querySelector('#mItemStatus').value;
       const sens = selSens.value;
       const qtd = sens === 'controlado' ? 1 : Math.max(1, parseInt(m.querySelector('#mItemQtd').value, 10) || 1);
       const obs = m.querySelector('#mItemObs').value.trim();
+
+      const placa = m.querySelector('#mItemPlaca').value.trim();
+      const renavam = m.querySelector('#mItemRenavam').value.trim();
+      const padTit = +m.querySelector('#mItemPadTit').value || null;
+      const padSub = +m.querySelector('#mItemPadSub').value || null;
+      const hodometro = parseInt(m.querySelector('#mItemHodometro').value, 10) || 0;
+      const combustivel = m.querySelector('#mItemCombustivel').value;
 
       if (!nome) {
         toast('Nome do item é obrigatório', 'erro');
@@ -1171,6 +1266,7 @@
           body: JSON.stringify({
             id: itemEdicao ? itemEdicao.id : 0,
             grupo_id: itemEdicao ? itemEdicao.grupo_id : null,
+            setor_id: setorId,
             categoria_id: catId,
             nome: nome,
             codigo_patrimonio: cod,
@@ -1178,7 +1274,13 @@
             status: status,
             sensibilidade: sens,
             quantidade: qtd,
-            observacao: obs
+            observacao: obs,
+            placa: placa,
+            renavam: renavam,
+            padrinho_titular_id: padTit,
+            padrinho_substituto_id: padSub,
+            hodometro_atual: hodometro,
+            combustivel_atual: combustivel
           })
         });
         toast(itemEdicao ? 'Item atualizado com sucesso!' : 'Item cadastrado com sucesso!');
@@ -1382,6 +1484,677 @@
       </div>
     `;
     modal(html);
+  }
+
+  /* =====================================================================
+     ABA 3: GARAGEM & FROTA (FICHAS DE VIATURAS, PADRINHOS E DOSSIÊS) (v1.5)
+     ===================================================================== */
+  async function renderGaragem() {
+    const cont = $('#matConteudo');
+    cont.innerHTML = '<div class="carregando">Carregando frota de viaturas…</div>';
+
+    try {
+      const res = await api('/api/material/itens?garagem=1');
+      const viaturas = res.itens || [];
+
+      cont.innerHTML = `
+        <div class="cartao">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
+            <div>
+              <h3 style="margin:0">🚘 Garagem de Viaturas & Controle de Frota</h3>
+              <p style="color:var(--tx2); font-size:12.5px; margin:4px 0 0">Gestão de viaturas operacionais e administrativas, padrinhos e histórico de manutenção.</p>
+            </div>
+            <div style="display:flex; gap:8px">
+              <button class="primario" id="btNovaViatura">+ Cadastrar Viatura</button>
+            </div>
+          </div>
+
+          <div class="rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th>Viatura / Modelo</th>
+                  <th>Placa / Chassi</th>
+                  <th>Setor Responsável</th>
+                  <th>Padrinhos (Titular / Substituto)</th>
+                  <th>Hodômetro / Combustível</th>
+                  <th>Situação</th>
+                  <th style="text-align:right">Dossiê & Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${viaturas.length ? viaturas.map(v => {
+                  const viat = v.viatura || {};
+                  const st = v.status || 'disponivel';
+                  const stBadge = st === 'disponivel'
+                    ? '<span style="color:var(--verde-claro); font-weight:700">PRONTA (GARAGEM)</span>'
+                    : (st === 'acautelado'
+                        ? '<span style="color:var(--ambar-txt); font-weight:700">EM MISSÃO / FORA</span>'
+                        : '<span style="color:var(--tx3); font-weight:700">OFICINA / MANUT</span>');
+
+                  const padrinhosTxt = viat.padrinho_titular_nome
+                    ? `<b>${esc(viat.padrinho_titular_nome)}</b> (Titular)<br><small style="color:var(--tx3)">Subst: ${esc(viat.padrinho_substituto_nome || '—')}</small>`
+                    : '<span style="color:var(--tx3); font-style:italic">Sem padrinho designado</span>';
+
+                  return `
+                    <tr>
+                      <td>
+                        <b>${esc(v.nome)}</b><br>
+                        <small style="color:var(--tx3)">PAT: #${esc(v.codigo_patrimonio)}</small>
+                      </td>
+                      <td>
+                        <b style="color:var(--azul-claro)">${esc(viat.placa || 'Sem Placa')}</b><br>
+                        <small style="color:var(--tx3)">${esc(viat.renavam || '—')}</small>
+                      </td>
+                      <td>${esc(v.setor_nome || 'Carga Geral')}</td>
+                      <td>${padrinhosTxt}</td>
+                      <td>
+                        ${viat.hodometro_atual ? viat.hodometro_atual + ' km' : '—'}<br>
+                        <small style="color:var(--tx3)">Tanque: ${esc(viat.combustivel_atual || 'cheio')}</small>
+                      </td>
+                      <td>${stBadge}</td>
+                      <td style="text-align:right; white-space:nowrap">
+                        <button class="primario" style="font-size:12px; padding:4px 10px; margin-right:4px" data-fichaviat="${v.id}">
+                          📂 Ficha & Dossiê
+                        </button>
+                        <button class="acao-linha" style="font-size:12px; padding:4px 8px" data-edititem="${v.id}">
+                          ✏️ Editar
+                        </button>
+                      </td>
+                    </tr>
+                  `;
+                }).join('') : '<tr><td colspan="7"><span class="vazio">Nenhuma viatura cadastrada na garagem.</span></td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+
+      $('#btNovaViatura').onclick = () => modalNovoItem(null, () => renderGaragem());
+
+      cont.querySelectorAll('button[data-fichaviat]').forEach(b => {
+        b.onclick = () => {
+          const id = +b.dataset.fichaviat;
+          modalFichaViatura(id);
+        };
+      });
+
+      cont.querySelectorAll('button[data-edititem]').forEach(b => {
+        b.onclick = () => {
+          const id = +b.dataset.edititem;
+          const it = viaturas.find(x => x.id === id);
+          if (it) modalNovoItem(it, () => renderGaragem());
+        };
+      });
+
+    } catch (e) {
+      cont.innerHTML = '<span class="vazio">Falha ao carregar garagem de viaturas.</span>';
+    }
+  }
+
+  /* ---------- Modal: Ficha da Viatura (Dossiê, Anexos, Comentários) ---------- */
+  async function modalFichaViatura(itemId) {
+    const [itensRes, anexosRes, comRes] = await Promise.all([
+      api('/api/material/itens'),
+      api(`/api/material/itens/${itemId}/anexos`),
+      api(`/api/material/itens/${itemId}/comentarios`)
+    ]);
+
+    const item = (itensRes.itens || []).find(x => x.id === itemId);
+    if (!item) {
+      alerta('Viatura não localizada.');
+      return;
+    }
+
+    const viat = item.viatura || {};
+    const anexos = anexosRes.anexos || [];
+    const comentarios = comRes.comentarios || [];
+
+    const html = `
+      <div class="modal" style="max-width:680px; max-height:88vh; display:flex; flex-direction:column">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
+          <div>
+            <h3 style="margin:0">🚘 Dossiê da Viatura: ${esc(item.nome)}</h3>
+            <p style="color:var(--tx2); font-size:12.5px; margin:2px 0 0">
+              Placa: <b style="color:var(--azul-claro)">${esc(viat.placa || '—')}</b> · 
+              Patrimônio: #${esc(item.codigo_patrimonio)} · 
+              Setor: <b>${esc(item.setor_nome || 'Carga Geral')}</b>
+            </p>
+          </div>
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">✕</button>
+        </div>
+
+        <!-- Cartões de Padrinhos e Status -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px">
+          <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:10px">
+            <span style="font-size:11px; color:var(--tx3); text-transform:uppercase; font-weight:700">Padrinho Titular</span>
+            <div style="font-size:14px; font-weight:700; margin-top:2px">
+              ${esc(viat.padrinho_titular_nome || 'Nenhum definido')}
+            </div>
+            <span style="font-size:11px; color:var(--tx3); text-transform:uppercase; font-weight:700; margin-top:6px; display:inline-block">Padrinho Substituto</span>
+            <div style="font-size:13px; font-weight:600">
+              ${esc(viat.padrinho_substituto_nome || 'Nenhum definido')}
+            </div>
+          </div>
+
+          <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:10px">
+            <span style="font-size:11px; color:var(--tx3); text-transform:uppercase; font-weight:700">Hodômetro & Combustível</span>
+            <div style="font-size:14px; font-weight:700; margin-top:2px">
+              ${viat.hodometro_atual ? viat.hodometro_atual + ' km' : 'Não lançado'}
+            </div>
+            <div style="font-size:12px; color:var(--tx2); margin-top:4px">
+              Nível do Tanque: <b>${esc(viat.combustivel_atual || 'cheio')}</b>
+            </div>
+          </div>
+        </div>
+
+        <div style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:16px">
+          
+          <!-- Seção de Arquivos e Textos Anexos -->
+          <div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px">
+              <b style="font-size:13.5px">📄 Arquivos & Documentos do Veículo (${anexos.length})</b>
+              <label class="acao-linha" style="font-size:12px; padding:3px 8px; cursor:pointer">
+                + Anexar Documento
+                <input type="file" id="inpAnexoViatura" style="display:none">
+              </label>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px">
+              ${anexos.length ? anexos.map(a => `
+                <div style="display:flex; justify-content:space-between; align-items:center; background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:6px 10px">
+                  <div>
+                    <b style="font-size:12.5px">${esc(a.nome_arquivo)}</b>
+                    <small style="color:var(--tx3); margin-left:6px">${(a.tamanho/1024).toFixed(1)} KB · ${(a.criado_em || '').slice(0,16).replace('T',' ')}</small>
+                  </div>
+                  <div style="display:flex; gap:4px">
+                    <a href="/api/material/item-anexos/${a.id}" target="_blank" class="primario" style="font-size:11px; padding:2px 8px">Baixar</a>
+                    <button class="acao-linha perigo" style="font-size:11px; padding:2px 6px" data-delanexoviat="${a.id}">✕</button>
+                  </div>
+                </div>
+              `).join('') : '<div class="vazio" style="padding:10px">Nenhum documento ou CRLV anexado.</div>'}
+            </div>
+          </div>
+
+          <!-- Seção de Comentários / Manutenções -->
+          <div>
+            <b style="font-size:13.5px">📝 Diário de Bordo & Comentários Técnicos</b>
+            <div style="display:flex; gap:6px; margin:8px 0">
+              <input id="inpComentarioViatura" placeholder="Anotar alteração, revisão, troca de óleo ou observação técnica…" style="flex:1">
+              <button class="primario" id="btAddComentarioViatura" style="font-size:12px">Adicionar</button>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto">
+              ${comentarios.length ? comentarios.map(c => `
+                <div style="background:var(--painel2); border-left:3px solid var(--azul-claro); border-radius:4px; padding:8px 10px; font-size:12.5px">
+                  <div style="display:flex; justify-content:space-between; color:var(--tx3); font-size:11px; margin-bottom:2px">
+                    <b>@${esc(c.operador)}</b>
+                    <span>${(c.criado_em || '').slice(0,16).replace('T',' ')}</span>
+                  </div>
+                  <div style="color:var(--tx)">${esc(c.texto)}</div>
+                </div>
+              `).join('') : '<div class="vazio" style="padding:10px">Nenhum comentário registrado no histórico.</div>'}
+            </div>
+          </div>
+
+        </div>
+
+        <div style="text-align:right; margin-top:14px; border-top:1px solid var(--borda); padding-top:10px">
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Fechar Dossiê</button>
+        </div>
+      </div>
+    `;
+
+    const m = modal(html);
+
+    // Upload de anexo
+    const inpFile = m.querySelector('#inpAnexoViatura');
+    inpFile.onchange = () => {
+      const f = inpFile.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          await api(`/api/material/itens/${itemId}/anexos`, {
+            method: 'POST',
+            body: JSON.stringify({
+              nome_arquivo: f.name,
+              tipo_mime: f.type,
+              tamanho: f.size,
+              dados_base64: reader.result
+            })
+          });
+          toast('Documento anexado com sucesso!');
+          m.remove();
+          modalFichaViatura(itemId);
+        } catch (e) {}
+      };
+      reader.readAsDataURL(f);
+    };
+
+    // Exclusão de anexo
+    m.querySelectorAll('button[data-delanexoviat]').forEach(b => {
+      b.onclick = async () => {
+        const anexoId = +b.dataset.delanexoviat;
+        if (!(await confirmar('Excluir este anexo?'))) return;
+        try {
+          await api(`/api/material/item-anexos/${anexoId}`, { method: 'DELETE' });
+          toast('Anexo removido');
+          m.remove();
+          modalFichaViatura(itemId);
+        } catch (e) {}
+      };
+    });
+
+    // Inserção de comentário
+    const inpTxt = m.querySelector('#inpComentarioViatura');
+    m.querySelector('#btAddComentarioViatura').onclick = async () => {
+      const t = inpTxt.value.trim();
+      if (!t) return;
+      try {
+        await api(`/api/material/itens/${itemId}/comentarios`, {
+          method: 'POST',
+          body: JSON.stringify({ texto: t })
+        });
+        toast('Comentário registrado');
+        m.remove();
+        modalFichaViatura(itemId);
+      } catch (e) {}
+    };
+  }
+
+  /* =====================================================================
+     ABA 4: CHECK DIÁRIO DE MATERIAL (CONFERÊNCIA & PRONTO DE MATERIAL) (v1.5)
+     ===================================================================== */
+  async function renderConferenciasMaterial() {
+    const cont = $('#matConteudo');
+    cont.innerHTML = '<div class="carregando">Carregando conferências de material…</div>';
+
+    try {
+      const [confRes, setoresRes] = await Promise.all([
+        api('/api/material/conferencias'),
+        api('/api/catalogo/setores')
+      ]);
+
+      const lista = confRes.conferencias || [];
+      const setores = (setoresRes.itens || []).filter(s => s.ativo);
+
+      cont.innerHTML = `
+        <div class="cartao">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:14px">
+            <div>
+              <h3 style="margin:0">🎯 Check Diário de Material & Prontos da Reserva</h3>
+              <p style="color:var(--tx2); font-size:12.5px; margin:4px 0 0">
+                Rotina diária de verificação física do acervo por setor, bipagem e homologação de Prontos oficiais.
+              </p>
+            </div>
+            <div style="display:flex; gap:8px">
+              <button class="primario" id="btIniciarCheckDiario" style="box-shadow: 0 4px 14px rgba(16,185,129,0.35)">
+                + Iniciar Novo Check Diário
+              </button>
+            </div>
+          </div>
+
+          <div class="rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Setor Auditado</th>
+                  <th>Responsáveis (Encarregado / Auxiliar)</th>
+                  <th>Progresso / Itens</th>
+                  <th>Status</th>
+                  <th style="text-align:right">Ações & Relatório</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${lista.length ? lista.map(c => {
+                  const fechada = c.status === 'fechada';
+                  const stBadge = fechada
+                    ? '<span style="color:var(--verde-claro); font-weight:700">CONCLUÍDO (PRONTO)</span>'
+                    : '<span style="color:var(--ambar-txt); font-weight:700">EM ANDAMENTO</span>';
+
+                  const respTxt = c.encarregado_nome_guerra
+                    ? `<b>${esc(c.encarregado_nome_guerra)}</b><br><small style="color:var(--tx3)">Aux: ${esc(c.auxiliar_nome_guerra || '—')}</small>`
+                    : '<small style="color:var(--tx3)">Sem designação formal</small>';
+
+                  return `
+                    <tr>
+                      <td>
+                        <b>${c.data}</b><br>
+                        <small style="color:var(--tx3)">Aberta por: ${esc(c.aberta_por)}</small>
+                      </td>
+                      <td><b>${esc(c.setor_nome || 'Carga Geral')}</b></td>
+                      <td>${respTxt}</td>
+                      <td>
+                        <b>${c.itens_presentes + c.itens_acautelados} / ${c.total_itens}</b> verificados<br>
+                        <small style="color:var(--tx3)">(${c.itens_presentes} presentes, ${c.itens_acautelados} cautelados)</small>
+                      </td>
+                      <td>${stBadge}</td>
+                      <td style="text-align:right; white-space:nowrap">
+                        ${!fechada ? `
+                          <button class="primario" style="font-size:12px; padding:4px 10px; margin-right:4px" data-executarcheck="${c.id}">
+                            📷 Bipar / Executar
+                          </button>
+                        ` : ''}
+                        <button class="acao-linha" style="font-size:12px; padding:4px 10px; color:var(--verde-claro)" data-verprontopdf="${c.id}">
+                          📄 Relatório de Pronto
+                        </button>
+                      </td>
+                    </tr>
+                  `;
+                }).join('') : '<tr><td colspan="6"><span class="vazio">Nenhum check diário realizado até o momento.</span></td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
+
+      $('#btIniciarCheckDiario').onclick = () => modalIniciarCheckDiario(setores);
+
+      cont.querySelectorAll('button[data-executarcheck]').forEach(b => {
+        b.onclick = () => {
+          const id = +b.dataset.executarcheck;
+          modalExecutarCheckDiario(id);
+        };
+      });
+
+      cont.querySelectorAll('button[data-verprontopdf]').forEach(b => {
+        b.onclick = () => {
+          const id = +b.dataset.verprontopdf;
+          window.open(`/api/material/conferencias/${id}/pronto.pdf`, '_blank');
+        };
+      });
+
+    } catch (e) {
+      cont.innerHTML = '<span class="vazio">Falha ao carregar conferências de material.</span>';
+    }
+  }
+
+  /* ---------- Modal: Iniciar Sessão de Check Diário ---------- */
+  function modalIniciarCheckDiario(setores) {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const html = `
+      <div class="modal" style="max-width:440px">
+        <h3 style="margin-top:0">🎯 Abrir Sessão de Check Diário</h3>
+        <p style="color:var(--tx2); font-size:13px">Selecione o setor da reserva para iniciar a contagem física e bipagem de carga.</p>
+
+        <div class="campo" style="margin-bottom:12px">
+          <label>Data de Referência *</label>
+          <input type="date" id="mCheckData" value="${hoje}">
+        </div>
+
+        <div class="campo" style="margin-bottom:16px">
+          <label>Setor / Carga *</label>
+          <select id="mCheckSetor">
+            <option value="">Carga Geral da Unidade</option>
+            ${setores.map(s => `<option value="${s.id}">${esc(s.nome)}</option>`).join('')}
+          </select>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px">
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
+          <button class="primario" id="btConfirmarAbrirCheck">Iniciar Conferência</button>
+        </div>
+      </div>
+    `;
+
+    const m = modal(html);
+    m.querySelector('#btConfirmarAbrirCheck').onclick = async () => {
+      const data = m.querySelector('#mCheckData').value;
+      const setorVal = m.querySelector('#mCheckSetor').value;
+      const setorId = setorVal ? +setorVal : null;
+
+      try {
+        const res = await api('/api/material/conferencias/iniciar', {
+          method: 'POST',
+          body: JSON.stringify({ data: data, setor_id: setorId })
+        });
+        toast('Sessão de Check Diário iniciada!');
+        m.remove();
+        modalExecutarCheckDiario(res.id);
+      } catch (e) {}
+    };
+  }
+
+  /* ---------- Modal: Executar / Bipar Check Diário ---------- */
+  async function modalExecutarCheckDiario(confId) {
+    const res = await api(`/api/material/conferencias/${confId}`);
+    const conf = res;
+    const itens = conf.itens || [];
+
+    const html = `
+      <div class="modal" style="max-width:820px; max-height:90vh; display:flex; flex-direction:column">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+          <div>
+            <h3 style="margin:0">🎯 Execução do Check Diário: ${esc(conf.setor_nome || 'Carga Geral')}</h3>
+            <p style="color:var(--tx2); font-size:12.5px; margin:2px 0 0">
+              Data: <b>${conf.data}</b> · 
+              Encarregado: <b>${esc(conf.encarregado_nome_guerra || '—')}</b> · 
+              Status: <span style="font-weight:700; text-transform:uppercase">${conf.status}</span>
+            </p>
+          </div>
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove(); renderConferenciasMaterial();">✕</button>
+        </div>
+
+        <!-- Área de Entrada Rápida de Bipagem -->
+        <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:10px; margin-bottom:12px">
+          <div style="display:flex; gap:8px">
+            <input id="inpBipCheck" placeholder="Mire o leitor ou digite o Cód. de Patrimônio (ex.: ARM-001)…" style="flex:1; font-size:14px; font-weight:700">
+            <button class="primario" id="btBiparCheck">Bipar Presente</button>
+          </div>
+          <div id="msgBipFeedback" style="font-size:12px; margin-top:4px; color:var(--tx3)">Aguardando leitura de patrimônio…</div>
+        </div>
+
+        <!-- Tabela de Itens da Conferência -->
+        <div class="rolagem" style="flex:1; overflow-y:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Patrimônio</th>
+                <th>Item / Descrição</th>
+                <th>Sensibilidade</th>
+                <th>Qtd Esperada</th>
+                <th>Situação Atual</th>
+                <th style="text-align:right">Ações Manuais</th>
+              </tr>
+            </thead>
+            <tbody id="tbItensCheck">
+              ${itens.map(it => {
+                let badge = '<span style="color:var(--tx3); font-weight:700">NÃO CONFERIDO</span>';
+                if (it.status === 'presente') badge = '<span style="color:var(--verde-claro); font-weight:700">PRONTO (PRESENTE)</span>';
+                else if (it.status === 'acautelado') badge = `<span style="color:var(--ambar-txt); font-weight:700">EM CAUTELA (${esc(it.cautela_responsavel || 'Militar')})</span>`;
+                else if (it.status === 'manutencao') badge = '<span style="color:var(--tx3); font-weight:700">MANUTENÇÃO</span>';
+
+                return `
+                  <tr data-itemid="${it.item_id}" data-cod="${esc(it.codigo_patrimonio)}">
+                    <td><b>#${esc(it.codigo_patrimonio)}</b></td>
+                    <td><b>${esc(it.nome)}</b></td>
+                    <td><span style="font-size:11px; text-transform:uppercase">${esc(it.sensibilidade || 'convencional')}</span></td>
+                    <td>${it.quantidade_esperada}</td>
+                    <td>${badge}</td>
+                    <td style="text-align:right; white-space:nowrap">
+                      <button class="primario" style="font-size:11px; padding:2px 6px" data-marcarstatus="presente">Presente</button>
+                      <button class="acao-linha" style="font-size:11px; padding:2px 6px" data-marcarstatus="ausente">Falta</button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Rodapé e Fechamento -->
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:12px; border-top:1px solid var(--borda); padding-top:10px">
+          <div>
+            <button class="acao-linha" onclick="window.open('/api/material/conferencias/${confId}/pronto.pdf', '_blank')">
+              📄 Visualizar Pronto (Rascunho)
+            </button>
+          </div>
+          <div style="display:flex; gap:8px">
+            <button class="acao-linha" onclick="this.closest('.modal-mask').remove(); renderConferenciasMaterial();">Salvar e Sair</button>
+            <button class="primario" id="btConcluirFecharCheck" style="background:var(--verde); border-color:var(--verde)">
+              ✅ Homologar & Fechar Check Diário
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const m = modal(html);
+    const inp = m.querySelector('#inpBipCheck');
+    const msg = m.querySelector('#msgBipFeedback');
+
+    const registrarLeitura = async (codigo, status = 'presente') => {
+      try {
+        const bipRes = await api(`/api/material/conferencias/${confId}/bipar`, {
+          method: 'POST',
+          body: JSON.stringify({ codigo_patrimonio: codigo, status: status })
+        });
+        msg.innerHTML = `<span style="color:var(--verde-claro)">✓ ${esc(bipRes.nome)} (#${esc(bipRes.codigo_patrimonio)}) marcado como PRESENTE!</span>`;
+        inp.value = '';
+        inp.focus();
+        // Recarregar modal
+        m.remove();
+        modalExecutarCheckDiario(confId);
+      } catch (err) {
+        msg.innerHTML = `<span style="color:var(--verm)">✕ Código '${esc(codigo)}' não localizado na carga deste setor.</span>`;
+      }
+    };
+
+    m.querySelector('#btBiparCheck').onclick = () => {
+      if (inp.value.trim()) registrarLeitura(inp.value.trim());
+    };
+
+    inp.onkeydown = (e) => {
+      if (e.key === 'Enter' && inp.value.trim()) {
+        e.preventDefault();
+        registrarLeitura(inp.value.trim());
+      }
+    };
+
+    m.querySelectorAll('button[data-marcarstatus]').forEach(b => {
+      b.onclick = () => {
+        const tr = b.closest('tr');
+        const cod = tr.dataset.cod;
+        const st = b.dataset.marcarstatus;
+        registrarLeitura(cod, st);
+      };
+    });
+
+    m.querySelector('#btConcluirFecharCheck').onclick = async () => {
+      if (!(await confirmar('Deseja realmente homologar e fechar a conferência diária? Após o fechamento, o Pronto oficial será emitido de forma imutável.'))) return;
+      try {
+        await api(`/api/material/conferencias/${confId}/fechar`, { method: 'POST' });
+        toast('Conferência diária concluída e homologada com sucesso!');
+        m.remove();
+        renderConferenciasMaterial();
+        window.open(`/api/material/conferencias/${confId}/pronto.pdf`, '_blank');
+      } catch (e) {}
+    };
+
+    setTimeout(() => inp.focus(), 150);
+  }
+
+  /* =====================================================================
+     MODAL: GERENCIAR ENCARREGADOS E AUXILIARES DE MATERIAL (v1.5)
+     ===================================================================== */
+  async function modalGerenciarResponsaveis() {
+    const [respRes, setoresRes, pessoasRes] = await Promise.all([
+      api('/api/material/responsaveis'),
+      api('/api/catalogo/setores'),
+      api('/api/pessoas')
+    ]);
+
+    const responsaveis = respRes.responsaveis || [];
+    const setores = (setoresRes.itens || []).filter(s => s.ativo);
+    const pessoas = (pessoasRes.pessoas || []).filter(p => p.status === 'ativo')
+      .sort((a, b) => (a.nome_guerra || '').localeCompare(b.nome_guerra || '', 'pt-BR'));
+
+    const html = `
+      <div class="modal" style="max-width:640px">
+        <h3 style="margin-top:0">👤 Designação de Encarregados de Material</h3>
+        <p style="color:var(--tx2); font-size:13px; margin-bottom:14px">
+          Defina os militares responsáveis pela carga de material do Grupo e de cada Setor (Encarregado e Auxiliar que assinam os Prontos).
+        </p>
+
+        <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:12px; margin-bottom:14px">
+          <div class="campo" style="margin-bottom:8px">
+            <label>Setor de Atribuição *</label>
+            <select id="mRespSetor">
+              <option value="">Carga Geral da Unidade</option>
+              ${setores.map(s => `<option value="${s.id}">${esc(s.nome)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-linha" style="margin-bottom:10px">
+            <div class="campo" style="flex:1">
+              <label>Encarregado de Material (Titular)</label>
+              <select id="mRespEnc">
+                <option value="">— Nenhum —</option>
+                ${pessoas.map(p => `<option value="${p.id}">${esc(p.nome_guerra)} (${esc(p.nome_completo)})</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Auxiliar do Encarregado</label>
+              <select id="mRespAux">
+                <option value="">— Nenhum —</option>
+                ${pessoas.map(p => `<option value="${p.id}">${esc(p.nome_guerra)} (${esc(p.nome_completo)})</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div style="text-align:right">
+            <button class="primario" id="btSalvarResponsavel">+ Salvar Designação</button>
+          </div>
+        </div>
+
+        <div class="rolagem">
+          <table>
+            <thead>
+              <tr>
+                <th>Setor / Carga</th>
+                <th>Encarregado</th>
+                <th>Auxiliar</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${responsaveis.length ? responsaveis.map(r => `
+                <tr>
+                  <td><b>${esc(r.setor_nome)}</b></td>
+                  <td><b>${esc(r.encarregado_nome_guerra || '—')}</b></td>
+                  <td>${esc(r.auxiliar_nome_guerra || '—')}</td>
+                </tr>
+              `).join('') : '<tr><td colspan="3"><span class="vazio">Nenhum responsável registrado.</span></td></tr>'}
+            </tbody>
+          </table>
+        </div>
+
+        <div style="text-align:right; margin-top:14px">
+          <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Fechar</button>
+        </div>
+      </div>
+    `;
+
+    const m = modal(html);
+    m.querySelector('#btSalvarResponsavel').onclick = async () => {
+      const sVal = m.querySelector('#mRespSetor').value;
+      const sid = sVal ? +sVal : null;
+      const eVal = m.querySelector('#mRespEnc').value;
+      const eid = eVal ? +eVal : null;
+      const aVal = m.querySelector('#mRespAux').value;
+      const aid = aVal ? +aVal : null;
+
+      try {
+        await api('/api/material/responsaveis', {
+          method: 'POST',
+          body: JSON.stringify({
+            setor_id: sid,
+            encarregado_id: eid,
+            auxiliar_encarregado_id: aid
+          })
+        });
+        toast('Encarregados salvos com sucesso!');
+        m.remove();
+        modalGerenciarResponsaveis();
+      } catch (e) {}
+    };
   }
 
 })();

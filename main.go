@@ -16,8 +16,8 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v1.5 = 29: + v29 Conferência por Setor e Sensibilidade de Material Convencional/Controlado). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 29
+// (v1.5 = 30: + v30 Material por Setor, Encarregados, Garagem/Viaturas com Padrinhos, Anexos, Comentários e Conferência Diária/Pronto). Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
+const versaoSchemaBinario = 30
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio

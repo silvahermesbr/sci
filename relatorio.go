@@ -1754,4 +1754,164 @@ func (a *App) gerarEscalaDiaPDF(d EscalaDiaPDF) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// ProntoMaterialDados reúne todas as informações necessárias para emitir o Pronto Diário de Material.
+type ProntoMaterialDados struct {
+	ConferenciaID int64
+	GrupoNome     string
+	SetorNome     string
+	Data          string
+	Status        string
+	AbertaEm      string
+	FechadaEm     string
+	OpAbertura    string
+	OpFechamento  string
+	Encarregado   string
+	Auxiliar      string
+	Totais        map[string]int
+	Itens         []map[string]any
+}
+
+// gerarProntoMaterialPDF produz o documento militar/institucional oficial de Pronto da Reserva de Material e Frota.
+func (a *App) gerarProntoMaterialPDF(d ProntoMaterialDados) ([]byte, error) {
+	T := cp1252Traduz.Replace
+	sub := fmt.Sprintf("Unidade: %s · Setor: %s · Data: %s", strings.ToUpper(d.GrupoNome), strings.ToUpper(d.SetorNome), fmtDataBR(d.Data))
+	pdf := a.novoPDF("P", "PRONTO DIARIO DE MATERIAL & RESERVA", sub, d.OpAbertura)
+
+	// 1. Resumo Situacional em Cards
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("1. CONFERÊNCIA FÍSICA E PRONTO OPERACIONAL"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	cards := [][2]string{
+		{"TOTAL CARGA", strconv.Itoa(d.Totais["total"])},
+		{"PRONTO (NA RESERVA)", strconv.Itoa(d.Totais["presente"])},
+		{"ACAUTELADO (FORA)", strconv.Itoa(d.Totais["acautelado"])},
+		{"AUSENTE / FALTA", strconv.Itoa(d.Totais["ausente"])},
+		{"OFICINA / MANUT", strconv.Itoa(d.Totais["manutencao"] + d.Totais["baixado"])},
+	}
+	yCards := pdf.GetY()
+	for i, c := range cards {
+		x := 14 + float64(i)*36.4
+		pdf.SetXY(x, yCards)
+		pdf.SetFillColor(248, 250, 252)
+		pdf.SetDrawColor(203, 213, 225)
+		pdf.Rect(x, yCards, 34.5, 13, "FD")
+
+		pdf.SetXY(x, yCards+1.5)
+		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(34.5, 3.5, T(c[0]), "", 0, "C", false, 0, "")
+
+		pdf.SetXY(x, yCards+5.5)
+		pdf.SetFont("Helvetica", "B", 11)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.CellFormat(34.5, 6, T(c[1]), "", 0, "C", false, 0, "")
+	}
+	pdf.SetY(yCards + 17)
+
+	// 2. Quadro Discriminado de Itens e Cautelas
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("2. RELAÇÃO NOMINAL DO ACERVO CONFERIDO"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	if len(d.Itens) == 0 {
+		pdf.SetFont("Helvetica", "I", 8.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(182, 8, T("Nenhum item contabilizado nesta conferência."), "1", 1, "C", false, 0, "")
+	} else {
+		col := []string{"Patrimônio", "Material / Descrição", "Categoria", "Tipo", "Situação no Check", "Posse / Cautela"}
+		larg := []float64{25, 52, 28, 22, 28, 27}
+		al := []string{"C", "L", "L", "C", "C", "L"}
+		pdfTabelaCabecalho(pdf, col, larg)
+
+		stLabels := map[string]string{
+			"presente":   "PRONTO (PRESENTE)",
+			"acautelado": "EM CAUTELA",
+			"ausente":    "NÃO ENCONTRADO",
+			"manutencao": "EM MANUTENÇÃO",
+			"baixado":    "BAIXADO / SUCATA",
+		}
+
+		for idx, it := range d.Itens {
+			if pdf.GetY() > 260 {
+				pdf.AddPage()
+				pdfTabelaCabecalho(pdf, col, larg)
+			}
+			st := str(it["status"])
+			if lbl, ok := stLabels[st]; ok {
+				st = lbl
+			}
+			sens := strings.ToUpper(str(it["sensibilidade"]))
+			if sens == "" {
+				sens = "CONVENCIONAL"
+			}
+			resp := str(it["responsavel"])
+			if resp == "" {
+				resp = "—"
+			}
+
+			vals := []string{
+				str(it["codigo_patrimonio"]),
+				str(it["nome"]),
+				str(it["categoria"]),
+				sens,
+				st,
+				resp,
+			}
+			pdfTabelaLinha(pdf, vals, larg, al, idx%2 == 1)
+		}
+	}
+
+	// 3. Bloco de Assinaturas (Encarregado e Auxiliar)
+	pdf.Ln(8)
+	if pdf.GetY() > 245 {
+		pdf.AddPage()
+	}
+
+	pdf.SetY(pdf.GetY() + 4)
+	wAssinatura := 80.0
+
+	// Assinatura 1: Encarregado
+	x1 := 18.0
+	pdf.SetDrawColor(148, 163, 184)
+	pdf.Line(x1, pdf.GetY()+12, x1+wAssinatura, pdf.GetY()+12)
+	pdf.SetXY(x1, pdf.GetY()+13)
+	nomeEnc := d.Encarregado
+	if nomeEnc == "" || nomeEnc == "—" {
+		nomeEnc = d.OpFechamento
+	}
+	pdf.SetFont("Helvetica", "B", 8.5)
+	pdf.SetTextColor(15, 23, 42)
+	pdf.CellFormat(wAssinatura, 4, T(nomeEnc), "", 1, "C", false, 0, "")
+	pdf.SetX(x1)
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(100, 116, 139)
+	pdf.CellFormat(wAssinatura, 3.5, T("Encarregado do Material"), "", 1, "C", false, 0, "")
+
+	// Assinatura 2: Auxiliar ou Oficial
+	x2 := 112.0
+	yBase := pdf.GetY() - 7.5
+	pdf.Line(x2, yBase+12, x2+wAssinatura, yBase+12)
+	pdf.SetXY(x2, yBase+13)
+	nomeAux := d.Auxiliar
+	if nomeAux == "" || nomeAux == "—" {
+		nomeAux = "Visto do Oficial de Dia"
+	}
+	pdf.SetFont("Helvetica", "B", 8.5)
+	pdf.SetTextColor(15, 23, 42)
+	pdf.CellFormat(wAssinatura, 4, T(nomeAux), "", 1, "C", false, 0, "")
+	pdf.SetX(x2)
+	pdf.SetFont("Helvetica", "", 7.5)
+	pdf.SetTextColor(100, 116, 139)
+	pdf.CellFormat(wAssinatura, 3.5, T("Auxiliar de Material / Conferente"), "", 1, "C", false, 0, "")
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 

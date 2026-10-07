@@ -910,6 +910,9 @@ function rotear() {
   // v9.14.2: hash pode carregar query (#/conferencia?id=7) — rotear pela BASE (antes de '?')
   const hBruto = location.hash || '';
   const h = hBruto.split('?')[0] || '';
+  if (h !== '#/conferencia' && typeof window.fecharStreamConferencia === 'function') {
+    window.fecharStreamConferencia();
+  }
   if (!ME) { viewLogin(); return; }
   montarShell(ME);
   const papel = ME.papel;

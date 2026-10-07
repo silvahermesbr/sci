@@ -156,6 +156,133 @@
   window.addEventListener('pagehide', descarregarPendentes);
   /* --- LISTAS (v9.14): #/hoje mostra SÓ as listas de conferências; a conferência
      em si fica em #/conferencia (botão Abrir). Abertas editáveis; fechadas = PDF. --- */
+  /* ================================================================
+     STREAMING EM TEMPO REAL DE CONFERÊNCIAS (SSE)
+     ================================================================ */
+  function fecharStreamConferencia() {
+    if (window.confStream) {
+      try { window.confStream.close(); } catch (e) {}
+      window.confStream = null;
+    }
+  }
+  window.fecharStreamConferencia = fecharStreamConferencia;
+
+  function iniciarStreamConferencia(confId) {
+    fecharStreamConferencia();
+    if (!confId) return;
+    try {
+      const es = new EventSource('/api/conferencia/' + confId + '/stream');
+      window.confStream = es;
+
+      es.onmessage = (ev) => {
+        if (!ev.data) return;
+        try {
+          const evento = JSON.parse(ev.data);
+          tratarEventoConferencia(evento);
+        } catch (e) {}
+      };
+
+      es.onerror = () => {
+        // EventSource reconecta automaticamente no caso de oscilações
+      };
+    } catch (e) {
+      console.warn('Conexão SSE de tempo real não pôde ser iniciada:', e);
+    }
+  }
+
+  function tratarEventoConferencia(ev) {
+    if (!C || !C.c || !ev || !ev.tipo) return;
+    if (ev.conferencia_id && C.c.id !== ev.conferencia_id) return;
+
+    if (ev.tipo === 'fechada') {
+      fecharStreamConferencia();
+      toast(`Conferência encerrada por outro operador (${ev.fechado_por || 'Comando'}).`, 'info');
+      location.hash = '#/hoje';
+      if (typeof rotear === 'function') rotear();
+      return;
+    }
+
+    if (ev.tipo === 'descartada') {
+      fecharStreamConferencia();
+      toast(`A conferência foi descartada por ${ev.usuario_nome || 'outro operador'}.`, 'aviso');
+      location.hash = '#/hoje';
+      if (typeof rotear === 'function') rotear();
+      return;
+    }
+
+    if (ev.tipo === 'setor_atualizado') {
+      if (C.setoresStatus) {
+        const s = C.setoresStatus.find(x => x.setor_id === ev.setor_id);
+        if (s) {
+          s.status = ev.status;
+        }
+      }
+      toast(`Setor atualizado em tempo real (${ev.status === 'concluida' ? 'Concluído' : 'Em andamento'}) por ${ev.usuario_nome || 'Operador'}`, 'info');
+      const bInp = $('#busca');
+      confRender(bInp ? bInp.value : '');
+      return;
+    }
+
+    if (ev.tipo === 'marcar') {
+      // Ignora evento disparado pelo próprio usuário logado para evitar repintura redundante
+      if (window.ME && ev.usuario_id && window.ME.id === ev.usuario_id) return;
+
+      const pid = ev.pessoa_id;
+      C.est[pid] = ev.situacao;
+      C.dest[pid] = ev.destino_id || null;
+      if (ev.observacao !== undefined && ev.observacao !== null) {
+        C.obs[pid] = ev.observacao;
+      }
+      if (ev.verificado) {
+        C.verif.add(pid);
+      } else {
+        C.verif.delete(pid);
+      }
+
+      // Atualizar no DOM se a linha da pessoa estiver visível
+      const elPessoa = document.querySelector(`.pessoa[data-id="${pid}"]`);
+      if (elPessoa) {
+        const chk = elPessoa.querySelector('.chk');
+        if (chk) {
+          chk.checked = !!ev.verificado;
+        }
+        elPessoa.classList.toggle('verificado', !!ev.verificado);
+
+        const selSit = elPessoa.querySelector('.sel-situacao');
+        if (selSit && selSit.value !== ev.situacao) {
+          selSit.value = ev.situacao;
+        }
+
+        const selDest = elPessoa.querySelector('.sel-destino');
+        if (selDest && ev.destino_id) {
+          selDest.value = String(ev.destino_id);
+        }
+
+        const smallInfo = elPessoa.querySelector('small');
+        if (smallInfo) {
+          const p = C.pessoas.find(x => x.id === pid);
+          if (p) {
+            smallInfo.innerHTML = `${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[pid] ? ' · 📝' : ''}${C.temComentario[pid] ? ' · 💬' : ''}`;
+          }
+        }
+
+        // Destaque visual suave de atualização em tempo real
+        elPessoa.style.transition = 'background-color 0.3s ease';
+        const bgAntigo = elPessoa.style.backgroundColor || '';
+        elPessoa.style.backgroundColor = 'rgba(16, 185, 129, 0.22)';
+        setTimeout(() => {
+          elPessoa.style.backgroundColor = bgAntigo;
+        }, 1200);
+      }
+
+      // Atualizar contador de verificados na barra fixa
+      const cont = document.querySelector('.barra-fixa .cont');
+      if (cont) {
+        cont.innerHTML = `<b>${C.verif.size}/${C.pessoas.length}</b> verificados`;
+      }
+    }
+  }
+
   window.ViewHoje = async function (modoTela) {
     navAtiva('#/hoje');
     $('#app').innerHTML = '<div class="carregando">Carregando conferências…</div>';
@@ -333,7 +460,8 @@
     }
     C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados, escaladosOntem, setoresStatus: d.setores_status || [] };
     confRender();
-    $('#btVoltar').onclick = () => { location.hash = '#/hoje'; };
+    iniciarStreamConferencia(C.c.id);
+    $('#btVoltar').onclick = () => { fecharStreamConferencia(); location.hash = '#/hoje'; };
     const btDesc = $('#btDescartar');
     if (btDesc) {
       btDesc.onclick = async () => {
@@ -457,6 +585,44 @@
           setorBadgeHeader = `<span style="font-size:11.5px;color:#ef4444;font-weight:600;padding:2px 8px;border-radius:12px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3)">❌ Não iniciada</span>`;
         }
       }
+
+      let jaInseriuDivisor = false;
+      const totalVerif = pessoasSetor.filter(p => C.verif.has(p.id)).length;
+      const itensHTML = pessoasSetor.map((p, idx) => {
+        const sit = sitDe(p);
+        const ehVerif = C.verif.has(p.id);
+        const escHoje = (C.escalados || []).find(x => x.pessoa_id === p.id);
+        const escOntem = (C.escaladosOntem || []).find(x => x.pessoa_id === p.id);
+        let badgeEscala = '';
+        if (escHoje) {
+          badgeEscala = `<span style="display:inline-flex;align-items:center;margin-left:4px;cursor:help;font-size:13px" title="Escalado HOJE em: ${esc(escHoje.tipo_nome || 'Escala')}">📅🔴</span>`;
+        } else if (escOntem) {
+          badgeEscala = `<span style="display:inline-flex;align-items:center;margin-left:4px;cursor:help;font-size:13px" title="Escalado ONTEM (dia pós-escala) em: ${esc(escOntem.tipo_nome || 'Escala')}">📅🟡</span>`;
+        }
+        const selDest = sit === 'justificada'
+          ? `<select class="sel-destino" data-id="${p.id}"><option value="">destino…</option>` +
+            C.destinos.map(dx => `<option value="${dx.id}" ${C.dest[p.id] == dx.id ? 'selected' : ''}>${esc(dx.nome)}</option>`).join('') + '</select>'
+          : '';
+        const optSit = s => `<option value="${s}" ${sit === s ? 'selected' : ''}>${ROTULO[s]}</option>`;
+
+        let divisorHTML = '';
+        if (ehVerif && !jaInseriuDivisor) {
+          jaInseriuDivisor = true;
+          divisorHTML = `
+            <div class="divisor-verificados">
+              <span class="divisor-linha"></span>
+              <span class="divisor-rotulo">✓ Verificados (${totalVerif} de ${pessoasSetor.length})</span>
+              <span class="divisor-linha"></span>
+            </div>
+          `;
+        }
+
+        return divisorHTML + `<div class="pessoa ${ehVerif ? 'verificado' : ''}" data-id="${p.id}">
+          <input type="checkbox" class="chk" data-id="${p.id}" ${ehVerif ? 'checked' : ''} title="verifiquei esta pessoa">
+          <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
+          <select class="sel-situacao" data-id="${p.id}" title="situação">${sit === 'nao_verificado' ? '<option value="nao_verificado" disabled selected>NÃO VERIFICADO</option>' : ''}${SITUACOES.map(optSit).join('')}</select>
+          ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
+      }).join('');
 
       listas += `<div class="grupo-setor">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">

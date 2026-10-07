@@ -1918,7 +1918,8 @@
     $('#app').innerHTML = `<h2>Gerenciar</h2>
       <div class="abas" id="abasGer">
         <button data-g="pessoal" class="${abaGer === 'pessoal' ? 'ativo' : ''}">Pessoal</button>
-        <button data-g="tags" class="${abaGer === 'tags' ? 'ativo' : ''}">Tags</button>
+        <button data-g="setores" class="${abaGer === 'setores' ? 'ativo' : ''}">Setores</button>
+        <button data-g="tags" class="${abaGer === 'tags' ? 'ativo' : ''}">Catálogos</button>
         <button data-g="grupos" class="${abaGer === 'grupos' ? 'ativo' : ''}">Grupos</button>
         <button data-g="operadores" class="${abaGer === 'operadores' ? 'ativo' : ''}">Operadores</button></div>
       <div id="gerPessoal" class="${abaGer === 'pessoal' ? '' : 'oculto'}">
@@ -1932,12 +1933,26 @@
           <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Posto / Graduação</th><th>Ativo</th><th></th></tr></thead>
           <tbody id="tabP">${linhasP || '<tr><td colspan="8"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
       </div>
+      <div id="gerSetores" class="${abaGer === 'setores' ? '' : 'oculto'}">
+        <div class="cartao">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:14px">
+            <div>
+              <h3 style="margin:0 0 4px">Setores da Unidade</h3>
+              <p style="color:var(--tx2); font-size:12.5px; margin:0">Subdivisões operacionais do grupo. Cada setor possui seu efetivo alocado e seu Chefe de Setor responsável pelas conferências.</p>
+            </div>
+            <button class="primario" id="btNovoSetor" style="font-weight:600">+ Novo Setor</button>
+          </div>
+          <div id="listaCardsSetores" style="display:flex; flex-direction:column; gap:10px">
+            <div class="carregando">Carregando setores…</div>
+          </div>
+        </div>
+      </div>
       <div id="gerTags" class="${abaGer === 'tags' ? '' : 'oculto'}">
         <div class="cartao">
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px">
             <div>
               <h3 style="margin:0 0 4px">Catálogos & TAGS Organizacionais</h3>
-              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Tags, Setores, Postos/Graduações e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
+              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Tags, Postos/Graduações e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
             </div>
           </div>
 
@@ -1947,7 +1962,7 @@
               <span>➕</span> <span>Adicionar Novo Item ao Catálogo</span>
             </h4>
             <div class="form-linha" style="align-items:flex-end">
-              <div class="campo" style="width:160px; margin:0">
+              <div class="campo" style="width:180px; margin:0">
                 <label>Tipo de Catálogo</label>
                 <select id="cgT">
                   <optgroup label="Tags de Pessoal">
@@ -1959,9 +1974,6 @@
                     <option value="material_tipos">📦 Tipos de Material</option>
                     <option value="material_classes">🎖️ Classes de Material</option>
                   </optgroup>
-                  <optgroup label="Estrutura Organizacional">
-                    <option value="setores">🏢 Setores / Seções</option>
-                  </optgroup>
                 </select>
               </div>
               <div class="campo" style="flex:1; margin:0">
@@ -1971,10 +1983,6 @@
               <div class="campo" id="cgCorWrap" style="width:100px; margin:0">
                 <label>Cor (Tag)</label>
                 <input type="color" id="cgCor" value="#10b981" style="width:100%; height:40px; padding:2px; cursor:pointer">
-              </div>
-              <div class="campo" id="cgSiglaWrap" style="width:110px; margin:0; display:none">
-                <label>Sigla</label>
-                <input id="cgSigla" placeholder="ex.: 1º PEL">
               </div>
               <div class="campo" style="margin:0">
                 <button class="primario" id="cgGo" style="min-height:40px; padding:0 22px">Adicionar</button>
@@ -2015,11 +2023,12 @@
     /* --- alternância de sub-abas --- */
     document.querySelectorAll('#abasGer button').forEach(b => b.onclick = () => {
       abaGer = b.dataset.g;
-      ['pessoal', 'tags', 'grupos', 'operadores'].forEach(k => {
+      ['pessoal', 'setores', 'tags', 'grupos', 'operadores'].forEach(k => {
         const el = $('#ger' + k[0].toUpperCase() + k.slice(1));
         if (el) el.classList.toggle('oculto', k !== abaGer);
       });
       document.querySelectorAll('.abas button[data-g]').forEach(x => x.classList.toggle('ativo', x.dataset.g === abaGer));
+      if (abaGer === 'setores') renderSetoresGerente();
       if (abaGer === 'tags') carregarCats(); // v9.16.9: carrega ao clicar (não só na 1ª renderização)
       if (abaGer === 'pessoal') atualizarSelectsCatalogos();
     });

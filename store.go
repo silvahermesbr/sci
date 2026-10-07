@@ -131,6 +131,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV29(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV30(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1991,6 +1994,124 @@ func (s *Store) migrarV29() error {
 	_, _ = s.db.Exec(`UPDATE material_itens SET sensibilidade = 'convencional' WHERE sensibilidade IS NULL OR sensibilidade = '' OR nivel_sensibilidade NOT IN ('sensivel', 'restrito')`)
 
 	return s.marcarVersao(29)
+}
+
+// migrarV30: Material por Setor, Encarregados e Auxiliares de Material, Ficha de Viaturas (Garagem, Padrinhos, Anexos e Comentários), e Conferência Diária (Check de Material / Pronto).
+func (s *Store) migrarV30() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 30`).Scan(&v)
+	if v == 30 {
+		return nil
+	}
+
+	// 1. Coluna setor_id em material_itens
+	var nSetorItem int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('material_itens') WHERE name = 'setor_id'`).Scan(&nSetorItem)
+	if nSetorItem == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE material_itens ADD COLUMN setor_id INTEGER REFERENCES setores(id)`); err != nil {
+			return fmt.Errorf("migração v30 alter material_itens setor_id: %w", err)
+		}
+		_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_material_itens_setor ON material_itens(setor_id)`)
+	}
+
+	// 2. Coluna setor_id em material_cautelas
+	var nSetorCaut int
+	_ = s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('material_cautelas') WHERE name = 'setor_id'`).Scan(&nSetorCaut)
+	if nSetorCaut == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE material_cautelas ADD COLUMN setor_id INTEGER REFERENCES setores(id)`); err != nil {
+			return fmt.Errorf("migração v30 alter material_cautelas setor_id: %w", err)
+		}
+	}
+
+	// 3. Tabela grupo_setor_responsaveis: Encarregado e Auxiliar de Material por Grupo/Setor
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS grupo_setor_responsaveis (
+		grupo_id INTEGER NOT NULL REFERENCES grupos(id) ON DELETE CASCADE,
+		setor_id INTEGER REFERENCES setores(id) ON DELETE CASCADE,
+		encarregado_id INTEGER REFERENCES pessoas(id) ON DELETE SET NULL,
+		auxiliar_encarregado_id INTEGER REFERENCES pessoas(id) ON DELETE SET NULL,
+		atualizado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+		UNIQUE(grupo_id, setor_id)
+	)`); err != nil {
+		return fmt.Errorf("migração v30 tabela grupo_setor_responsaveis: %w", err)
+	}
+
+	// 4. Tabela material_viaturas: Extensão para Viaturas (Placa, Renavam, Hodômetro, Padrinho Titular e Substituto)
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_viaturas (
+		item_id INTEGER PRIMARY KEY REFERENCES material_itens(id) ON DELETE CASCADE,
+		placa TEXT,
+		renavam TEXT,
+		padrinho_titular_id INTEGER REFERENCES pessoas(id) ON DELETE SET NULL,
+		padrinho_substituto_id INTEGER REFERENCES pessoas(id) ON DELETE SET NULL,
+		hodometro_atual INTEGER NOT NULL DEFAULT 0,
+		combustivel_atual TEXT NOT NULL DEFAULT 'cheio',
+		atualizado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	)`); err != nil {
+		return fmt.Errorf("migração v30 tabela material_viaturas: %w", err)
+	}
+
+	// 5. Tabela material_item_anexos: Documentos, manuais, CRLVs e arquivos de texto vinculados ao item/viatura
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_item_anexos (
+		id INTEGER PRIMARY KEY,
+		item_id INTEGER NOT NULL REFERENCES material_itens(id) ON DELETE CASCADE,
+		nome_arquivo TEXT NOT NULL,
+		tipo_mime TEXT NOT NULL DEFAULT 'text/plain',
+		tamanho INTEGER NOT NULL DEFAULT 0,
+		dados_base64 TEXT NOT NULL,
+		criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	)`); err != nil {
+		return fmt.Errorf("migração v30 tabela material_item_anexos: %w", err)
+	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_item_anexos_item ON material_item_anexos(item_id)`)
+
+	// 6. Tabela material_item_comentarios: Histórico/feed de anotações e manutenções na ficha do item/viatura
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_item_comentarios (
+		id INTEGER PRIMARY KEY,
+		item_id INTEGER NOT NULL REFERENCES material_itens(id) ON DELETE CASCADE,
+		operador_id INTEGER NOT NULL REFERENCES usuarios(id),
+		texto TEXT NOT NULL,
+		criado_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	)`); err != nil {
+		return fmt.Errorf("migração v30 tabela material_item_comentarios: %w", err)
+	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_item_comentarios_item ON material_item_comentarios(item_id)`)
+
+	// 7. Tabela material_conferencias: Sessão de Check Diário de Material (Conferência e Pronto)
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_conferencias (
+		id INTEGER PRIMARY KEY,
+		grupo_id INTEGER NOT NULL REFERENCES grupos(id),
+		setor_id INTEGER REFERENCES setores(id),
+		data TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta', 'fechada', 'cancelada')),
+		aberta_por INTEGER NOT NULL REFERENCES usuarios(id),
+		aberta_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+		fechada_por INTEGER REFERENCES usuarios(id),
+		fechada_em TEXT,
+		encarregado_id INTEGER REFERENCES pessoas(id),
+		auxiliar_id INTEGER REFERENCES pessoas(id),
+		observacao TEXT
+	)`); err != nil {
+		return fmt.Errorf("migração v30 tabela material_conferencias: %w", err)
+	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_conf_grupo ON material_conferencias(grupo_id, data)`)
+
+	// 8. Tabela material_conferencia_itens: Itens bipados/conferidos no Check Diário
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS material_conferencia_itens (
+		id INTEGER PRIMARY KEY,
+		conferencia_id INTEGER NOT NULL REFERENCES material_conferencias(id) ON DELETE CASCADE,
+		item_id INTEGER NOT NULL REFERENCES material_itens(id),
+		status TEXT NOT NULL CHECK (status IN ('presente', 'acautelado', 'ausente', 'manutencao', 'baixado')),
+		quantidade_esperada INTEGER NOT NULL DEFAULT 1,
+		quantidade_conferida INTEGER NOT NULL DEFAULT 1,
+		conferido_por INTEGER REFERENCES usuarios(id),
+		conferido_em TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+		observacao TEXT,
+		UNIQUE(conferencia_id, item_id)
+	)`); err != nil {
+		return fmt.Errorf("migração v30 tabela material_conferencia_itens: %w", err)
+	}
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_conf_itens_conf ON material_conferencia_itens(conferencia_id)`)
+
+	return s.marcarVersao(30)
 }
 
 // EhSubordinado verifica se subordinadoID é igual ou subordinado (transitivo) a superiorID na árvore de grupos.
