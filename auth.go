@@ -275,8 +275,13 @@ func (a *App) validarCredenciais(login, senha, ip string) (*Usuario, error) {
 		Scan(&grupoID, &ng, &nc, &dataNasc, &tipoSang, &tel, &email, &endr, &foto, &setorID, &funcaoID); err != nil {
 		return nil, err
 	}
-	return &Usuario{ID: id, Login: login, Papel: papel, PessoaID: pessoaID, GrupoID: grupoID,
+	u := &Usuario{ID: id, Login: login, Papel: papel, PessoaID: pessoaID, GrupoID: grupoID,
 		NomeGuerra: ng, NomeCompleto: nc, DataNascimento: dataNasc, TipoSanguineo: tipoSang,
 		Telefone: tel, Email: email, Endereco: endr, FotoBase64: foto,
-		SetorID: setorID, FuncaoID: funcaoID, PrecisaSetup: precisaSetup}, nil
+		SetorID: setorID, FuncaoID: funcaoID, PrecisaSetup: precisaSetup}
+	papeis, err := a.st.PapeisDoUsuario(id)
+	if err == nil {
+		u.Papeis = papeis
+	}
+	return u, nil
 }

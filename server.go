@@ -669,7 +669,7 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		alvoValido := solicitante.GrupoID != nil && (alvoGrupo == *solicitante.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*solicitante.GrupoID), alvoGrupo))
-		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || !alvoValido {
+		if !alvoValido {
 			jsonErro(w, http.StatusForbidden, "gerente só edita membros do próprio grupo ou subordinados")
 			return
 		}
