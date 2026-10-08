@@ -2595,6 +2595,9 @@ func (s *Store) migrarV37() error {
 		usuarios = append(usuarios, uf)
 	}
 	rows.Close() // libera a conexão ANTES de fazer INSERT/QueryRow (SetMaxOpenConns=1)
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migração v37 rows: %w", err)
+	}
 
 	for _, uf := range usuarios {
 		if uf.fid == nil || *uf.fid <= 0 {
