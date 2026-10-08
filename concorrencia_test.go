@@ -254,14 +254,18 @@ func TestConcorrenciaFecharDuploSessoesDistintas(t *testing.T) {
 
 	criaUsuarioTeste(t, st, "ger_conc_c", "senha-gerente", "operador")
 	// doutrina 06/10 (fechar = gerente/ENCARREGADO): B é o ENCARREGADO DE
-	// PESSOAL do grupo — operador com a função (2º gerente é vetado pelo
-	// índice único de gerente por grupo).
+	// PESSOAL do grupo — operador DESIGNADO à função (2º gerente é vetado pelo
+	// índice único de gerente por grupo). R3: poder vem da designação.
 	var fEnc int64
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, ativo) VALUES ('Encarregado Conc B', 1) RETURNING id`).Scan(&fEnc); err != nil {
 		t.Fatalf("função encarregado: %v", err)
 	}
-	if _, err := st.db.Exec(`UPDATE usuarios SET funcao_id = ? WHERE login = 'ger_conc_c'`, fEnc); err != nil {
-		t.Fatalf("função do usuário c: %v", err)
+	var uidC int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'ger_conc_c'`).Scan(&uidC); err != nil {
+		t.Fatalf("id ger_conc_c: %v", err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fEnc, gidDe(t, st), uidC); err != nil {
+		t.Fatalf("designar ger_conc_c: %v", err)
 	}
 	tokB := vinculaGrupoDoLogin(t, app, st, "ger_conc_c", gidDe(t, st))
 

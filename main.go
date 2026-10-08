@@ -16,11 +16,10 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v36 = integração feat/v1.5-evolucao: material por setor, responsáveis,
-// garagem/viaturas com padrinhos, anexos por item, comentários,
-// conferência diária de material e pronto).
+// (v37 = fix/r3-poderes-designacao: poderes de gestão de pessoal passam a vir
+// da DESIGNAÇÃO (funcao_membros), não do nome da função no cadastro).
 // Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 36
+const versaoSchemaBinario = 37
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio

@@ -22,8 +22,18 @@ func TestG2MeDevolveFuncaoGlobal(t *testing.T) {
 	}
 	// conta criada com a função (vínculos ANTES do login: sessão congela papel)
 	criaUsuarioTeste(t, st, "enc_g2", "senha12345", "operador")
+	// R3: poder vem de designação, não de funcao_id no cadastro. Ainda assim,
+	// o /api/me usa usuario_papeis.funcao_id para exibir funcao_nome — mantemos
+	// funcao_id para o display E criamos a designação para o poder.
+	var encG2ID int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login='enc_g2'`).Scan(&encG2ID); err != nil {
+		t.Fatalf("id enc_g2: %v", err)
+	}
 	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ?, funcao_id = ? WHERE login = ?`, gid, fid, "enc_g2"); err != nil {
 		t.Fatalf("vincular função: %v", err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fid, gid, encG2ID); err != nil {
+		t.Fatalf("designar enc_g2: %v", err)
 	}
 	cookie := loginAs(t, app, "enc_g2", "senha12345")
 

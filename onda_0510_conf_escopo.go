@@ -34,30 +34,26 @@ func normSemAcento(s string) string {
 	return repl.Replace(s)
 }
 
-// ehEncarregado: usuário cujo funcao_nome (ou nome da função via funcao_id)
-// contém "encarregado" (normalizado). Função do cadastro do usuário tem
-// precedência; em último caso consulta a função da pessoa vinculada.
+// ehEncarregado: usuário DESIGNADO (funcao_membros) a função cujo nome contém
+// "encarregado" (normalizado) — consulta funcao_membros no escopo do grupo.
+// NADA de consulta a usuarios.funcao_id / pessoas.funcao_id (R3: designação).
 func (a *App) ehEncarregado(u *Usuario) bool {
 	if u == nil {
 		return false
 	}
-	if strings.Contains(normSemAcento(u.FuncaoNome), "encarregado") {
-		return true
+	esc := escopoDoUsuario(u)
+	if esc <= 0 {
+		return false
 	}
-	if u.FuncaoID != nil && *u.FuncaoID > 0 {
-		var nome string
-		if err := a.st.db.QueryRow(`SELECT nome FROM funcoes WHERE id = ?`, *u.FuncaoID).Scan(&nome); err == nil {
-			if strings.Contains(normSemAcento(nome), "encarregado") {
-				return true
-			}
-		}
+	rows, err := a.st.db.Query(`SELECT f.nome FROM funcao_membros fm JOIN funcoes f ON f.id=fm.funcao_id WHERE fm.usuario_id=? AND fm.grupo_id=?`, u.ID, esc)
+	if err != nil {
+		return false
 	}
-	if u.PessoaID != nil && *u.PessoaID > 0 {
+	defer rows.Close()
+	for rows.Next() {
 		var nome string
-		if err := a.st.db.QueryRow(`SELECT nome FROM funcoes WHERE id = (SELECT funcao_id FROM pessoas WHERE id = ?)`, *u.PessoaID).Scan(&nome); err == nil {
-			if strings.Contains(normSemAcento(nome), "encarregado") {
-				return true
-			}
+		if err := rows.Scan(&nome); err == nil && containsNomeFuncao(nome, "encarregado") {
+			return true
 		}
 	}
 	return false
@@ -164,18 +160,21 @@ func (a *App) guardaSetorNaMarcar(w http.ResponseWriter, u *Usuario, pessoaID in
 	}
 	switch u.Papel {
 	case "chefe_setor":
-		// Multi-chefia: comanda TODOS os setores onde tem linha; fallbacks da
-		// conta legada = u.SetorID (mesma resolução do hMe) e pessoa vinculada.
+		// ordem 08/10 — contexto-govena: o chefe só lança no setor ATIVO do
+		// contexto da sessão (u.SetorID → fallback pessoa vinculada). Antes,
+		// chefeComandaSetor autorizava lançamento em TODOS os setores que
+		// comanda — cruzava dados entre setores.
 		var pSetor *int64
 		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, pessoaID).Scan(&pSetor)
 		if pSetor == nil {
 			jsonErro(w, http.StatusForbidden, "militar sem setor — não é de comando do chefe")
 			return false
 		}
-		if a.chefeComandaSetor(u, *pSetor) {
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo != nil && *sAtivo == *pSetor {
 			return true
 		}
-		jsonErro(w, http.StatusForbidden, "você só pode lançar presença para militares do seu próprio setor")
+		jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto para lançar neste setor")
 		return false
 	case "operador":
 		setorUsuario := setorDoUsuario(a, u)

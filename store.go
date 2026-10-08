@@ -152,6 +152,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV36(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV37(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2554,4 +2557,67 @@ func (s *Store) migrarV36() error {
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_mat_conf_itens_conf ON material_conferencia_itens(conferencia_id)`)
 
 	return s.marcarVersao(36)
+}
+
+// migrarV37 (fix/r3-poderes-designacao 08/10 — ordem Diretor R3): migração dos
+// poderes de gestão de pessoal do modelo "nome da função no cadastro" para o
+// modelo "designação na aba Funções (funcao_membros)". Para cada grupo, varre
+// usuários com funcao_id → funcoes.nome (ou fallback pessoa.funcao_id) cujo
+// nome normalizado contém 'encarregado' ou 'auxiliar', e cria INSERT OR IGNORE
+// em funcao_membros com titularidade 'titular' ou 'auxiliar'. Idempotente:
+// banco NOVO (sem usuários) passa limpo; banco POPULADO ganha as designações
+// correspondentes; rodar de novo não duplica (INSERT OR IGNORE + guarda v37).
+type usuarioFuncV37 struct {
+	uid, gid int64
+	fid      *int64
+}
+
+func (s *Store) migrarV37() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 37`).Scan(&v)
+	if v == 37 {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT u.id, u.grupo_id,
+		COALESCE(u.funcao_id, (SELECT funcao_id FROM pessoas WHERE id = u.pessoa_id)) as fid
+		FROM usuarios u
+		WHERE u.grupo_id IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("migração v37 query: %w", err)
+	}
+	var usuarios []usuarioFuncV37
+	for rows.Next() {
+		var uf usuarioFuncV37
+		if err := rows.Scan(&uf.uid, &uf.gid, &uf.fid); err != nil {
+			rows.Close()
+			return fmt.Errorf("migração v37 scan: %w", err)
+		}
+		usuarios = append(usuarios, uf)
+	}
+	rows.Close() // libera a conexão ANTES de fazer INSERT/QueryRow (SetMaxOpenConns=1)
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migração v37 rows: %w", err)
+	}
+
+	for _, uf := range usuarios {
+		if uf.fid == nil || *uf.fid <= 0 {
+			continue
+		}
+		var nome string
+		if err := s.db.QueryRow(`SELECT nome FROM funcoes WHERE id = ?`, *uf.fid).Scan(&nome); err != nil {
+			continue
+		}
+		var titularidade string
+		if strings.Contains(normSemAcento(nome), "encarregado") {
+			titularidade = "titular"
+		} else if strings.Contains(normSemAcento(nome), "auxiliar") {
+			titularidade = "auxiliar"
+		}
+		if titularidade == "" {
+			continue
+		}
+		_, _ = s.db.Exec(`INSERT OR IGNORE INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?, ?, ?, ?)`,
+			*uf.fid, uf.gid, uf.uid, titularidade)
+	}
+	return s.marcarVersao(37)
 }

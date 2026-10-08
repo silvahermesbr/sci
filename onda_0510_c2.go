@@ -34,6 +34,14 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
 		return
 	}
+	// FIX R1: filtrar funções visíveis — própria, global (grupo_id IS NULL) ou de grupos superiores
+	ids := append([]int64{escopo}, a.gruposSuperioresAtivos(escopo)...)
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, escopo) // LEFT JOIN tm.grupo_id = ?
+	for _, id := range ids {
+		args = append(args, id)
+	}
 	rows, err := a.st.db.Query(`
 		SELECT f.id, f.nome,
 		       COALESCE(tm.id, 0), COALESCE(tm.usuario_id, 0),
@@ -42,7 +50,8 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 		FROM funcoes f
 		LEFT JOIN funcao_membros tm ON tm.funcao_id = f.id AND tm.grupo_id = ?
 		LEFT JOIN usuarios mu ON mu.id = tm.usuario_id
-		ORDER BY f.nome ASC, CASE tm.titularidade WHEN 'titular' THEN 0 ELSE 1 END, tm.id ASC`, escopo)
+		WHERE f.grupo_id IS NULL OR f.grupo_id IN (`+ph+`)
+		ORDER BY f.nome ASC, CASE tm.titularidade WHEN 'titular' THEN 0 ELSE 1 END, tm.id ASC`, args...)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao listar funções: "+err.Error())
 		return
@@ -100,9 +109,17 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// FIX R1: validar que a função pertence ao escopo — própria, global ou de superior
 	var funcaoExiste int
-	if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE id = ?`, req.FuncaoID).Scan(&funcaoExiste); err != nil || funcaoExiste == 0 {
-		jsonErro(w, http.StatusBadRequest, "função inexistente")
+	superiores := a.gruposSuperioresAtivos(escopo)
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(superiores)), ",")
+	args := make([]any, 0, len(superiores)+2)
+	args = append(args, req.FuncaoID, escopo)
+	for _, s := range superiores {
+		args = append(args, s)
+	}
+	if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE id=? AND (grupo_id IS NULL OR grupo_id=? OR grupo_id IN (`+ph+`))`, args...).Scan(&funcaoExiste); err != nil || funcaoExiste == 0 {
+		jsonErro(w, http.StatusBadRequest, "função não pertence ao seu grupo")
 		return
 	}
 	var loginMembro string
@@ -123,6 +140,20 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := res.LastInsertId()
 	a.st.Auditoria(&u.ID, "designar_funcao_membro", "funcao_membros", &id, loginMembro+" ["+tit+"]", ipDe(r))
+	// R3 (ordem 08/10): sincroniza o DISPLAY da sessão — usuario_papeis.funcao_id
+	// alimenta funcao_nome no /api/me e a derivação de papel-conf no core.js
+	// (encarregado/auxiliar). A fonte do PODER continua sendo SÓ funcao_membros;
+	// aqui é espelho de exibição. Falha de espelho NUNCA derruba a designação
+	// (o poder já está gravado).
+	func() {
+		var nPapel int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, req.UsuarioID, escopo).Scan(&nPapel)
+		if nPapel > 0 {
+			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = ? WHERE usuario_id = ? AND grupo_id = ?`, req.FuncaoID, req.UsuarioID, escopo)
+		} else {
+			_, _ = a.st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?, ?, 'operador', ?)`, req.UsuarioID, escopo, req.FuncaoID)
+		}
+	}()
 	jsonOK(w, map[string]any{"ok": true, "id": id})
 }
 
