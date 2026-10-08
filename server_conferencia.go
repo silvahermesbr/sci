@@ -14,6 +14,7 @@ import (
 )
 
 func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
+	a.ensureTabelaDespachos()
 	u := usuarioDoCtx(r)
 	escopo := escopoDoUsuario(u)
 	var f struct {
@@ -24,7 +25,16 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	}
 	// admin não tem grupo: nunca há "conferência do admin" — a área fica em modo leitura
 	if escopo == 0 && u.Papel == "admin" {
-		jsonOK(w, map[string]any{"conferencia": nil, "pessoas": a.pessoasAtivas(0)})
+		pessoas := a.pessoasAtivas(0)
+		jsonOK(w, map[string]any{
+			"conferencia":      nil,
+			"pessoas":          pessoas,
+			"setores_status":   []map[string]any{},
+			"total_banco":      len(pessoas),
+			"total_verificado": 0,
+			"setores_fechados": 0,
+			"total_setores":    0,
+		})
 		return
 	}
 	var err error
@@ -66,6 +76,21 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 			"criada_em": f.CriadaEm, "estados": estados}
 	}
 
+	despachadosMap := make(map[int64]bool)
+	if f.ID > 0 {
+		rowsD, errD := a.st.db.Query(`SELECT setor_id FROM conferencia_despachos WHERE conferencia_id = ?`, f.ID)
+		if errD == nil {
+			for rowsD.Next() {
+				var sid int64
+				if rowsD.Scan(&sid) == nil {
+					despachadosMap[sid] = true
+				}
+			}
+			rowsD.Close()
+		}
+	}
+	temDespachos := len(despachadosMap) > 0
+
 	var setoresStatus []map[string]any
 	if f.ID > 0 {
 		qSetores := `
@@ -91,6 +116,10 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 				var concEm *string
 				var totEf, totVer int
 				if sRows.Scan(&sid, &sNome, &sSigla, &sStatus, &concPor, &concNome, &concEm, &totEf, &totVer) == nil {
+					pct := 0
+					if totEf > 0 {
+						pct = (totVer * 100) / totEf
+					}
 					item := map[string]any{
 						"setor_id":           sid,
 						"setor_nome":         sNome,
@@ -103,6 +132,8 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 						"concluido_por_id":   concPor,
 						"concluido_por_nome": concNome,
 						"concluido_em":       concEm,
+						"pct_conferido":      pct,
+						"despachado":         despachadosMap[sid],
 					}
 					setoresStatus = append(setoresStatus, item)
 				}
@@ -122,13 +153,71 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	tHoje, _ := time.Parse("2006-01-02", dataHoje)
 	dataOntem := tHoje.AddDate(0, 0, -1).Format("2006-01-02")
 	escaladosOntem := a.escaladosNaData(escopo, dataOntem)
+
+	pessoasGrupo := a.pessoasAtivas(escopo)
+	totalBanco := len(pessoasGrupo)
+
+	deveFiltrar := f.ID > 0 && temDespachos &&
+		(u.Papel == "chefe_setor" || u.Papel == "operador") &&
+		!a.ehEncarregado(u) && !a.ehAuxiliarDePessoal(u)
+
+	if deveFiltrar {
+		var filtrados []map[string]any
+		for _, st := range setoresStatus {
+			sid, _ := st["setor_id"].(int64)
+			if !despachadosMap[sid] {
+				continue
+			}
+			if u.Papel == "chefe_setor" && a.chefeComandaSetor(u, sid) {
+				filtrados = append(filtrados, st)
+			} else if u.Papel == "operador" {
+				opSid := setorDoUsuario(a, u)
+				if opSid != nil && *opSid == sid {
+					filtrados = append(filtrados, st)
+				}
+			}
+		}
+		if len(filtrados) == 0 {
+			jsonOK(w, map[string]any{
+				"conferencia":      nil,
+				"pessoas":          []any{},
+				"setores_status":   []map[string]any{},
+				"total_banco":      totalBanco,
+				"total_verificado": 0,
+				"setores_fechados": 0,
+				"total_setores":    0,
+				"escalados":        escalados,
+				"escalados_ontem":  escaladosOntem,
+				"escala":           a.escalaDaConferencia(f.ID),
+			})
+			return
+		}
+		setoresStatus = filtrados
+	}
+
+	totalVerificado := 0
+	setoresFechados := 0
+	for _, st := range setoresStatus {
+		if v, ok := st["verificados"].(int); ok {
+			totalVerificado += v
+		}
+		if s, ok := st["status"].(string); ok && s == "concluida" {
+			setoresFechados++
+		}
+	}
+	totalSetores := len(setoresStatus)
+
 	jsonOK(w, map[string]any{
-		"conferencia":     form,
-		"setores_status":  setoresStatus,
-		"pessoas":         a.pessoasAtivas(escopo),
-		"escalados":       escalados,
-		"escalados_ontem": escaladosOntem,
-		"escala":          a.escalaDaConferencia(f.ID),
+		"conferencia":      form,
+		"setores_status":   setoresStatus,
+		"pessoas":          pessoasGrupo,
+		"escalados":        escalados,
+		"escalados_ontem":  escaladosOntem,
+		"escala":           a.escalaDaConferencia(f.ID),
+		"total_banco":      totalBanco,
+		"total_verificado": totalVerificado,
+		"setores_fechados": setoresFechados,
+		"total_setores":    totalSetores,
 	})
 }
 
@@ -261,128 +350,77 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Local       string `json:"local"`
-		Nome        string `json:"nome"`                   // ordem 04/10: modal NOVA CONFERÊNCIA pede nome
-		PrazoFinal  string `json:"prazo_final"`            // horário-limite p/ pronto da conferência
-		Encarregado *int64 `json:"encarregado_usuario_id"` // encarregado de pessoal
-	}
+	a.ensureTabelaDespachos()
+	var req confIniciarReq
 	_ = decodificar(r, &req)
-	// ordem Tenente (28/09): data/hora são coletadas do relógio — horário de Brasília
-	// REGRA (28/09): ADMIN NÃO inicia conferência — só gerente/operador de grupo.
+
 	u := usuarioDoCtx(r)
 	if u.Papel == "admin" {
 		jsonErro(w, http.StatusForbidden, "o admin não inicia conferências — quem inicia é o gerente/operador de um grupo")
-		return
-	}
-	// Onda 05/10 (ordem Diretor): conferência é iniciada por GERENTE DE GRUPO
-	// ou ENCARREGADO DE PESSOAL (função) — mesmo escopo (grupo).
-	// Ordem 06/10 (item 15): AUXILIAR DE PESSOAL espelha o encarregado.
-	if u.Papel != "gerente" && !a.ehEncarregado(u) && !a.ehAuxiliarDePessoal(u) {
-		jsonErro(w, http.StatusForbidden, "a conferência é iniciada pelo gerente ou pelo encarregado/auxiliar de pessoal")
 		return
 	}
 	if u.GrupoID == nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
-	grupoID := *u.GrupoID
-	data := time.Now().In(a.horaLocal).Format("2006-01-02")
-	// ordem 04/10: a NOVA CONFERÊNCIA é nomeada pelo MODAL (nome+prazo; cancelar
-	// descarta, despachar cria). Na API, chamadas sem nome (testes/integrações)
-	// recebem o nome padrão — o front nunca envia vazio.
-	if strings.TrimSpace(req.Nome) == "" {
-		req.Nome = tipoConferenciaPadrao + " — " + data
+
+	temSetores := len(req.Setores) > 0
+	if !temSetores {
+		if u.Papel != "gerente" && !a.ehEncarregado(u) && !a.ehAuxiliarDePessoal(u) {
+			jsonErro(w, http.StatusForbidden, "a conferência é iniciada pelo gerente ou pelo encarregado/auxiliar de pessoal")
+			return
+		}
+	} else {
+		if u.Papel == "chefe_setor" {
+			for _, sid := range req.Setores {
+				if !a.chefeComandaSetor(u, sid) {
+					jsonErro(w, http.StatusForbidden, "você só pode iniciar conferência do seu próprio setor")
+					return
+				}
+			}
+		} else if u.Papel == "operador" {
+			opSid := setorDoUsuario(a, u)
+			if opSid == nil {
+				jsonErro(w, http.StatusForbidden, "você só pode iniciar conferência do seu próprio setor")
+				return
+			}
+			for _, sid := range req.Setores {
+				if *opSid != sid {
+					jsonErro(w, http.StatusForbidden, "você só pode iniciar conferência do seu próprio setor")
+					return
+				}
+			}
+		} else if u.Papel != "gerente" && !a.ehEncarregado(u) && !a.ehAuxiliarDePessoal(u) {
+			jsonErro(w, http.StatusForbidden, "papel sem acesso a esta área")
+			return
+		}
 	}
-	tipoID, _, err := a.tipoPadraoID()
+
+	var setoresUnicos []int64
+	if temSetores {
+		var err error
+		setoresUnicos, err = a.validarSetoresDoGrupo(*u.GrupoID, req.Setores)
+		if err != nil {
+			jsonErro(w, http.StatusBadRequest, "setor inválido ou inexistente")
+			return
+		}
+	}
+
+	id, err := a.criarConferenciaBase(u, req)
 	if err != nil {
-		jsonErro(w, http.StatusInternalServerError, "tipo '"+tipoConferenciaPadrao+"' inexistente")
+		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// v9.14.2 (ordem Tenente 29/09): MÚLTIPLAS conferências abertas simultâneas por grupo
-	// (o bloqueio anterior de "1 aberta por grupo" foi removido). Cada conferência tem o
-	// próprio ID; o /hoje (edição) usa ?id= quando informado, senão a mais recente.
-	var id int64
-	// v9.15.3: banco grava UTC REAL (sufixo Z verdadeiro); EXIBIÇÃO converte p/ Brasília
-	criadoEm := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
-	res, e := a.st.db.Exec(
-		`INSERT INTO conferencias (data, tipo_id, local, grupo_id, criado_por, criado_em, nome, prazo_final, encarregado_usuario_id) VALUES (?,?,?,?,?,?,?,?,?)`,
-		data, tipoID, req.Local, grupoID, u.ID, criadoEm,
-		strings.TrimSpace(req.Nome), strings.TrimSpace(req.PrazoFinal), req.Encarregado)
-	if e != nil {
-		jsonErro(w, http.StatusInternalServerError, e.Error())
-		return
-	}
-	id, _ = res.LastInsertId()
 
-	// v9.16.3 (ordem Tenente 29/09): CARRY OVER — a nova conferência herda o estado da última
-	// conferência fechada de cada militar, com regra de frescor:
-	//   última conf hoje ou ontem  → mantém situação + destino (serviço de ontem continua)
-	//   última conf há 2+ dias     → reseta para 'presente' (ex.: sexta → segunda)
-	//   nunca conferido            → nada a herdar (default 'presente')
-	// Herda APENAS pessoas ativas do grupo.
-	// FIX P0-1 (revisão DEV-L 30/09): fechamento da subquery ROW_NUMBER foi apagado na
-	// v1.0 e o erro morria no `_, _ =` — toda conferência nova nascia SEM herdar estado.
-	if _, err := a.st.db.Exec(`INSERT INTO presencas
-		(conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em, verificado)
-		SELECT ?, pr.pessoa_id, pr.situacao, pr.destino_id, pr.observacao, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 0
-		FROM presencas pr
-		JOIN conferencias c ON c.id = pr.conferencia_id AND c.status = 'fechada'
-		JOIN (SELECT pessoa_id, conferencia_id FROM (
-		      SELECT p2.pessoa_id, p2.conferencia_id,
-		             ROW_NUMBER() OVER (PARTITION BY p2.pessoa_id ORDER BY c2.data DESC, c2.id DESC) rn
-		      FROM presencas p2 JOIN conferencias c2 ON c2.id = p2.conferencia_id AND c2.status='fechada'
-		      ) WHERE rn = 1) u2 ON u2.pessoa_id = pr.pessoa_id AND u2.conferencia_id = c.id
-		WHERE julianday(?) - julianday(c.data) <= 1
-		  AND pr.pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ? AND status = 'ativo')`,
-		id, u.ID, data, grupoID); err != nil {
-		log.Printf("sci carry-over conf %d: %v", id, err) // nunca mais silencioso
-	}
-
-	// v1.0: MOTOR INTELIGENTE — Se houver militares escalados na data (módulo Escalas),
-	// garante o destino 'Serviço de Escala' e pré-associa na conferência como Justificada/Serviço.
-	var destServicoID int64
-	_ = a.st.db.QueryRow(`SELECT id FROM destinos WHERE (grupo_id = ? OR grupo_id IS NULL) AND LOWER(nome) LIKE '%serviço%' AND ativo = 1 ORDER BY grupo_id DESC LIMIT 1`, grupoID).Scan(&destServicoID)
-	if destServicoID == 0 {
-		// cria destino de serviço automaticamente se não existir
-		resD, errD := a.st.db.Exec(`INSERT INTO destinos (grupo_id, nome, ativo) VALUES (?, 'Serviço de Escala', 1)`, grupoID)
-		if errD == nil {
-			destServicoID, _ = resD.LastInsertId()
-		}
-	}
-	if destServicoID > 0 {
-		// FIX P1-1 (revisão DEV-L 30/09): erro do motor NUNCA silencioso
-		if _, err := a.st.db.Exec(`
-			INSERT INTO presencas (conferencia_id, pessoa_id, situacao, destino_id, observacao, marcado_por, marcado_em, verificado)
-			SELECT ?, ep.pessoa_id, 'justificada', ?, 'Escala: ' || etp.nome, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'), 0
-			FROM escala_pessoas ep
-			JOIN escala_turnos et ON et.id = ep.turno_id
-			JOIN escala_tipos etp ON etp.id = et.tipo_id
-			JOIN pessoas pes ON pes.id = ep.pessoa_id AND pes.status = 'ativo' AND pes.grupo_id = ?
-			WHERE substr(et.data_inicio, 1, 10) <= ? AND substr(COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), 1, 10) >= ?
-			ON CONFLICT(conferencia_id, pessoa_id) DO UPDATE SET
-			  situacao = 'justificada',
-			  destino_id = excluded.destino_id,
-			  observacao = excluded.observacao,
-			  alterado_por = excluded.marcado_por,
-			  alterado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-		`, id, destServicoID, u.ID, grupoID, data, data); err != nil {
-			log.Printf("sci motor-escalas conf %d: %v", id, err)
+	if temSetores {
+		for _, sid := range setoresUnicos {
+			_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO conferencia_despachos (conferencia_id, setor_id, criado_por) VALUES (?, ?, ?)`, id, sid, u.ID)
 		}
 	}
 
-	// v1.5: Inicialização das conferências setoriais individuais
-	_, _ = a.st.db.Exec(`
-		INSERT OR IGNORE INTO conferencia_setores (conferencia_id, setor_id, status)
-		SELECT ?, s.id, 'nao_iniciada'
-		FROM setores s
-		WHERE (s.grupo_id = ? OR s.grupo_id IS NULL)
-		  AND s.ativo = 1
-		  AND s.id IN (SELECT DISTINCT setor_id FROM pessoas WHERE grupo_id = ? AND status = 'ativo' AND setor_id IS NOT NULL)
-	`, id, grupoID, grupoID)
-
+	data := time.Now().In(a.horaLocal).Format("2006-01-02")
 	a.st.Auditoria(&u.ID, "iniciar", "conferencias", &id, "data="+data+" (carry over e escalas aplicados)", ipDe(r))
-	jsonOK(w, map[string]any{"id": id, "data": data})
+	jsonOK(w, map[string]any{"id": id, "data": data, "conferencia_id": id})
 }
 
 func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
@@ -945,6 +983,9 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 			if filtro == "justificados" && sit != "justificada" {
 				continue
 			}
+			if filtro == "atrasos" && sit != "atraso" {
+				continue
+			}
 			ord++
 			lanc = append(lanc, map[string]any{
 				"ord": ord, "nome_guerra": ng, "funcao": funcao, "setor": setor, "situacao": sit,
@@ -962,8 +1003,8 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filtro := r.URL.Query().Get("filtro")
-	if filtro != "" && filtro != "todos" && filtro != "faltas" && filtro != "justificados" {
-		jsonErro(w, http.StatusBadRequest, "filtro inválido (todos|faltas|justificados)")
+	if filtro != "" && filtro != "todos" && filtro != "faltas" && filtro != "justificados" && filtro != "atrasos" {
+		jsonErro(w, http.StatusBadRequest, "filtro inválido (todos|faltas|justificados|atrasos)")
 		return
 	}
 	var (
@@ -1009,6 +1050,8 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		selo = "_SO_FALTAS"
 	} else if filtro == "justificados" {
 		selo = "_SO_JUSTIFICADOS"
+	} else if filtro == "atrasos" {
+		selo = "_SO_ATRASOS"
 	}
 	var fechadoPorNome string
 	_ = a.st.db.QueryRow(`
@@ -1438,7 +1481,8 @@ func (a *App) rotasConferencia() {
 	m.Handle("DELETE /api/conferencia/arquivada/{id}", a.auth(true, a.hConferenciaExcluirArquivada))
 	m.Handle("GET /api/conferencia/hoje", a.auth(false, a.hConferenciaHoje))
 	m.Handle("GET /api/conferencia/estado", a.auth(false, a.hConferenciaEstado))
-	m.Handle("POST /api/conferencia/iniciar", confAuth(a.hConferenciaIniciar))
+	m.Handle("POST /api/conferencia/iniciar", confMarcarAuth(a.hConferenciaIniciar))
+	m.Handle("POST /api/conferencia/despachar", confAuth(a.hConferenciaDespachar))
 	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
 	m.Handle("POST /api/conferencia/marcar", confMarcarAuth(a.hConferenciaMarcar))
 	m.Handle("GET /api/conferencia/lista", a.auth(false, a.hConferenciaList))

@@ -35,7 +35,36 @@ func (a *App) hLogin(w http.ResponseWriter, r *http.Request) {
 		Name: cookieSessao, Value: tok, Path: "/", HttpOnly: true,
 		SameSite: http.SameSiteStrictMode, MaxAge: int(ttlSessao.Seconds()),
 	})
-	jsonOK(w, map[string]any{"usuario": u, "expira": expira})
+
+	sessaoU, err := a.st.UsuarioDaSessao(tok)
+	if err != nil || sessaoU == nil {
+		sessaoU = u
+	}
+	setorID := sessaoU.SetorID
+	if setorID == nil && sessaoU.PessoaID != nil && *sessaoU.PessoaID > 0 {
+		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *sessaoU.PessoaID).Scan(&setorID)
+	}
+	setoresChefiados := []int64{}
+	if sessaoU.Papel == "chefe_setor" {
+		rows, e := a.st.db.Query(`SELECT setor_id FROM chefe_setores WHERE usuario_id = ? ORDER BY setor_id`, sessaoU.ID)
+		if e == nil {
+			for rows.Next() {
+				var sid int64
+				if rows.Scan(&sid) == nil {
+					setoresChefiados = append(setoresChefiados, sid)
+				}
+			}
+			rows.Close()
+		}
+	}
+	jsonOK(w, map[string]any{
+		"usuario":           sessaoU,
+		"setor_id":          setorID,
+		"setor_nome":        sessaoU.SetorNome,
+		"setores_chefiados": setoresChefiados,
+		"grupo_nome":        sessaoU.GrupoNome,
+		"expira":            expira,
+	})
 }
 
 func (a *App) hAuthSetup(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +133,7 @@ func (a *App) hMe(w http.ResponseWriter, r *http.Request) {
 	// ordem 06/10 (P3): nome do GRUPO da sessão — o dropdown de contexto do
 	// front usa como título da linha; PapeisDoUsuario já traz grupo_nome por
 	// papel, aqui é o do papel ATIVO (última leitura, sem custo extra).
-	jsonOK(w, map[string]any{"usuario": u, "setor_id": setorID, "setores_chefiados": setoresChefiados, "grupo_nome": u.GrupoNome})
+	jsonOK(w, map[string]any{"usuario": u, "setor_id": setorID, "setor_nome": u.SetorNome, "setores_chefiados": setoresChefiados, "grupo_nome": u.GrupoNome})
 }
 
 func (a *App) hLogout(w http.ResponseWriter, r *http.Request) {
@@ -557,7 +586,57 @@ func (a *App) hPessoaPDF(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hPessoasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	jsonOK(w, map[string]any{"pessoas": a.pessoasTodas(escopoDoUsuario(u))})
+	pessoas := a.pessoasTodas(escopoDoUsuario(u))
+	if len(pessoas) == 0 {
+		jsonOK(w, map[string]any{"pessoas": pessoas})
+		return
+	}
+	type ultModInfo struct {
+		em   string
+		quem string
+	}
+	ultMods := make(map[int64]ultModInfo)
+	q := `SELECT ad.registro_id, ad.em, COALESCE(NULLIF(u.nome_guerra, ''), COALESCE(u.login, ''))
+	      FROM auditoria ad
+	      JOIN (
+	          SELECT registro_id, MAX(em) AS max_em, MAX(id) AS max_id
+	          FROM auditoria
+	          WHERE entidade = 'pessoas' AND registro_id IS NOT NULL
+	          GROUP BY registro_id
+	      ) ult ON ad.id = ult.max_id
+	      LEFT JOIN usuarios u ON u.id = ad.usuario_id
+	      WHERE ad.entidade = 'pessoas'`
+	if rows, err := a.st.db.Query(q); err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var regID int64
+			var em, quem string
+			if err := rows.Scan(&regID, &em, &quem); err == nil {
+				ultMods[regID] = ultModInfo{em: em, quem: quem}
+			}
+		}
+	}
+	for _, p := range pessoas {
+		var idVal int64
+		switch v := p["id"].(type) {
+		case int64:
+			idVal = v
+		case int:
+			idVal = int64(v)
+		case float64:
+			idVal = int64(v)
+		}
+		if idVal > 0 {
+			if m, achou := ultMods[idVal]; achou {
+				p["ultima_mod_por"] = m.quem
+				p["ultima_mod_em"] = m.em
+				continue
+			}
+		}
+		p["ultima_mod_por"] = nil
+		p["ultima_mod_em"] = nil
+	}
+	jsonOK(w, map[string]any{"pessoas": pessoas})
 }
 
 func (a *App) hPessoaExcluir(w http.ResponseWriter, r *http.Request) {
@@ -1447,9 +1526,12 @@ func (a *App) rotasPessoal() {
 	m.Handle("GET /api/pessoas/{id}/ficha", a.auth(false, a.hPessoaFicha))
 
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
+	m.Handle("GET /api/pessoas/apresentacao", a.auth(false, a.hPessoaApresentacaoGet))
 	m.Handle("POST /api/pessoas", a.guardaGestaoPessoal(a.hPessoasAdd))
 	m.Handle("PATCH /api/pessoas/{id}", a.guardaGestaoPessoal(a.hPessoasEdit))
 	m.Handle("DELETE /api/pessoas/{id}", a.auth(false, a.hPessoaExcluir)) // v9.7: admin/gerente excluem (com histórico → desativa)
+	m.Handle("POST /api/pessoas/{id}/apresentacao", a.guardaGestaoPessoal(a.hPessoaApresentacaoSet))
+	m.Handle("GET /api/pessoas/{id}/modificacoes", a.auth(false, a.hPessoaModificacoes))
 	m.Handle("GET /api/pessoas/{id}/qr", a.auth(false, a.hPessoaQRCode))
 	m.Handle("GET /api/pessoas/{id}/pdf", a.auth(false, a.hPessoaPDF))
 

@@ -555,6 +555,8 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 		titulo += " (SÓ FALTAS)"
 	} else if c.Filtro == "justificados" {
 		titulo += " (SÓ JUSTIFICADOS)"
+	} else if c.Filtro == "atrasos" {
+		titulo += " (SÓ ATRASOS)"
 	}
 	pdf := a.novoPDF("P", titulo, sub, c.GeradoPor)
 

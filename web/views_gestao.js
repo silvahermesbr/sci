@@ -2073,9 +2073,15 @@
     const souFuncaoPessoal = eu.papel !== 'gerente';
     navAtiva('#/grupos');
     $('#app').innerHTML = '<div class="carregando">…</div>';
-    const [grupos, arvore, pessoas, setores, funcoes, contas] = await Promise.all([
+    const [grupos, arvore, pessoas, setores, funcoes, contas, apresentacaoDados] = await Promise.all([
       api('/api/grupos'), api('/api/grupos/arvore'), api('/api/pessoas'),
-      api('/api/catalogo/setores'), api('/api/catalogo/funcoes'), api('/api/usuarios')]);
+      api('/api/catalogo/setores'), api('/api/catalogo/funcoes'), api('/api/usuarios'),
+      api('/api/pessoas/apresentacao').catch(() => ({ apresentacao: [] }))]);
+    const mapaApresentacao = {};
+    ((apresentacaoDados && apresentacaoDados.apresentacao) || []).forEach(a => {
+      if (a && a.pessoa_id != null) mapaApresentacao[a.pessoa_id] = a;
+    });
+    const podeApresentacao = typeof window.gestorPessoal === 'function' ? (window.gestorPessoal() || (typeof window.ehEncarregado === 'function' && window.ehEncarregado())) : false;
     let optSetores = ativosDe(setores), optFuncoes = ativosDe(funcoes);
     setoresCat = setores; funcoesCat = funcoes; // cache p/ carregarCats (v9.16.9)
     const operadores = contas.filter(c => c.grupo_id === eu.grupo_id && c.papel === 'operador');
@@ -2120,16 +2126,44 @@
         <textarea id="csv" rows="5" placeholder="SILVA;José da Silva;Comando;Motorista&#10;SOUSA;Maria de Sousa;Serviços&#10;PERES;Bruno Peres"></textarea>
         <button class="acao-linha" id="csvGo" style="margin-top:8px">Importar linhas</button></div>`;
 
+    /* --- mapa local de rótulos e classes de apresentação --- */
+    const GPX_ROTULO_APRESENTACAO = {
+      'presente': { rotulo: 'Presente', classe: 'pill-presente' },
+      'dispensado': { rotulo: 'Dispensado', classe: 'gpx-pill-dispensado' },
+      'descompensado': { rotulo: 'Descompensado', classe: 'gpx-pill-descompensado' },
+      'a serviço externo': { rotulo: 'A serviço externo', classe: 'gpx-pill-servico-ext' },
+      'atrasado': { rotulo: 'Atrasado', classe: 'pill-atraso' },
+      'falta': { rotulo: 'Falta', classe: 'pill-falta' }
+    };
+    function gpxRenderPillApresentacao(estado) {
+      if (!estado) return '';
+      const norm = String(estado).trim().toLowerCase();
+      const info = GPX_ROTULO_APRESENTACAO[norm];
+      if (info) return `<span class="pill ${info.classe}">${esc(info.rotulo)}</span>`;
+      return `<span class="pill">${esc(estado)}</span>`;
+    }
+
     /* --- banco de pessoal (checkbox por linha p/ operações em lote) --- */
-    const linhasP = (pessoas.pessoas || []).map(p =>
-      `<tr data-p='${esc(JSON.stringify(p))}'><td><input type="checkbox" class="chkP" data-id="${p.id}"></td>
-       <td class="num">#${p.id}</td><td><b>${esc(p.nome_guerra)}</b></td><td>${esc(p.nome_completo)}</td>
+    const linhasP = (pessoas.pessoas || []).map(p => {
+      const ap = mapaApresentacao[p.id];
+      const pillAp = ap && ap.estado ? ` ${gpxRenderPillApresentacao(ap.estado)}` : '';
+      const celMod = p.ultima_mod_em
+        ? `<div class="gpx-mod-cel"><div>${fmtData(p.ultima_mod_em)} ${fmtHora(p.ultima_mod_em)}</div>${p.ultima_mod_por ? `<small class="gpx-mod-por">por ${esc(p.ultima_mod_por)}</small>` : ''}</div>`
+        : '—';
+      return `<tr data-p='${esc(JSON.stringify(p))}'><td><input type="checkbox" class="chkP" data-id="${p.id}"></td>
+       <td class="num">#${p.id}</td><td><b>${esc(p.nome_guerra)}</b>${pillAp}</td><td>${esc(p.nome_completo)}</td>
        <td>${esc(p.setor || 'SEM SETOR')}</td>
        <td>${esc(p.funcao || 'INDEFINIDO')}</td>
        <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
-       <td><button class="acao-linha" data-edit="${p.id}">editar</button>
+       <td>${celMod}</td>
+       <td><div class="gpx-acoes">
+       ${podeApresentacao ? `<button class="acao-linha" data-apresentacao="${p.id}" data-nome="${esc(p.nome_guerra)}">APRESENTAÇÃO</button>` : ''}
+       <button class="acao-linha" data-historico="${p.id}" data-nome="${esc(p.nome_guerra)}">HISTÓRICO</button>
+       <button class="acao-linha" data-edit="${p.id}">editar</button>
        <button class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button>
-       ${souFuncaoPessoal ? '' : `<button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button>`}</td></tr>`).join('');
+       ${souFuncaoPessoal ? '' : `<button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button>`}
+       </div></td></tr>`;
+    }).join('');
 
     const optsMoverGer = `<option value="">— destino (dentro da sua hierarquia) —</option>` +
       grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
@@ -2147,8 +2181,17 @@
             <button class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
             ${souFuncaoPessoal ? '' : '<button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>'}
             <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span></div>
-          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Posto / Graduação</th><th>Ativo</th><th></th></tr></thead>
-          <tbody id="tabP">${linhasP || '<tr><td colspan="8"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
+          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Posto / Graduação</th><th>Ativo</th><th>ÚLTIMA MODIFICAÇÃO</th><th></th></tr></thead>
+          <tbody id="tabP">${linhasP || '<tr><td colspan="9"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
+        <div class="cartao gpx-rel-card">
+          <h3 style="margin-top:0">RELATÓRIO DE FALTAS E ATRASOS</h3>
+          <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Selecione uma conferência fechada para emitir o relatório analítico filtrado por situação.</p>
+          <div class="gpx-rel-controles">
+            <div id="gpxRelConfDD" style="min-width:280px"></div>
+            <button type="button" class="primario" id="gpxBtFaltas">SÓ FALTAS</button>
+            <button type="button" id="gpxBtAtrasos">SÓ ATRASOS</button>
+          </div>
+        </div>
       </div>
       <div id="gerTags" class="${abaGer === 'tags' ? '' : 'oculto'}">
         <div class="cartao">
@@ -2357,7 +2400,7 @@
     if (tabPTbl) {
       window.tabelaControles('ger-pessoal', tabPTbl, $('#tabP'), [
         null, { tipo: 'num' }, { tipo: 'txt' }, { tipo: 'txt' },
-        { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, null
+        { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, null
       ], 20);
     }
     const tabOpTbl = document.querySelector('#gerOperadores table');
@@ -2848,6 +2891,167 @@
         window.open('/api/pessoas/' + id + '/pdf', '_blank');
       };
     });
+
+    /* --- onda GPX (item 2): edição de apresentação (presente → dispensado etc.) --- */
+    document.querySelectorAll('#tabP [data-apresentacao]').forEach(bt => {
+      bt.onclick = ev => {
+        ev.stopPropagation();
+        const pid = bt.dataset.apresentacao;
+        const nomeGuerra = bt.dataset.nome || '';
+        const atual = mapaApresentacao[pid] || {};
+        const estadoAtual = atual.estado || 'presente';
+
+        const div = modal(`<div class="modal-inner" style="max-width:440px">
+          <h3>Apresentação — ${esc(nomeGuerra)}</h3>
+          <div class="campo" style="margin-bottom:12px">
+            <label>Estado de Apresentação</label>
+            <div id="gpxAprEstadoDD"></div>
+          </div>
+          <div class="campo" style="margin-bottom:16px">
+            <label>Motivo (opcional)</label>
+            <textarea id="gpxAprMotivo" rows="3" placeholder="Justificativa ou observação…">${esc(atual.motivo || '')}</textarea>
+          </div>
+          <div class="modal-acoes" style="display:flex;justify-content:flex-end;gap:8px">
+            <button class="fantasma" id="gpxAprCanc">Cancelar</button>
+            <button class="primario" id="gpxAprReg">Registrar</button>
+          </div>
+        </div>`);
+        if (!div) return;
+
+        let estadoEscolhido = estadoAtual;
+        const ddContainer = div.querySelector('#gpxAprEstadoDD');
+        if (ddContainer && typeof criarDropdown === 'function') {
+          criarDropdown(ddContainer, [
+            { valor: 'presente', rotulo: 'Presente' },
+            { valor: 'dispensado', rotulo: 'Dispensado' },
+            { valor: 'descompensado', rotulo: 'Descompensado' },
+            { valor: 'a serviço externo', rotulo: 'A serviço externo' },
+            { valor: 'atrasado', rotulo: 'Atrasado' },
+            { valor: 'falta', rotulo: 'Falta' }
+          ], {
+            valorPadrao: estadoAtual,
+            onChange: v => { estadoEscolhido = v; }
+          });
+        }
+
+        const fecharModal = () => { div.remove(); };
+        const btCanc = div.querySelector('#gpxAprCanc');
+        if (btCanc) btCanc.onclick = fecharModal;
+
+        const btReg = div.querySelector('#gpxAprReg');
+        if (btReg) {
+          btReg.onclick = async () => {
+            const motivoTxt = (div.querySelector('#gpxAprMotivo')?.value || '').trim();
+            btReg.disabled = true;
+            try {
+              const resp = await api(`/api/pessoas/${pid}/apresentacao`, {
+                method: 'POST',
+                body: JSON.stringify({ estado: estadoEscolhido, motivo: motivoTxt })
+              });
+              if (resp && resp.ok) {
+                toast('Apresentação registrada');
+                fecharModal();
+                window.ViewGrupos();
+              } else {
+                toast((resp && resp.erro) || 'Falha ao registrar apresentação', 'erro');
+                btReg.disabled = false;
+              }
+            } catch (err) {
+              toast((err && err.message) || 'Erro ao comunicar com o servidor', 'erro');
+              btReg.disabled = false;
+            }
+          };
+        }
+      };
+    });
+
+    /* --- onda GPX (item 3): trilha de modificações por pessoa --- */
+    document.querySelectorAll('#tabP [data-historico]').forEach(bt => {
+      bt.onclick = async ev => {
+        ev.stopPropagation();
+        const pid = bt.dataset.historico;
+        const nomeGuerra = bt.dataset.nome || '';
+
+        const div = modal(`<div class="modal-inner" style="max-width:540px">
+          <h3>Histórico de Modificações — ${esc(nomeGuerra)}</h3>
+          <div id="gpxHistCorpo"><div class="carregando">…</div></div>
+          <div class="modal-acoes" style="display:flex;justify-content:flex-end;margin-top:14px">
+            <button class="fantasma" id="gpxHistFechar">Fechar</button>
+          </div>
+        </div>`);
+        if (!div) return;
+
+        const btFechar = div.querySelector('#gpxHistFechar');
+        if (btFechar) btFechar.onclick = () => { div.remove(); };
+
+        try {
+          const r = await api(`/api/pessoas/${pid}/modificacoes`);
+          const lista = (r && r.modificacoes) || [];
+          const cont = div.querySelector('#gpxHistCorpo');
+          if (!cont) return;
+          if (!lista.length) {
+            cont.innerHTML = '<div class="gpx-hist-vazio">Nenhuma modificação registrada até o momento.</div>';
+          } else {
+            cont.innerHTML = `<div class="gpx-hist">${lista.map(m => `
+              <div class="gpx-hist-item">
+                <div class="gpx-hist-quando">${fmtData(m.quando)} ${fmtHora(m.quando)}${m.fonte ? ` <span style="opacity:0.7">(${esc(m.fonte)})</span>` : ''}</div>
+                <div class="gpx-hist-quem">${esc(m.quem || 'Sistema')}</div>
+                <div class="gpx-hist-acao">${esc(m.acao || '—')}</div>
+              </div>`).join('')}</div>`;
+          }
+        } catch (e) {
+          const cont = div.querySelector('#gpxHistCorpo');
+          if (cont) cont.innerHTML = '<div class="gpx-hist-vazio">Falha ao carregar modificações.</div>';
+        }
+      };
+    });
+
+    /* --- onda GPX (item 4): relatório de faltas e atrasos de conferência fechada --- */
+    (async () => {
+      const relDDCont = $('#gpxRelConfDD');
+      const btFaltas = $('#gpxBtFaltas');
+      const btAtrasos = $('#gpxBtAtrasos');
+      if (!relDDCont || !btFaltas || !btAtrasos) return;
+
+      let confsFechadas = [];
+      try {
+        const respConfs = await api('/api/conferencia/lista');
+        confsFechadas = (respConfs || []).filter(c => c && c.status === 'fechada');
+      } catch (err) {
+        confsFechadas = [];
+      }
+
+      let confIdSelecionada = confsFechadas.length ? String(confsFechadas[0].id) : null;
+
+      if (!confsFechadas.length) {
+        relDDCont.innerHTML = '<span style="color:var(--tx3);font-size:12.5px">Nenhuma conferência fechada encontrada</span>';
+        btFaltas.disabled = true;
+        btAtrasos.disabled = true;
+        return;
+      }
+
+      const opcoesDD = confsFechadas.map(c => ({
+        valor: String(c.id),
+        rotulo: `#${c.id} — ${fmtData(c.data)} ${c.nome ? '· ' + c.nome : ''} (${c.lancamentos || 0} lançamentos)`
+      }));
+
+      if (typeof criarDropdown === 'function') {
+        criarDropdown(relDDCont, opcoesDD, {
+          valorPadrao: confIdSelecionada,
+          onChange: val => { confIdSelecionada = val; }
+        });
+      }
+
+      btFaltas.onclick = () => {
+        if (!confIdSelecionada) { toast('Selecione uma conferência fechada', 'erro'); return; }
+        window.open('/api/conferencia/' + encodeURIComponent(confIdSelecionada) + '/relatorio.pdf?filtro=faltas', '_blank');
+      };
+
+      btAtrasos.onclick = () => {
+        if (!confIdSelecionada) { toast('Selecione uma conferência fechada', 'erro'); return; }
+        window.open('/api/conferencia/' + encodeURIComponent(confIdSelecionada) + '/relatorio.pdf?filtro=atrasos', '_blank');
+      };
+    })();
 
     /* --- aba TAGS: Catálogos divididos em Pessoal e Material (v1.5) --- */
     const rotCat = {

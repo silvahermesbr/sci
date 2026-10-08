@@ -28,6 +28,8 @@ type UsuarioPapel struct {
 	UsuarioID    int64  `json:"usuario_id"`
 	GrupoID      *int64 `json:"grupo_id"`
 	GrupoNome    string `json:"grupo_nome,omitempty"`
+	SetorID      *int64 `json:"setor_id,omitempty"`
+	SetorNome    string `json:"setor_nome,omitempty"`
 	Papel        string `json:"papel"` // admin | gerente | operador | chefe_setor
 	FuncaoID     *int64 `json:"funcao_id"`
 	FuncaoNome   string `json:"funcao_nome,omitempty"`
@@ -50,6 +52,7 @@ type Usuario struct {
 	Endereco       string         `json:"endereco,omitempty"` // ENDEREÇO
 	FotoBase64     string         `json:"foto_base64,omitempty"` // Foto 1x1
 	SetorID        *int64         `json:"setor_id"`
+	SetorNome      string         `json:"setor_nome,omitempty"`
 	FuncaoID       *int64         `json:"funcao_id"` // função militar/organizacional ativa
 	FuncaoNome     string         `json:"funcao_nome,omitempty"`
 	PapelAtivoID   *int64         `json:"papel_ativo_id,omitempty"`

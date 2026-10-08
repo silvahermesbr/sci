@@ -6,9 +6,9 @@
    Comportamento copiado do protótipo web/app.js (v9.11.2) — nada pode sumir. */
 /* [FATIADO da views_gestao.js — onda de modularização; recorte puro] */
 'use strict';
-  const $ = (s) => document.querySelector(s);
 (function () {
 'use strict';
+  const $ = (s) => document.querySelector(s);
   window.ViewPerfil = async function () {
     const eu = quem();
     if (!eu) { location.hash = '#/login'; return; }
@@ -228,5 +228,4 @@
   };
 
   // exports (referenciados por outros módulos / router)
-  window.ViewPerfil = ViewPerfil;
 })();

@@ -788,10 +788,7 @@
 
   // exports (referenciados por outros módulos / router)
   window.FOCO_GRUPO_ID = FOCO_GRUPO_ID;
-  window.ViewAdmin = ViewAdmin;
-  window.arvoreHTML = arvoreHTML;
   window.buscarNoPorId = buscarNoPorId;
-  window.codigoChip = codigoChip;
   window.ligarToggles = ligarToggles;
   window.marcarGerente = marcarGerente;
   window.modal = modal;

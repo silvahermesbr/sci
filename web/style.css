@@ -3979,3 +3979,268 @@ th.sorted-desc {
 /* Onda UX 0510 (item 3): mural no padrão Email Interno — card clicável abre a leitura */
 .aviso-card[data-veraviso]:hover { border-color: var(--verde-claro, #4ade80); box-shadow: 0 0 0 1px var(--verde-claro, #4ade80) inset; }
 .aviso-card[data-veraviso] .aviso-card-titulo { color: var(--tx); }
+
+/* ==========================================================================
+   48. Módulo de Conferência — Onda Despacho & Dashboard do Gerente (cfd-)
+   ========================================================================== */
+.cfd-painel-gerente {
+  background: rgba(14, 21, 36, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio, 8px);
+}
+
+.cfd-barra-gerente {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tx);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--borda);
+  flex-wrap: wrap;
+}
+
+.cfd-barra-gerente b {
+  color: var(--verde-claro);
+}
+
+.cfd-ranking-titulo {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--tx2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 10px 0 6px;
+}
+
+.cfd-ranking-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.cfd-card-ranking {
+  min-width: 140px;
+  flex: 1 1 140px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: var(--raio-p, 6px);
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--borda);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.cfd-card-ranking:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--borda2, rgba(255, 255, 255, 0.15));
+}
+
+.cfd-card-pct {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.cfd-card-nome {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--tx);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cfd-card-detalhe {
+  font-size: 11px;
+  color: var(--tx2);
+}
+
+.cfd-vazio {
+  text-align: center;
+  padding: 40px 20px;
+  background: rgba(14, 21, 36, 0.6);
+  border: 1px dashed var(--borda2, var(--borda));
+  border-radius: var(--raio, 8px);
+  color: var(--tx2);
+}
+
+.cfd-lista-setores-modal {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+  padding-right: 4px;
+}
+
+.cfd-setor-item-modal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--raio-p, 6px);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--borda);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  user-select: none;
+}
+
+.cfd-setor-item-modal:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--borda2, rgba(255, 255, 255, 0.15));
+}
+
+.cfd-chk-todos {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--tx);
+}
+
+.cfd-modal-confirm-corpo {
+  padding: 12px 14px;
+  border-radius: var(--raio-p, 6px);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--borda);
+}
+
+@media (max-width: 480px) {
+  .cfd-card-ranking {
+    min-width: 100%;
+    flex: 1 1 100%;
+  }
+}
+
+/* ==========================================================================
+   49. Gestão de Pessoal — Onda GPX (Apresentação, Modificações & Relatórios)
+   ========================================================================== */
+.gpx-acoes {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.gpx-pill-dispensado {
+  background: rgba(56, 189, 248, 0.12);
+  color: var(--azul-txt);
+  border-color: rgba(56, 189, 248, 0.3);
+}
+
+.gpx-pill-descompensado {
+  background: rgba(148, 163, 184, 0.14);
+  color: var(--tx2);
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.gpx-pill-servico-ext {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--ambar-txt);
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.gpx-hist {
+  position: relative;
+  padding-left: 20px;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.gpx-hist::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--borda);
+}
+
+.gpx-hist-item {
+  position: relative;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.gpx-hist-item::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--verde-claro);
+  box-shadow: 0 0 0 2px var(--painel);
+}
+
+.gpx-hist-quando {
+  font-size: 11.5px;
+  color: var(--tx3);
+  margin-bottom: 2px;
+}
+
+.gpx-hist-quem {
+  font-weight: 600;
+  color: var(--tx);
+}
+
+.gpx-hist-acao {
+  color: var(--tx2);
+}
+
+.gpx-hist-vazio {
+  color: var(--tx3);
+  font-size: 13px;
+  padding: 12px 0;
+}
+
+.gpx-rel-card {
+  margin-top: 18px;
+}
+
+.gpx-rel-controles {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.gpx-mod-cel {
+  line-height: 1.25;
+}
+
+.gpx-mod-por {
+  color: var(--tx3);
+  font-size: 11px;
+}
+
+@media (max-width: 380px) {
+  .gpx-acoes {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .gpx-rel-controles {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+

@@ -83,11 +83,11 @@
     tblPaginarPara(chave, table, tbody, tamPag, est);
   }
   window.tblOrdenar = tblOrdenar;
-  window.tblPaginar = tblPaginar;
-  window.tabelaControles = (chave, table, tbody, cols, tamPag) => {
+  const tabelaControles = (chave, table, tbody, cols, tamPag) => {
     tblOrdenar(chave, table, tbody, cols);
     if (tamPag) tblPaginar(chave, table, tbody, tamPag);
   };
+  window.tabelaControles = tabelaControles;
 
 
   /* ---------- blocos compartilhados ---------- */

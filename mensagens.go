@@ -15,7 +15,8 @@ import (
 
 func (a *App) hMudarContexto(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PapelID int64 `json:"papel_id"`
+		PapelID int64  `json:"papel_id"`
+		SetorID *int64 `json:"setor_id"`
 	}
 	if err := decodificar(r, &req); err != nil || req.PapelID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "papel_id inválido")
@@ -30,19 +31,39 @@ func (a *App) hMudarContexto(w http.ResponseWriter, r *http.Request) {
 
 	// Validar se o papel_id pertence ao usuário
 	var donoID int64
-	err = a.st.db.QueryRow(`SELECT usuario_id FROM usuario_papeis WHERE id = ?`, req.PapelID).Scan(&donoID)
+	var grupoID *int64
+	var papel string
+	err = a.st.db.QueryRow(`SELECT usuario_id, grupo_id, papel FROM usuario_papeis WHERE id = ?`, req.PapelID).Scan(&donoID, &grupoID, &papel)
 	if err != nil || donoID != u.ID {
 		jsonErro(w, http.StatusForbidden, "este papel não pertence a este usuário")
 		return
 	}
 
+	// Se setor_id foi passado, validar
+	if req.SetorID != nil && *req.SetorID > 0 {
+		var setorValido int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM setores WHERE id = ? AND ativo = 1`, *req.SetorID).Scan(&setorValido)
+		if setorValido == 0 {
+			jsonErro(w, http.StatusBadRequest, "setor inválido ou inativo")
+			return
+		}
+	} else if papel == "chefe_setor" && grupoID != nil {
+		var firstSid int64
+		if e := a.st.db.QueryRow(`SELECT cs.setor_id FROM chefe_setores cs JOIN setores s ON s.id = cs.setor_id WHERE cs.usuario_id = ? AND cs.grupo_id = ? ORDER BY s.nome ASC LIMIT 1`, u.ID, *grupoID).Scan(&firstSid); e == nil {
+			req.SetorID = &firstSid
+		}
+	}
+
 	// Atualizar a sessão ativa
 	h := sha256.Sum256([]byte(c.Value))
 	hash := hex.EncodeToString(h[:])
-	_, err = a.st.db.Exec(`UPDATE sessoes SET papel_ativo_id = ? WHERE token_hash = ?`, req.PapelID, hash)
+	_, err = a.st.db.Exec(`UPDATE sessoes SET papel_ativo_id = ?, setor_ativo_id = ? WHERE token_hash = ?`, req.PapelID, req.SetorID, hash)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao atualizar contexto da sessão")
 		return
+	}
+	if req.SetorID != nil && *req.SetorID > 0 {
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, *req.SetorID, u.ID)
 	}
 
 	novoU, err := a.st.UsuarioDaSessao(c.Value)
@@ -52,9 +73,9 @@ func (a *App) hMudarContexto(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a.st.Auditoria(&u.ID, "trocar_contexto", "usuario_papeis", &req.PapelID,
-		fmt.Sprintf("para papel=%s grupo=%v", novoU.Papel, novoU.GrupoID), ipDe(r))
+		fmt.Sprintf("para papel=%s grupo=%v setor=%v", novoU.Papel, novoU.GrupoID, novoU.SetorID), ipDe(r))
 
-	jsonOK(w, map[string]any{"usuario": novoU})
+	jsonOK(w, map[string]any{"usuario": novoU, "setor_id": novoU.SetorID, "grupo_nome": novoU.GrupoNome, "setor_nome": novoU.SetorNome})
 }
 
 // ---------- Gestão de Papéis de Usuários ----------

@@ -83,8 +83,12 @@ function rotaInicial() {
 
 /* navega p/ hash; se já estiver nele, roteia direto (hashchange não dispara) */
 function irPara(hash) {
-  if (location.hash === hash) rotear();
-  else location.hash = hash;
+  if (location.hash === hash) {
+    if (typeof window.rotear === 'function') window.rotear();
+    else rotear();
+  } else {
+    location.hash = hash;
+  }
 }
 
 /* ---------- API ---------- */
@@ -474,13 +478,22 @@ window.modalSenha = modalSenha;
 function textoContextoUsuario(u) {
   if (!u) return 'Sem papel';
   const papel = rotuloPapel(u.papel);
-  const funcao = u.funcao_nome ? u.funcao_nome : '';
-  const grupo = u.grupo_nome ? u.grupo_nome : (u.papel === 'admin' ? 'Global' : '');
-  
-  if (funcao && grupo) return `${funcao} · ${grupo}`;
-  if (funcao) return `${funcao} (${papel})`;
-  if (grupo) return `${papel} · ${grupo}`;
-  return papel;
+  const funcao = (u.funcao_nome && u.funcao_nome.trim()) ? u.funcao_nome.trim() : papel;
+  const grupo = (u.grupo_nome && u.grupo_nome.trim()) ? u.grupo_nome.trim() : (u.papel === 'admin' ? 'Global' : '');
+  const setor = (u.setor_nome && u.setor_nome.trim()) ? u.setor_nome.trim() : '';
+
+  let grupoSetor = '';
+  if (grupo && setor) {
+    grupoSetor = `${grupo}/${setor}`;
+  } else if (grupo) {
+    grupoSetor = grupo;
+  } else if (setor) {
+    grupoSetor = setor;
+  } else {
+    grupoSetor = (u.papel === 'admin' ? 'Global' : 'Sem grupo');
+  }
+
+  return `${grupoSetor} - ${funcao}`;
 }
 
 function montarShell(usuario) {
@@ -692,18 +705,21 @@ definirUsuario(usuario);
       return;
     }
     const html = papeis.map(p => {
-      const ehAtivo = usuario.papel_ativo_id === p.id;
+      const mesmoPapel = usuario.papel_ativo_id === p.id;
+      const mesmoSetor = p.setor_id ? (usuario.setor_id === p.setor_id) : true;
+      const ehAtivo = mesmoPapel && mesmoSetor;
+
       const rot = rotuloPapel(p.papel);
-      // ordem 06/10 (P3): TÍTULO = nome do grupo/setor, SUBTÍTULO = função.
-      // Sem grupo: admin = Global; demais = Sem grupo. Sem função no papel:
-      // o subtítulo mostra o rótulo do papel (nunca linha vazia).
-      const titulo = p.grupo_nome ? p.grupo_nome : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
-      const subtitulo = p.funcao_nome ? p.funcao_nome : rot;
+      const funcao = (p.funcao_nome && p.funcao_nome.trim()) ? p.funcao_nome.trim() : rot;
+      const grupo = (p.grupo_nome && p.grupo_nome.trim()) ? p.grupo_nome.trim() : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
+      const setor = (p.setor_nome && p.setor_nome.trim()) ? p.setor_nome.trim() : '';
+      const grupoSetor = (grupo && setor) ? `${grupo}/${setor}` : (grupo || setor || 'Global');
+
       return `
-        <div class="menu-contexto-item ${ehAtivo ? 'ativo' : ''}" data-papelid="${p.id}">
+        <div class="menu-contexto-item ${ehAtivo ? 'ativo' : ''}" data-papelid="${p.id}" data-setorid="${p.setor_id || ''}">
           <div style="min-width:0">
-            <div style="font-weight:700">${esc(titulo)}</div>
-            <div style="font-size:11px;color:var(--tx3)">${esc(subtitulo)}</div>
+            <div style="font-weight:700">${esc(grupoSetor)}</div>
+            <div style="font-size:11px;color:var(--tx3)">${esc(funcao)}</div>
           </div>
           ${ehAtivo ? '<span style="font-size:12px">✓</span>' : ''}
         </div>
@@ -715,7 +731,8 @@ definirUsuario(usuario);
       item.onclick = async (ev) => {
         ev.stopPropagation();
         const pId = +item.dataset.papelid;
-        if (pId === usuario.papel_ativo_id) {
+        const sId = item.dataset.setorid ? +item.dataset.setorid : null;
+        if (pId === usuario.papel_ativo_id && (!sId || sId === usuario.setor_id)) {
           menuCtx.classList.add('oculto');
           return;
         }
@@ -723,12 +740,14 @@ definirUsuario(usuario);
         try {
           const res = await api('/api/sessao/contexto', {
             method: 'POST',
-            body: JSON.stringify({ papel_id: pId })
+            body: JSON.stringify({ papel_id: pId, setor_id: sId })
           });
           if (res && res.usuario) {
             toast('Contexto alterado com sucesso!');
-            if (res && res.setor_id !== undefined && res.usuario) res.usuario.setor_id = res.setor_id; // onda 0510
-definirUsuario(res.usuario);
+            if (res && res.setor_id !== undefined && res.usuario) res.usuario.setor_id = res.setor_id;
+            if (res && res.setor_nome && res.usuario && !res.usuario.setor_nome) res.usuario.setor_nome = res.setor_nome;
+            if (res && res.grupo_nome && res.usuario && !res.usuario.grupo_nome) res.usuario.grupo_nome = res.grupo_nome;
+            definirUsuario(res.usuario);
             montarShell(res.usuario);
             irPara(rotaInicial());
           }
@@ -899,7 +918,9 @@ function viewLogin() {
     try {
       const r = await api('/api/login', { method: 'POST', body: JSON.stringify({ login: login, senha: senha }) });
       if (r && r.setor_id !== undefined && r.usuario) r.usuario.setor_id = r.setor_id; // onda 0510
-definirUsuario(r.usuario);
+      if (r && r.setor_nome && r.usuario && !r.usuario.setor_nome) r.usuario.setor_nome = r.setor_nome;
+      if (r && r.grupo_nome && r.usuario && !r.usuario.grupo_nome) r.usuario.grupo_nome = r.grupo_nome;
+      definirUsuario(r.usuario);
       if (r.usuario.precisa_setup && window.showSetupModal) {
         window.showSetupModal();
         if (btn) btn.disabled = false;
@@ -936,6 +957,16 @@ function chamarView(nome, ...args) {
   animarEntradaView();
   const fn = window[nome];
   if (typeof fn !== 'function') {
+    if (typeof window.garantirHash === 'function' && location.hash) {
+      window.garantirHash(location.hash).then(() => {
+        if (typeof window[nome] === 'function') {
+          chamarView(nome, ...args);
+        } else {
+          app.innerHTML = '<div class="carregando">módulo ausente: ' + esc(nome) + '</div>';
+        }
+      });
+      return;
+    }
     app.innerHTML = '<div class="carregando">módulo ausente: ' + esc(nome) + '</div>';
     return;
   }
@@ -1185,7 +1216,10 @@ window.aplicarConfiguracoes = aplicarConfiguracoes;
 
 /* ---------- boot ---------- */
 window.SCI_BOOT = function () {
-  window.onhashchange = rotear;
+  window.onhashchange = function () {
+    if (typeof window.rotear === 'function') window.rotear();
+    else rotear();
+  };
 
   // Carregar imediatamente configs locais para evitar flash de cor padrão
   try {
@@ -1203,6 +1237,9 @@ window.SCI_BOOT = function () {
 
     try {
       const r = await api('/api/me');
+      if (r && r.setor_id !== undefined && r.usuario) r.usuario.setor_id = r.setor_id;
+      if (r && r.setor_nome && r.usuario && !r.usuario.setor_nome) r.usuario.setor_nome = r.setor_nome;
+      if (r && r.grupo_nome && r.usuario && !r.usuario.grupo_nome) r.usuario.grupo_nome = r.grupo_nome;
       definirUsuario(r && r.usuario);
       if (r && r.usuario && r.usuario.precisa_setup && window.showSetupModal) {
         window.showSetupModal();
@@ -1215,7 +1252,8 @@ window.SCI_BOOT = function () {
     if (!location.hash || location.hash === '#' || location.hash === '#/') {
       location.hash = rotaInicial(); // dispara hashchange → rotear
     } else {
-      rotear();
+      if (typeof window.rotear === 'function') window.rotear();
+      else rotear();
     }
   })();
 };

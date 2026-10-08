@@ -1110,5 +1110,4 @@
   };
 
   // exports (referenciados por outros módulos / router)
-  window.ViewGrupos = ViewGrupos;
 })();

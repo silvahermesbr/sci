@@ -295,6 +295,211 @@
     // mesmo sem re-render da lista (o do pooling só atualiza por confRender).
     const topo = document.getElementById('confContTopo');
     if (topo) topo.innerHTML = contSpan();
+
+    confPainelGerenteRender();
+  }
+
+  /* === Painel do Gerente (Ranking e Acompanhamento) ========================= */
+  function confRankingCardsHTML(setoresList) {
+    if (!setoresList || !setoresList.length) {
+      return '<span class="vazio" style="font-size:12px;padding:6px 0">Nenhum setor despachado nesta conferência.</span>';
+    }
+    const lista = (setoresList || []).filter(s => s.status !== 'sem_setor' && s.setor_id > 0).map(s => {
+      const vTot = s.total_verificados ?? s.verificados ?? 0;
+      const eTot = s.total_efetivo ?? s.total_pessoas ?? 0;
+      const pct = s.pct_conferido !== undefined ? Math.round(s.pct_conferido) : (eTot > 0 ? Math.round((vTot / eTot) * 100) : 0);
+      return {
+        ...s,
+        pct,
+        vTot,
+        eTot,
+        nome: s.setor_sigla || s.setor_nome || ('Setor #' + s.setor_id)
+      };
+    });
+    // Ordenado do PIOR para o MELHOR (menor % primeiro)
+    lista.sort((a, b) => a.pct - b.pct || (a.nome || '').localeCompare(b.nome || '', 'pt', { sensitivity: 'base' }));
+
+    return lista.map(s => {
+      let corPct = 'var(--verm)';
+      if (s.pct >= 100 || s.status === 'concluida') corPct = 'var(--verde-claro)';
+      else if (s.pct >= 50) corPct = 'var(--ambar-txt)';
+
+      return `
+        <div class="cfd-card-ranking">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px">
+            <span class="cfd-card-pct" style="color:${corPct}">${s.pct}%</span>
+            <span style="font-size:11px;color:var(--tx3)">${s.status === 'concluida' ? '✅' : '⏳'}</span>
+          </div>
+          <div class="cfd-card-nome" title="${esc(s.setor_nome || s.nome)}">${esc(s.nome)}</div>
+          <div class="cfd-card-detalhe">${s.vTot} de ${s.eTot} verif.</div>
+        </div>`;
+    }).join('');
+  }
+
+  function confPainelGerenteHTML() {
+    const ehChefeOuOper = window.ME && (window.ME.papel === 'chefe_setor' || window.ME.papel === 'operador');
+    if (ehChefeOuOper || !C || !C.c) return '';
+
+    const totBanco = C.totalBanco ?? (C.pessoas ? C.pessoas.length : 0);
+    const totVerif = C.totalVerificado ?? (C.verif ? C.verif.size : 0);
+    const setFech = C.setoresFechados ?? (C.setoresStatus || []).filter(s => s.status === 'concluida').length;
+    const totSet = C.totalSetores ?? (C.setoresStatus || []).filter(s => s.setor_id > 0).length;
+
+    return `
+      <div class="cartao cfd-painel-gerente" style="margin-bottom:14px;padding:12px 14px">
+        <div class="cfd-barra-gerente">
+          <span style="font-size:16px">📊</span>
+          <span id="cfdBarraGerenteTexto">Total verificado/total do banco: <b>${totVerif}/${totBanco}</b> · Setores fechados: <b>${setFech}/${totSet}</b></span>
+        </div>
+        <div class="cfd-ranking-titulo">
+          Ranking de % conferido por setor (menor % primeiro):
+        </div>
+        <div id="cfdRankingContainer" class="cfd-ranking-container">
+          ${confRankingCardsHTML(C.setoresStatus)}
+        </div>
+      </div>`;
+  }
+
+  function confPainelGerenteRender() {
+    const ehChefeOuOper = window.ME && (window.ME.papel === 'chefe_setor' || window.ME.papel === 'operador');
+    if (ehChefeOuOper || !C || !C.c) return;
+
+    const textoEl = document.getElementById('cfdBarraGerenteTexto');
+    if (textoEl) {
+      const totBanco = C.totalBanco ?? (C.pessoas ? C.pessoas.length : 0);
+      const totVerif = C.totalVerificado ?? (C.verif ? C.verif.size : 0);
+      const setFech = C.setoresFechados ?? (C.setoresStatus || []).filter(s => s.status === 'concluida').length;
+      const totSet = C.totalSetores ?? (C.setoresStatus || []).filter(s => s.setor_id > 0).length;
+      textoEl.innerHTML = `Total verificado/total do banco: <b>${totVerif}/${totBanco}</b> · Setores fechados: <b>${setFech}/${totSet}</b>`;
+    }
+
+    const rCont = document.getElementById('cfdRankingContainer');
+    if (rCont) {
+      rCont.innerHTML = confRankingCardsHTML(C.setoresStatus);
+    }
+  }
+
+  /* === Modal de confirmação ao fechar o setor (chefe/operador) ============== */
+  function abrirModalConfirmarConclusaoSetor(sid, sNome, onConfirmar) {
+    if (!C || !C.c) return;
+    const pessoasSetor = (C.pessoas || []).filter(p => p.setor_id === sid || (sNome && (p.setor || '').toLowerCase() === sNome.toLowerCase()));
+    const presentes = pessoasSetor.filter(p => {
+      const v = C.est ? C.est[p.id] : null;
+      const sit = (typeof v === 'object' && v !== null) ? v.situacao : (v || 'nao_verificado');
+      const verificado = (typeof v === 'object' && v !== null && v.verificado) || (C.verif && C.verif.has(p.id));
+      return verificado && sit === 'presente';
+    }).length;
+
+    const html = `
+      <div class="modal" style="max-width:440px;width:92%">
+        <h3 style="margin-top:0">Confira seu efetivo</h3>
+        <div class="cfd-modal-confirm-corpo" style="margin:16px 0 20px">
+          <p style="font-size:15px;line-height:1.5;margin:0 0 8px;color:var(--tx)">
+            <b>${presentes}</b> presentes registrados no setor <b>${esc(sNome || 'do setor')}</b>.
+          </p>
+          <p style="font-size:12.5px;color:var(--tx2);margin:0">
+            Deseja confirmar e concluir a conferência do seu setor?
+          </p>
+        </div>
+        <div class="modal-acoes" style="display:flex;justify-content:flex-end;gap:10px">
+          <button type="button" class="secundario" id="cfdVoltarSetor">Voltar</button>
+          <button type="button" class="primario" id="cfdConfirmarSetor">Confirmar</button>
+        </div>
+      </div>`;
+    const m = modal(html);
+    m.querySelector('#cfdVoltarSetor').onclick = () => m.remove();
+    m.querySelector('#cfdConfirmarSetor').onclick = async () => {
+      m.remove();
+      if (typeof onConfirmar === 'function') await onConfirmar();
+    };
+  }
+
+  /* === Modal Iniciar / Despachar Conferência ================================ */
+  async function abrirModalIniciarOuDespacharConf() {
+    let setores = [];
+    try { setores = await api('/api/catalogo/setores'); } catch (e) { setores = []; }
+    setores = (setores || []).filter(s => s.ativo === 1 || s.ativo === true);
+    if (window.ME && window.ME.grupo_id && setores.some(s => s.grupo_id != null)) {
+      setores = setores.filter(s => !s.grupo_id || s.grupo_id === window.ME.grupo_id);
+    }
+    setores.sort((a, b) => (a.sigla || a.nome || '').localeCompare(b.sigla || b.nome || '', 'pt', { sensitivity: 'base' }));
+
+    const setoresHTML = setores.map(s => `
+      <label class="cfd-setor-item-modal">
+        <input type="checkbox" class="cfd-chk-setor" value="${s.id}" checked>
+        <span><b>${esc(s.sigla || s.nome)}</b> <small style="color:var(--tx2)">(${esc(s.nome)})</small></span>
+      </label>
+    `).join('') || '<span class="vazio">Nenhum setor disponível</span>';
+
+    const html = `
+      <div class="modal" style="max-width:480px;width:92%">
+        <h3 style="margin-top:0">Iniciar Conferência</h3>
+        <div class="campo" style="margin-bottom:10px">
+          <label style="font-weight:700">Nome da conferência</label>
+          <input type="text" id="ncNome" placeholder="ex.: Conferência de pessoal — 2ª semana" style="width:100%">
+        </div>
+        <div class="campo" style="margin-bottom:12px">
+          <label style="font-weight:700">Prazo final (pronto da conferência)</label>
+          <input type="time" id="ncPrazo" style="width:100%">
+          <small style="color:var(--tx2);font-size:11.5px">Operadores têm até este horário para finalizar a conferência do pessoal do seu setor.</small>
+        </div>
+        <div class="campo" style="margin-bottom:14px">
+          <label style="font-weight:700;margin-bottom:6px;display:block">Setores convocados</label>
+          <label class="cfd-chk-todos">
+            <input type="checkbox" id="ncTodosSetores" ${setores.length ? 'checked' : ''}>
+            <span>Selecionar todos</span>
+          </label>
+          <div class="cfd-lista-setores-modal">
+            ${setoresHTML}
+          </div>
+        </div>
+        <div class="modal-acoes" style="justify-content:flex-end;gap:8px">
+          <button type="button" class="acao-linha" id="ncCancelar">Cancelar</button>
+          <button type="button" class="primario" id="ncDespachar">Despachar</button>
+        </div>
+      </div>`;
+    const m = modal(html);
+    const chkTodos = m.querySelector('#ncTodosSetores');
+    const chks = m.querySelectorAll('.cfd-chk-setor');
+    if (chkTodos) {
+      chkTodos.onchange = () => {
+        chks.forEach(c => { c.checked = chkTodos.checked; });
+      };
+    }
+    chks.forEach(c => {
+      c.onchange = () => {
+        if (chkTodos) {
+          chkTodos.checked = Array.from(chks).every(x => x.checked);
+        }
+      };
+    });
+    m.querySelector('#ncCancelar').onclick = () => m.remove();
+    m.querySelector('#ncDespachar').onclick = async () => {
+      const nome = m.querySelector('#ncNome').value.trim();
+      const prazo = m.querySelector('#ncPrazo').value;
+      if (!nome) { toast('Informe o nome da conferência', 'erro'); return; }
+      const marcados = Array.from(m.querySelectorAll('.cfd-chk-setor:checked')).map(c => +c.value);
+      try {
+        let r;
+        if (marcados.length > 0) {
+          r = await api('/api/conferencia/despachar', {
+            method: 'POST',
+            body: JSON.stringify({ nome, prazo_final: prazo, setores: marcados })
+          });
+        } else {
+          r = await api('/api/conferencia/iniciar', {
+            method: 'POST',
+            body: JSON.stringify({ nome, prazo_final: prazo })
+          });
+        }
+        m.remove();
+        toast('Conferência despachada');
+        const cid = r.conferencia_id || (r.conferencia ? r.conferencia.id : r.id);
+        location.hash = '#/conferencia?id=' + cid;
+      } catch (e) {
+        toast((e && e.erro) || (e && e.message) || 'Falha ao despachar', 'erro');
+      }
+    };
   }
 
   const marcarParcial = (pid, situacao, destinoId, observacao, verificado) => {
@@ -475,6 +680,10 @@
     // C.c e setores_status com o payload fresco (fonte de verdade = servidor)
     C.c.estados = estServ;
     if (d.setores_status) C.setoresStatus = d.setores_status;
+    if (d.total_banco !== undefined) C.totalBanco = d.total_banco;
+    if (d.total_verificado !== undefined) C.totalVerificado = d.total_verificado;
+    if (d.setores_fechados !== undefined) C.setoresFechados = d.setores_fechados;
+    if (d.total_setores !== undefined) C.totalSetores = d.total_setores;
     if (mudouLista && !focoNoPainel && !modalAberto) {
       // P4: mudança localizada num setor conhecido → re-render dirigido + flash
       // apenas no grupo alterado (re-render único preserva invariante: sem
@@ -533,7 +742,8 @@
     let lista = [];
     try { lista = await api('/api/conferencia/lista' + qs); } catch (e) { lista = []; }
     let haAberta = null;
-    try { const d = await api('/api/conferencia/hoje'); haAberta = d.conferencia || null; } catch (e) {}
+    let dadosHoje = null;
+    try { dadosHoje = await api('/api/conferencia/hoje'); haAberta = dadosHoje.conferencia || null; } catch (e) {}
     const souAdmin = (window.ME && window.ME.papel) === 'admin';
     const linha = c => {
       const emAberto = c.status === 'aberta' && modoTela !== 'arquivo';
@@ -592,13 +802,11 @@
         </div></div>`;
     }
     const ehChefeSetor = (window.ME && window.ME.papel) === 'chefe_setor';
-    // ordem 04/10: NOVA CONFERÊNCIA é ato de GERENTE (conferência iniciada por
-    // gerente de grupo); chefe de setor apenas lança presenças na conferência aberta.
+    const ehOperador = (window.ME && window.ME.papel) === 'operador';
     const ehGerente = (window.ME && window.ME.papel) === 'gerente';
-    // fix: ehEnc definido ANTES do uso — `ehGerente || ehEnc` só avaliava ehEnc
-    // para NÃO-gerente (chefe) e explodia com ReferenceError ("ehEnc is not
-    // defined"), deixando a tela eterna em "Carregando…" para chefe/operador.
     const ehEnc = !!(window.ehEncarregado && window.ehEncarregado());
+    const ehGestor = !!(window.gestorPessoal && window.gestorPessoal());
+    const podeIniciar = ehGerente || ehEnc || ehGestor;
     $('#app').innerHTML = `<h2>Conferências</h2>${abasTela}${seletor}
       <div class="cartao" style="margin-bottom:10px">
         <div class="campo" style="margin:0">
@@ -606,8 +814,15 @@
           <input id="fConfID" placeholder="Digite para filtrar instantaneamente…">
         </div>
       </div>
-      ${modoTela !== 'arquivo' ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-        ${(ehGerente || ehEnc) ? `<button class="primario" id="btNovaConf" style="min-height:44px">▶ Nova conferência</button>` : ''}
+      ${modoTela !== 'arquivo' ? `
+      ${(ehChefeSetor || ehOperador) && !haAberta && (!dadosHoje || !dadosHoje.setores_status || dadosHoje.setores_status.length === 0) ? `
+      <div class="cartao cfd-vazio" style="margin-bottom:12px;padding:20px 16px">
+        <h4 style="margin:0 0 4px">Nenhuma conferência despachada para o seu setor.</h4>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0">Aguarde o Gerente ou Encarregado iniciar a conferência.</p>
+      </div>` : ''}
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        ${podeIniciar ? `<button class="primario" id="btIniciarConf" style="min-height:44px">▶ Iniciar conferência</button>
+        <button class="fantasma" id="btNovaConf" style="min-height:44px">+ Nova conferência</button>` : ''}
         <span style="color:var(--tx2);font-size:12px">${ehChefeSetor ? 'Como Chefe de Setor, selecione uma conferência aberta para lançar presença do seu efetivo.' : 'abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)'}</span></div>` +
       tabela('Abertas', abertas) + tabela('Fechadas', fechadas)
       : tabela('Arquivadas', lista, 'nenhuma conferência arquivada')}
@@ -652,41 +867,11 @@
         window.ViewHoje('conferencias');
       };
     }
-    // NOVA CONFERÊNCIA (ordem 04/10): modal solicita NOME e PRAZO FINAL;
-    // cancelar remove (nada persistido); despachar cria a conferência em aberto.
+    // INICIAR / NOVA CONFERÊNCIA: modal com nome, prazo e seleção de setores
+    const btIniciar = $('#btIniciarConf');
+    if (btIniciar) btIniciar.onclick = abrirModalIniciarOuDespacharConf;
     const btNova = $('#btNovaConf');
-    if (btNova) btNova.onclick = () => {
-      const html = `
-        <div class="modal" style="max-width:480px;width:92%">
-          <h3 style="margin-top:0">Nova Conferência</h3>
-          <div class="campo" style="margin-bottom:10px">
-            <label style="font-weight:700">Nome da conferência</label>
-            <input type="text" id="ncNome" placeholder="ex.: Conferência de pessoal — 2ª semana" style="width:100%">
-          </div>
-          <div class="campo" style="margin-bottom:14px">
-            <label style="font-weight:700">Prazo final (pronto da conferência)</label>
-            <input type="time" id="ncPrazo" style="width:100%">
-            <small style="color:var(--tx2);font-size:11.5px">Operadores têm até este horário para finalizar a conferência do pessoal do seu setor.</small>
-          </div>
-          <div class="modal-acoes" style="justify-content:flex-end;gap:8px">
-            <button type="button" class="acao-linha" id="ncCancelar">Cancelar</button>
-            <button type="button" class="primario" id="ncDespachar">Despachar</button>
-          </div>
-        </div>`;
-      const m = modal(html);
-      m.querySelector('#ncCancelar').onclick = () => m.remove(); // cancelar: remove a conferência (nada foi criado)
-      m.querySelector('#ncDespachar').onclick = async () => {
-        const nome = m.querySelector('#ncNome').value.trim();
-        const prazo = m.querySelector('#ncPrazo').value;
-        if (!nome) { toast('Informe o nome da conferência', 'erro'); return; }
-        try {
-          const r = await api('/api/conferencia/iniciar', { method: 'POST', body: JSON.stringify({ nome, prazo_final: prazo }) });
-          m.remove();
-          toast('Conferência despachada e em aberto.');
-          location.hash = '#/conferencia?id=' + (r.conferencia ? r.conferencia.id : r.id);
-        } catch (e) {}
-      };
-    };
+    if (btNova) btNova.onclick = abrirModalIniciarOuDespacharConf;
     // TOGGLE da conferência em aberto (ordem 04/10): clicar na linha expande
     // os detalhes (nome, prazo, encarregado).
     document.querySelectorAll('[data-toggle-btn]').forEach(tr => {
@@ -753,7 +938,29 @@
     $('#app').innerHTML = '<div class="carregando">Carregando efetivo…</div>';
     CONF_ID = new URLSearchParams(location.hash.split('?')[1] || '').get('id') || null;
     const qs = CONF_ID ? '?id=' + CONF_ID : '';
-    const d = await api('/api/conferencia/hoje' + qs);
+    let d;
+    try {
+      d = await api('/api/conferencia/hoje' + qs);
+    } catch (e) {
+      d = { conferencia: null, setores_status: [] };
+    }
+    const ehChefe = window.ME && window.ME.papel === 'chefe_setor';
+    const ehOper = window.ME && window.ME.papel === 'operador';
+    const ehChefeOuOper = ehChefe || ehOper;
+    const setoresStatus = d.setores_status || [];
+
+    if (ehChefeOuOper && (!d.conferencia || d.conferencia === null) && setoresStatus.length === 0) {
+      $('#app').innerHTML = `
+        <div style="margin-bottom:10px"><button class="fantasma" id="btVoltar" style="min-height:38px">← Retornar</button></div>
+        <div class="cartao cfd-vazio">
+          <div style="font-size:36px;margin-bottom:10px">📭</div>
+          <h3 style="margin:0 0 6px">Nenhuma conferência despachada para o seu setor.</h3>
+          <p style="color:var(--tx2);font-size:13px;margin:0">Aguarde a liberação da conferência pelo Gerente ou Encarregado.</p>
+        </div>`;
+      $('#btVoltar').onclick = () => { confPoolingStop(); location.hash = '#/hoje'; };
+      return;
+    }
+
     if (!d.conferencia) { location.hash = '#/hoje'; return; }
     let destinos = [];
     try { destinos = await api('/api/catalogo/destinos'); } catch (e) { destinos = []; }
@@ -772,15 +979,27 @@
     const escalados = d.escalados || [];
     const escaladosOntem = d.escalados_ontem || [];
     let pessoasLista = d.pessoas || [];
-    const ehChefe = window.ME && window.ME.papel === 'chefe_setor';
-    const ehOper = window.ME && window.ME.papel === 'operador';
-    // Onda 05/10 (ordem Diretor): chefe_setor E OPERADOR veem só o próprio setor;
-    // gerente e encarregado veem o grupo inteiro (fallback: setor_id da pessoa vinculada).
-    const escopoSetor = (window.ME && (ehChefe || ehOper) && (window.ME.setor_id || window.ME.pessoa_setor_id)) || null;
-    if (escopoSetor) {
-      pessoasLista = pessoasLista.filter(p => p.setor_id === escopoSetor);
+    if (ehChefe || ehOper) {
+      // Confia no filtro do servidor: se vier setores (1+), renderize SOMENTE eles
+      const setoresPermitidos = new Set(setoresStatus.map(s => s.setor_id));
+      if (setoresPermitidos.size > 0) {
+        pessoasLista = pessoasLista.filter(p => setoresPermitidos.has(p.setor_id));
+      } else {
+        const escopoSetor = (window.ME && (window.ME.setor_id || window.ME.pessoa_setor_id)) || null;
+        if (escopoSetor) pessoasLista = pessoasLista.filter(p => p.setor_id === escopoSetor);
+      }
     }
-    C = { c: d.conferencia, pessoas: pessoasLista, destinos, est, dest, obs, verif, temComentario, escalados, escaladosOntem, setoresStatus: d.setores_status || [] };
+    C = {
+      c: d.conferencia,
+      pessoas: pessoasLista,
+      destinos, est, dest, obs, verif, temComentario,
+      escalados, escaladosOntem,
+      setoresStatus: d.setores_status || [],
+      totalBanco: d.total_banco,
+      totalVerificado: d.total_verificado,
+      setoresFechados: d.setores_fechados,
+      totalSetores: d.total_setores
+    };
     confRender();
     confPoolingStart(); // ciclo 2: pooling 2s enquanto a conferência estiver na tela
     $('#btVoltar').onclick = () => { confPoolingStop(); location.hash = '#/hoje'; };
@@ -1008,10 +1227,11 @@
     $('#app').innerHTML = `<div style="margin-bottom:10px"><button class="fantasma" id="btVoltar" style="min-height:38px">← Retornar</button></div>
       <h2 style="margin-top:0">Conferência de pessoal</h2>${banner}
       ${confDashHTML()}
+      ${confPainelGerenteHTML()}
       ${dashboardSetoresHTML}
       <div class="barra-fixa">
         <input id="busca" placeholder="buscar nome…">
-        ${!ehChefe ? `<button class="primario" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>` : `<span style="font-size:12px;color:var(--tx2);font-weight:600">Área do Chefe de Setor</span>`}
+        ${!ehChefe ? `<button class="primario" id="btFecharBarra">✕ FECHAR CONFERÊNCIA</button>` : ((C.setoresStatus && C.setoresStatus.length > 0) ? '' : `<span style="font-size:12px;color:var(--tx2);font-weight:600">Área do Chefe de Setor</span>`)}
       </div>
       <div id="lista">${listas}</div>
       ${!ehChefe ? `
@@ -1048,26 +1268,21 @@
       // o PRÓPRIO setor (endpoint existente) e recarregar a view. Setor já
       // concluído → botão vira estado (sem POST redundante).
       const btFS = document.getElementById('btFecharSetorTopo');
-      if (btFS) btFS.onclick = async () => {
+      if (btFS) btFS.onclick = () => {
         const meuSetor = window.ME ? (window.ME.setor_id || window.ME.pessoa_setor_id) : null;
         if (!meuSetor || !C.c) return;
         const sObj = (C.setoresStatus || []).find(x => x.setor_id === meuSetor);
         if (sObj && sObj.status === 'concluida') { toast('Seu setor já está concluído nesta conferência', 'erro'); return; }
-        const vTot = sObj ? (sObj.total_verificados ?? sObj.verificados ?? 0) : 0;
-        const eTot = sObj ? (sObj.total_efetivo ?? sObj.total_pessoas ?? 0) : 0;
-        if (vTot < eTot) {
-          const pendentes = eTot - vTot;
-          if (!confirm(`Atenção: Existem ${pendentes} militares do seu setor ainda não verificados.\nDeseja realmente fechar (concluir) a conferência do seu setor?`)) {
-            return;
+        const sNome = sObj ? (sObj.setor_sigla || sObj.setor_nome) : 'Meu Setor';
+        abrirModalConfirmarConclusaoSetor(meuSetor, sNome, async () => {
+          try {
+            await api(`/api/conferencia/${C.c.id}/setor/${meuSetor}/concluir`, { method: 'POST' });
+            toast('Conferência do setor concluída');
+            await window.ViewConferencia();
+          } catch (e) {
+            toast('Erro: ' + (e.message || e), 'erro');
           }
-        }
-        try {
-          await api(`/api/conferencia/${C.c.id}/setor/${meuSetor}/concluir`, { method: 'POST' });
-          toast('Conferência do seu setor concluída com sucesso!');
-          await window.ViewConferencia();
-        } catch (e) {
-          toast('Erro: ' + (e.message || e), 'erro');
-        }
+        });
       };
     };
     atualizar();
@@ -1125,31 +1340,32 @@
         const acao = btn.dataset.acao;
         if (acao === 'concluir') {
           const sObj = (C.setoresStatus || []).find(x => x.setor_id === sid);
-          const vTot = sObj ? (sObj.total_verificados ?? sObj.verificados ?? 0) : 0;
-          const eTot = sObj ? (sObj.total_efetivo ?? sObj.total_pessoas ?? 0) : 0;
-          if (vTot < eTot) {
-            const pendentes = eTot - vTot;
-            if (!confirm(`Atenção: Existem ${pendentes} militares deste setor ainda não verificados.\nDeseja realmente concluir a conferência deste setor?`)) {
-              return;
+          const sNome = sObj ? (sObj.setor_sigla || sObj.setor_nome) : 'Setor';
+          abrirModalConfirmarConclusaoSetor(sid, sNome, async () => {
+            try {
+              await api(`/api/conferencia/${C.c.id}/setor/${sid}/concluir`, { method: 'POST' });
+              toast('Conferência do setor concluída');
+              await window.ViewConferencia();
+            } catch (e) {
+              toast('Erro: ' + (e.message || e), 'erro');
             }
-          }
+          });
+          return;
         }
         try {
-          if (acao === 'concluir') {
-            await api(`/api/conferencia/${C.c.id}/setor/${sid}/concluir`, { method: 'POST' });
-            toast('Conferência do setor concluída com sucesso!');
-          } else {
-            await api(`/api/conferencia/${C.c.id}/setor/${sid}/reabrir`, { method: 'POST' });
-            toast('Conferência do setor reaberta!');
-          }
+          await api(`/api/conferencia/${C.c.id}/setor/${sid}/reabrir`, { method: 'POST' });
+          toast('Conferência do setor reaberta!');
           await window.ViewConferencia();
         } catch (e) {
           toast('Erro: ' + (e.message || e), 'erro');
         }
       };
     });
+    const btIniBanner = $('#btIniciar');
+    if (btIniBanner) btIniBanner.onclick = abrirModalIniciarOuDespacharConf;
     atualizar(); // contador de verificados acompanha o re-render (v9.15.2)
     ligarBarra(); // v9.16.5b: barra é recriada no innerHTML — religar FECHAR e busca
+    confPainelGerenteRender();
     // P3 (ordem 06/10): os handlers do TOPO (btFecharTopo/btFecharSetorTopo) são
     // ligados DENTRO de ligarBarra — re-criados a cada re-render (innerHTML total).
   }

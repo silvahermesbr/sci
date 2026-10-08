@@ -24,10 +24,10 @@
     '#/avisos':       '/views_avisos.js',
     '#/calendario':   '/views_calendario.js',
     '#/drive':        '/views_drive.js',
-    '#/admin':        '/views_admin.js',
+    '#/admin':        '/views_gestao.js',
     '#/configuracoes':'/views_config.js',
-    '#/grupos':       '/views_grupos.js',
-    '#/perfil':       '/views_perfil.js',
+    '#/grupos':       '/views_gestao.js',
+    '#/perfil':       '/views_gestao.js',
     '#/escalas':      '/views_escalas.js',
     '#/material':     '/views_material.js',
     '#/consciencia':  '/views_consciencia.js'
@@ -35,17 +35,14 @@
 
   /* Dependências: scripts extras carregados junto com uma view.
      editor_rico.js é necessário para views_conf.js e views_mensagens.js
-     (EditorRico.init). vendor/quill.js e vendor/quill.snow.css são carregados
-     sob demanda se existirem (reservados para uso futuro). */
+     (EditorRico.init). */
   var DEP_VIEW = {
     '/views_conf.js':      ['/editor_rico.js'],
     '/views_mensagens.js': ['/editor_rico.js'],
-    '/views_admin.js':     ['/ui_helpers.js'],
-    '/views_grupos.js':    ['/ui_helpers.js'],
-    '/views_perfil.js':    ['/ui_helpers.js']
+    '/views_gestao.js':    []
   };
 
-  var CACHEBUST = '?v=351';
+  var CACHEBUST = '?v=354';
 
   var carregados = new Set();        // URL → true (já injetado)
   var carregando = {};               // URL → Promise enquanto carrega
@@ -78,7 +75,7 @@
   /* ── Carrega script + dependências ── */
   function carregarView(url) {
     var deps = DEP_VIEW[url] || [];
-    var chain = [url].concat(deps);
+    var chain = deps.concat([url]);
     // Filtra scripts que já existem (eager, ex: core.js nunca entra aqui)
     // e scripts que apontam para arquivos inexistentes
     return chain.reduce(function (prev, u) {
@@ -102,6 +99,8 @@
     if (!url) return Promise.resolve(false);
     return carregarView(url).then(function () { return true; });
   }
+  window.garantirHash = garantirHash;
+  window.hashPrecisaCarregar = hashPrecisaCarregar;
 
   /* ─═╡ Interceptação 1: hashchange com capture ╞═─
      Roda ANTES do onhashchange/rotear. Substitui onhashchange por um
