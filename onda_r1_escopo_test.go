@@ -82,15 +82,19 @@ func TestR1EscopoFuncoes(t *testing.T) {
 	ckGerA := loginAs(t, app, "r1gerA", "senha-gerA")
 	ckGerB := loginAs(t, app, "r1gerB", "senha-gerB")
 
-	// ---- R1d: designar função do PRÓPRIO grupo → 200 (regressão) ----
+	// ---- R1d: designar cadeira fixa (global) → 200 (regressão; modelo v39 hardcoded) ----
+	var cadeiraID int64
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`).Scan(&cadeiraID); err != nil {
+		t.Fatalf("cadeira enc_pessoal ausente: %v", err)
+	}
 	rr, res := doJSONReq(app, "POST", "/api/grupo/funcoes/membros",
-		map[string]any{"funcao_id": funcAID, "usuario_id": gerAUID, "titularidade": "titular"}, ckGerA)
+		map[string]any{"funcao_id": cadeiraID, "usuario_id": gerAUID, "titularidade": "titular"}, ckGerA)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("R1d: designar função própria (A) deve 200, veio %d (%v)", rr.Code, res)
 	}
 	// Confirma que gravou
 	var tit string
-	if err := st.db.QueryRow(`SELECT titularidade FROM funcao_membros WHERE funcao_id=? AND grupo_id=? AND usuario_id=?`, funcAID, gidA, gerAUID).Scan(&tit); err != nil || tit != "titular" {
+	if err := st.db.QueryRow(`SELECT titularidade FROM funcao_membros WHERE funcao_id=? AND grupo_id=? AND usuario_id=?`, cadeiraID, gidA, gerAUID).Scan(&tit); err != nil || tit != "titular" {
 		t.Fatalf("R1d: designação não persistiu (tit=%q err=%v)", tit, err)
 	}
 
@@ -122,7 +126,7 @@ func TestR1EscopoFuncoes(t *testing.T) {
 	for _, it := range lista {
 		nome, _ := it["funcao_nome"].(string)
 		fid := int64(it["funcao_id"].(float64))
-		if fid == funcGlobalID {
+		if fid == cadeiraID {
 			temGlobal = true
 		}
 		if fid == funcAID {
@@ -133,31 +137,28 @@ func TestR1EscopoFuncoes(t *testing.T) {
 		}
 		_ = nome
 	}
+	// v39: listagem só traz CADEIRAS fixas (chave NOT NULL); funções de grupo sem chave somem
 	if !temGlobal {
-		t.Fatalf("R1c: GET gerente A deveria conter função global (ID=%d), não veio", funcGlobalID)
+		t.Fatalf("R1c: GET gerente A deveria conter a cadeira fixa (ID=%d), não veio", cadeiraID)
 	}
-	if !temExclusivaA {
-		t.Fatalf("R1c: GET gerente A deveria conter função exclusiva A (ID=%d), não veio", funcAID)
+	if temExclusivaA {
+		t.Fatalf("R1c: GET gerente A NÃO deveria conter função sem chave (ID=%d), mas veio", funcAID)
 	}
 	if temExclusivaB {
 		t.Fatalf("R1c: GET gerente A NÃO deveria conter função exclusiva B (ID=%d), mas veio", funcBID)
 	}
 
-	// ---- R1b: gerente B designa função do grupo SUPERIOR A (herdada) → 200 ----
+	// ---- R1b (v39): gerente B designa função de grupo SEM chave → 400 (só cadeiras fixas) ----
 	rr, res = doJSONReq(app, "POST", "/api/grupo/funcoes/membros",
 		map[string]any{"funcao_id": funcAID, "usuario_id": gerBUID, "titularidade": "titular"}, ckGerB)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("R1b: gerente B designar função superior A deve 200, veio %d (%v)", rr.Code, res)
-	}
-	// Confirma que gravou no grupo B (designação é sempre do próprio grupo)
-	if err := st.db.QueryRow(`SELECT titularidade FROM funcao_membros WHERE funcao_id=? AND grupo_id=? AND usuario_id=?`, funcAID, gidB, gerBUID).Scan(&tit); err != nil || tit != "titular" {
-		t.Fatalf("R1b: designação herdada não persistiu (tit=%q err=%v)", tit, err)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("R1b: designar função sem chave deve 400 (só cadeiras fixas), veio %d (%v)", rr.Code, res)
 	}
 
-	// ---- R1b variante: gerente B também consegue designar função própria e global ----
+	// ---- R1b variante (v39): designar função sem chave → 400 ----
 	rr, _ = doJSONReq(app, "POST", "/api/grupo/funcoes/membros",
 		map[string]any{"funcao_id": funcBID, "usuario_id": gerBUID, "titularidade": "auxiliar"}, ckGerB)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("R1b variante: gerente B designar exclusiva B deve 200, veio %d", rr.Code)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("R1b variante: designar função sem chave deve 400, veio %d", rr.Code)
 	}
 }
