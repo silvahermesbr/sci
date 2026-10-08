@@ -40,25 +40,38 @@ window.formatarTamanhoBytes = formatarTamanhoBytes;
 
 /* ---------- usuário da sessão ---------- */
 let ME = null;
-// ordem 06/10 (P4): função de pessoal no cliente — encarregado OU auxiliar
-// (nome normalizado, sem acentos). Espelha ehEncarregado/ehAuxiliarDePessoal.
-function funcaoEhPessoal(u, agulha) {
+
+function funcaoNomeContem(u, agulha) {
   if (!u || typeof u.funcao_nome !== 'string') return false;
   return u.funcao_nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(agulha);
 }
+
+function ehEncPessoalUsuario(u) {
+  if (!u) return false;
+  if (Array.isArray(u.funcoes_grupo)) {
+    return u.funcoes_grupo.some(f => f && f.chave === 'enc_pessoal');
+  }
+  return funcaoNomeContem(u, 'pessoal') || funcaoNomeContem(u, 'encarregado') || funcaoNomeContem(u, 'auxiliar');
+}
+
+function ehEncMaterialUsuario(u) {
+  if (!u) return false;
+  if (Array.isArray(u.funcoes_grupo)) {
+    return u.funcoes_grupo.some(f => f && f.chave === 'enc_material');
+  }
+  return funcaoNomeContem(u, 'material');
+}
+
 function definirUsuario(u) {
-  // Onda 05/10 (ordem Diretor): encarregado de pessoal (função c/ "encarregado",
-  // sem papel do sistema) atua na CONFERÊNCIA — papel-conf derivado no cliente.
-  // Ordem 06/10 (item 15): AUXILIAR DE PESSOAL recebe a MESMA derivação —
-  // mesmos módulos, mesmos poderes de gestão de pessoal (o servidor valida
-  // cada função à parte; aqui é só chave de navegação).
-  if (u && !u.papel && (funcaoEhPessoal(u, 'encarregado') || funcaoEhPessoal(u, 'auxiliar'))) {
+  if (u && !u.papel && (ehEncPessoalUsuario(u) || ehEncMaterialUsuario(u))) {
     u.papel = 'encarregado';
   }
   ME = u; window.SCI_ME = u; window.ME = u;
-  window.ehEncarregado = () => (ME && ME.papel === 'encarregado');
-  // ordem 06/10 (P4): gerente OU encarregado OU auxiliar de pessoal
-  window.gestorPessoal = () => !!(ME && (ME.papel === 'gerente' || ME.papel === 'encarregado'));
+  window.ehEncPessoal = () => ehEncPessoalUsuario(ME);
+  window.ehEncMaterial = () => ehEncMaterialUsuario(ME);
+  window.gestorPessoal = () => !!(ME && (ME.papel === 'gerente' || (window.ehEncPessoal && window.ehEncPessoal())));
+  window.gestorMaterial = () => !!(ME && (ME.papel === 'gerente' || (window.ehEncMaterial && window.ehEncMaterial())));
+  window.ehEncarregado = () => !!(ME && (ME.papel === 'encarregado' || (window.ehEncPessoal && window.ehEncPessoal()) || (window.ehEncMaterial && window.ehEncMaterial())));
 }
 window.definirUsuario = definirUsuario;
 
