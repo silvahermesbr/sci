@@ -691,10 +691,12 @@ definirUsuario(usuario);
     } else if (window.ehEncarregado && window.ehEncarregado()) {
       // f3: lógica composável para encarregados (pessoal e/ou material).
       // Encarregado NUNCA vê GERENCIAR GRUPO (#/grupos).
+      // Correção Diretor: TODOS têm leitura do MURAL DE AVISOS (no topo).
       const mapa = new Map();
       const addItem = (rota, rotulo, svg, extra) => {
         if (!mapa.has(rota)) mapa.set(rota, [rota, rotulo, svg, extra]);
       };
+      addItem('#/avisos', 'MURAL DE AVISOS', svgAvisos);
       if (window.ehEncPessoal && window.ehEncPessoal()) {
         addItem('#/hoje', 'CONFERÊNCIA', svgConf);
         addItem('#/pessoal', 'PESSOAL', svgPes);
@@ -706,9 +708,10 @@ definirUsuario(usuario);
       addItem('#/perfil', 'MEU PERFIL', svgPerfil);
       itens = Array.from(mapa.values());
     } else {
-      // P0 onda 05/10 — conta SEM função do sistema: só Meu Perfil
-      // (login → aviso de módulo indisponível; nada mais é visível).
+      // P0 onda 05/10 — conta SEM função do sistema: Meu Perfil + Mural de Avisos
+      // (correção Diretor: leitura de avisos para TODOS).
       itens = [
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
         ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>']
       ];
     }
