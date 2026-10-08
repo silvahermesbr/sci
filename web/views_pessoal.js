@@ -112,8 +112,8 @@
     const souFuncaoPessoal = eu.papel !== 'gerente';
     navAtiva('#/pessoal');
     $('#app').innerHTML = '<div class="carregando">…</div>';
-    const [grupos, arvore, pessoas, setores, funcoes, contas, apresentacaoDados] = await Promise.all([
-      api('/api/grupos'), api('/api/grupos/arvore'), api('/api/pessoas'),
+    const [grupos, pessoas, setores, funcoes, contas, apresentacaoDados] = await Promise.all([
+      api('/api/grupos'), api('/api/pessoas'),
       api('/api/catalogo/setores'), api('/api/catalogo/funcoes'), api('/api/usuarios'),
       api('/api/pessoas/apresentacao').catch(() => ({ apresentacao: [] }))]);
     const mapaApresentacao = {};
@@ -122,12 +122,7 @@
     });
     const podeApresentacao = typeof window.gestorPessoal === 'function' ? (window.gestorPessoal() || (typeof window.ehEncarregado === 'function' && window.ehEncarregado())) : false;
     let optSetores = ativosDe(setores), optFuncoes = ativosDe(funcoes);
-    setoresCat = setores; funcoesCat = funcoes; // cache p/ carregarCats (v9.16.9)
-    const operadores = contas.filter(c => c.grupo_id === eu.grupo_id && c.papel === 'operador');
-    const meus = grupos.filter(g => g.id === eu.grupo_id);
-    const gerenteDe = {};
-    contas.filter(c => c.papel === 'gerente' && c.ativo && c.grupo_id).forEach(c => { gerenteDe[c.grupo_id] = c.login; });
-    marcarGerente(arvore, gerenteDe);
+    setoresCat = setores; funcoesCat = funcoes; // cache
 
     async function atualizarSelectsCatalogos() {
       try {
@@ -203,9 +198,6 @@
        ${souFuncaoPessoal ? '' : `<button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button>`}
        </div></td></tr>`;
     }).join('');
-
-    const optsMoverGer = `<option value="">— destino (dentro da sua hierarquia) —</option>` +
-      grupos.map(g => `<option value="${g.id}">${esc(g.nome)}</option>`).join('');
 
     // ordem 04/10: abas do módulo → DROPDOWN estilizado
     $('#app').innerHTML = `<h2>Pessoal</h2>
@@ -307,19 +299,10 @@
         }
       };
     }
-    /* --- ordem 06/10: edição de nomes da conta pela função de pessoal --- */
-    document.querySelectorAll('[data-editu]').forEach(b => {
-      b.onclick = async () => {
-        const novoNg = prompt('Nome de guerra:', b.dataset.ng || '');
-        if (novoNg === null) return;
-        const novoNc = prompt('Nome completo:', b.dataset.nc || '');
-        if (novoNc === null) return;
-        const r = await processar(() => api(`/api/usuarios/${b.dataset.editu}`, { method: 'PATCH', body: JSON.stringify({ nome_guerra: novoNg.trim(), nome_completo: novoNc.trim() }) }), 'Salvando conta…');
-        if (r.ok) window.ViewPessoal();
-      };
-    });
+    /* --- f2: edição de nomes da conta (data-editu) fica no Gerenciar (Operadores)
+       — o módulo Pessoal usa os handlers data-apresentacao/data-historico. --- */
 
-    ligarToggles($('#app'));
+    // f2: toggles de árvore são da view Grupos (Gerenciar) — aqui não há árvore.
 
     /* --- ordem 06/10 (item 10): controles de tabela nas listas do GERENCIA ---
        Banco de pessoal: ordenar em todas as colunas + paginação 20/página.
