@@ -30,8 +30,15 @@ func (a *App) hSetorExcluir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	if u == nil || u.Papel != "gerente" {
-		jsonErro(w, http.StatusForbidden, "gestão de setores é exclusiva do gerente")
+	// módulo Pessoal (f2): enc/aux de pessoal EXCLUEM setor SÓ do PRÓPRIO grupo
+	// (sem subordinados — mesmo padrão do hGrupoNomearChefe); gerente mantém a
+	// hierarquia (próprio + subordinados); admin entra sempre.
+	// NOTE: função de pessoal = tem poder SEM papel do sistema — por isso o
+	// filtro é podeGestaoPessoal && Papel vazio, senão o gerente (que tem
+	// podeGestaoPessoal=true) cairia no ramo restrito e perderia subordinados.
+	encAux := u != nil && (u.Papel == "" || u.Papel == "encarregado") && a.podeGestaoPessoal(u)
+	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !encAux) {
+		jsonErro(w, http.StatusForbidden, "gestão de setores é do gerente ou do encarregado/auxiliar de pessoal")
 		return
 	}
 	esc := escopoDoUsuario(u)
@@ -42,14 +49,14 @@ func (a *App) hSetorExcluir(w http.ResponseWriter, r *http.Request) {
 
 	// Setor deve existir e pertencer ao escopo (próprio grupo) ou a subordinados
 	// (mesma doutrina dos handlers de catálogo: gerente gere o próprio grupo e
-	// os subordinados).
+	// os subordinados). Função de pessoal: restrita ao próprio grupo.
 	var donoGrupo int64
 	if e := a.st.db.QueryRow(`SELECT COALESCE(grupo_id, 0) FROM setores WHERE id = ?`, id).Scan(&donoGrupo); e != nil {
 		jsonErro(w, http.StatusNotFound, "setor não encontrado")
 		return
 	}
 	permitido := donoGrupo == esc
-	if !permitido {
+	if !permitido && !encAux {
 		for _, sub := range a.gruposSubordinadosAtivos(esc) {
 			if sub == donoGrupo {
 				permitido = true

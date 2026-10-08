@@ -1562,11 +1562,14 @@ func (a *App) rotasPessoal() {
 	m.Handle("GET /api/mensagens/destinatarios", a.auth(false, a.hMensagensDestinatarios))
 	m.Handle("GET /api/pessoas/{id}/ficha", a.auth(false, a.hPessoaFicha))
 
+	// módulo Pessoal (f2): escrita de pessoas é do guarda — admin/gerente/enc/aux.
+	// DELETE entra no guarda: era só auth e um OPERADOR do grupo excluía pessoa
+	// (checagem interna cobre grupo, mas não papel). GET continua aberto (leitura).
 	m.Handle("GET /api/pessoas", a.auth(false, a.hPessoasList))
 	m.Handle("GET /api/pessoas/apresentacao", a.auth(false, a.hPessoaApresentacaoGet))
 	m.Handle("POST /api/pessoas", a.guardaGestaoPessoal(a.hPessoasAdd))
 	m.Handle("PATCH /api/pessoas/{id}", a.guardaGestaoPessoal(a.hPessoasEdit))
-	m.Handle("DELETE /api/pessoas/{id}", a.auth(false, a.hPessoaExcluir)) // v9.7: admin/gerente excluem (com histórico → desativa)
+	m.Handle("DELETE /api/pessoas/{id}", a.guardaGestaoPessoal(a.hPessoaExcluir))
 	m.Handle("POST /api/pessoas/{id}/apresentacao", a.guardaGestaoPessoal(a.hPessoaApresentacaoSet))
 	m.Handle("GET /api/pessoas/{id}/modificacoes", a.auth(false, a.hPessoaModificacoes))
 	m.Handle("GET /api/pessoas/{id}/qr", a.auth(false, a.hPessoaQRCode))
