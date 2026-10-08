@@ -28,30 +28,10 @@ func containsNomeFuncao(nome, agulha string) bool {
 	return strings.Contains(normSemAcento(nome), agulha)
 }
 
-// ehAuxiliarDePessoal (item 15): MESMA regra de detecção do encarregado, com
-// "auxiliar". Consulta funcao_membros no escopo do grupo (R3: designação).
-// Sozinha não dá poder nenhum — só alimenta podeGestaoPessoal e o ramo de
-// nomeação de função. NADA de consulta a usuarios.funcao_id/pessoas.funcao_id.
+// ehAuxiliarDePessoal: wrapper de compatibilidade delegando para ehEncarregadoDePessoal.
+// Detecção por chave, nunca por nome (anti-escalação).
 func (a *App) ehAuxiliarDePessoal(u *Usuario) bool {
-	if u == nil {
-		return false
-	}
-	esc := escopoDoUsuario(u)
-	if esc <= 0 {
-		return false
-	}
-	rows, err := a.st.db.Query(`SELECT f.nome FROM funcao_membros fm JOIN funcoes f ON f.id=fm.funcao_id WHERE fm.usuario_id=? AND fm.grupo_id=?`, u.ID, esc)
-	if err != nil {
-		return false
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var nome string
-		if err := rows.Scan(&nome); err == nil && containsNomeFuncao(nome, "auxiliar") {
-			return true
-		}
-	}
-	return false
+	return a.ehEncarregadoDePessoal(u)
 }
 
 // funcaoIDPorNome: id da função do catálogo do GRUPO (ou global) cujo nome
@@ -83,6 +63,7 @@ func (a *App) funcaoIDPorNome(grupoID *int64, agulha string) *int64 {
 // validam o escopo de cada um) ou encarregado/auxiliar de pessoal COM grupo na
 // sessão. PAPEL DO SISTEMA MANDA (anti-escalação, 4a4fbc2): operador/
 // chefe_setor não ganham poderes por função renomeada no catálogo.
+// Detecção por chave imutável 'enc_pessoal', nunca por nome (anti-escalação).
 func (a *App) podeGestaoPessoal(u *Usuario) bool {
 	if u == nil {
 		return false
@@ -96,7 +77,7 @@ func (a *App) podeGestaoPessoal(u *Usuario) bool {
 	if esc := escopoDoUsuario(u); esc <= 0 {
 		return false
 	}
-	return a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u)
+	return a.ehEncarregadoDePessoal(u)
 }
 
 // guardaGestaoPessoal: middleware das rotas de gestão de pessoal — admin e
