@@ -16,11 +16,11 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 		t.Fatalf("criar grupo: %v", err)
 	}
 	var fPess, fMat int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fPess); err != nil {
-		t.Fatalf("criar fPess: %v", err)
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`).Scan(&fPess); err != nil {
+		t.Fatalf("cadeira enc_pessoal ausente: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Material', ?, 'grupo', 'enc_material') RETURNING id`, gid).Scan(&fMat); err != nil {
-		t.Fatalf("criar fMat: %v", err)
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_material'`).Scan(&fMat); err != nil {
+		t.Fatalf("cadeira enc_material ausente: %v", err)
 	}
 	var matCatID int64
 	if err := st.db.QueryRow(`INSERT INTO material_categorias (nome, grupo_id) VALUES ('Cat E2E', ?) RETURNING id`, gid).Scan(&matCatID); err != nil {
@@ -128,10 +128,10 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("Gerente deve acessar avisos (200), veio %d", rr.Code)
 	}
-	// Cria nova função de grupo via mini-form (POST /api/catalogo/funcoes com tipo=grupo): 200
+	// v39: funções de grupo são HARDCODED — API NÃO cria (400); gerente só designa
 	rr, _ = doJSONReq(app, "POST", "/api/catalogo/funcoes", map[string]any{"nome": "Nova Função Gerente", "tipo": "grupo"}, ckGerente)
-	if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
-		t.Fatalf("Gerente deve conseguir criar função de grupo (200/201), veio %d", rr.Code)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Criar função de grupo via API deve ser 400 (hardcoded), veio %d", rr.Code)
 	}
 	// Designa membro: 200
 	rr, _ = doJSONReq(app, "POST", "/api/grupo/funcoes/membros", map[string]any{"funcao_id": fPess, "usuario_id": idOperador, "titularidade": "auxiliar"}, ckGerente)
@@ -250,9 +250,9 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 		t.Fatalf("Anti-escalação violada! Renomear item deu poder indevido (esperado 403, veio %d)", rr.Code)
 	}
 
-	// 2. Operador tenta criar função com tipo='grupo' via catálogo sem autorização -> 403
+	// 2. Operador tenta criar função com tipo='grupo' -> 403 (middleware de papel age ANTES do gate hardcoded)
 	rr, _ = doJSONReq(app, "POST", "/api/catalogo/funcoes", map[string]any{"nome": "Tentativa Hacker", "tipo": "grupo"}, ckOperador)
 	if rr.Code != http.StatusForbidden {
-		t.Fatalf("Operador NÃO pode criar função tipo=grupo (esperado 403, veio %d)", rr.Code)
+		t.Fatalf("Operador criar função tipo=grupo deve ser 403 (guarda de papel), veio %d", rr.Code)
 	}
 }

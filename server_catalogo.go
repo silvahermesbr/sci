@@ -165,8 +165,9 @@ func (a *App) hCatalogoEditar(w http.ResponseWriter, r *http.Request) {
 	if t == "funcoes" {
 		var itemTipo string
 		_ = a.st.db.QueryRow(`SELECT COALESCE(tipo, 'antiguidade') FROM funcoes WHERE id = ?`, id).Scan(&itemTipo)
-		if itemTipo == "grupo" && u.Papel != "admin" {
-			jsonErro(w, http.StatusForbidden, "edição de função de grupo é exclusiva do administrador")
+		// v39 (ordem Diretor): funções de grupo são HARDCODED — ninguém edita nem exclui
+		if itemTipo == "grupo" {
+			jsonErro(w, http.StatusForbidden, "funções de grupo são fixas do sistema e não podem ser editadas")
 			return
 		}
 	}
@@ -336,12 +337,15 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	tipo := "antiguidade"
 	if t == "funcoes" {
+		// v39 (ordem Diretor): funções de grupo são HARDCODED (só as 3 cadeiras
+		// semeadas pela migração). API só cria itens de ANTIGUIDADE — tentar
+		// tipo=grupo é erro.
 		if strings.TrimSpace(req.Tipo) != "" {
 			tipo = strings.ToLower(strings.TrimSpace(req.Tipo))
-			if tipo != "antiguidade" && tipo != "grupo" {
-				jsonErro(w, http.StatusBadRequest, "tipo inválido: deve ser 'antiguidade' ou 'grupo'")
-				return
-			}
+		}
+		if tipo == "grupo" {
+			jsonErro(w, http.StatusBadRequest, "funções de grupo são fixas do sistema (Gerente, Encarregado de Pessoal, Encarregado de Material) e não podem ser criadas")
+			return
 		}
 	}
 	nome := strings.TrimSpace(req.Nome)
@@ -418,8 +422,9 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 	if t == "funcoes" {
 		var itemTipo string
 		_ = a.st.db.QueryRow(`SELECT COALESCE(tipo, 'antiguidade') FROM funcoes WHERE id = ?`, id).Scan(&itemTipo)
-		if itemTipo == "grupo" && u.Papel != "admin" {
-			jsonErro(w, http.StatusForbidden, "exclusão de função de grupo é exclusiva do administrador")
+		// v39 (ordem Diretor): funções de grupo são HARDCODED — ninguém exclui
+		if itemTipo == "grupo" {
+			jsonErro(w, http.StatusForbidden, "funções de grupo são fixas do sistema e não podem ser excluídas")
 			return
 		}
 	}

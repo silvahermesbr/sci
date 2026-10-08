@@ -2729,6 +2729,35 @@ func (s *Store) migrarV38() error {
 		}
 	}
 
+	// v39 (ordem Diretor 08/10): as 3 funções de grupo são HARDCODED — somente
+	// Gerente, Encarregado de Pessoal e Encarregado de Material. Semeia as
+	// cadeiras canônicas GLOBAIS (grupo_id NULL) com as chaves imutáveis,
+	// idempotente (chave já existente = pula). UI/API nunca criam função de grupo.
+	cadeiras := []struct {
+		nome  string
+		chave string
+	}{
+		{"Encarregado de Pessoal", "enc_pessoal"},
+		{"Encarregado de Material", "enc_material"},
+		{"Gerente", ""},
+	}
+	for _, cd := range cadeiras {
+		if cd.chave == "" {
+			// Gerente: cadeira sem chave sistêmica (papel do sistema manda)
+			var n int
+			_ = s.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE tipo = 'grupo' AND LOWER(nome) = 'gerente'`).Scan(&n)
+			if n == 0 {
+				_, _ = s.db.Exec(`INSERT INTO funcoes (nome, grupo_id, tipo) VALUES ('Gerente', NULL, 'grupo')`)
+			}
+			continue
+		}
+		var n int
+		_ = s.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE chave = ?`, cd.chave).Scan(&n)
+		if n == 0 {
+			_, _ = s.db.Exec(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES (?, NULL, 'grupo', ?)`, cd.nome, cd.chave)
+		}
+	}
+
 	// Reserva operacional nasce desativada ("0")
 	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '0' WHERE chave = 'MODO_RESERVA' AND valor = '1'`)
 

@@ -13,11 +13,11 @@ func TestF3Migracao38IdempotenteEBackfill(t *testing.T) {
 
 	// Inserir funções estilo antigo (sem tipo/chave especificados, caem no default)
 	var fPess, fMat, fGer, fOutra int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome) VALUES ('Encarregado de Pessoal') RETURNING id`).Scan(&fPess); err != nil {
-		t.Fatalf("inserir enc pessoal: %v", err)
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`).Scan(&fPess); err != nil {
+		t.Fatalf("cadeira enc_pessoal semeda ausente: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome) VALUES ('Encarregado de Material') RETURNING id`).Scan(&fMat); err != nil {
-		t.Fatalf("inserir enc material: %v", err)
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_material'`).Scan(&fMat); err != nil {
+		t.Fatalf("cadeira enc_material semeda ausente: %v", err)
 	}
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome) VALUES ('gerente') RETURNING id`).Scan(&fGer); err != nil {
 		t.Fatalf("inserir gerente: %v", err)
@@ -61,6 +61,15 @@ func TestF3Migracao38IdempotenteEBackfill(t *testing.T) {
 		t.Fatalf("fOutra esperado antiguidade/nil, veio tipo=%q chave=%v", tipoOutra, chaveOutra)
 	}
 
+	// v39 (ordem Diretor): as 3 cadeiras HARDCODED devem existir com as chaves certas
+	var nEncP, nEncM, nGer int
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE chave = 'enc_pessoal'`).Scan(&nEncP)
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE chave = 'enc_material'`).Scan(&nEncM)
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE tipo = 'grupo' AND LOWER(nome) = 'gerente'`).Scan(&nGer)
+	if nEncP != 1 || nEncM != 1 || nGer < 1 {
+		t.Fatalf("cadeiras hardcoded ausentes/duplicadas: enc_pessoal=%d enc_material=%d gerente=%d", nEncP, nEncM, nGer)
+	}
+
 	// Provar idempotência rodando migrarV38 novamente
 	if err := st.migrarV38(); err != nil {
 		t.Fatalf("migrarV38 idempotência falhou: %v", err)
@@ -78,7 +87,7 @@ func TestF3AuxiliarEncPessoalTemPoderGestaoPessoal(t *testing.T) {
 		t.Fatalf("criar grupo: %v", err)
 	}
 	var fEnc int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`, gid).Scan(&fEnc); err != nil {
 		t.Fatalf("criar funcao: %v", err)
 	}
 
@@ -117,7 +126,7 @@ func TestF3EncMaterialAcessaMaterialENaoPessoal(t *testing.T) {
 		t.Fatalf("criar grupo: %v", err)
 	}
 	var fMat int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Material', ?, 'grupo', 'enc_material') RETURNING id`, gid).Scan(&fMat); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_material'`, gid).Scan(&fMat); err != nil {
 		t.Fatalf("criar funcao material: %v", err)
 	}
 	var catID int64
@@ -186,7 +195,7 @@ func TestF3EncarregadoNaoDesignaMembros(t *testing.T) {
 		t.Fatalf("criar grupo: %v", err)
 	}
 	var fEnc, fOutra int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`, gid).Scan(&fEnc); err != nil {
 		t.Fatalf("criar enc pessoal: %v", err)
 	}
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo) VALUES ('Funcao Alvo', ?, 'grupo') RETURNING id`, gid).Scan(&fOutra); err != nil {
@@ -253,7 +262,7 @@ func TestF3AntiEscalacaoRenomearItemAntiguidade(t *testing.T) {
 
 	// Admin renomeia o item de antiguidade para "Encarregado de Pessoal"
 	ckAdm := loginAs(t, app, "f3adm", "senha-adm")
-	rrR, _ := doJSONReq(app, "PATCH", "/api/catalogo/funcoes/"+idi(fAntiga), map[string]any{"nome": "Encarregado de Pessoal"}, ckAdm)
+	rrR, _ := doJSONReq(app, "PATCH", "/api/catalogo/funcoes/"+idi(fAntiga), map[string]any{"nome": "Encarregado de Pessoal Falso"}, ckAdm)
 	if rrR.Code != http.StatusOK {
 		t.Fatalf("admin renomeia item de catalogo (200), veio %d", rrR.Code)
 	}
@@ -282,10 +291,10 @@ func TestF3ApiMeTrazFuncoesGrupo(t *testing.T) {
 		t.Fatalf("criar grupo: %v", err)
 	}
 	var fPess, fMat int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fPess); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`, gid).Scan(&fPess); err != nil {
 		t.Fatalf("criar enc pessoal: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Material', ?, 'grupo', 'enc_material') RETURNING id`, gid).Scan(&fMat); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_material'`, gid).Scan(&fMat); err != nil {
 		t.Fatalf("criar enc mat: %v", err)
 	}
 
@@ -344,8 +353,8 @@ func TestF3PatchCatalogoNaoAlteraChaveEBloqueiaNaoAdmin(t *testing.T) {
 		t.Fatalf("criar grupo: %v", err)
 	}
 	var fGrupo, fAntiga int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Funcao Grupo F3', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fGrupo); err != nil {
-		t.Fatalf("criar funcao grupo: %v", err)
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`).Scan(&fGrupo); err != nil {
+		t.Fatalf("cadeira enc_pessoal ausente: %v", err)
 	}
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo) VALUES ('Funcao Antiga F3', ?, 'antiguidade') RETURNING id`, gid).Scan(&fAntiga); err != nil {
 		t.Fatalf("criar funcao antiga: %v", err)
@@ -385,13 +394,13 @@ func TestF3SegundaLinhaMesmaChaveViolaIndiceSemPanico(t *testing.T) {
 	_, st, cleanup := setupTestApp(t)
 	defer cleanup()
 
-	// Inserir primeira com enc_pessoal
-	if _, err := st.db.Exec(`INSERT INTO funcoes (nome, tipo, chave) VALUES ('Enc 1', 'grupo', 'enc_pessoal')`); err != nil {
+	// Inserir primeira com chave de teste (inexistente)
+	if _, err := st.db.Exec(`INSERT INTO funcoes (nome, tipo, chave) VALUES ('Enc 1', 'grupo', 'enc_teste')`); err != nil {
 		t.Fatalf("inserir enc 1: %v", err)
 	}
 
-	// Inserir segunda com mesma chave enc_pessoal -> erro UNIQUE sem pânico
-	_, err := st.db.Exec(`INSERT INTO funcoes (nome, tipo, chave) VALUES ('Enc 2', 'grupo', 'enc_pessoal')`)
+	// Inserir segunda com a mesma chave -> erro UNIQUE sem pânico
+	_, err := st.db.Exec(`INSERT INTO funcoes (nome, tipo, chave) VALUES ('Enc 2', 'grupo', 'enc_teste')`)
 	if err == nil {
 		t.Fatalf("esperava erro de UNIQUE constraint no índice parcial idx_funcoes_chave, veio nil")
 	}

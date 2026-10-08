@@ -229,12 +229,7 @@
         <div class="cartao"><h3 style="margin-top:0">FUNÇÕES DO GRUPO — Titulares e Auxiliares</h3>
         <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Funções <b>administrativas do grupo</b> (Encarregado de Pessoal e afins — sem postos/graduações): <b>1 titular</b> por função (garantido pelo sistema) e quantos auxiliares forem necessários. Somente contas do SEU grupo.</p>
         ${!podeDesignar ? '<div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12.5px;color:var(--tx2)">ℹ️ A designação de funções é realizada pelo gerente do grupo.</div>' : ''}
-        ${podeDesignar ? `
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--painel2);border:1px solid var(--borda);border-radius:6px">
-            <input type="text" id="inpNovaFuncaoGrupo" placeholder="Nome da função de grupo" style="min-width:220px;flex:1;max-width:320px">
-            <button class="primario" id="btnNovaFuncaoGrupo" style="font-size:12px;padding:6px 14px">+ Nova função de grupo</button>
-          </div>
-        ` : ''}
+        <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12.5px;color:var(--tx2)">🔒 Funções de grupo são <b>fixas do sistema</b>: Gerente, Encarregado de Pessoal e Encarregado de Material. Aqui se designa quem ocupa cada cadeira (1 titular + auxiliares).</div>
         <div class="rolagem"><table><thead><tr><th>Função</th><th>Designados</th>${podeDesignar ? '<th>Designar</th>' : ''}</tr></thead>
         <tbody id="tabFun"><tr><td colspan="${podeDesignar ? 3 : 2}"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
@@ -284,24 +279,8 @@
     }
 
     /* --- f3: criação de nova função de grupo pelo gerente/admin --- */
-    if (podeDesignar) {
-      const btnNovaFun = $('#btnNovaFuncaoGrupo');
-      if (btnNovaFun) {
-        btnNovaFun.onclick = async () => {
-          const inp = $('#inpNovaFuncaoGrupo');
-          const nome = (inp && inp.value.trim()) || '';
-          if (!nome) { toast('Informe o nome da função', 'erro'); return; }
-          const r = await processar(() => api('/api/catalogo/funcoes', {
-            method: 'POST',
-            body: JSON.stringify({ nome, tipo: 'grupo' })
-          }), 'Criando função de grupo…');
-          if (r.ok) {
-            if (inp) inp.value = '';
-            carregarFuncoesMembros();
-          }
-        };
-      }
-    }
+    // v39 (ordem Diretor): funções de grupo são HARDCODED — sem criação pela UI
+    // (o form "Nova função de grupo" foi removido; as 3 cadeiras vêm da migração).
 
     /* --- ordem 06/10 (item 3): encarregado/auxiliar criam contas do grupo --- */
     const btEncCriar = $('#encCriar');
