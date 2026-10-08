@@ -1586,7 +1586,7 @@
          <td class="num">${esc(p.atrasos)}</td><td class="num">${esc(p.faltas)}</td><td class="num">${esc(p.justificadas)}</td><td class="num">${esc(p.nao_verificados || 0)}</td></tr>`).join('');
 
       container.innerHTML = `
-        <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Posto / Graduação</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
+        <div class="rolagem"><table><thead><tr><th class="num">ORD</th><th>Antiguidade</th><th>Nome</th><th>Setor</th><th>Grupo</th><th class="num">Pres.</th><th class="num">Atraso</th>
         <th class="num">Falta</th><th class="num">Just.</th><th class="num">N.V.</th></tr></thead>
         <tbody>${linhas || '<tr><td colspan="10"><span class="vazio">nenhum militar encontrado</span></td></tr>'}</tbody></table></div>
         ${renderPaginadorHTML(pag, 'pagConsolidado')}
@@ -1996,7 +1996,7 @@
                 <thead>
                   <tr>
                     <th>Militar</th>
-                    <th>Posto / Graduação</th>
+                    <th>Antiguidade</th>
                     <th>Setor</th>
                     <th>Situação</th>
                     <th>Destino</th>
@@ -2067,9 +2067,9 @@
               </select>
             </div>
             <div class="campo" style="margin:0; width:180px">
-              <label>Posto / Graduação</label>
+              <label>Antiguidade</label>
               <select id="biFuncao">
-                <option value="">— Todos os Postos/Grad. —</option>
+                <option value="">— Todas as Antiguidades —</option>
                 ${optFuncoes.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
               </select>
             </div>

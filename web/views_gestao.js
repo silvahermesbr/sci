@@ -2225,7 +2225,7 @@
     /* --- aba TAGS: Catálogos divididos em Pessoal e Material (v1.5) --- */
     const rotCat = {
       destinos: '📍 Destinos (Pessoal)',
-      funcoes: '🎖️ Funções (Pessoal)',
+      funcoes: '🎖️ Antiguidade (Pessoal)',
       tags: '🏷️ Situação do Material (Material)',
       material_tipos: '📦 Tipos de Material (Material)',
       material_classes: '🎖️ Classes de Material (Material)',

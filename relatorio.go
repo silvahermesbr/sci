@@ -471,9 +471,9 @@ func (a *App) relatorioSimplesRender(pdf *fpdf.Fpdf, b Bundle) {
 	}
 	pdf.SetFont("Helvetica", "B", 9.5)
 	pdf.SetTextColor(verdeR, verdeG, verdeB)
-	pdf.Cell(0, 6, T("EFETIVO — POR ANTIGUIDADE DE FUNÇÃO (ID menor = mais antigo)"))
+	pdf.Cell(0, 6, T("EFETIVO — POR ORDEM DE ANTIGUIDADE (ID menor = mais antigo)"))
 	pdf.Ln(7)
-	cab := []string{"ORD", "Função", "Nome de guerra", "Setor", "Grupo", "Pres.", "Atraso", "Falta", "Just.", "N.V."}
+	cab := []string{"ORD", "Antiguidade", "Nome de guerra", "Setor", "Grupo", "Pres.", "Atraso", "Falta", "Just.", "N.V."}
 	larg := []float64{11, 30, 30, 22, 22, 14, 14, 14, 14, 12}
 	pdf.SetFont("Helvetica", "B", 8)
 	pdf.SetFillColor(verdeR, verdeG, verdeB)
@@ -606,7 +606,7 @@ func (a *App) gerarConferenciaPDF(c ConferenciaPDF) ([]byte, error) {
 	pdf.CellFormat(0, 5, T("CHAMADA NOMINAL & LANÇAMENTOS"), "", 1, "L", false, 0, "")
 	pdf.Ln(1)
 
-	cab := []string{"ORD", "Função", "Nome de Guerra", "Setor", "Situação", "Destino / Motivo", "Observações"}
+	cab := []string{"ORD", "Antiguidade", "Nome de Guerra", "Setor", "Situação", "Destino / Motivo", "Observações"}
 	larg := []float64{10, 28, 34, 26, 22, 26, 36}
 	alinh := []string{"C", "L", "L", "L", "C", "L", "L"}
 	pdfTabelaCabecalho(pdf, cab, larg)
@@ -716,7 +716,7 @@ func (a *App) gerarFichaPessoalPDF(f FichaPessoalPDF, operador string) ([]byte, 
 
 	pdf.SetXY(48, yFoto)
 	campos := [][2]string{
-		{"Nome de Guerra / Função", fmt.Sprintf("%s (%s)", f.NomeGuerra, f.Funcao)},
+		{"Nome de Guerra / Antiguidade", fmt.Sprintf("%s (%s)", f.NomeGuerra, f.Funcao)},
 		{"Nome Completo", f.NomeCompleto},
 		{"Subunidade / Grupo", f.Grupo},
 		{"Pelotão / Setor", f.Setor},
@@ -939,7 +939,7 @@ func (a *App) gerarReciboCautelaPDF(r ReciboCautelaPDF, operador string) ([]byte
 		itensTomador := [][2]string{
 			{"Nome de Guerra", r.PessoaNomeGuerra},
 			{"Nome Completo", r.PessoaCompleto},
-			{"Função / Posto", r.PessoaFuncao},
+			{"Antiguidade / Posto", r.PessoaFuncao},
 			{"Setor / Pelotão", r.PessoaSetor},
 			{"Unidade / Grupo", r.PessoaGrupo},
 		}
