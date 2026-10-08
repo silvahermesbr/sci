@@ -51,9 +51,9 @@ func TestV15_MaterialEvolucao_SetorGaragemEConferencia(t *testing.T) {
 	resPadTit, _ := st.db.Exec(`INSERT INTO pessoas (grupo_id, setor_id, nome_guerra, nome_completo, status) VALUES (?, ?, 'Sd Santos', 'Pedro Santos', 'ativo')`, gid, sID)
 	padTitID, _ := resPadTit.LastInsertId()
 
-	resU, _ := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, setor_id, ativo) VALUES ('operador_mat', 'hash', 'operador', ?, ?, 1)`, gid, sID)
+	resU, _ := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, setor_id, ativo) VALUES ('gerente_mat', 'hash', 'gerente', ?, ?, 1)`, gid, sID)
 	uID, _ := resU.LastInsertId()
-	_, _ = st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'operador')`, uID, gid)
+	_, _ = st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'gerente')`, uID, gid)
 
 	tok, _, err := st.CriarSessao(uID, time.Hour)
 	if err != nil {
@@ -156,8 +156,8 @@ func TestV15_MaterialEvolucao_SetorGaragemEConferencia(t *testing.T) {
 
 		// Anexo
 		recA, respA := doReq("POST", "/api/material/itens/"+testIntToStr(viaturaID)+"/anexos", map[string]any{
-			"nome_arquivo": "manual_revisao.txt",
-			"tipo_mime":    "text/plain",
+			"nome_arquivo": "manual_revisao.pdf",
+			"tipo_mime":    "application/pdf",
 			"tamanho":      14,
 			"dados_base64": "SGVsbG8gV29ybGQ=",
 		})
