@@ -36,6 +36,20 @@ func ondaPresencaBancoSetup(t *testing.T, app *App, st *Store) (gid, gidFora, p1
 	if _, err := st.db.Exec(vincula, gid, fAux, "aux01_p"); err != nil {
 		t.Fatalf("vincular aux01_p: %v", err)
 	}
+	// R3: o PODER vem da designação (funcao_membros); funcao_id fica só p/ display.
+	var encP_ID, auxP_ID int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'enc01_p'`).Scan(&encP_ID); err != nil {
+		t.Fatalf("id enc01_p: %v", err)
+	}
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'aux01_p'`).Scan(&auxP_ID); err != nil {
+		t.Fatalf("id aux01_p: %v", err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fEnc, gid, encP_ID); err != nil {
+		t.Fatalf("designar enc01_p: %v", err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fAux, gid, auxP_ID); err != nil {
+		t.Fatalf("designar aux01_p: %v", err)
+	}
 	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login IN ('ger01_p','chefe01_p','op01_p')`, gid); err != nil {
 		t.Fatalf("vincular usuarios gid: %v", err)
 	}

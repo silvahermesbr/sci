@@ -41,6 +41,15 @@ func ondaEscopoSetup(t *testing.T, app *App, st *Store) (gid, setorA, setorB, pA
 	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ?, funcao_id = ? WHERE login = 'enc01'`, gid, fEnc); err != nil {
 		t.Fatalf("vincular enc: %v", err)
 	}
+	// R3: o PODER vem da designação (funcao_membros), não do funcao_id do
+	// cadastro (que fica só para o display no /api/me).
+	var enc01ID int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'enc01'`).Scan(&enc01ID); err != nil {
+		t.Fatalf("id enc01: %v", err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fEnc, gid, enc01ID); err != nil {
+		t.Fatalf("designar enc01: %v", err)
+	}
 	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ?, setor_id = ? WHERE login IN ('op01','ch01')`, gid, setorA); err != nil {
 		t.Fatalf("vincular op/ch: %v", err)
 	}
