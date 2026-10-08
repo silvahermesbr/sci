@@ -27,6 +27,7 @@
     '#/admin':        '/views_gestao.js',
     '#/configuracoes':'/views_config.js',
     '#/grupos':       '/views_gestao.js',
+    '#/pessoal':      '/views_pessoal.js',
     '#/perfil':       '/views_gestao.js',
     '#/escalas':      '/views_escalas.js',
     '#/material':     '/views_material.js',
@@ -39,10 +40,11 @@
   var DEP_VIEW = {
     '/views_conf.js':      ['/editor_rico.js'],
     '/views_mensagens.js': ['/editor_rico.js'],
-    '/views_gestao.js':    []
+    '/views_gestao.js':    [],
+    '/views_pessoal.js':   [] // autocontido: usa apenas helpers globais do core.js
   };
 
-  var CACHEBUST = '?v=357';
+  var CACHEBUST = '?v=358';
 
   var carregados = new Set();        // URL → true (já injetado)
   var carregando = {};               // URL → Promise enquanto carrega

@@ -649,6 +649,7 @@ definirUsuario(usuario);
     const svgDrive = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
     const svgRel = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>';
     const svgGer = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+    const svgPes = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="16" y1="3" x2="22" y2="9"/><line x1="22" y1="3" x2="16" y2="9"/></svg>';
     if (papel === 'operador') {
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
@@ -667,6 +668,7 @@ definirUsuario(usuario);
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/mensagens', 'EMAIL INTERNO', svgMsg, true],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
+        ['#/pessoal', 'PESSOAL', svgPes],
         ['#/grupos', 'GERENCIAR GRUPO', svgGer],
         ['#/relatorios', 'RELATÓRIOS', svgRel]
       ];
@@ -676,11 +678,13 @@ definirUsuario(usuario);
       // Ordem 06/10 (itens 3+15): AUXILIAR DE PESSOAL espelha o encarregado
       // (derivação em definirUsuario) e ambos ganham GERENCIAR GRUPO (P4) —
       // as ações de pessoal da view são liberadas por gestorPessoal().
+      // f2: e o MÓDULO PESSOAL (Efetivo · Funções · Setores).
       const itensFuncao = [
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>']
       ];
-      itensFuncao.splice(1, 0, ['#/grupos', 'GERENCIAR GRUPO', svgGer]);
+      itensFuncao.splice(1, 0, ['#/pessoal', 'PESSOAL', svgPes]);
+      itensFuncao.splice(2, 0, ['#/grupos', 'GERENCIAR GRUPO', svgGer]);
       itens = itensFuncao;
     } else {
       // P0 onda 05/10 — conta SEM função do sistema: só Meu Perfil
@@ -1094,6 +1098,13 @@ function rotear() {
     // pessoal (mínimo escopo — é a única rota nova liberada; #/admin segue
     // exclusiva do admin).
     if (papel === 'gerente' || (papel === 'encarregado' && window.gestorPessoal && window.gestorPessoal())) chamarView('ViewGrupos');
+    else irPara(rotaInicial());
+    return;
+  }
+  if (h === '#/pessoal') {
+    // módulo Pessoal (f2): gerente OU encarregado/auxiliar de pessoal —
+    // espelho do portão de #/grupos; operador/chefe/admin → rota inicial.
+    if (papel === 'gerente' || (papel === 'encarregado' && window.gestorPessoal && window.gestorPessoal())) chamarView('ViewPessoal');
     else irPara(rotaInicial());
     return;
   }
