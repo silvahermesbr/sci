@@ -32,7 +32,7 @@ func TestR3DesignacaoEncarregado(t *testing.T) {
 	gid := setupR3(t, app, st)
 
 	var fEnc int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`, gid).Scan(&fEnc); err != nil {
 		t.Fatalf("criar função encarregado: %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestR3SemDesignacao(t *testing.T) {
 	gid := setupR3(t, app, st)
 
 	var fEnc int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`, gid).Scan(&fEnc); err != nil {
 		t.Fatalf("criar função encarregado: %v", err)
 	}
 
@@ -101,7 +101,7 @@ func TestR3DesignacaoAuxiliar(t *testing.T) {
 	gid := setupR3(t, app, st)
 
 	var fAux int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Auxiliar de Pessoal', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fAux); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`, gid).Scan(&fAux); err != nil {
 		t.Fatalf("criar função auxiliar: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestR3MigrarV37(t *testing.T) {
 		t.Fatalf("criar grupo B: %v", err)
 	}
 	var fEnc, fOutra int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Encarregado de Pessoal', ?) RETURNING id`, gid1).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Encarregado Legado V37', ?) RETURNING id`, gid1).Scan(&fEnc); err != nil {
 		t.Fatalf("criar função encarregado: %v", err)
 	}
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Furriel', ?) RETURNING id`, gid1).Scan(&fOutra); err != nil {
