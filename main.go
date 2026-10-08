@@ -16,10 +16,10 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v37 = fix/r3-poderes-designacao: poderes de gestão de pessoal passam a vir
-// da DESIGNAÇÃO (funcao_membros), não do nome da função no cadastro).
+// (v38 = f3: novo modelo de encarregados com tipo='antiguidade'|'grupo' e chaves
+// imutáveis 'enc_pessoal'|'enc_material', índice parcial único e reserva desativada).
 // Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 37
+const versaoSchemaBinario = 38
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio

@@ -155,6 +155,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV37(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV38(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -1177,8 +1180,43 @@ func (s *Store) UsuarioDaSessao(tokenCru string) (*Usuario, error) {
 	if err == nil {
 		u.Papeis = papeis
 	}
+	u.FuncoesGrupo = s.FuncoesGrupoDoUsuario(u.ID, u.GrupoID)
 
 	return &u, nil
+}
+
+func (s *Store) FuncoesGrupoDoUsuario(usuarioID int64, grupoID *int64) []UsuarioFuncaoGrupo {
+	out := []UsuarioFuncaoGrupo{}
+	if grupoID == nil || *grupoID <= 0 {
+		return out
+	}
+	rows, err := s.db.Query(
+		`SELECT f.chave, fm.titularidade, f.nome
+		 FROM funcao_membros fm
+		 JOIN funcoes f ON f.id = fm.funcao_id
+		 WHERE fm.usuario_id = ? AND fm.grupo_id = ?
+		 ORDER BY f.nome ASC`, usuarioID, *grupoID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ch sql.NullString
+		var tit, fnome string
+		if rows.Scan(&ch, &tit, &fnome) == nil {
+			var chPtr *string
+			if ch.Valid {
+				v := ch.String
+				chPtr = &v
+			}
+			out = append(out, UsuarioFuncaoGrupo{
+				Chave:        chPtr,
+				Titularidade: tit,
+				FuncaoNome:   fnome,
+			})
+		}
+	}
+	return out
 }
 
 func (s *Store) PapeisDoUsuario(usuarioID int64) ([]UsuarioPapel, error) {
@@ -2620,4 +2658,79 @@ func (s *Store) migrarV37() error {
 			*uf.fid, uf.gid, uf.uid, titularidade)
 	}
 	return s.marcarVersao(37)
+}
+
+// migrarV38 (f3: novo modelo de encarregados):
+//   - Coluna funcoes.tipo ('antiguidade' | 'grupo', default 'antiguidade')
+//   - Coluna funcoes.chave ('enc_pessoal' | 'enc_material' | NULL)
+//   - Índice parcial único idx_funcoes_chave em funcoes(chave) WHERE chave IS NOT NULL
+//   - Backfill idempotente: 'encarregado de pessoal' -> grupo/enc_pessoal;
+//     'encarregado de material' -> grupo/enc_material; 'gerente' -> grupo/NULL.
+//   - Reserva operacional desativada por padrão (MODO_RESERVA=0 se ausente).
+type funcBackfillV38 struct {
+	id   int64
+	nome string
+}
+
+func (s *Store) migrarV38() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 38`).Scan(&v)
+	if v == 38 {
+		return nil
+	}
+
+	var colTipo int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('funcoes') WHERE name='tipo'`).Scan(&colTipo)
+	if colTipo == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE funcoes ADD COLUMN tipo TEXT NOT NULL DEFAULT 'antiguidade'`); err != nil {
+			return fmt.Errorf("migração v38 add coluna tipo: %w", err)
+		}
+	}
+
+	var colChave int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('funcoes') WHERE name='chave'`).Scan(&colChave)
+	if colChave == 0 {
+		if _, err := s.db.Exec(`ALTER TABLE funcoes ADD COLUMN chave TEXT`); err != nil {
+			return fmt.Errorf("migração v38 add coluna chave: %w", err)
+		}
+	}
+
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_funcoes_chave ON funcoes(chave) WHERE chave IS NOT NULL`); err != nil {
+		return fmt.Errorf("migração v38 índice chave: %w", err)
+	}
+
+	// Backfill idempotente de linhas ainda tipo='antiguidade'
+	rows, err := s.db.Query(`SELECT id, nome FROM funcoes WHERE tipo = 'antiguidade'`)
+	if err != nil {
+		return fmt.Errorf("migração v38 query funcoes: %w", err)
+	}
+	var itens []funcBackfillV38
+	for rows.Next() {
+		var it funcBackfillV38
+		if err := rows.Scan(&it.id, &it.nome); err != nil {
+			rows.Close()
+			return fmt.Errorf("migração v38 scan: %w", err)
+		}
+		itens = append(itens, it)
+	}
+	rows.Close() // libera a conexão antes de fazer Execs (pool=1)
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migração v38 rows: %w", err)
+	}
+
+	for _, it := range itens {
+		norm := normSemAcento(it.nome)
+		if norm == "encarregado de pessoal" {
+			_, _ = s.db.Exec(`UPDATE funcoes SET tipo = 'grupo', chave = 'enc_pessoal' WHERE id = ?`, it.id)
+		} else if norm == "encarregado de material" {
+			_, _ = s.db.Exec(`UPDATE funcoes SET tipo = 'grupo', chave = 'enc_material' WHERE id = ?`, it.id)
+		} else if norm == "gerente" {
+			_, _ = s.db.Exec(`UPDATE funcoes SET tipo = 'grupo', chave = NULL WHERE id = ?`, it.id)
+		}
+	}
+
+	// Reserva operacional nasce desativada ("0")
+	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '0' WHERE chave = 'MODO_RESERVA' AND valor = '1'`)
+
+	return s.marcarVersao(38)
 }

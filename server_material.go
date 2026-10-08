@@ -1737,43 +1737,68 @@ func (a *App) hMaterialEtiquetasLotePDF(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write(pdfBytes)
 }
 
+// authMaterial: middleware de acesso ao módulo Material.
+// Se a reserva operacional estiver ativa, responde 423 Locked.
+// Permite gerente, operador, chefe_setor E encarregado/auxiliar de material
+// (designação por chave 'enc_material'). Admin mantém o comportamento de reservaAuth.
+func (a *App) authMaterial(next http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.reservaAtivo() {
+			jsonErro(w, http.StatusLocked, "módulo em reserva operacional")
+			return
+		}
+		a.auth(false, func(w http.ResponseWriter, r *http.Request) {
+			u := usuarioDoCtx(r)
+			if u == nil {
+				jsonErro(w, http.StatusUnauthorized, "não autenticado")
+				return
+			}
+			if u.Papel == "gerente" || u.Papel == "operador" || u.Papel == "chefe_setor" || a.ehEncarregadoDeMaterial(u) {
+				next(w, r)
+				return
+			}
+			http.Error(w, `{"erro":"papel sem acesso a esta área"}`, http.StatusForbidden)
+		}).ServeHTTP(w, r)
+	})
+}
+
 // ---------- rotas rotasMaterial ----------
 func (a *App) rotasMaterial() {
 	m := a.mux
 
-	// Módulo de Material e Cautelas (v1.0) — EM RESERVA (ordem Tenente 30/09)
-	m.Handle("GET /api/material/categorias", a.reservaAuth(a.hMaterialCategoriasList))
-	m.Handle("POST /api/material/categorias", a.reservaAuth(a.hMaterialCategoriasAdd))
-	m.Handle("DELETE /api/material/categorias/{id}", a.reservaAuth(a.hMaterialCategoriasDel))
-	m.Handle("GET /api/material/itens", a.reservaAuth(a.hMaterialItensList))
-	m.Handle("POST /api/material/itens", a.reservaAuth(a.hMaterialItensSave))
-	m.Handle("DELETE /api/material/itens/{id}", a.reservaAuth(a.hMaterialItensDel))
-	m.Handle("GET /api/material/itens/{id}/qr", a.reservaAuth(a.hMaterialItemQRCode))
-	m.Handle("GET /api/material/etiquetas-lote.pdf", a.reservaAuth(a.hMaterialEtiquetasLotePDF))
+	// Módulo de Material e Cautelas (v1.0)
+	m.Handle("GET /api/material/categorias", a.authMaterial(a.hMaterialCategoriasList))
+	m.Handle("POST /api/material/categorias", a.authMaterial(a.hMaterialCategoriasAdd))
+	m.Handle("DELETE /api/material/categorias/{id}", a.authMaterial(a.hMaterialCategoriasDel))
+	m.Handle("GET /api/material/itens", a.authMaterial(a.hMaterialItensList))
+	m.Handle("POST /api/material/itens", a.authMaterial(a.hMaterialItensSave))
+	m.Handle("DELETE /api/material/itens/{id}", a.authMaterial(a.hMaterialItensDel))
+	m.Handle("GET /api/material/itens/{id}/qr", a.authMaterial(a.hMaterialItemQRCode))
+	m.Handle("GET /api/material/etiquetas-lote.pdf", a.authMaterial(a.hMaterialEtiquetasLotePDF))
 	m.Handle("GET /api/material/inventario/pdf", a.auth(false, a.hMaterialInventarioPDF))
-	m.Handle("POST /api/material/cautelar", a.reservaAuth(a.hMaterialCautelar))
-	m.Handle("POST /api/material/devolver", a.reservaAuth(a.hMaterialDevolver))
-	m.Handle("GET /api/material/cautelas", a.reservaAuth(a.hMaterialCautelasList))
+	m.Handle("POST /api/material/cautelar", a.authMaterial(a.hMaterialCautelar))
+	m.Handle("POST /api/material/devolver", a.authMaterial(a.hMaterialDevolver))
+	m.Handle("GET /api/material/cautelas", a.authMaterial(a.hMaterialCautelasList))
 	m.Handle("GET /api/material/cautelas/{id}/recibo.pdf", a.auth(false, a.hMaterialCautelaReciboPDF))
-	m.Handle("POST /api/material/cautelas/{id}/anexos", a.reservaAuth(a.hMaterialAnexoAdd))
-	m.Handle("GET /api/material/cautelas/{id}/anexos", a.reservaAuth(a.hMaterialAnexoList))
-	m.Handle("GET /api/material/anexos/{id}", a.reservaAuth(a.hMaterialAnexoGet))
-	m.Handle("DELETE /api/material/anexos/{id}", a.reservaAuth(a.hMaterialAnexoDel))
+	m.Handle("POST /api/material/cautelas/{id}/anexos", a.authMaterial(a.hMaterialAnexoAdd))
+	m.Handle("GET /api/material/cautelas/{id}/anexos", a.authMaterial(a.hMaterialAnexoList))
+	m.Handle("GET /api/material/anexos/{id}", a.authMaterial(a.hMaterialAnexoGet))
+	m.Handle("DELETE /api/material/anexos/{id}", a.authMaterial(a.hMaterialAnexoDel))
 
 	// Material v1.5 (feat/v1.5-evolucao): responsáveis, anexos por item, comentários, conferência diária
-	m.Handle("GET /api/material/responsaveis", a.reservaAuth(a.hMaterialResponsaveisList))
-	m.Handle("POST /api/material/responsaveis", a.reservaAuth(a.hMaterialResponsaveisSave))
-	m.Handle("GET /api/material/itens/{id}/anexos", a.reservaAuth(a.hMaterialItemAnexosList))
-	m.Handle("POST /api/material/itens/{id}/anexos", a.reservaAuth(a.hMaterialItemAnexoAdd))
-	m.Handle("GET /api/material/item-anexos/{anexo_id}", a.reservaAuth(a.hMaterialItemAnexoGet))
-	m.Handle("DELETE /api/material/item-anexos/{anexo_id}", a.reservaAuth(a.hMaterialItemAnexoDel))
-	m.Handle("GET /api/material/itens/{id}/comentarios", a.reservaAuth(a.hMaterialItemComentariosList))
-	m.Handle("POST /api/material/itens/{id}/comentarios", a.reservaAuth(a.hMaterialItemComentarioAdd))
-	m.Handle("GET /api/material/conferencias", a.reservaAuth(a.hMaterialConferenciasList))
-	m.Handle("POST /api/material/conferencias", a.reservaAuth(a.hMaterialConferenciasList))
-	m.Handle("POST /api/material/conferencias/iniciar", a.reservaAuth(a.hMaterialConferenciaIniciar))
-	m.Handle("GET /api/material/conferencias/{id}", a.reservaAuth(a.hMaterialConferenciaGet))
-	m.Handle("POST /api/material/conferencias/{id}/bipar", a.reservaAuth(a.hMaterialConferenciaBipar))
-	m.Handle("POST /api/material/conferencias/{id}/fechar", a.reservaAuth(a.hMaterialConferenciaFechar))
+	m.Handle("GET /api/material/responsaveis", a.authMaterial(a.hMaterialResponsaveisList))
+	m.Handle("POST /api/material/responsaveis", a.authMaterial(a.hMaterialResponsaveisSave))
+	m.Handle("GET /api/material/itens/{id}/anexos", a.authMaterial(a.hMaterialItemAnexosList))
+	m.Handle("POST /api/material/itens/{id}/anexos", a.authMaterial(a.hMaterialItemAnexoAdd))
+	m.Handle("GET /api/material/item-anexos/{anexo_id}", a.authMaterial(a.hMaterialItemAnexoGet))
+	m.Handle("DELETE /api/material/item-anexos/{anexo_id}", a.authMaterial(a.hMaterialItemAnexoDel))
+	m.Handle("GET /api/material/itens/{id}/comentarios", a.authMaterial(a.hMaterialItemComentariosList))
+	m.Handle("POST /api/material/itens/{id}/comentarios", a.authMaterial(a.hMaterialItemComentarioAdd))
+	m.Handle("GET /api/material/conferencias", a.authMaterial(a.hMaterialConferenciasList))
+	m.Handle("POST /api/material/conferencias", a.authMaterial(a.hMaterialConferenciasList))
+	m.Handle("POST /api/material/conferencias/iniciar", a.authMaterial(a.hMaterialConferenciaIniciar))
+	m.Handle("GET /api/material/conferencias/{id}", a.authMaterial(a.hMaterialConferenciaGet))
+	m.Handle("POST /api/material/conferencias/{id}/bipar", a.authMaterial(a.hMaterialConferenciaBipar))
+	m.Handle("POST /api/material/conferencias/{id}/fechar", a.authMaterial(a.hMaterialConferenciaFechar))
 	m.Handle("GET /api/material/conferencias/{id}/pronto.pdf", a.auth(false, a.hMaterialConferenciaPDF))
 }

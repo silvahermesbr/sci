@@ -17,7 +17,7 @@ func TestG2MeDevolveFuncaoGlobal(t *testing.T) {
 	gid, _ := criaGrupo(t, app, admin, "G G2 Funcao", "ger_g2fun")
 
 	var fid int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Encarregado de Pessoal G2', ?) RETURNING id`, gid).Scan(&fid); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal G2', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fid); err != nil {
 		t.Fatalf("criar função: %v", err)
 	}
 	// conta criada com a função (vínculos ANTES do login: sessão congela papel)

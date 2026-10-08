@@ -34,10 +34,10 @@ func normSemAcento(s string) string {
 	return repl.Replace(s)
 }
 
-// ehEncarregado: usuário DESIGNADO (funcao_membros) a função cujo nome contém
-// "encarregado" (normalizado) — consulta funcao_membros no escopo do grupo.
-// NADA de consulta a usuarios.funcao_id / pessoas.funcao_id (R3: designação).
-func (a *App) ehEncarregado(u *Usuario) bool {
+// ehEncarregadoDePessoal: usuário DESIGNADO (funcao_membros) para função com chave='enc_pessoal'
+// no grupo do usuário (titular ou auxiliar — ambos têm o mesmo poder).
+// Detecção por chave imutável, NUNCA por nome (anti-escalação).
+func (a *App) ehEncarregadoDePessoal(u *Usuario) bool {
 	if u == nil {
 		return false
 	}
@@ -45,18 +45,31 @@ func (a *App) ehEncarregado(u *Usuario) bool {
 	if esc <= 0 {
 		return false
 	}
-	rows, err := a.st.db.Query(`SELECT f.nome FROM funcao_membros fm JOIN funcoes f ON f.id=fm.funcao_id WHERE fm.usuario_id=? AND fm.grupo_id=?`, u.ID, esc)
-	if err != nil {
+	var ok int
+	err := a.st.db.QueryRow(`SELECT 1 FROM funcao_membros fm JOIN funcoes f ON f.id=fm.funcao_id WHERE fm.usuario_id=? AND fm.grupo_id=? AND f.chave='enc_pessoal'`, u.ID, esc).Scan(&ok)
+	return err == nil && ok == 1
+}
+
+// ehEncarregadoDeMaterial: usuário DESIGNADO (funcao_membros) para função com chave='enc_material'
+// no grupo do usuário (titular ou auxiliar — ambos têm o mesmo poder).
+// Detecção por chave imutável, NUNCA por nome (anti-escalação).
+func (a *App) ehEncarregadoDeMaterial(u *Usuario) bool {
+	if u == nil {
 		return false
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var nome string
-		if err := rows.Scan(&nome); err == nil && containsNomeFuncao(nome, "encarregado") {
-			return true
-		}
+	esc := escopoDoUsuario(u)
+	if esc <= 0 {
+		return false
 	}
-	return false
+	var ok int
+	err := a.st.db.QueryRow(`SELECT 1 FROM funcao_membros fm JOIN funcoes f ON f.id=fm.funcao_id WHERE fm.usuario_id=? AND fm.grupo_id=? AND f.chave='enc_material'`, u.ID, esc).Scan(&ok)
+	return err == nil && ok == 1
+}
+
+// ehEncarregado: wrapper de compatibilidade delegando para ehEncarregadoDePessoal.
+// Detecção por chave, nunca por nome (anti-escalação).
+func (a *App) ehEncarregado(u *Usuario) bool {
+	return a.ehEncarregadoDePessoal(u)
 }
 
 // setorDoUsuario: setor de atuação — u.SetorID com fallback pessoa.setor_id

@@ -28,7 +28,7 @@ func f2PessoalSetup(t *testing.T, app *App, st *Store) (gid, gidFora, setorID, s
 	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id) VALUES ('Seção F2 Fora', ?) RETURNING id`, gidFora).Scan(&setorForaID); err != nil {
 		t.Fatalf("criar setor fora: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Encarregado de Pessoal F2', ?) RETURNING id`, gid).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal F2', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fEnc); err != nil {
 		t.Fatalf("criar função encarregado: %v", err)
 	}
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Auxiliar de Pessoal F2', ?) RETURNING id`, gid).Scan(&fAux); err != nil {
@@ -62,7 +62,7 @@ func f2PessoalSetup(t *testing.T, app *App, st *Store) (gid, gidFora, setorID, s
 		}
 	}
 	designa("enc_f2", fEnc, "titular")
-	designa("aux_f2", fAux, "auxiliar")
+	designa("aux_f2", fEnc, "auxiliar")
 
 	if err := st.db.QueryRow(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('ALVOF2', 'Alvo F2', ?, 'ativo') RETURNING id`, gid).Scan(&pAlvo); err != nil {
 		t.Fatalf("criar pessoa alvo: %v", err)

@@ -36,28 +36,35 @@ type UsuarioPapel struct {
 	NomeExibicao string `json:"nome_exibicao,omitempty"`
 }
 
+type UsuarioFuncaoGrupo struct {
+	Chave        *string `json:"chave"`
+	Titularidade string  `json:"titularidade"`
+	FuncaoNome   string  `json:"funcao_nome"`
+}
+
 type Usuario struct {
-	ID             int64          `json:"id"`
-	Login          string         `json:"login"`
-	Papel          string         `json:"papel"` // admin | gerente | operador | chefe_setor (papel ativo)
-	PessoaID       *int64         `json:"pessoa_id"`
-	GrupoID        *int64         `json:"grupo_id"` // grupo do papel ativo
-	GrupoNome      string         `json:"grupo_nome,omitempty"`
-	NomeGuerra     string         `json:"nome_guerra"` // NOME
-	NomeCompleto   string         `json:"nome_completo"` // NOME COMPLETO
-	DataNascimento string         `json:"data_nascimento,omitempty"` // DATA NASC
-	TipoSanguineo  string         `json:"tipo_sanguineo,omitempty"` // TIPO SANGUÍNEO
-	Telefone       string         `json:"telefone,omitempty"` // TELEFONE
-	Email          string         `json:"email,omitempty"` // EMAIL
-	Endereco       string         `json:"endereco,omitempty"` // ENDEREÇO
-	FotoBase64     string         `json:"foto_base64,omitempty"` // Foto 1x1
-	SetorID        *int64         `json:"setor_id"`
-	SetorNome      string         `json:"setor_nome,omitempty"`
-	FuncaoID       *int64         `json:"funcao_id"` // função militar/organizacional ativa
-	FuncaoNome     string         `json:"funcao_nome,omitempty"`
-	PapelAtivoID   *int64         `json:"papel_ativo_id,omitempty"`
-	Papeis         []UsuarioPapel `json:"papeis,omitempty"`
-	PrecisaSetup   bool           `json:"precisa_setup"`
+	ID             int64                `json:"id"`
+	Login          string               `json:"login"`
+	Papel          string               `json:"papel"` // admin | gerente | operador | chefe_setor (papel ativo)
+	PessoaID       *int64               `json:"pessoa_id"`
+	GrupoID        *int64               `json:"grupo_id"` // grupo do papel ativo
+	GrupoNome      string               `json:"grupo_nome,omitempty"`
+	NomeGuerra     string               `json:"nome_guerra"` // NOME
+	NomeCompleto   string               `json:"nome_completo"` // NOME COMPLETO
+	DataNascimento string               `json:"data_nascimento,omitempty"` // DATA NASC
+	TipoSanguineo  string               `json:"tipo_sanguineo,omitempty"` // TIPO SANGUÍNEO
+	Telefone       string               `json:"telefone,omitempty"` // TELEFONE
+	Email          string               `json:"email,omitempty"` // EMAIL
+	Endereco       string               `json:"endereco,omitempty"` // ENDEREÇO
+	FotoBase64     string               `json:"foto_base64,omitempty"` // Foto 1x1
+	SetorID        *int64               `json:"setor_id"`
+	SetorNome      string               `json:"setor_nome,omitempty"`
+	FuncaoID       *int64               `json:"funcao_id"` // função militar/organizacional ativa
+	FuncaoNome     string               `json:"funcao_nome,omitempty"`
+	PapelAtivoID   *int64               `json:"papel_ativo_id,omitempty"`
+	Papeis         []UsuarioPapel       `json:"papeis,omitempty"`
+	FuncoesGrupo   []UsuarioFuncaoGrupo `json:"funcoes_grupo"`
+	PrecisaSetup   bool                 `json:"precisa_setup"`
 }
 
 type ctxKeyChave int
@@ -286,5 +293,6 @@ func (a *App) validarCredenciais(login, senha, ip string) (*Usuario, error) {
 	if err == nil {
 		u.Papeis = papeis
 	}
+	u.FuncoesGrupo = a.st.FuncoesGrupoDoUsuario(id, grupoID)
 	return u, nil
 }

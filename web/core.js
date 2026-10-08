@@ -40,25 +40,38 @@ window.formatarTamanhoBytes = formatarTamanhoBytes;
 
 /* ---------- usuário da sessão ---------- */
 let ME = null;
-// ordem 06/10 (P4): função de pessoal no cliente — encarregado OU auxiliar
-// (nome normalizado, sem acentos). Espelha ehEncarregado/ehAuxiliarDePessoal.
-function funcaoEhPessoal(u, agulha) {
+
+function funcaoNomeContem(u, agulha) {
   if (!u || typeof u.funcao_nome !== 'string') return false;
   return u.funcao_nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(agulha);
 }
+
+function ehEncPessoalUsuario(u) {
+  if (!u) return false;
+  if (Array.isArray(u.funcoes_grupo)) {
+    return u.funcoes_grupo.some(f => f && f.chave === 'enc_pessoal');
+  }
+  return funcaoNomeContem(u, 'pessoal') || funcaoNomeContem(u, 'encarregado') || funcaoNomeContem(u, 'auxiliar');
+}
+
+function ehEncMaterialUsuario(u) {
+  if (!u) return false;
+  if (Array.isArray(u.funcoes_grupo)) {
+    return u.funcoes_grupo.some(f => f && f.chave === 'enc_material');
+  }
+  return funcaoNomeContem(u, 'material');
+}
+
 function definirUsuario(u) {
-  // Onda 05/10 (ordem Diretor): encarregado de pessoal (função c/ "encarregado",
-  // sem papel do sistema) atua na CONFERÊNCIA — papel-conf derivado no cliente.
-  // Ordem 06/10 (item 15): AUXILIAR DE PESSOAL recebe a MESMA derivação —
-  // mesmos módulos, mesmos poderes de gestão de pessoal (o servidor valida
-  // cada função à parte; aqui é só chave de navegação).
-  if (u && !u.papel && (funcaoEhPessoal(u, 'encarregado') || funcaoEhPessoal(u, 'auxiliar'))) {
+  if (u && !u.papel && (ehEncPessoalUsuario(u) || ehEncMaterialUsuario(u))) {
     u.papel = 'encarregado';
   }
   ME = u; window.SCI_ME = u; window.ME = u;
-  window.ehEncarregado = () => (ME && ME.papel === 'encarregado');
-  // ordem 06/10 (P4): gerente OU encarregado OU auxiliar de pessoal
-  window.gestorPessoal = () => !!(ME && (ME.papel === 'gerente' || ME.papel === 'encarregado'));
+  window.ehEncPessoal = () => ehEncPessoalUsuario(ME);
+  window.ehEncMaterial = () => ehEncMaterialUsuario(ME);
+  window.gestorPessoal = () => !!(ME && (ME.papel === 'gerente' || (window.ehEncPessoal && window.ehEncPessoal())));
+  window.gestorMaterial = () => !!(ME && (ME.papel === 'gerente' || (window.ehEncMaterial && window.ehEncMaterial())));
+  window.ehEncarregado = () => !!(ME && (ME.papel === 'encarregado' || (window.ehEncPessoal && window.ehEncPessoal()) || (window.ehEncMaterial && window.ehEncMaterial())));
 }
 window.definirUsuario = definirUsuario;
 
@@ -650,6 +663,8 @@ definirUsuario(usuario);
     const svgRel = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>';
     const svgGer = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
     const svgPes = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="16" y1="3" x2="22" y2="9"/><line x1="22" y1="3" x2="16" y2="9"/></svg>';
+    const svgMaterial = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
+    const svgPerfil = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
     if (papel === 'operador') {
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
@@ -669,23 +684,27 @@ definirUsuario(usuario);
         ['#/mensagens', 'EMAIL INTERNO', svgMsg, true],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
         ['#/pessoal', 'PESSOAL', svgPes],
+        ['#/material', 'MATERIAL', svgMaterial],
         ['#/grupos', 'GERENCIAR GRUPO', svgGer],
         ['#/relatorios', 'RELATÓRIOS', svgRel]
       ];
     } else if (window.ehEncarregado && window.ehEncarregado()) {
-      // Onda 05/10 (ordem Diretor): ENCARREGADO DE PESSOAL (sem papel do sistema)
-      // atua na CONFERÊNCIA com escopo de grupo (mesma conferência do grupo).
-      // Ordem 06/10 (itens 3+15): AUXILIAR DE PESSOAL espelha o encarregado
-      // (derivação em definirUsuario) e ambos ganham GERENCIAR GRUPO (P4) —
-      // as ações de pessoal da view são liberadas por gestorPessoal().
-      // f2: e o MÓDULO PESSOAL (Efetivo · Funções · Setores).
-      const itensFuncao = [
-        ['#/hoje', 'CONFERÊNCIA', svgConf],
-        ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>']
-      ];
-      itensFuncao.splice(1, 0, ['#/pessoal', 'PESSOAL', svgPes]);
-      itensFuncao.splice(2, 0, ['#/grupos', 'GERENCIAR GRUPO', svgGer]);
-      itens = itensFuncao;
+      // f3: lógica composável para encarregados (pessoal e/ou material).
+      // Encarregado NUNCA vê GERENCIAR GRUPO (#/grupos).
+      const mapa = new Map();
+      const addItem = (rota, rotulo, svg, extra) => {
+        if (!mapa.has(rota)) mapa.set(rota, [rota, rotulo, svg, extra]);
+      };
+      if (window.ehEncPessoal && window.ehEncPessoal()) {
+        addItem('#/hoje', 'CONFERÊNCIA', svgConf);
+        addItem('#/pessoal', 'PESSOAL', svgPes);
+      }
+      if (window.ehEncMaterial && window.ehEncMaterial()) {
+        addItem('#/hoje', 'CONFERÊNCIA', svgConf);
+        addItem('#/material', 'MATERIAL', svgMaterial);
+      }
+      addItem('#/perfil', 'MEU PERFIL', svgPerfil);
+      itens = Array.from(mapa.values());
     } else {
       // P0 onda 05/10 — conta SEM função do sistema: só Meu Perfil
       // (login → aviso de módulo indisponível; nada mais é visível).
@@ -1049,10 +1068,10 @@ function rotear() {
     irPara('#/admin');
     return;
   } // admin não tem grupo: restrito em dados operacionais de grupo, mas possui caixa de mensagens própria
-  // Modos de DESENVOLVIMENTO (ordem 04/10): escalas (1.8), material (1.6),
+  // Modos de DESENVOLVIMENTO (ordem 04/10): escalas (1.8),
   // calendário (1.7) e consciência situacional (1.9) — acesso removido
   // across the board; código em acervo para as versões futuras.
-  if (h === '#/escalas' || h === '#/material' || h === '#/calendario' || h === '#/consciencia') {
+  if (h === '#/escalas' || h === '#/calendario' || h === '#/consciencia') {
     chamarView('ViewModuloEmDesenvolvimento'); return;
   }
   // Usuário normal (ordem 04/10): login leva ao aviso de módulo não disponível
@@ -1083,6 +1102,11 @@ function rotear() {
   if (h === '#/calendario') { chamarView('ViewCalendario'); return; }
   if (h === '#/drive') { chamarView('ViewDrive'); return; }
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
+  if (h === '#/material') {
+    if (papel === 'gerente' || (window.gestorMaterial && window.gestorMaterial())) chamarView('ViewMaterial');
+    else chamarView('ViewSemModulo');
+    return;
+  }
   if (h === '#/admin') {
     if (papel === 'admin') chamarView('ViewAdmin');
     else irPara(rotaInicial());
@@ -1094,10 +1118,7 @@ function rotear() {
     return;
   }
   if (h === '#/grupos') {
-    // ordem 06/10 (P4): GERENCIAR passa a aceitar encarregado/auxiliar de
-    // pessoal (mínimo escopo — é a única rota nova liberada; #/admin segue
-    // exclusiva do admin).
-    if (papel === 'gerente' || (papel === 'encarregado' && window.gestorPessoal && window.gestorPessoal())) chamarView('ViewGrupos');
+    if (papel === 'gerente') chamarView('ViewGrupos');
     else irPara(rotaInicial());
     return;
   }

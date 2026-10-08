@@ -110,6 +110,7 @@
     // ordem 06/10: quem chega aqui sem papel do sistema é encarregado/auxiliar —
     // o servidor nega exclusão de catálogo/pessoa, senha e mover; o front esconde.
     const souFuncaoPessoal = eu.papel !== 'gerente';
+    const podeDesignar = eu && (eu.papel === 'gerente' || eu.papel === 'admin');
     navAtiva('#/pessoal');
     $('#app').innerHTML = '<div class="carregando">…</div>';
     const [grupos, pessoas, setores, funcoes, contas, apresentacaoDados] = await Promise.all([
@@ -227,8 +228,15 @@
       <div id="pesFuncoes" class="${abaPes === 'funcoes' ? '' : 'oculto'}">
         <div class="cartao"><h3 style="margin-top:0">FUNÇÕES DO GRUPO — Titulares e Auxiliares</h3>
         <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Funções <b>administrativas do grupo</b> (Encarregado de Pessoal e afins — sem postos/graduações): <b>1 titular</b> por função (garantido pelo sistema) e quantos auxiliares forem necessários. Somente contas do SEU grupo.</p>
-        <div class="rolagem"><table><thead><tr><th>Função</th><th>Designados</th><th>Designar</th></tr></thead>
-        <tbody id="tabFun"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
+        ${!podeDesignar ? '<div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:6px;padding:8px 12px;margin-bottom:12px;font-size:12.5px;color:var(--tx2)">ℹ️ A designação de funções é realizada pelo gerente do grupo.</div>' : ''}
+        ${podeDesignar ? `
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px;padding:10px 12px;background:var(--painel2);border:1px solid var(--borda);border-radius:6px">
+            <input type="text" id="inpNovaFuncaoGrupo" placeholder="Nome da função de grupo" style="min-width:220px;flex:1;max-width:320px">
+            <button class="primario" id="btnNovaFuncaoGrupo" style="font-size:12px;padding:6px 14px">+ Nova função de grupo</button>
+          </div>
+        ` : ''}
+        <div class="rolagem"><table><thead><tr><th>Função</th><th>Designados</th>${podeDesignar ? '<th>Designar</th>' : ''}</tr></thead>
+        <tbody id="tabFun"><tr><td colspan="${podeDesignar ? 3 : 2}"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
       <div id="pesSetores" class="${abaPes === 'setores' ? '' : 'oculto'}">
         <!-- f2: aba SETORES do módulo Pessoal — GESTÃO (novo/editar/excluir),
@@ -273,6 +281,26 @@
           if (abaPes === 'setores') { carregarModoSetores(); carregarChefes(); carregarAgregadoSetores(); }
         }
       });
+    }
+
+    /* --- f3: criação de nova função de grupo pelo gerente/admin --- */
+    if (podeDesignar) {
+      const btnNovaFun = $('#btnNovaFuncaoGrupo');
+      if (btnNovaFun) {
+        btnNovaFun.onclick = async () => {
+          const inp = $('#inpNovaFuncaoGrupo');
+          const nome = (inp && inp.value.trim()) || '';
+          if (!nome) { toast('Informe o nome da função', 'erro'); return; }
+          const r = await processar(() => api('/api/catalogo/funcoes', {
+            method: 'POST',
+            body: JSON.stringify({ nome, tipo: 'grupo' })
+          }), 'Criando função de grupo…');
+          if (r.ok) {
+            if (inp) inp.value = '';
+            carregarFuncoesMembros();
+          }
+        };
+      }
     }
 
     /* --- ordem 06/10 (item 3): encarregado/auxiliar criam contas do grupo --- */
@@ -322,7 +350,7 @@
     async function carregarFuncoesMembros() {
       const tb = $('#tabFun');
       if (!tb) return;
-      tb.innerHTML = '<tr><td colspan="3"><span class="carregando">…</span></td></tr>';
+      tb.innerHTML = `<tr><td colspan="${podeDesignar ? 3 : 2}"><span class="carregando">…</span></td></tr>`;
       try {
         const linhas = await api('/api/grupo/funcoes/membros');
         const porFuncao = {};
@@ -330,7 +358,7 @@
           (porFuncao[l.funcao_id] = porFuncao[l.funcao_id] || { funcao_id: l.funcao_id, funcao_nome: l.funcao_nome, membros: [] }).membros.push(l);
         });
         const ids = Object.keys(porFuncao).sort((a, b) => String(porFuncao[a].funcao_nome).localeCompare(String(porFuncao[b].funcao_nome)));
-        if (!ids.length) { tb.innerHTML = '<tr><td colspan="3"><span class="vazio">nenhuma função no catálogo</span></td></tr>'; return; }
+        if (!ids.length) { tb.innerHTML = `<tr><td colspan="${podeDesignar ? 3 : 2}"><span class="vazio">nenhuma função no catálogo</span></td></tr>`; return; }
         const opContas = contas.filter(c => c.grupo_id === eu.grupo_id && c.ativo)
           .map(c => `<option value="${c.id}">${esc(c.nome_guerra || c.login)} (${esc(c.login)})</option>`).join('');
         tb.innerHTML = ids.map(fid => {
@@ -338,42 +366,50 @@
           const membros = f.membros.filter(m => m.membro_id > 0);
           const titular = membros.find(m => m.titularidade === 'titular');
           const auxiliares = membros.filter(m => m.titularidade === 'auxiliar');
+          const remBtTit = podeDesignar && titular ? ` <button class="acao-linha" data-remfun="${titular.membro_id}">remover</button>` : '';
           const linhaTit = titular
-            ? `<b>👑 ${esc(titular.nome_guerra || titular.login)}</b> <button class="acao-linha" data-remfun="${titular.membro_id}">remover</button>`
+            ? `<b>👑 ${esc(titular.nome_guerra || titular.login)}</b>${remBtTit}`
             : '<span style="color:var(--tx3)">sem titular</span>';
-          const linhasAux = auxiliares.map(m => `<div style="margin-top:4px">${esc(m.nome_guerra || m.login)} <button class="acao-linha" data-remfun="${m.membro_id}">remover</button></div>`).join('');
-          return `<tr>
-            <td><b>${esc(f.funcao_nome)}</b></td>
-            <td>${linhaTit}${auxiliares.length ? '<div style="margin-top:6px;border-top:1px dashed var(--borda);padding-top:4px">' + linhasAux + '</div>' : ''}</td>
+          const linhasAux = auxiliares.map(m => {
+            const remBtAux = podeDesignar ? ` <button class="acao-linha" data-remfun="${m.membro_id}">remover</button>` : '';
+            return `<div style="margin-top:4px">${esc(m.nome_guerra || m.login)}${remBtAux}</div>`;
+          }).join('');
+          const colDesignar = podeDesignar ? `
             <td>
               <div class="form-linha" style="gap:6px;align-items:center;flex-wrap:wrap">
                 <select data-seluser="${f.funcao_id}" style="min-width:170px"><option value="">— conta —</option>${opContas}</select>
                 <select data-seltit="${f.funcao_id}"><option value="titular">titular</option><option value="auxiliar">auxiliar</option></select>
                 <button class="primario" data-addfun="${f.funcao_id}" style="font-size:12px;padding:4px 12px">Designar</button>
               </div>
-            </td></tr>`;
+            </td>` : '';
+          return `<tr>
+            <td><b>${esc(f.funcao_nome)}</b></td>
+            <td>${linhaTit}${auxiliares.length ? '<div style="margin-top:6px;border-top:1px dashed var(--borda);padding-top:4px">' + linhasAux + '</div>' : ''}</td>
+            ${colDesignar}</tr>`;
         }).join('');
-        tb.querySelectorAll('[data-addfun]').forEach(bt => {
-          bt.onclick = async () => {
-            const fID = +bt.dataset.addfun;
-            const selU = tb.querySelector(`[data-seluser="${fID}"]`);
-            const selT = tb.querySelector(`[data-seltit="${fID}"]`);
-            if (!selU.value) { toast('Escolha a conta', 'erro'); return; }
-            const r = await processar(() => api('/api/grupo/funcoes/membros', { method: 'POST', body: JSON.stringify({ funcao_id: fID, usuario_id: +selU.value, titularidade: selT.value }) }), 'Designando…');
-            if (r.ok) carregarFuncoesMembros();
-          };
-        });
-        tb.querySelectorAll('[data-remfun]').forEach(bt => {
-          bt.onclick = async () => {
-            const r = await processar(() => api('/api/grupo/funcoes/membros/' + bt.dataset.remfun, { method: 'DELETE' }), 'Removendo designação…');
-            if (r.ok) carregarFuncoesMembros();
-          };
-        });
+        if (podeDesignar) {
+          tb.querySelectorAll('[data-addfun]').forEach(bt => {
+            bt.onclick = async () => {
+              const fID = +bt.dataset.addfun;
+              const selU = tb.querySelector(`[data-seluser="${fID}"]`);
+              const selT = tb.querySelector(`[data-seltit="${fID}"]`);
+              if (!selU.value) { toast('Escolha a conta', 'erro'); return; }
+              const r = await processar(() => api('/api/grupo/funcoes/membros', { method: 'POST', body: JSON.stringify({ funcao_id: fID, usuario_id: +selU.value, titularidade: selT.value }) }), 'Designando…');
+              if (r.ok) carregarFuncoesMembros();
+            };
+          });
+          tb.querySelectorAll('[data-remfun]').forEach(bt => {
+            bt.onclick = async () => {
+              const r = await processar(() => api('/api/grupo/funcoes/membros/' + bt.dataset.remfun, { method: 'DELETE' }), 'Removendo designação…');
+              if (r.ok) carregarFuncoesMembros();
+            };
+          });
+        }
         // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Função / Designados / Designar)
         const tabFunTbl = document.querySelector('#pesFuncoes table');
         if (tabFunTbl) pesOrdenar('pes-funcoes', tabFunTbl, tb, [{ tipo: 'txt' }, { tipo: 'txt' }]);
       } catch (e) {
-        tb.innerHTML = '<tr><td colspan="3"><span class="vazio">Falha ao carregar funções.</span></td></tr>';
+        tb.innerHTML = `<tr><td colspan="${podeDesignar ? 3 : 2}"><span class="vazio">Falha ao carregar funções.</span></td></tr>`;
       }
     }
     if (abaPes === 'funcoes') carregarFuncoesMembros();

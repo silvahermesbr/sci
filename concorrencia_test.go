@@ -257,7 +257,7 @@ func TestConcorrenciaFecharDuploSessoesDistintas(t *testing.T) {
 	// PESSOAL do grupo — operador DESIGNADO à função (2º gerente é vetado pelo
 	// índice único de gerente por grupo). R3: poder vem da designação.
 	var fEnc int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, ativo) VALUES ('Encarregado Conc B', 1) RETURNING id`).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, tipo, chave, ativo) VALUES ('Encarregado Conc B', 'grupo', 'enc_pessoal', 1) RETURNING id`).Scan(&fEnc); err != nil {
 		t.Fatalf("função encarregado: %v", err)
 	}
 	var uidC int64
