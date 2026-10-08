@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#080c14">
+<meta name="description" content="SCI — Sistema de Controle Interno: conferência digital de pessoal, relatórios oficiais e gestão documental da unidade, 100% local.">
+<title>SCI — Sistema de Controle Interno</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23275e42'/%3E%3Cpath d='M6 12.5l4 4 8-9' stroke='%238fd2a9' stroke-width='2.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+/* ==========================================================================
+   SCI — Landing pública (design system v300 espelhado: Obsidian Dark Glass)
+   Página institucional · sem dependências externas · CSP-friendly
+   ========================================================================== */
+:root {
+  color-scheme: dark;
+  --bg: #080c14;
+  --bg-gradient: radial-gradient(1200px 600px at 50% -180px, rgba(16, 185, 129, 0.12), transparent 70%),
+                 radial-gradient(800px 400px at 90% 90%, rgba(59, 130, 246, 0.07), transparent 70%),
+                 #080c14;
+  --painel: #0e1524;
+  --painel2: #162035;
+  --borda: #1e293b;
+  --borda2: #334155;
+  --vidro: rgba(14, 21, 36, 0.55);
+  --vidro-forte: rgba(14, 21, 36, 0.78);
+  --brilho: rgba(255, 255, 255, 0.08);
+  --tx: #f8fafc;
+  --tx2: #94a3b8;
+  --tx3: #64748b;
+  --verde: #10b981;
+  --verde-claro: #34d399;
+  --verdeesc: #065f46;
+  --verdeesc2: #047857;
+  --ambar-txt: #fbbf24;
+  --azul: #38bdf8;
+  --raio: 10px;
+  --raio-g: 14px;
+  --sombra: 0 8px 24px -4px rgba(0, 0, 0, 0.5);
+  --sombra-g: 0 20px 50px -10px rgba(0, 0, 0, 0.7);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html, body { overflow-x: hidden; overflow-x: clip; }
+body {
+  background: var(--bg-gradient);
+  background-attachment: fixed;
+  color: var(--tx);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+  overflow-x: hidden;
+}
+a { color: var(--verde-claro); text-decoration: none; }
+:focus-visible { outline: 2px solid var(--verde); outline-offset: 2px; border-radius: 4px; }
+::selection { background: rgba(16, 185, 129, 0.35); color: #fff; }
+::placeholder { color: var(--tx3); }
+
+/* ---------- Topbar ---------- */
+.topo {
+  position: fixed; inset: 0 0 auto 0; z-index: 50;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 12px clamp(16px, 5vw, 48px);
+  background: var(--vidro-forte);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--brilho);
+}
+.marca { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.marca svg { flex: 0 0 auto; color: var(--verde-claro); filter: drop-shadow(0 0 8px rgba(52, 211, 153, 0.45)); }
+.marca-nome { font-weight: 800; letter-spacing: 0.04em; font-size: 15.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.marca-sub { font-size: 11px; color: var(--tx3); letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; }
+.topo-nav { display: flex; align-items: center; gap: 6px; }
+.topo-nav a.ancora {
+  color: var(--tx2); font-size: 13px; font-weight: 600; letter-spacing: 0.03em;
+  padding: 9px 13px; border-radius: 8px; transition: color .18s ease, background .18s ease;
+}
+.topo-nav a.ancora:hover { color: var(--verde-claro); background: rgba(16, 185, 129, 0.08); }
+.bt-entrar {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: linear-gradient(180deg, var(--verdeesc2), var(--verdeesc));
+  color: #f8fafc; border: 1px solid rgba(52, 211, 153, 0.35);
+  padding: 9px 20px; min-height: 42px; border-radius: var(--raio);
+  font-weight: 700; font-size: 13.5px; letter-spacing: 0.02em;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.25);
+  transition: filter .18s ease, box-shadow .18s ease, transform .12s ease;
+}
+.bt-entrar:hover { filter: brightness(1.15); box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4); }
+.bt-entrar:active { transform: translateY(1px); }
+.bt-entrar svg { transition: transform .18s ease; }
+.bt-entrar:hover svg { transform: translateX(3px); }
+
+/* ---------- Herói ---------- */
+.hero {
+  position: relative;
+  min-height: calc(100svh - 0px);
+  display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  align-items: center; gap: clamp(28px, 5vw, 64px);
+  max-width: 1200px; margin: 0 auto;
+  padding: clamp(96px, 14vh, 150px) clamp(16px, 5vw, 48px) 64px;
+  /* Os orbes decorativos são contidos aqui: sem eles o documento cresce
+     lateralmente e o Chrome mobile expande o layout (fit-to-width). */
+  overflow: clip;
+}
+.orbe { position: absolute; border-radius: 50%; filter: blur(70px); opacity: .35; pointer-events: none; }
+.orbe-1 { width: 420px; height: 420px; top: -120px; right: -80px; background: radial-gradient(circle, rgba(16,185,129,.4), transparent 70%); animation: flutuar 14s ease-in-out infinite; }
+.orbe-2 { width: 340px; height: 340px; bottom: -60px; left: -120px; background: radial-gradient(circle, rgba(56,189,248,.22), transparent 70%); animation: flutuar 18s ease-in-out infinite reverse; }
+@keyframes flutuar { 0%, 100% { transform: translate(0, 0) scale(1); } 50% { transform: translate(-24px, 28px) scale(1.06); } }
+
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--verde-claro);
+  background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.28);
+  padding: 7px 14px; border-radius: 999px; margin-bottom: 22px;
+}
+.hero-badge::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--verde-claro);
+  box-shadow: 0 0 10px var(--verde-claro); animation: pulsar 2s ease-in-out infinite;
+}
+@keyframes pulsar { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.hero h1 {
+  font-size: clamp(30px, 4.6vw, 52px);
+  line-height: 1.12; letter-spacing: -0.015em; font-weight: 800;
+  margin-bottom: 18px;
+}
+.hero h1 .realce {
+  background: linear-gradient(92deg, var(--verde-claro) 0%, var(--verde) 45%, #a7f3d0 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.hero p.sub { font-size: clamp(14.5px, 1.6vw, 17px); color: var(--tx2); max-width: 52ch; margin-bottom: 30px; }
+.hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 34px; }
+.bt-hero {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 12px 26px; min-height: 46px; border-radius: var(--raio);
+  font-weight: 700; font-size: 14.5px; letter-spacing: 0.02em;
+  transition: filter .18s ease, box-shadow .18s ease, transform .12s ease, border-color .18s ease;
+}
+.bt-hero.primario {
+  background: linear-gradient(180deg, var(--verdeesc2), var(--verdeesc));
+  color: #f8fafc; border: 1px solid rgba(52, 211, 153, 0.35);
+  box-shadow: 0 4px 18px rgba(16, 185, 129, 0.3);
+}
+.bt-hero.primario:hover { filter: brightness(1.15); box-shadow: 0 8px 26px rgba(16, 185, 129, 0.45); }
+.bt-hero.primario:active { transform: translateY(1px); }
+.bt-hero.fantasma {
+  color: var(--tx); background: var(--vidro);
+  border: 1px solid var(--borda2);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+}
+.bt-hero.fantasma:hover { border-color: var(--verde); color: var(--verde-claro); }
+.hero-nota { font-size: 12.5px; color: var(--tx3); }
+.hero-nota b { color: var(--tx2); }
+
+/* ---------- Mock do painel (ilustração do produto) ---------- */
+.mock-janela {
+  position: relative;
+  background: var(--vidro);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+  border: 1px solid var(--brilho);
+  border-radius: var(--raio-g);
+  box-shadow: var(--sombra-g);
+  overflow: hidden;
+  animation: surgir .7s cubic-bezier(0.16, 1, 0.3, 1) both .25s;
+}
+@keyframes surgir { from { opacity: 0; transform: translateY(26px) scale(0.985); } to { opacity: 1; transform: none; } }
+.mock-barra {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 16px; border-bottom: 1px solid var(--brilho);
+  background: rgba(8, 12, 20, 0.5);
+}
+.mock-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--borda2); }
+.mock-dot.on { background: var(--verde); box-shadow: 0 0 8px rgba(16,185,129,.6); }
+.mock-titulo { font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--tx3); margin-left: 6px; }
+.mock-corpo { padding: 18px 18px 20px; }
+.mock-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 6px 11px; border-radius: 999px;
+  background: rgba(148, 163, 184, 0.1); color: var(--tx2); border: 1px solid rgba(148, 163, 184, 0.2);
+}
+.chip b { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.chip.ok { background: rgba(16, 185, 129, 0.12); color: var(--verde-claro); border-color: rgba(16, 185, 129, 0.3); }
+.chip.ama { background: rgba(245, 158, 11, 0.12); color: var(--ambar-txt); border-color: rgba(245, 158, 11, 0.3); }
+.chip.verm { background: rgba(239, 68, 68, 0.12); color: #f87171; border-color: rgba(239, 68, 68, 0.3); }
+.chip.azul { background: rgba(56, 189, 248, 0.12); color: var(--azul); border-color: rgba(56, 189, 248, 0.3); }
+.mock-linha {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 12px; border-radius: 8px;
+  border: 1px solid transparent; border-bottom-color: var(--borda);
+  transition: background .18s ease, border-color .18s ease, transform .18s ease;
+}
+.mock-linha:last-child { border-bottom-color: transparent; }
+.mock-linha:hover { background: rgba(22, 32, 53, 0.55); border-color: var(--borda2); transform: translateX(3px); }
+.mock-ck { width: 17px; height: 17px; border-radius: 5px; border: 1.5px solid var(--borda2); flex: 0 0 auto; display: grid; place-items: center; }
+.mock-ck.on { background: var(--verde); border-color: var(--verde); }
+.mock-ck svg { opacity: 0; }
+.mock-ck.on svg { opacity: 1; }
+.mock-nome { flex: 1; min-width: 0; }
+.mock-nome b { display: block; font-size: 13px; font-weight: 600; }
+.mock-nome span { display: block; font-size: 11px; color: var(--tx3); }
+.pill { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; }
+.pill.ok { background: rgba(16,185,129,.14); color: var(--verde-claro); }
+.pill.ama { background: rgba(245,158,11,.14); color: var(--ambar-txt); }
+.pill.neutro { background: rgba(148,163,184,.14); color: var(--tx2); }
+.mock-rodape { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; }
+.mock-ao-vivo { display: inline-flex; align-items: center; gap: 7px; font-size: 10.5px; font-weight: 800; letter-spacing: 0.1em; color: var(--verde-claro); }
+.mock-ao-vivo::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--verde-claro); box-shadow: 0 0 8px var(--verde-claro); animation: pulsar 1.8s ease-in-out infinite; }
+.mock-bt {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: #f8fafc; background: linear-gradient(180deg, var(--verdeesc2), var(--verdeesc));
+  border: 1px solid rgba(52, 211, 153, 0.35); border-radius: 8px; padding: 8px 14px;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.22);
+}
+
+/* ---------- Seções ---------- */
+.secao { max-width: 1200px; margin: 0 auto; padding: clamp(56px, 9vh, 96px) clamp(16px, 5vw, 48px); }
+.secao-cabeca { margin-bottom: 34px; }
+.secao-etiqueta {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; color: var(--verde-claro);
+  margin-bottom: 12px;
+}
+.secao-etiqueta::before { content: ""; width: 22px; height: 3px; border-radius: 2px; background: var(--verde); box-shadow: 0 0 10px var(--verde); }
+.secao h2 { font-size: clamp(22px, 3vw, 32px); font-weight: 800; letter-spacing: -0.01em; line-height: 1.2; }
+.secao .secao-desc { color: var(--tx2); max-width: 62ch; margin-top: 10px; font-size: 14.5px; }
+
+/* Revelação suave ao rolar */
+.revela { opacity: 0; transform: translateY(26px); transition: opacity .65s cubic-bezier(0.16, 1, 0.3, 1), transform .65s cubic-bezier(0.16, 1, 0.3, 1); }
+.revela.visivel { opacity: 1; transform: none; }
+
+/* Números */
+.numeros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.numero {
+  background: var(--vidro); border: 1px solid var(--brilho); border-radius: var(--raio);
+  padding: 18px 16px; text-align: center;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  transition: transform .2s ease, border-color .2s ease;
+}
+.numero:hover { transform: translateY(-3px); border-color: rgba(52, 211, 153, 0.35); }
+.numero b { display: block; font-size: 26px; color: var(--verde-claro); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+.numero span { display: block; margin-top: 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--tx3); }
+
+/* Módulos */
+.modulos-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.modulo {
+  position: relative; overflow: hidden;
+  background: var(--vidro); border: 1px solid var(--brilho); border-radius: var(--raio-g);
+  padding: 22px; min-height: 172px; display: flex; flex-direction: column; gap: 10px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
+}
+.modulo::before {
+  content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--verde), transparent);
+  opacity: 0; transition: opacity .25s ease;
+}
+.modulo:hover { transform: translateY(-4px); border-color: rgba(52, 211, 153, 0.32); box-shadow: var(--sombra); }
+.modulo:hover::before { opacity: 1; }
+.modulo-topo { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.modulo-icone {
+  width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center;
+  background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.25); color: var(--verde-claro);
+}
+.modulo h3 { font-size: 15.5px; font-weight: 700; letter-spacing: 0.01em; }
+.modulo p { font-size: 13px; color: var(--tx2); }
+.tag { font-size: 9.5px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 9px; border-radius: 999px; white-space: nowrap; }
+.tag.ativo { background: rgba(16, 185, 129, 0.12); color: var(--verde-claro); border: 1px solid rgba(16, 185, 129, 0.3); }
+.tag.breve { background: rgba(245, 158, 11, 0.1); color: var(--ambar-txt); border: 1px solid rgba(245, 158, 11, 0.28); }
+.modulo.breve { opacity: 0.82; }
+
+/* Como funciona */
+.passos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: passo; }
+.passo {
+  position: relative; background: var(--vidro); border: 1px solid var(--brilho);
+  border-radius: var(--raio-g); padding: 24px 22px 20px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  transition: transform .22s ease, border-color .22s ease;
+}
+.passo:hover { transform: translateY(-4px); border-color: rgba(52, 211, 153, 0.32); }
+.passo-num {
+  counter-increment: passo;
+  width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+  font-weight: 800; font-size: 14px; color: #f8fafc;
+  background: linear-gradient(180deg, var(--verdeesc2), var(--verdeesc));
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+  margin-bottom: 14px;
+}
+.passo-num::before { content: counter(passo); }
+.passo h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+.passo p { font-size: 13px; color: var(--tx2); }
+
+/* Segurança */
+.seg-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.seg {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: var(--vidro); border: 1px solid var(--brilho); border-radius: var(--raio-g);
+  padding: 20px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  transition: transform .22s ease, border-color .22s ease;
+}
+.seg:hover { transform: translateY(-3px); border-color: rgba(52, 211, 153, 0.32); }
+.seg-icone { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.25); color: var(--azul); }
+.seg h3 { font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
+.seg p { font-size: 13px; color: var(--tx2); }
+
+/* CTA final */
+.cta-final {
+  max-width: 1200px; margin: 0 auto; padding: 0 clamp(16px, 5vw, 48px) 72px;
+}
+.cta-caixa {
+  position: relative; overflow: hidden; text-align: center;
+  background: var(--vidro); border: 1px solid rgba(52, 211, 153, 0.25); border-radius: var(--raio-g);
+  padding: clamp(36px, 6vw, 56px) 24px;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: var(--sombra-g);
+}
+.cta-caixa::before {
+  content: ""; position: absolute; inset: -40% -20% auto; height: 120%;
+  background: radial-gradient(600px 200px at 50% 0%, rgba(16, 185, 129, 0.14), transparent 70%);
+  pointer-events: none;
+}
+.cta-caixa h2 { font-size: clamp(20px, 3vw, 28px); font-weight: 800; margin-bottom: 10px; position: relative; }
+.cta-caixa p { color: var(--tx2); max-width: 52ch; margin: 0 auto 26px; font-size: 14px; position: relative; }
+
+/* Rodapé */
+.rodape {
+  border-top: 1px solid var(--brilho);
+  background: rgba(8, 12, 20, 0.6);
+  padding: 26px clamp(16px, 5vw, 48px);
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+}
+.rodape small { color: var(--tx3); font-size: 12px; letter-spacing: 0.03em; }
+.rodape a { font-size: 12.5px; font-weight: 600; }
+
+/* ---------- Responsivo ---------- */
+@media (max-width: 980px) {
+  .hero { grid-template-columns: 1fr; padding-top: 108px; min-height: 0; gap: 40px; }
+  .modulos-grid { grid-template-columns: repeat(2, 1fr); }
+  .numeros { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 768px) {
+  .topo-nav a.ancora { display: none; }
+  .marca-sub { display: none; }
+  .passos { grid-template-columns: 1fr; }
+  .seg-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 560px) {
+  .modulos-grid { grid-template-columns: 1fr; }
+  .hero-ctas .bt-hero { width: 100%; justify-content: center; }
+  .mock-linha { gap: 8px; padding: 10px 8px; }
+  .mock-corpo { padding: 14px 12px 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  html { scroll-behavior: auto; }
+}
+</style>
+</head>
+<body>
+
+<header class="topo">
+  <div class="marca">
+    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 2.5l8 3.2v5.6c0 5-3.4 8.6-8 10.2-4.6-1.6-8-5.2-8-10.2V5.7l8-3.2z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+      <path d="M8.4 12.2l2.5 2.5 4.7-5.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div>
+      <div class="marca-nome" id="ldNome">SCI</div>
+      <div class="marca-sub" id="ldSub">Sistema de Controle Interno</div>
+    </div>
+  </div>
+  <nav class="topo-nav" aria-label="Navegação da página">
+    <a class="ancora" href="#modulos">Módulos</a>
+    <a class="ancora" href="#funcionamento">Como funciona</a>
+    <a class="ancora" href="#seguranca">Segurança</a>
+    <a class="bt-entrar" href="/?login=1#/login">
+      <span>Entrar</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+    </a>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="orbe orbe-1" aria-hidden="true"></div>
+  <div class="orbe orbe-2" aria-hidden="true"></div>
+
+  <div>
+    <span class="hero-badge" style="animation:surgir .6s cubic-bezier(.16,1,.3,1) both">Plataforma da unidade · Uso interno</span>
+    <h1 style="animation:surgir .6s cubic-bezier(.16,1,.3,1) both .08s">O controle de presença da OM, <span class="realce">digital e sem papel</span></h1>
+    <p class="sub" style="animation:surgir .6s cubic-bezier(.16,1,.3,1) both .16s">
+      O SCI substitui a conferência manual de efetivo por um fluxo digital completo:
+      lançamento em segundos, acompanhamento em tempo real e relatórios oficiais em PDF —
+      tudo rodando na própria unidade, sem depender de serviços externos.
+    </p>
+    <div class="hero-ctas" style="animation:surgir .6s cubic-bezier(.16,1,.3,1) both .24s">
+      <a class="bt-hero primario" href="/?login=1#/login">
+        <span>Acessar o sistema</span>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+      </a>
+      <a class="bt-hero fantasma" href="#modulos">Conhecer os módulos</a>
+    </div>
+    <p class="hero-nota" style="animation:surgir .6s cubic-bezier(.16,1,.3,1) both .32s">
+      Acesso individual e restrito · <b>é necessária conta fornecida pelo encarregado de pessoal da sua unidade</b>
+    </p>
+  </div>
+
+  <div class="mock-janela" role="img" aria-label="Ilustração do painel de conferência de pessoal do SCI">
+    <div class="mock-barra">
+      <span class="mock-dot on"></span><span class="mock-dot"></span><span class="mock-dot"></span>
+      <span class="mock-titulo">Conferência #42 · Hoje</span>
+    </div>
+    <div class="mock-corpo">
+      <div class="mock-chips">
+        <span class="chip ok">Presentes <b>118</b></span>
+        <span class="chip ama">Atrasos <b>3</b></span>
+        <span class="chip verm">Faltas <b>2</b></span>
+        <span class="chip azul">Justificadas <b>5</b></span>
+        <span class="chip">N.V. <b>1</b></span>
+      </div>
+      <div class="mock-linha">
+        <span class="mock-ck on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#06281d" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-11"/></svg></span>
+        <span class="mock-nome"><b>Silva</b><span>Cmt Gda · 1ª Cia</span></span>
+        <span class="pill ok">Presente</span>
+      </div>
+      <div class="mock-linha">
+        <span class="mock-ck on"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#06281d" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4 10-11"/></svg></span>
+        <span class="mock-nome"><b>Souza</b><span>Op VelOp · Seção Cmm</span></span>
+        <span class="pill ok">Presente</span>
+      </div>
+      <div class="mock-linha">
+        <span class="mock-ck"></span>
+        <span class="mock-nome"><b>Oliveira</b><span>Mec Manut · Esqd C Mec</span></span>
+        <span class="pill ama">Atraso</span>
+      </div>
+      <div class="mock-linha">
+        <span class="mock-ck"></span>
+        <span class="mock-nome"><b>Pereira</b><span>Aux Adm · Seção Pss</span></span>
+        <span class="pill neutro">Não conferido</span>
+      </div>
+      <div class="mock-rodape">
+        <span class="mock-ao-vivo">TEMPO REAL</span>
+        <span class="mock-bt">Fechar conferência</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="secao" id="modulos">
+  <div class="secao-cabeca revela">
+    <span class="secao-etiqueta">Módulos</span>
+    <h2>Uma plataforma, todo o ciclo do controle interno</h2>
+    <p class="secao-desc">Cada módulo nasceu de uma demanda real da rotina da unidade — e o sistema evolui continuamente a partir do uso de quem opera.</p>
+  </div>
+  <div class="modulos-grid">
+    <article class="modulo revela">
+      <div class="modulo-topo">
+        <span class="modulo-icone"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-9"/><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg></span>
+        <span class="tag ativo">Em operação</span>
+      </div>
+      <h3>Conferência de Pessoal</h3>
+      <p>Conferência diária do efetivo por setor, com situações de presença, justificativas com destino, comentários por militar e fechamento em transação única.</p>
+    </article>
+    <article class="modulo revela" style="transition-delay:.06s">
+      <div class="modulo-topo">
+        <span class="modulo-icone"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15h6M9 11h2"/></svg></span>
+        <span class="tag ativo">Em operação</span>
+      </div>
+      <h3>Relatórios &amp; Arquivo</h3>
+      <p>Relatórios por dia, semana, mês ou período livre, com percentual de efetivo pronto, filtros por tag e período, impressão em preto e branco e arquivo histórico.</p>
+    </article>
+    <article class="modulo revela" style="transition-delay:.12s">
+      <div class="modulo-topo">
+        <span class="modulo-icone"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+        <span class="tag ativo">Em operação</span>
+      </div>
+      <h3>Mensagens &amp; Despachos</h3>
+      <p>Comunicação interna com mensagens diretas, avisos da unidade e fluxo de despachos com ciência — sem depender de aplicativos externos.</p>
+    </article>
+    <article class="modulo revela" style="transition-delay:.18s">
+      <div class="modulo-topo">
+        <span class="modulo-icone"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+        <span class="tag ativo">Em operação</span>
+      </div>
+      <h3>Drive de Arquivos</h3>
+      <p>Armazenamento documental organizado em pastas, com upload, busca e anexos por referência em cautelas e registros — tudo dentro do sistema.</p>
+    </article>
+    <article class="modulo breve revela" style="transition-delay:.24s">
+      <div class="modulo-topo">
+        <span class="modulo-icone"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+        <span class="tag breve">Em desenvolvimento</span>
+      </div>
+      <h3>Escalas de Serviço</h3>
+      <p>Montagem de escalas por postos e turnos, com templates reutilizáveis, aprovação em fases e publicação para o militar.</p>
+    </article>
+    <article class="modulo breve revela" style="transition-delay:.3s">
+      <div class="modulo-topo">
+        <span class="modulo-icone"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4L11 3.8A2 2 0 0 0 9.6 3.2H4a1 1 0 0 0-1 1v5.6c0 .5.2 1 .6 1.4l9.6 9.6a2 2 0 0 0 2.8 0l4.6-4.6a2 2 0 0 0 0-2.8z"/><circle cx="7.5" cy="7.5" r="0.5"/></svg></span>
+        <span class="tag breve">Em desenvolvimento</span>
+      </div>
+      <h3>Material &amp; Cautelas</h3>
+      <p>Controle de bens por categoria, cautelas com responsável, anexos digitalizados, etiquetas com QR Code e alertas de devolução.</p>
+    </article>
+  </div>
+</section>
+
+<section class="secao" id="funcionamento" style="padding-top:0">
+  <div class="secao-cabeca revela">
+    <span class="secao-etiqueta">Como funciona</span>
+    <h2>Da chamada ao relatório em três passos</h2>
+  </div>
+  <div class="passos">
+    <div class="passo revela">
+      <span class="passo-num" aria-hidden="true"></span>
+      <h3>Inicie a conferência</h3>
+      <p>O operador abre a conferência do dia e o sistema monta a lista do efetivo ativo, organizada por setor — inclusive aproveitando a situação lançada no serviço anterior.</p>
+    </div>
+    <div class="passo revela" style="transition-delay:.08s">
+      <span class="passo-num" aria-hidden="true"></span>
+      <h3>Toque no nome</h3>
+      <p>Cada toque registra a situação (presente, atraso, falta ou justificada) e grava na hora. Todos veem o painel atualizado em tempo real, com contadores por situação.</p>
+    </div>
+    <div class="passo revela" style="transition-delay:.16s">
+      <span class="passo-num" aria-hidden="true"></span>
+      <h3>Feche e arquive</h3>
+      <p>O fechamento consolida tudo em uma transação e libera o relatório oficial em PDF, pronto para impressão em preto e branco. Nada é perdido: o histórico fica em arquivo.</p>
+    </div>
+  </div>
+</section>
+
+<section class="secao" id="seguranca" style="padding-top:0">
+  <div class="secao-cabeca revela">
+    <span class="secao-etiqueta">Segurança &amp; Operação</span>
+    <h2>Dados da unidade, dentro da unidade</h2>
+  </div>
+  <div class="seg-grid">
+    <div class="seg revela">
+      <span class="seg-icone"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+      <div>
+        <h3>100% local</h3>
+        <p>Um único servidor dentro da OM, sem nuvem externa e sem dependência de internet. O banco de dados é arquivo próprio, com integridade verificada.</p>
+      </div>
+    </div>
+    <div class="seg revela" style="transition-delay:.06s">
+      <span class="seg-icone"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10z"/></svg></span>
+      <div>
+        <h3>Acesso controlado e auditado</h3>
+        <p>Contas individuais com senha protegida por hash criptográfico, hierarquia de papéis e registro imutável de auditoria de todas as ações.</p>
+      </div>
+    </div>
+    <div class="seg revela" style="transition-delay:.12s">
+      <span class="seg-icone"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg></span>
+      <div>
+        <h3>Backup automático</h3>
+        <p>Cópia de segurança a cada fechamento de conferência, no boot e sob demanda, com verificação de integridade por hash e bandeira de alerta em caso de falha.</p>
+      </div>
+    </div>
+    <div class="seg revela" style="transition-delay:.18s">
+      <span class="seg-icone"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7z"/></svg></span>
+      <div>
+        <h3>Leve e rápido</h3>
+        <p>Interface única e enxuta, sem instalação: roda no navegador do celular ou do computador, pensada para hardware modesto e rede da própria unidade.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="cta-final">
+  <div class="cta-caixa revela">
+    <h2>Pronto para registrar o serviço de hoje?</h2>
+    <p>Entre com a sua conta e a conferência do dia está a dois toques de distância.</p>
+    <a class="bt-hero primario" href="/?login=1#/login">
+      <span>Entrar no SCI</span>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+    </a>
+  </div>
+</section>
+
+<footer class="rodape">
+  <small>SCI — Sistema de Controle Interno · Uso restrito · <span id="ldOrg">3º B Com GE</span></small>
+  <a href="/?login=1#/login">Acesso ao sistema →</a>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+  /* White-label: a landing espelha os rótulos públicos do sistema (mesma
+     fonte que a tela de login usa: GET /api/configuracoes, só chaves públicas). */
+  try {
+    fetch('/api/configuracoes').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      if (!d || !d.configuracoes) return;
+      var c = d.configuracoes;
+      var nome = c.NOME_SISTEMA, sub = c.SUBTITULO_SISTEMA, org = c.TITULO_ORGANIZACAO;
+      if (nome) {
+        document.getElementById('ldNome').textContent = nome;
+        document.title = nome + (org ? ' — ' + org : '');
+      }
+      if (sub) document.getElementById('ldSub').textContent = sub;
+      if (org) document.getElementById('ldOrg').textContent = org;
+      var root = document.documentElement;
+      if (c.COR_PRIMARIA) root.style.setProperty('--verde', c.COR_PRIMARIA);
+      if (c.COR_PRIMARIA_CLARO) root.style.setProperty('--verde-claro', c.COR_PRIMARIA_CLARO);
+      if (c.COR_PRIMARIA_ESCURO) root.style.setProperty('--verdeesc', c.COR_PRIMARIA_ESCURO);
+    }).catch(function () {});
+  } catch (e) {}
+
+  /* Revelação suave ao rolar (IntersectionObserver; cai no CSS p/ navegadores antigos) */
+  var alvos = document.querySelectorAll('.revela');
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function (entradas) {
+      entradas.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add('visivel'); io.unobserve(en.target); }
+      });
+    }, { threshold: 0.14, rootMargin: '0px 0px -40px 0px' });
+    alvos.forEach(function (el) { io.observe(el); });
+  } else {
+    alvos.forEach(function (el) { el.classList.add('visivel'); });
+  }
+})();
+</script>
+</body>
+</html>

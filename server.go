@@ -277,7 +277,19 @@ func (a *App) hSPA(w http.ResponseWriter, r *http.Request) {
 	}
 	caminho := strings.TrimPrefix(r.URL.Path, "/")
 	if caminho == "" {
-		caminho = "index.html"
+		// Landing pública (ordem do Diretor 08/10/26): a raiz serve a página
+		// institucional com botão de login; a SPA continua em qualquer
+		// #rota (login incluído). Visitante já autenticado vai direto à SPA.
+		if r.URL.Query().Get("login") != "1" {
+			if _, err := fs.Stat(sub, "landing.html"); err == nil {
+				if ck, err := r.Cookie(cookieSessao); err != nil || ck.Value == "" {
+					caminho = "landing.html"
+				}
+			}
+		}
+		if caminho == "" {
+			caminho = "index.html"
+		}
 	}
 	if _, err := fs.Stat(sub, caminho); err != nil {
 		caminho = "index.html" // fallback SPA
