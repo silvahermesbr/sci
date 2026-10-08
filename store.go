@@ -2729,8 +2729,8 @@ func (s *Store) migrarV38() error {
 		}
 	}
 
-	// Reserva operacional nasce desativada ("0") se não configurada previamente
-	_, _ = s.db.Exec(`INSERT OR IGNORE INTO configuracoes (chave, valor) VALUES ('MODO_RESERVA', '0')`)
+	// Reserva operacional nasce desativada ("0")
+	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '0' WHERE chave = 'MODO_RESERVA' AND valor = '1'`)
 
 	return s.marcarVersao(38)
 }
