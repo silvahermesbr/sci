@@ -207,6 +207,23 @@ func TestContextoGovemaConferenciaMultiSetor(t *testing.T) {
 	if code := concluir(s2); code != http.StatusForbidden {
 		t.Fatalf("CTX S1: concluir setor S2 deveria 403, veio %d", code)
 	}
+	// estados (presenças) também seguem o contexto: o check do ALPHA UM vem no
+	// fio; nenhum estado do S2 aparece mesmo com lançamento pré-existente.
+	rrH1, _ := doJSONReq(app, "GET", fmt.Sprintf("/api/conferencia/hoje?id=%d", outD.CID), nil, chefeCookie)
+	var hoje1 struct {
+		Conferencia *struct {
+			Estados map[string]struct {
+				Verificado bool `json:"verificado"`
+			} `json:"estados"`
+		} `json:"conferencia"`
+	}
+	_ = json.Unmarshal(rrH1.Body.Bytes(), &hoje1)
+	if hoje1.Conferencia == nil {
+		t.Fatalf("CTX S1: conferencia não veio no fio")
+	}
+	if n := len(hoje1.Conferencia.Estados); n != 1 {
+		t.Fatalf("CTX S1: esperava 1 estado no fio (ALPHA UM), obteve %d: %+v", n, hoje1.Conferencia.Estados)
+	}
 
 	// ===== TROCA: contexto S2 =====
 	rrC2, resC2 := doJSONReq(app, "POST", "/api/sessao/contexto", map[string]any{
@@ -227,6 +244,22 @@ func TestContextoGovemaConferenciaMultiSetor(t *testing.T) {
 	}
 	if len(pessoas) != 2 {
 		t.Fatalf("CTX S2: esperava 2 pessoas (BRAVO*), obteve %d: %+v", len(pessoas), pessoas)
+	}
+	// CTX S2: o check do ALPHA UM (S1) NÃO pode vazar no fio de estados.
+	rrH2, _ := doJSONReq(app, "GET", fmt.Sprintf("/api/conferencia/hoje?id=%d", outD.CID), nil, chefeCookie)
+	var hoje2 struct {
+		Conferencia *struct {
+			Estados map[string]struct {
+				Verificado bool `json:"verificado"`
+			} `json:"estados"`
+		} `json:"conferencia"`
+	}
+	_ = json.Unmarshal(rrH2.Body.Bytes(), &hoje2)
+	if hoje2.Conferencia == nil {
+		t.Fatalf("CTX S2: conferencia não veio no fio")
+	}
+	if n := len(hoje2.Conferencia.Estados); n != 0 {
+		t.Fatalf("CTX S2: estados do S1 vazaram no fio (%d): %+v", n, hoje2.Conferencia.Estados)
 	}
 	if code := marcar(pID["ALPHA UM"]); code != http.StatusForbidden {
 		t.Fatalf("CTX S2: marcar pessoa do S1 deveria 403, veio %d", code)

@@ -182,6 +182,22 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 
 	deveFiltrar := f.ID > 0 && temDespachos && ehChefeOuOper
 
+	// ordem 08/10: estados de lançamento (presenças) também seguem o contexto —
+	// só entram no fio os de pessoas do setor ativo (sem cruzamento de contadores).
+	if ehChefeOuOper && form != nil && ativo != nil {
+		if est, ok := (*form)["estados"].(map[int64]map[string]any); ok {
+			estFiltrado := map[int64]map[string]any{}
+			for pid := range est {
+				var pSetor *int64
+				_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, pid).Scan(&pSetor)
+				if pSetor != nil && *pSetor == *ativo {
+					estFiltrado[pid] = est[pid]
+				}
+			}
+			(*form)["estados"] = estFiltrado
+		}
+	}
+
 	if deveFiltrar {
 		var filtrados []map[string]any
 		for _, st := range setoresStatus {
