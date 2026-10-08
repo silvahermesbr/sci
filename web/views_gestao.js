@@ -2065,8 +2065,8 @@
      ===================================================================== */
   window.ViewGrupos = async function () {
     const eu = quem();
-    if (!eu || (eu.papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal()))) { location.hash = '#/hoje'; return; }
-    const souFuncaoPessoal = eu.papel !== 'gerente';
+    if (!eu || eu.papel !== 'gerente') { location.hash = '#/hoje'; return; }
+    const souFuncaoPessoal = false;
     navAtiva('#/grupos');
     $('#app').innerHTML = '<div class="carregando">…</div>';
     const [grupos, arvore, contas] = await Promise.all([

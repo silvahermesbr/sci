@@ -1068,10 +1068,10 @@ function rotear() {
     irPara('#/admin');
     return;
   } // admin não tem grupo: restrito em dados operacionais de grupo, mas possui caixa de mensagens própria
-  // Modos de DESENVOLVIMENTO (ordem 04/10): escalas (1.8), material (1.6),
+  // Modos de DESENVOLVIMENTO (ordem 04/10): escalas (1.8),
   // calendário (1.7) e consciência situacional (1.9) — acesso removido
   // across the board; código em acervo para as versões futuras.
-  if (h === '#/escalas' || h === '#/material' || h === '#/calendario' || h === '#/consciencia') {
+  if (h === '#/escalas' || h === '#/calendario' || h === '#/consciencia') {
     chamarView('ViewModuloEmDesenvolvimento'); return;
   }
   // Usuário normal (ordem 04/10): login leva ao aviso de módulo não disponível
@@ -1102,6 +1102,11 @@ function rotear() {
   if (h === '#/calendario') { chamarView('ViewCalendario'); return; }
   if (h === '#/drive') { chamarView('ViewDrive'); return; }
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
+  if (h === '#/material') {
+    if (papel === 'gerente' || (window.gestorMaterial && window.gestorMaterial())) chamarView('ViewMaterial');
+    else chamarView('ViewSemModulo');
+    return;
+  }
   if (h === '#/admin') {
     if (papel === 'admin') chamarView('ViewAdmin');
     else irPara(rotaInicial());
@@ -1113,10 +1118,7 @@ function rotear() {
     return;
   }
   if (h === '#/grupos') {
-    // ordem 06/10 (P4): GERENCIAR passa a aceitar encarregado/auxiliar de
-    // pessoal (mínimo escopo — é a única rota nova liberada; #/admin segue
-    // exclusiva do admin).
-    if (papel === 'gerente' || (papel === 'encarregado' && window.gestorPessoal && window.gestorPessoal())) chamarView('ViewGrupos');
+    if (papel === 'gerente') chamarView('ViewGrupos');
     else irPara(rotaInicial());
     return;
   }
