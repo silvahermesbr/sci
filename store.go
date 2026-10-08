@@ -158,6 +158,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV38(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV39(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2729,10 +2732,26 @@ func (s *Store) migrarV38() error {
 		}
 	}
 
-	// v39 (ordem Diretor 08/10): as 3 funções de grupo são HARDCODED — somente
-	// Gerente, Encarregado de Pessoal e Encarregado de Material. Semeia as
-	// cadeiras canônicas GLOBAIS (grupo_id NULL) com as chaves imutáveis,
-	// idempotente (chave já existente = pula). UI/API nunca criam função de grupo.
+
+	// Reserva operacional nasce desativada ("0")
+	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '0' WHERE chave = 'MODO_RESERVA' AND valor = '1'`)
+
+	return s.marcarVersao(38)
+}
+
+// migrarV39 (ordem Diretor 08/10 — correção): as funções de grupo são
+// HARDCODED — somente Gerente, Encarregado de Pessoal e Encarregado de Material.
+// Semeia as cadeiras canônicas GLOBAIS (grupo_id NULL) com as chaves imutáveis.
+// Idempotente (chave/nome já existente = pula) e roda TAMBÉM em bancos onde a
+// v38 já havia sido aplicada antes deste seed existir. UI/API nunca criam
+// função de grupo (hCatalogoAdd rejeita tipo=grupo; editar/excluir → 403).
+func (s *Store) migrarV39() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 39`).Scan(&v)
+	if v == 39 {
+		return nil
+	}
+
 	cadeiras := []struct {
 		nome  string
 		chave string
@@ -2747,19 +2766,20 @@ func (s *Store) migrarV38() error {
 			var n int
 			_ = s.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE tipo = 'grupo' AND LOWER(nome) = 'gerente'`).Scan(&n)
 			if n == 0 {
-				_, _ = s.db.Exec(`INSERT INTO funcoes (nome, grupo_id, tipo) VALUES ('Gerente', NULL, 'grupo')`)
+				if _, err := s.db.Exec(`INSERT INTO funcoes (nome, grupo_id, tipo) VALUES ('Gerente', NULL, 'grupo')`); err != nil {
+					return fmt.Errorf("migração v39 seed gerente: %w", err)
+				}
 			}
 			continue
 		}
 		var n int
 		_ = s.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE chave = ?`, cd.chave).Scan(&n)
 		if n == 0 {
-			_, _ = s.db.Exec(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES (?, NULL, 'grupo', ?)`, cd.nome, cd.chave)
+			if _, err := s.db.Exec(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES (?, NULL, 'grupo', ?)`, cd.nome, cd.chave); err != nil {
+				return fmt.Errorf("migração v39 seed %s: %w", cd.chave, err)
+			}
 		}
 	}
 
-	// Reserva operacional nasce desativada ("0")
-	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '0' WHERE chave = 'MODO_RESERVA' AND valor = '1'`)
-
-	return s.marcarVersao(38)
+	return s.marcarVersao(39)
 }
