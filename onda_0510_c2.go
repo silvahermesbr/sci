@@ -45,8 +45,8 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 			FROM funcoes f
 			LEFT JOIN funcao_membros tm ON tm.funcao_id = f.id
 			LEFT JOIN usuarios mu ON mu.id = tm.usuario_id
-			WHERE f.tipo = 'grupo'
-			ORDER BY f.nome ASC, CASE tm.titularidade WHEN 'titular' THEN 0 ELSE 1 END, tm.id ASC`)
+			WHERE f.tipo = 'grupo' AND f.chave IS NOT NULL
+			ORDER BY CASE f.chave WHEN 'enc_pessoal' THEN 0 WHEN 'enc_material' THEN 1 ELSE 2 END, f.nome ASC, CASE tm.titularidade WHEN 'titular' THEN 0 ELSE 1 END, tm.id ASC`)
 	} else {
 		ids := append([]int64{escopo}, a.gruposSuperioresAtivos(escopo)...)
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
@@ -63,8 +63,8 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 			FROM funcoes f
 			LEFT JOIN funcao_membros tm ON tm.funcao_id = f.id AND tm.grupo_id = ?
 			LEFT JOIN usuarios mu ON mu.id = tm.usuario_id
-			WHERE f.tipo = 'grupo' AND (f.grupo_id IS NULL OR f.grupo_id IN (`+ph+`))
-			ORDER BY f.nome ASC, CASE tm.titularidade WHEN 'titular' THEN 0 ELSE 1 END, tm.id ASC`, args...)
+			WHERE f.tipo = 'grupo' AND f.chave IS NOT NULL AND (f.grupo_id IS NULL OR f.grupo_id IN (`+ph+`))
+			ORDER BY CASE f.chave WHEN 'enc_pessoal' THEN 0 WHEN 'enc_material' THEN 1 ELSE 2 END, f.nome ASC, CASE tm.titularidade WHEN 'titular' THEN 0 ELSE 1 END, tm.id ASC`, args...)
 	}
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao listar funções: "+err.Error())
@@ -147,8 +147,8 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	for _, s := range superiores {
 		args = append(args, s)
 	}
-	if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE id=? AND tipo='grupo' AND (grupo_id IS NULL OR grupo_id=? OR grupo_id IN (`+ph+`))`, args...).Scan(&funcaoExiste); err != nil || funcaoExiste == 0 {
-		jsonErro(w, http.StatusBadRequest, "função não pertence ao seu grupo")
+	if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE id=? AND tipo='grupo' AND chave IS NOT NULL AND (grupo_id IS NULL OR grupo_id=? OR grupo_id IN (`+ph+`))`, args...).Scan(&funcaoExiste); err != nil || funcaoExiste == 0 {
+		jsonErro(w, http.StatusBadRequest, "só é possível designar nas cadeiras fixas: Encarregado de Pessoal e Encarregado de Material")
 		return
 	}
 
