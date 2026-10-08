@@ -28,7 +28,7 @@ func ondaEscopoSetup(t *testing.T, app *App, st *Store) (gid, setorA, setorB, pA
 		t.Fatalf("criar setor B: %v", err)
 	}
 	var fEnc int64
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome) VALUES ('Encarregado de Pessoal') RETURNING id`).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, tipo, chave) VALUES ('Encarregado de Pessoal', 'grupo', 'enc_pessoal') RETURNING id`).Scan(&fEnc); err != nil {
 		t.Fatalf("criar função: %v", err)
 	}
 

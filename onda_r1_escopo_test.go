@@ -32,15 +32,15 @@ func r1EscopoSetup(t *testing.T, app *App, st *Store) (gidA, gidB, funcGlobalID,
 	}
 
 	// Função global (sem grupo — visível a todos)
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Funcao R1 Global', NULL) RETURNING id`).Scan(&funcGlobalID); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo) VALUES ('Funcao R1 Global', NULL, 'grupo') RETURNING id`).Scan(&funcGlobalID); err != nil {
 		t.Fatalf("criar função global: %v", err)
 	}
 	// Função exclusiva de A
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Funcao R1 Exclusiva A', ?) RETURNING id`, gidA).Scan(&funcAID); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo) VALUES ('Funcao R1 Exclusiva A', ?, 'grupo') RETURNING id`, gidA).Scan(&funcAID); err != nil {
 		t.Fatalf("criar função A: %v", err)
 	}
 	// Função exclusiva de B
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Funcao R1 Exclusiva B', ?) RETURNING id`, gidB).Scan(&funcBID); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo) VALUES ('Funcao R1 Exclusiva B', ?, 'grupo') RETURNING id`, gidB).Scan(&funcBID); err != nil {
 		t.Fatalf("criar função B: %v", err)
 	}
 

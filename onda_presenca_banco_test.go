@@ -14,7 +14,7 @@ func ondaPresencaBancoSetup(t *testing.T, app *App, st *Store) (gid, gidFora, p1
 	if err := st.db.QueryRow(`INSERT INTO grupos (nome) VALUES ('Grp Presenca 2') RETURNING id`).Scan(&gidFora); err != nil {
 		t.Fatalf("criar grupo 2: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Encarregado de Pessoal Teste', ?) RETURNING id`, gid).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal Teste', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fEnc); err != nil {
 		t.Fatalf("criar função encarregado: %v", err)
 	}
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Auxiliar de Pessoal Teste', ?) RETURNING id`, gid).Scan(&fAux); err != nil {
@@ -47,7 +47,7 @@ func ondaPresencaBancoSetup(t *testing.T, app *App, st *Store) (gid, gidFora, p1
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fEnc, gid, encP_ID); err != nil {
 		t.Fatalf("designar enc01_p: %v", err)
 	}
-	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fAux, gid, auxP_ID); err != nil {
+	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'auxiliar')`, fEnc, gid, auxP_ID); err != nil {
 		t.Fatalf("designar aux01_p: %v", err)
 	}
 	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login IN ('ger01_p','chefe01_p','op01_p')`, gid); err != nil {

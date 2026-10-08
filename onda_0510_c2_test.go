@@ -37,7 +37,7 @@ func c2Setup(t *testing.T, app *App, st *Store) (gid, outroGid, funcaoID, gerUID
 	if err := st.db.QueryRow(`INSERT INTO grupos (nome) VALUES ('Grp C2 Beta') RETURNING id`).Scan(&outroGid); err != nil {
 		t.Fatalf("criar grupo beta: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome) VALUES ('Oficial de Dia C2') RETURNING id`).Scan(&funcaoID); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, tipo) VALUES ('Oficial de Dia C2', 'grupo') RETURNING id`).Scan(&funcaoID); err != nil {
 		t.Fatalf("criar função: %v", err)
 	}
 	criaUsuarioTeste(t, st, "c2ger", "senha-ger", "gerente")

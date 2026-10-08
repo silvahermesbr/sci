@@ -32,7 +32,7 @@ func onda0610Setup(t *testing.T, app *App, st *Store) (gid, gidFora, fEnc, fAux,
 	if err := st.db.QueryRow(`INSERT INTO grupos (nome) VALUES ('Grp 0610 Fora') RETURNING id`).Scan(&gidFora); err != nil {
 		t.Fatalf("criar grupo fora: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Encarregado de Pessoal', ?) RETURNING id`, gid).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fEnc); err != nil {
 		t.Fatalf("criar função encarregado: %v", err)
 	}
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Auxiliar de Pessoal', ?) RETURNING id`, gid).Scan(&fAux); err != nil {
@@ -79,13 +79,13 @@ func onda0610Setup(t *testing.T, app *App, st *Store) (gid, gidFora, fEnc, fAux,
 	if _, err := st.db.Exec(designa, fEnc, gid, enc01ID, "titular"); err != nil {
 		t.Fatalf("designar enc01: %v", err)
 	}
-	if _, err := st.db.Exec(designa, fAux, gid, aux01ID, "titular"); err != nil {
+	if _, err := st.db.Exec(designa, fEnc, gid, aux01ID, "auxiliar"); err != nil {
 		t.Fatalf("designar aux01: %v", err)
 	}
 	if _, err := st.db.Exec(designa, fEnc, gidFora, encForaID, "titular"); err != nil {
 		t.Fatalf("designar encFora: %v", err)
 	}
-	if _, err := st.db.Exec(designa, fAux, gidFora, auxForaID, "titular"); err != nil {
+	if _, err := st.db.Exec(designa, fEnc, gidFora, auxForaID, "auxiliar"); err != nil {
 		t.Fatalf("designar auxFora: %v", err)
 	}
 
