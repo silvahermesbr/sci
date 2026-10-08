@@ -1003,7 +1003,7 @@
           </div>
 
           <div class="campo" style="margin-bottom:12px">
-            <label>Posto / Graduação (Opcional)</label>
+            <label>Função (Opcional)</label>
             <select id="apFuncao">
               <option value="">— Nenhuma / Padrão —</option>
               ${funcoesLista.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
@@ -2118,7 +2118,7 @@
         <div class="form-linha"><div class="campo"><label>Nome de guerra</label><input id="pNg"></div>
         <div class="campo"><label>Nome completo</label><input id="pNc"></div></div>
         <div class="form-linha"><div class="campo"><label>Setor</label><select id="pSetor"><option value="">—</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-        <div class="campo"><label>Posto / Graduação</label><select id="pFuncao"><option value="">—</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+        <div class="campo"><label>Função</label><select id="pFuncao"><option value="">—</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
         <div class="campo"><label>Status</label><select id="pStatus"><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
         <button class="primario" id="pSalvar">Salvar</button>
         <h3 style="margin-top:16px">Adição em lote — cole as linhas e importe</h3>
@@ -2158,7 +2158,7 @@
        <td>${celMod}</td>
        <td><div class="gpx-acoes">
        ${podeApresentacao ? `<button class="acao-linha" data-apresentacao="${p.id}" data-nome="${esc(p.nome_guerra)}">APRESENTAÇÃO</button>` : ''}
-       <button class="acao-linha" data-historico="${p.id}" data-nome="${esc(p.nome_guerra)}">HISTÓRICO</button>
+       ${podeApresentacao ? `<button class="acao-linha" data-historico="${p.id}" data-nome="${esc(p.nome_guerra)}">HISTÓRICO</button>` : ''}
        <button class="acao-linha" data-edit="${p.id}">editar</button>
        <button class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button>
        ${souFuncaoPessoal ? '' : `<button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button>`}
@@ -2181,7 +2181,7 @@
             <button class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
             ${souFuncaoPessoal ? '' : '<button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>'}
             <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span></div>
-          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Posto / Graduação</th><th>Ativo</th><th>ÚLTIMA MODIFICAÇÃO</th><th></th></tr></thead>
+          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Função</th><th>Ativo</th><th>ÚLTIMA MODIFICAÇÃO</th><th></th></tr></thead>
           <tbody id="tabP">${linhasP || '<tr><td colspan="9"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
         <div class="cartao gpx-rel-card">
           <h3 style="margin-top:0">RELATÓRIO DE FALTAS E ATRASOS</h3>
@@ -2213,7 +2213,6 @@
                 <select id="cgT">
                   <optgroup label="Tags de Pessoal">
                     <option value="destinos">📍 Destinos (Faltas Justificadas)</option>
-                    <option value="funcoes">🎖️ Postos / Graduações</option>
                   </optgroup>
                   <optgroup label="Tags de Material">
                     <option value="tags">🏷️ Situação do Material (Disponível, etc.)</option>
@@ -2260,19 +2259,31 @@
       </div>
       <div id="gerFuncoes" class="${abaGer === 'funcoes' ? '' : 'oculto'}">
         <div class="cartao"><h3 style="margin-top:0">FUNÇÕES DO GRUPO — Titulares e Auxiliares</h3>
-        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Designação de membros por função do catálogo: <b>1 titular</b> por função (garantido pelo sistema) e quantos auxiliares forem necessários. Somente contas do SEU grupo.</p>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Funções <b>administrativas do grupo</b> (Encarregado de Pessoal e afins — sem postos/graduações): <b>1 titular</b> por função (garantido pelo sistema) e quantos auxiliares forem necessários. Somente contas do SEU grupo.</p>
         <div class="rolagem"><table><thead><tr><th>Função</th><th>Designados</th><th>Designar</th></tr></thead>
         <tbody id="tabFun"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
       <div id="gerChefes" class="${abaGer === 'chefes' ? '' : 'oculto'}">
-        <div class="cartao"><h3 style="margin-top:0">CHEFES DE SETOR — Nomeação e Destituição</h3>
-        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Cada setor com seu chefe atual. Nomear atribui o papel <b>chefe_setor</b> e vincula o setor à conta; destituir remove o papel (setor fica livre).</p>
+        <!-- ordem Diretor 07/10: aba SETORES absorve Setores (Gestão) e a Visão
+             Agregada — três blocos: GESTÃO (novo/editar/excluir), CHEFIAS
+             (nomear/destituir) e PANORAMA (leitura, próprio grupo + subordinados). -->
+        <div class="cartao">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px">
+            <div>
+              <h3 style="margin:0 0 4px">🏢 Setores — Gestão</h3>
+              <p style="color:var(--tx2); font-size:12.5px; margin:0">EDITAR abre as ações do setor: ALTERAR NOME, NOMEAR CHEFE (candidatos = pessoas do setor) e EXCLUIR (remaneja o pessoal para SEM SETOR; setor com histórico de conferências não é apagado — desative).</p>
+            </div>
+            <button class="primario" id="btNovoSetorChefes" style="min-height:36px">+ Novo setor</button>
+          </div>
+          <div class="rolagem"><table><thead><tr><th>Setor</th><th>Sigla</th><th>Unidade</th><th>Chefe</th><th>Ações</th></tr></thead>
+          <tbody id="tabSetores"><tr><td colspan="5"><span class="carregando">…</span></td></tr></tbody></table></div>
+        </div>
+        <div class="cartao"><h3 style="margin-top:0">CHEFIAS — Nomeação e Destituição rápida</h3>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Cada setor com seu chefe atual. Nomear atribui o papel <b>chefe_setor</b> e vincula o setor à conta; destituir remove o papel (setor fica livre). Um usuário pode chefiar VÁRIOS setores.</p>
         <div class="rolagem"><table><thead><tr><th>Setor</th><th>Chefe atual</th><th>Nomear</th></tr></thead>
         <tbody id="tabChefes"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
-      </div>
-      <div id="gerAgregado" class="${abaGer === 'agregado' ? '' : 'oculto'}">
-        <div class="cartao"><h3 style="margin-top:0">SETORES — Visão Agregada</h3>
-        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Panorama por setor/seção do escopo (próprio grupo e subordinados): pessoal ativo no banco, contas ativas e chefe atual. Use a aba <b>Chefes</b> para nomear/destituir.</p>
+        <div class="cartao"><h3 style="margin-top:0">PANORAMA — Visão Agregada do escopo</h3>
+        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Somente leitura: pessoal ativo no banco e contas ativas por setor (próprio grupo e subordinados). Nomear/destituir use os blocos acima.</p>
         <div class="rolagem"><table><thead><tr><th>Setor</th><th>Unidade</th><th class="num">Pessoal ativo</th><th class="num">Contas ativas</th><th>Chefe</th></tr></thead>
         <tbody id="tabAgreg"><tr><td colspan="5"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
@@ -2333,23 +2344,19 @@
         { valor: 'grupos', rotulo: 'Grupos' },
         { valor: 'operadores', rotulo: 'Operadores' },
         { valor: 'funcoes', rotulo: 'Funções' },
-        { valor: 'chefes', rotulo: 'Chefes' },
-        { valor: 'setores', rotulo: 'Setores (Gestão)' },
-        { valor: 'agregado', rotulo: 'Setores (Visão Agregada)' }
+        { valor: 'chefes', rotulo: 'Setores' }
       ], {
         valorPadrao: abaGer,
         onChange: (k) => {
           abaGer = k;
-          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes', 'agregado', 'setores'].forEach(kk => {
+          ['pessoal', 'tags', 'grupos', 'operadores', 'funcoes', 'chefes'].forEach(kk => {
             const el = $('#ger' + kk[0].toUpperCase() + kk.slice(1));
             if (el) el.classList.toggle('oculto', kk !== abaGer);
           });
           if (abaGer === 'tags') carregarCats();
           if (abaGer === 'pessoal') atualizarSelectsCatalogos();
           if (abaGer === 'funcoes') carregarFuncoesMembros();
-          if (abaGer === 'chefes') carregarChefes();
-          if (abaGer === 'agregado') carregarAgregadoSetores();
-          if (abaGer === 'setores') carregarModoSetores();
+          if (abaGer === 'chefes') { carregarModoSetores(); carregarChefes(); carregarAgregadoSetores(); }
         }
       });
     }
@@ -2471,9 +2478,7 @@
       }
     }
     if (abaGer === 'funcoes') carregarFuncoesMembros();
-    if (abaGer === 'chefes') carregarChefes();
-    if (abaGer === 'agregado') carregarAgregadoSetores();
-    if (abaGer === 'setores') carregarModoSetores();
+    if (abaGer === 'chefes') { carregarModoSetores(); carregarChefes(); carregarAgregadoSetores(); }
 
     /* --- ordem 06/10 (item 8): modo SETORES do Gerenciar ---
        Listagem com botão EDITAR por setor (modal com 3 ações: ALTERAR NOME via
@@ -2838,7 +2843,7 @@
         <p style="color:var(--tx2);font-size:12px;margin:4px 0">Campos em <b>(manter)</b> não são alterados. Aplica a todos os selecionados.</p>
         <div class="form-linha">
           <div class="campo"><label>Setor</label><select id="lSetor"><option value="">(manter)</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-          <div class="campo"><label>Posto / Graduação</label><select id="lFuncao"><option value="">(manter)</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+          <div class="campo"><label>Função</label><select id="lFuncao"><option value="">(manter)</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
           <div class="campo"><label>Status</label><select id="lStatus"><option value="">(manter)</option><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
         <div class="modal-acoes"><button class="fantasma" id="lX">Cancelar</button>
         <button class="primario" id="lGo">Aplicar a ${sel.length}</button></div></div>`);
@@ -3078,7 +3083,7 @@
     const carregarCats = async () => {
       const cont = $('#catGer');
       if (!cont) return;
-      const tipos = ['destinos', 'funcoes', 'tags', 'material_tipos', 'material_classes', 'setores'];
+      const tipos = ['destinos', 'tags', 'material_tipos', 'material_classes', 'setores'];
       const meuGid = (window.ME && window.ME.grupo_id) || null;
       
       // Coletar IDs de grupos subordinados a partir da árvore
@@ -3104,7 +3109,7 @@
       
       let html = `
         <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:8px;padding:12px;margin-bottom:18px;font-size:12.5px;color:var(--tx2)">
-          💡 <b>Doutrina de Organização v1.5:</b> As tags estão divididas em <b>Pessoal</b> (Situação/Destino/Postos e Graduações) e <b>Material</b> (Situação/Tipo/Classe). A tag de setor do militar é preenchida automaticamente pelo Setor ao qual ele está alocado.
+          💡 <b>Doutrina de Organização v1.5:</b> As tags estão divididas em <b>Pessoal</b> (Situação/Destino) e <b>Material</b> (Situação/Tipo/Classe). A tag de setor do militar é preenchida automaticamente pelo Setor ao qual ele está alocado. As <b>Funções administrativas</b> (Encarregado de Pessoal e auxiliares) são geridas na aba <b>Funções</b>.
         </div>`;
 
       for (const [t, lista] of resultados) {
@@ -3328,8 +3333,9 @@
       modalMover(b.dataset.mv, b.dataset.login, optsMoverGer,
         'Permitido apenas entre o seu grupo e seus subordinados.', () => window.ViewGrupos()));
     // ordem 06/10 (item 8b): NOVO SETOR no topo do modo Setores (POST catálogo existente)
-    const btNovoSetor = $('#btNovoSetor');
-    if (btNovoSetor) btNovoSetor.onclick = () => {
+    // + NOVO SETOR: mesmo handler para o botão do bloco antigo (Tags, se existir)
+    // e o do bloco GESTÃO da aba Setores (ordem Diretor 07/10).
+    const abrirModalNovoSetor = () => {
       const div = modal(`<div class="modal-inner" style="max-width:420px">
         <h3>🏢 NOVO SETOR</h3>
         <div class="campo"><label>Nome do setor *</label><input id="nsNome" placeholder="ex.: Seção de Comunicação Social"></div>
@@ -3353,6 +3359,10 @@
         }
       };
     };
+    const btNovoSetor = $('#btNovoSetor');
+    if (btNovoSetor) btNovoSetor.onclick = abrirModalNovoSetor;
+    const btNovoSetorCh = $('#btNovoSetorChefes');
+    if (btNovoSetorCh) btNovoSetorCh.onclick = abrirModalNovoSetor;
     document.querySelectorAll('[data-senha]').forEach(b => b.onclick = () =>
       modalSenha(b.dataset.senha, b.dataset.login, false, () => {}));
     document.querySelectorAll('[data-exc]').forEach(b => b.onclick = async () => {

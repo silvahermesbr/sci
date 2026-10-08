@@ -1121,6 +1121,26 @@
 
       const totalPendencias = count + despachos;
       const txt = totalPendencias === 1 ? '1 pendência no Email Interno' : `${totalPendencias} mensagens/despachos pendentes`;
+      // Notificação de AVISOS do grupo (ordem Diretor 07/10): aviso publicado =
+      // todo usuário recebe notificação. Fonte: /api/notificacoes (avisos_pendentes,
+      // já existente) somada ao badge do sino — sem duplicar o que já está no inbox.
+      let avisos = 0;
+      try {
+        const nres = await api('/api/notificacoes');
+        avisos = (nres && nres.avisos_pendentes) || 0;
+      } catch (e2) { /* silencioso: badge fica só com mensagens */ }
+      const elAv1 = document.getElementById('sinoHoverAvisosTxt');
+      if (elAv1) elAv1.textContent = avisos === 1 ? '1 novo comunicado' : `${avisos} novos comunicados`;
+      const elAv2 = document.getElementById('mobSinoHoverAvisosTxt');
+      if (elAv2) elAv2.textContent = avisos === 1 ? '1 novo comunicado' : `${avisos} novos comunicados`;
+      const badgeAvS = document.getElementById('sbBadgeAvisos');
+      const badgeAvM = document.getElementById('mobBadgeAvisos');
+      [badgeAvS, badgeAvM].forEach(b => {
+        if (!b) return;
+        b.textContent = String(avisos);
+        if (avisos > 0) b.classList.remove('oculto');
+        else b.classList.add('oculto');
+      });
       const elMsg1 = document.getElementById('sinoHoverMsgTxt');
       if (elMsg1) elMsg1.textContent = txt;
       const elMsg2 = document.getElementById('mobSinoHoverMsgTxt');

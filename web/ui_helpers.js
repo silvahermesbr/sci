@@ -706,7 +706,7 @@
           </div>
 
           <div class="campo" style="margin-bottom:12px">
-            <label>Posto / Graduação (Opcional)</label>
+            <label>Função (Opcional)</label>
             <select id="apFuncao">
               <option value="">— Nenhuma / Padrão —</option>
               ${funcoesLista.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}

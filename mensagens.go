@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1534,8 +1535,103 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 	// O próprio autor já dá o ciente automático
 	_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO aviso_cientes (aviso_id, usuario_id, papel_id) VALUES (?, ?, ?)`, id, u.ID, *u.PapelAtivoID)
 
-	a.st.Auditoria(&u.ID, "publicar_aviso", "avisos", &id, req.Titulo, ipDe(r))
-	jsonOK(w, map[string]any{"ok": true, "id": id})
+	// Notificação individual a TODOS os usuários do grupo (ordem Diretor 07/10):
+	// uma linha em mensagem_destinatarios por papel ativo de cada usuário ativo
+	// do grupo-alvo — o sino/badge já conta mensagem_destinatarios.lida_em IS NULL,
+	// então a notificação nasce daí. Autor fica fora (o autor já sabe).
+	// Falha é logada, nunca derruba a publicação.
+	// POOL DE 1 CONEXÃO: coletar TODOS os ids ANTES de inserir (cursor aberto
+	// segurando a única conexão + Exec no Next() = deadlock — já provado aqui).
+	// Fonte dos DESTINOS: usuario_papeis do grupo. Contas do grupo que ainda não
+	// logaram podem não ter linha lá (sincronizada no 1º login) — o fallback
+	// SINTETRIZA o papel-viável do cadastro (mesma regra do CriarSessaoComPapel),
+	// garantindo que TODO usuário do grupo receba a notificação.
+	var destinatarios int
+	var papelIDs []int64
+	rowsN, errN := a.st.db.Query(`
+		SELECT DISTINCT up.id
+		FROM usuario_papeis up
+		JOIN usuarios us ON us.id = up.usuario_id AND us.ativo = 1
+		WHERE up.grupo_id = ? AND up.id != ? AND up.papel IN ('admin','gerente','operador','chefe_setor')`,
+		*grupoID, *u.PapelAtivoID)
+	if errN != nil {
+		log.Printf("sci aviso %d notificação: %v", id, errN)
+	} else {
+		for rowsN.Next() {
+			var pidRaw int64
+			if rowsN.Scan(&pidRaw) == nil && pidRaw > 0 {
+				papelIDs = append(papelIDs, pidRaw)
+			}
+		}
+		rowsN.Close()
+		// FALLBACK: usuários do grupo SEM linha em usuario_papeis — SINTETIZA a
+		// linha com o papel do cadastro (usuarios.papel), mesma regra do
+		// CriarSessaoComPapel. Sem isso, quem nunca logou não recebe notificação.
+		rowsF, errF := a.st.db.Query(`
+			SELECT us.id, us.papel, us.funcao_id
+			FROM usuarios us
+			WHERE us.grupo_id = ? AND us.ativo = 1 AND us.id != ?
+			  AND us.papel IN ('admin','gerente','operador','chefe_setor')
+			  AND NOT EXISTS (SELECT 1 FROM usuario_papeis up2 WHERE up2.usuario_id = us.id AND up2.grupo_id = ?)`,
+			*grupoID, u.ID, *grupoID)
+		if errF == nil {
+			type candPapel struct {
+				uid  int64
+				papel string
+				fid  *int64
+			}
+			var cands []candPapel
+			for rowsF.Next() {
+				var c candPapel
+				if rowsF.Scan(&c.uid, &c.papel, &c.fid) == nil {
+					cands = append(cands, c)
+				}
+			}
+			rowsF.Close()
+			for _, c := range cands {
+				resP, errP := a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
+					c.uid, *grupoID, c.papel, c.fid)
+				if errP != nil {
+					log.Printf("sci aviso %d notificação (sintetizar papel u=%d): %v", id, c.uid, errP)
+					continue
+				}
+				newPID, _ := resP.LastInsertId()
+				if newPID > 0 {
+					papelIDs = append(papelIDs, newPID)
+				}
+			}
+		} else {
+			log.Printf("sci aviso %d notificação (fallback): %v", id, errF)
+		}
+		for _, pid := range papelIDs {
+			// NOTA DE INTEGRAÇÃO (Takeda): mensagem_destinatarios.mensagem_id tem FK
+			// para mensagens(id) — o id do AVISO não satisfaz a chave e o INSERT
+			// morria em silêncio (FK constraint), deixando notificados=0. A
+			// notificação é uma MENSAGEM do sistema ("📢 Aviso publicado: <título>")
+			// com o id do aviso em funcao_id — o inbox/sino já contam daí.
+			msgID := int64(0)
+			titulo := "📢 Aviso publicado: " + req.Titulo
+			// funcao_id é FK para funcoes(id) — NULL (não -id): o vínculo com o
+			// aviso vai no assunto da mensagem.
+			resM, errM := a.st.db.Exec(`
+				INSERT INTO mensagens (assunto, corpo, remetente_papel_id, remetente_usuario_id, tipo, exige_resposta, funcao_id)
+				VALUES (?, ?, ?, ?, 'comum', 0, NULL)`,
+				titulo, req.Conteudo, *u.PapelAtivoID, u.ID)
+			if errM != nil {
+				log.Printf("sci aviso %d notificação (mensagem): %v", id, errM)
+				continue
+			}
+			msgID, _ = resM.LastInsertId()
+			if _, errX := a.st.db.Exec(`INSERT INTO mensagem_destinatarios (mensagem_id, destinatario_papel_id) VALUES (?, ?)`, msgID, pid); errX == nil {
+				destinatarios++
+			} else {
+				log.Printf("sci aviso %d notificação (destino): %v", id, errX)
+			}
+		}
+	}
+
+	a.st.Auditoria(&u.ID, "publicar_aviso", "avisos", &id, fmt.Sprintf("%s (notificados=%d)", req.Titulo, destinatarios), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "id": id, "notificados": destinatarios})
 }
 
 func (a *App) hAvisosDel(w http.ResponseWriter, r *http.Request) {

@@ -570,12 +570,17 @@ definirUsuario(usuario);
           <button id="sbBtSinoNotif" type="button" title="Mensagens e Notificações" class="btn-sidebar-sino" aria-label="Mensagens e Notificações">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
             <span id="sbBadgeNotif" class="badge-mini oculto">0</span>
+            <span id="sbBadgeAvisos" class="badge-mini badge-avisos oculto">0</span>
           </button>
           <div class="sino-hover-card" id="sbSinoHoverCard">
             <div class="sino-hover-header">Resumo de Notificações</div>
             <div class="sino-hover-item" id="sinoHoverMsgItem">
               <span class="sino-hover-icon">📬</span>
               <span id="sinoHoverMsgTxt">0 mensagens não lidas</span>
+            </div>
+            <div class="sino-hover-item" id="sinoHoverAvisosItem">
+              <span class="sino-hover-icon">📢</span>
+              <span id="sinoHoverAvisosTxt">0 novos comunicados</span>
             </div>
             <div class="sino-hover-item" id="sinoHoverCautItem">
               <span class="sino-hover-icon">⏰</span>
@@ -1269,6 +1274,19 @@ async function checarNotificacoesHub() {
     if (el1) el1.textContent = txt;
     const el2 = $('#mobSinoHoverCautTxt');
     if (el2) el2.textContent = txt;
+    // AVISOS do grupo (ordem Diretor 07/10): badge azul do sino + linha do hover-card
+    const av = (res && res.avisos_pendentes) || 0;
+    const elAv1 = $('#sinoHoverAvisosTxt');
+    if (elAv1) elAv1.textContent = av === 1 ? '1 novo comunicado' : `${av} novos comunicados`;
+    const elAv2 = $('#mobSinoHoverAvisosTxt');
+    if (elAv2) elAv2.textContent = av === 1 ? '1 novo comunicado' : `${av} novos comunicados`;
+    ['#sbBadgeAvisos', '#mobBadgeAvisos'].forEach(sel => {
+      const b = $(sel);
+      if (!b) return;
+      b.textContent = String(av);
+      if (av > 0) b.classList.remove('oculto');
+      else b.classList.add('oculto');
+    });
   } catch (e) { /* silencioso */ }
 }
 window.checarNotificacoesHub = checarNotificacoesHub;

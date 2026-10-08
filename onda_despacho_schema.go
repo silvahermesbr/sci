@@ -7,9 +7,8 @@ import (
 )
 
 var (
-	despachoOnce sync.Once
-	despachoMu   sync.Mutex
-	despachoDbs  = make(map[*sql.DB]*sync.Once)
+	despachoMu  sync.Mutex
+	despachoDbs = make(map[*sql.DB]*sync.Once)
 )
 
 func (a *App) ensureTabelaDespachos() {
@@ -24,8 +23,6 @@ func (a *App) ensureTabelaDespachos() {
 		despachoDbs[db] = once
 	}
 	despachoMu.Unlock()
-
-	despachoOnce.Do(func() {})
 
 	once.Do(func() {
 		_, err := db.Exec(`CREATE TABLE IF NOT EXISTS conferencia_despachos (

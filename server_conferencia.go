@@ -352,7 +352,12 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	a.ensureTabelaDespachos()
 	var req confIniciarReq
-	_ = decodificar(r, &req)
+	// fix PM5: JSON malformado não pode engolir silenciosamente (req ficava com
+	// defaults e caía no fluxo "sem setores"); body vazio é tolerado (contrato legado).
+	if err := decodificar(r, &req); err != nil && err.Error() != "EOF" {
+		jsonErro(w, http.StatusBadRequest, "JSON inválido")
+		return
+	}
 
 	u := usuarioDoCtx(r)
 	if u.Papel == "admin" {
@@ -1371,7 +1376,7 @@ func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := a.st.db.Exec(
 		`INSERT INTO comentarios (ordem, conferencia_id, pessoa_id, operador_id, comentario, tag_id) VALUES (?,?,?,?,?,?)`,
-		ord, req.ConferenciaID, req.PessoaID, u.ID, strings.TrimSpace(req.Comentario), req.TagID)
+		ord, req.ConferenciaID, req.PessoaID, u.ID, strings.TrimSpace(sanitizaRichText(req.Comentario)), req.TagID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return

@@ -4244,3 +4244,10 @@ th.sorted-desc {
   }
 }
 
+
+/* badge de AVISOS (ordem Diretor 07/10): comunicado novo no grupo acende badge
+   próprio ao lado do de mensagens — azul, para diferenciar do vermelho de inbox */
+.btn-sidebar-sino .badge-mini.badge-avisos {
+  background: #3b82f6;
+  color: #fff;
+}
