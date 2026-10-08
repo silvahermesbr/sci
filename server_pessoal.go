@@ -726,6 +726,15 @@ func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "somente admin, gerente e encarregado/auxiliar de pessoal cadastram pessoal")
 		return
 	}
+	// ordem 04/10 (Fase G): função informada deve pertencer ao catálogo do grupo
+	// de vinculação (global = grupo NULL serve a todos).
+	if req.FuncaoID != nil && *req.FuncaoID <= 0 {
+		req.FuncaoID = nil
+	}
+	if req.FuncaoID != nil && !a.funcaoValidaParaPessoa(*req.FuncaoID, grupoID) {
+		jsonErro(w, http.StatusBadRequest, "função não pertence ao grupo da pessoa")
+		return
+	}
 	// v9.7: safeguard anti-duplicata — mesma pessoa (guerra+completo, case-insensitive,
 	// trim) não nasce duas vezes no mesmo grupo (índice único do schema v7 é a 2ª barreira)
 	var dup int
@@ -810,6 +819,18 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, motivo)
 		return
 	}
+	// ordem 04/10 (Fase G): função informada deve pertencer ao catálogo do grupo
+	// FINAL da pessoa (admin pode mover o grupo; gerente não).
+	if req.FuncaoID != nil {
+		grupoAlvo := gidEscopo
+		if u.Papel == "admin" && req.GrupoID != nil {
+			grupoAlvo = req.GrupoID
+		}
+		if !a.funcaoValidaParaPessoa(*req.FuncaoID, grupoAlvo) {
+			jsonErro(w, http.StatusBadRequest, "função não pertence ao grupo da pessoa")
+			return
+		}
+	}
 	// admin pode mover a pessoa de grupo na edição; gerente nunca altera grupo
 	if u.Papel == "admin" {
 		if _, err = a.st.db.Exec(`UPDATE pessoas SET nome_guerra=?, nome_completo=?, setor_id=?, funcao_id=?, status=?, grupo_id=?,
@@ -835,6 +856,22 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	a.st.Auditoria(&u.ID, "alterar", "pessoas", &id, req.NomeGuerra, ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})
+}
+
+// funcaoValidaParaPessoa: função informada deve pertencer ao catálogo do grupo
+// da pessoa (global = grupo NULL serve a todos). Reuso da regra de hUsuariosAdd.
+func (a *App) funcaoValidaParaPessoa(funcaoID int64, gidPessoa *int64) bool {
+	var fGrupo *int64
+	_ = a.st.db.QueryRow(`SELECT grupo_id FROM funcoes WHERE id = ?`, funcaoID).Scan(&fGrupo)
+	// função global (grupo NULL) serve a todos
+	if fGrupo == nil {
+		return true
+	}
+	// função de grupo específico: pessoa precisa estar no mesmo grupo
+	if gidPessoa == nil || *fGrupo != *gidPessoa {
+		return false
+	}
+	return true
 }
 
 func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
