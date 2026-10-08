@@ -28,7 +28,7 @@ func f2PessoalSetup(t *testing.T, app *App, st *Store) (gid, gidFora, setorID, s
 	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id) VALUES ('Seção F2 Fora', ?) RETURNING id`, gidFora).Scan(&setorForaID); err != nil {
 		t.Fatalf("criar setor fora: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, chave) VALUES ('Encarregado de Pessoal F2', ?, 'grupo', 'enc_pessoal') RETURNING id`, gid).Scan(&fEnc); err != nil {
+	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE chave = 'enc_pessoal'`).Scan(&fEnc); err != nil {
 		t.Fatalf("criar função encarregado: %v", err)
 	}
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Auxiliar de Pessoal F2', ?) RETURNING id`, gid).Scan(&fAux); err != nil {
