@@ -1180,8 +1180,43 @@ func (s *Store) UsuarioDaSessao(tokenCru string) (*Usuario, error) {
 	if err == nil {
 		u.Papeis = papeis
 	}
+	u.FuncoesGrupo = s.FuncoesGrupoDoUsuario(u.ID, u.GrupoID)
 
 	return &u, nil
+}
+
+func (s *Store) FuncoesGrupoDoUsuario(usuarioID int64, grupoID *int64) []UsuarioFuncaoGrupo {
+	out := []UsuarioFuncaoGrupo{}
+	if grupoID == nil || *grupoID <= 0 {
+		return out
+	}
+	rows, err := s.db.Query(
+		`SELECT f.chave, fm.titularidade, f.nome
+		 FROM funcao_membros fm
+		 JOIN funcoes f ON f.id = fm.funcao_id
+		 WHERE fm.usuario_id = ? AND fm.grupo_id = ?
+		 ORDER BY f.nome ASC`, usuarioID, *grupoID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ch sql.NullString
+		var tit, fnome string
+		if rows.Scan(&ch, &tit, &fnome) == nil {
+			var chPtr *string
+			if ch.Valid {
+				v := ch.String
+				chPtr = &v
+			}
+			out = append(out, UsuarioFuncaoGrupo{
+				Chave:        chPtr,
+				Titularidade: tit,
+				FuncaoNome:   fnome,
+			})
+		}
+	}
+	return out
 }
 
 func (s *Store) PapeisDoUsuario(usuarioID int64) ([]UsuarioPapel, error) {
