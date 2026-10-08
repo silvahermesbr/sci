@@ -44,7 +44,7 @@
     '/views_pessoal.js':   [] // autocontido: usa apenas helpers globais do core.js
   };
 
-  var CACHEBUST = '?v=359';
+  var CACHEBUST = '?v=360';
 
   var carregados = new Set();        // URL → true (já injetado)
   var carregando = {};               // URL → Promise enquanto carrega
