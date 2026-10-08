@@ -157,9 +157,30 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	pessoasGrupo := a.pessoasAtivas(escopo)
 	totalBanco := len(pessoasGrupo)
 
-	deveFiltrar := f.ID > 0 && temDespachos &&
-		(u.Papel == "chefe_setor" || u.Papel == "operador") &&
+	// ordem 08/10 — corte por CONTEXTO ATIVO: chefe_setor e operador só
+	// veem/lançam o setor ATIVO na sessão (sessoes.setor_ativo_id → u.SetorID;
+	// setorDoUsuario mantém o fallback legado da pessoa vinculada). Antes,
+	// chefeComandaSetor devolvia TODOS os setores comandados — o chefe via e
+	// operava o efetivo dos outros setores mesmo com outro contexto ativo.
+	ehChefeOuOper := (u.Papel == "chefe_setor" || u.Papel == "operador") &&
 		!a.ehEncarregado(u) && !a.ehAuxiliarDePessoal(u)
+	var ativo *int64
+	if ehChefeOuOper {
+		ativo = setorDoUsuario(a, u)
+		if ativo != nil {
+			somenteAtivo := []map[string]any{}
+			for _, p := range pessoasGrupo {
+				if sid, ok := p["setor_id"].(int64); ok && sid == *ativo {
+					somenteAtivo = append(somenteAtivo, p)
+				}
+			}
+			pessoasGrupo = somenteAtivo
+		} else {
+			pessoasGrupo = []map[string]any{}
+		}
+	}
+
+	deveFiltrar := f.ID > 0 && temDespachos && ehChefeOuOper
 
 	if deveFiltrar {
 		var filtrados []map[string]any
@@ -168,13 +189,8 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 			if !despachadosMap[sid] {
 				continue
 			}
-			if u.Papel == "chefe_setor" && a.chefeComandaSetor(u, sid) {
+			if ativo != nil && *ativo == sid {
 				filtrados = append(filtrados, st)
-			} else if u.Papel == "operador" {
-				opSid := setorDoUsuario(a, u)
-				if opSid != nil && *opSid == sid {
-					filtrados = append(filtrados, st)
-				}
 			}
 		}
 		if len(filtrados) == 0 {
@@ -566,12 +582,13 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if u.Papel == "chefe_setor" {
-		// Multi-chefia (ordem 06/10 item 14): fonte = chefe_setores — o chefe
-		// comanda TODOS os setores onde tem linha; fallbacks da conta legada
-		// (chefeComandaSetor): u.SetorID (mesma resolução do hMe) e pessoa
-		// vinculada.
-		if !a.chefeComandaSetor(u, sid) {
-			jsonErro(w, http.StatusForbidden, "chefe de setor só pode concluir seu próprio setor")
+		// ordem 08/10 — contexto-govena: o chefe só conclui o setor ATIVO no
+		// contexto da sessão (u.SetorID → fallback pessoa vinculada). A
+		// multi-chefia passa a ser exercida TROCANDO o contexto no dropdown,
+		// um setor por vez — sem cruzamento de dados entre setores.
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo == nil || *sAtivo != sid {
+			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de concluir este setor")
 			return
 		}
 	}
@@ -623,12 +640,11 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if u.Papel == "chefe_setor" {
-		// Multi-chefia (ordem 06/10 item 14): fonte = chefe_setores — o chefe
-		// comanda TODOS os setores onde tem linha; fallbacks da conta legada
-		// (chefeComandaSetor): u.SetorID (mesma resolução do hMe) e pessoa
-		// vinculada.
-		if !a.chefeComandaSetor(u, sid) {
-			jsonErro(w, http.StatusForbidden, "chefe de setor só pode reabrir seu próprio setor")
+		// ordem 08/10 — contexto-govena: só reabre o setor ATIVO no contexto
+		// (mesma regra da conclusão; multi-chefia = trocar o contexto).
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo == nil || *sAtivo != sid {
+			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de reabrir este setor")
 			return
 		}
 	}

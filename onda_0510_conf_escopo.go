@@ -164,18 +164,21 @@ func (a *App) guardaSetorNaMarcar(w http.ResponseWriter, u *Usuario, pessoaID in
 	}
 	switch u.Papel {
 	case "chefe_setor":
-		// Multi-chefia: comanda TODOS os setores onde tem linha; fallbacks da
-		// conta legada = u.SetorID (mesma resolução do hMe) e pessoa vinculada.
+		// ordem 08/10 — contexto-govena: o chefe só lança no setor ATIVO do
+		// contexto da sessão (u.SetorID → fallback pessoa vinculada). Antes,
+		// chefeComandaSetor autorizava lançamento em TODOS os setores que
+		// comanda — cruzava dados entre setores.
 		var pSetor *int64
 		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, pessoaID).Scan(&pSetor)
 		if pSetor == nil {
 			jsonErro(w, http.StatusForbidden, "militar sem setor — não é de comando do chefe")
 			return false
 		}
-		if a.chefeComandaSetor(u, *pSetor) {
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo != nil && *sAtivo == *pSetor {
 			return true
 		}
-		jsonErro(w, http.StatusForbidden, "você só pode lançar presença para militares do seu próprio setor")
+		jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto para lançar neste setor")
 		return false
 	case "operador":
 		setorUsuario := setorDoUsuario(a, u)

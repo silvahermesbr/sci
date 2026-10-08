@@ -982,10 +982,17 @@
     if (ehChefe || ehOper) {
       // Confia no filtro do servidor: se vier setores (1+), renderize SOMENTE eles
       const setoresPermitidos = new Set(setoresStatus.map(s => s.setor_id));
+      // ordem 08/10 — dupla defesa: o cliente também corta pelo setor ATIVO do
+      // contexto (ME.setor_id → fallback pessoa vinculada). O servidor já filtra
+      // "pessoas", mas nenhum efetivo alheio pode chegar à tela.
+      const meuSetorCtx = (window.ME && (window.ME.setor_id || window.ME.pessoa_setor_id)) || null;
+      if (meuSetorCtx) {
+        pessoasLista = pessoasLista.filter(p => p.setor_id === meuSetorCtx);
+      }
       if (setoresPermitidos.size > 0) {
         pessoasLista = pessoasLista.filter(p => setoresPermitidos.has(p.setor_id));
       } else {
-        const escopoSetor = (window.ME && (window.ME.setor_id || window.ME.pessoa_setor_id)) || null;
+        const escopoSetor = meuSetorCtx;
         if (escopoSetor) pessoasLista = pessoasLista.filter(p => p.setor_id === escopoSetor);
       }
     }
