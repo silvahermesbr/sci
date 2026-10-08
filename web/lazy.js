@@ -42,7 +42,7 @@
     '/views_gestao.js':    []
   };
 
-  var CACHEBUST = '?v=356';
+  var CACHEBUST = '?v=357';
 
   var carregados = new Set();        // URL → true (já injetado)
   var carregando = {};               // URL → Promise enquanto carrega
