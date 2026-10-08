@@ -34,30 +34,26 @@ func normSemAcento(s string) string {
 	return repl.Replace(s)
 }
 
-// ehEncarregado: usuário cujo funcao_nome (ou nome da função via funcao_id)
-// contém "encarregado" (normalizado). Função do cadastro do usuário tem
-// precedência; em último caso consulta a função da pessoa vinculada.
+// ehEncarregado: usuário DESIGNADO (funcao_membros) a função cujo nome contém
+// "encarregado" (normalizado) — consulta funcao_membros no escopo do grupo.
+// NADA de consulta a usuarios.funcao_id / pessoas.funcao_id (R3: designação).
 func (a *App) ehEncarregado(u *Usuario) bool {
 	if u == nil {
 		return false
 	}
-	if strings.Contains(normSemAcento(u.FuncaoNome), "encarregado") {
-		return true
+	esc := escopoDoUsuario(u)
+	if esc <= 0 {
+		return false
 	}
-	if u.FuncaoID != nil && *u.FuncaoID > 0 {
-		var nome string
-		if err := a.st.db.QueryRow(`SELECT nome FROM funcoes WHERE id = ?`, *u.FuncaoID).Scan(&nome); err == nil {
-			if strings.Contains(normSemAcento(nome), "encarregado") {
-				return true
-			}
-		}
+	rows, err := a.st.db.Query(`SELECT f.nome FROM funcao_membros fm JOIN funcoes f ON f.id=fm.funcao_id WHERE fm.usuario_id=? AND fm.grupo_id=?`, u.ID, esc)
+	if err != nil {
+		return false
 	}
-	if u.PessoaID != nil && *u.PessoaID > 0 {
+	defer rows.Close()
+	for rows.Next() {
 		var nome string
-		if err := a.st.db.QueryRow(`SELECT nome FROM funcoes WHERE id = (SELECT funcao_id FROM pessoas WHERE id = ?)`, *u.PessoaID).Scan(&nome); err == nil {
-			if strings.Contains(normSemAcento(nome), "encarregado") {
-				return true
-			}
+		if err := rows.Scan(&nome); err == nil && containsNomeFuncao(nome, "encarregado") {
+			return true
 		}
 	}
 	return false

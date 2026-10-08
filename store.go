@@ -2567,6 +2567,11 @@ func (s *Store) migrarV36() error {
 // em funcao_membros com titularidade 'titular' ou 'auxiliar'. Idempotente:
 // banco NOVO (sem usuários) passa limpo; banco POPULADO ganha as designações
 // correspondentes; rodar de novo não duplica (INSERT OR IGNORE + guarda v37).
+type usuarioFuncV37 struct {
+	uid, gid int64
+	fid      *int64
+}
+
 func (s *Store) migrarV37() error {
 	var v int
 	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 37`).Scan(&v)
@@ -2580,18 +2585,23 @@ func (s *Store) migrarV37() error {
 	if err != nil {
 		return fmt.Errorf("migração v37 query: %w", err)
 	}
-	defer rows.Close()
+	var usuarios []usuarioFuncV37
 	for rows.Next() {
-		var uid, gid int64
-		var fid *int64
-		if err := rows.Scan(&uid, &gid, &fid); err != nil {
+		var uf usuarioFuncV37
+		if err := rows.Scan(&uf.uid, &uf.gid, &uf.fid); err != nil {
+			rows.Close()
 			return fmt.Errorf("migração v37 scan: %w", err)
 		}
-		if fid == nil || *fid <= 0 {
+		usuarios = append(usuarios, uf)
+	}
+	rows.Close() // libera a conexão ANTES de fazer INSERT/QueryRow (SetMaxOpenConns=1)
+
+	for _, uf := range usuarios {
+		if uf.fid == nil || *uf.fid <= 0 {
 			continue
 		}
 		var nome string
-		if err := s.db.QueryRow(`SELECT nome FROM funcoes WHERE id = ?`, *fid).Scan(&nome); err != nil {
+		if err := s.db.QueryRow(`SELECT nome FROM funcoes WHERE id = ?`, *uf.fid).Scan(&nome); err != nil {
 			continue
 		}
 		var titularidade string
@@ -2604,10 +2614,7 @@ func (s *Store) migrarV37() error {
 			continue
 		}
 		_, _ = s.db.Exec(`INSERT OR IGNORE INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?, ?, ?, ?)`,
-			*fid, gid, uid, titularidade)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("migração v37 rows: %w", err)
+			*uf.fid, uf.gid, uf.uid, titularidade)
 	}
 	return s.marcarVersao(37)
 }

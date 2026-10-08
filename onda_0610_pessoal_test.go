@@ -22,6 +22,8 @@ import (
 
 // onda0610Setup: fixture fail-fast — 2 grupos, funções de pessoal em ambos,
 // contas de todos os papeis e 1 pessoa no grupo principal.
+// R3: poder encarregado/auxiliar vem de DESIGNAÇÃO (funcao_membros), não de
+// funcao_id no cadastro.
 func onda0610Setup(t *testing.T, app *App, st *Store) (gid, gidFora, fEnc, fAux, fOutra, pSilva, op01ID int64) {
 	t.Helper()
 	if err := st.db.QueryRow(`INSERT INTO grupos (nome) VALUES ('Grp 0610') RETURNING id`).Scan(&gid); err != nil {
@@ -39,8 +41,6 @@ func onda0610Setup(t *testing.T, app *App, st *Store) (gid, gidFora, fEnc, fAux,
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Furriel', ?) RETURNING id`, gid).Scan(&fOutra); err != nil {
 		t.Fatalf("criar função outra: %v", err)
 	}
-	// funcoes.nome é ÚNICO global: o grupo alheio REUSA as mesmas funções
-	// (detecção é pelo nome; o escopo vem do grupo da CONTA).
 
 	criaUsuarioTeste(t, st, "enc01", "senha-enc", "")          // encarregado: SEM papel
 	criaUsuarioTeste(t, st, "aux01", "senha-aux", "")          // auxiliar: SEM papel
@@ -51,22 +51,44 @@ func onda0610Setup(t *testing.T, app *App, st *Store) (gid, gidFora, fEnc, fAux,
 	criaUsuarioTeste(t, st, "com01", "senha-com", "")          // comum SEM grupo
 	criaUsuarioTeste(t, st, "adm01", "senha-adm", "admin")     // admin
 
-	vincula := `UPDATE usuarios SET grupo_id = ?, funcao_id = ? WHERE login = ?`
-	if _, err := st.db.Exec(vincula, gid, fEnc, "enc01"); err != nil {
-		t.Fatalf("vincular enc01: %v", err)
+	// Resolve IDs (precisa ser ANTES das designações)
+	var enc01ID, aux01ID, encForaID, auxForaID int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login='enc01'`).Scan(&enc01ID); err != nil {
+		t.Fatalf("id enc01: %v", err)
 	}
-	if _, err := st.db.Exec(vincula, gid, fAux, "aux01"); err != nil {
-		t.Fatalf("vincular aux01: %v", err)
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login='aux01'`).Scan(&aux01ID); err != nil {
+		t.Fatalf("id aux01: %v", err)
 	}
-	if _, err := st.db.Exec(vincula, gidFora, fEnc, "encFora"); err != nil {
-		t.Fatalf("vincular encFora: %v", err)
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login='encFora'`).Scan(&encForaID); err != nil {
+		t.Fatalf("id encFora: %v", err)
 	}
-	if _, err := st.db.Exec(vincula, gidFora, fAux, "auxFora"); err != nil {
-		t.Fatalf("vincular auxFora: %v", err)
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login='auxFora'`).Scan(&auxForaID); err != nil {
+		t.Fatalf("id auxFora: %v", err)
 	}
-	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login IN ('ger01','op01')`, gid); err != nil {
-		t.Fatalf("vincular ger/op: %v", err)
+
+	// Vincular grupo (sem funcao_id — R3: poder vem da designação)
+	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login IN ('enc01','aux01','ger01','op01')`, gid); err != nil {
+		t.Fatalf("vincular grupo gid: %v", err)
 	}
+	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login IN ('encFora','auxFora')`, gidFora); err != nil {
+		t.Fatalf("vincular grupo gidFora: %v", err)
+	}
+
+	// R3: designações em funcao_membros (NÃO em usuarios.funcao_id)
+	designa := `INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,?)`
+	if _, err := st.db.Exec(designa, fEnc, gid, enc01ID, "titular"); err != nil {
+		t.Fatalf("designar enc01: %v", err)
+	}
+	if _, err := st.db.Exec(designa, fAux, gid, aux01ID, "titular"); err != nil {
+		t.Fatalf("designar aux01: %v", err)
+	}
+	if _, err := st.db.Exec(designa, fEnc, gidFora, encForaID, "titular"); err != nil {
+		t.Fatalf("designar encFora: %v", err)
+	}
+	if _, err := st.db.Exec(designa, fAux, gidFora, auxForaID, "titular"); err != nil {
+		t.Fatalf("designar auxFora: %v", err)
+	}
+
 	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'op01'`).Scan(&op01ID); err != nil {
 		t.Fatalf("id op01: %v", err)
 	}

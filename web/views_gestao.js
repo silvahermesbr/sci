@@ -2198,7 +2198,7 @@
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px">
             <div>
               <h3 style="margin:0 0 4px">Catálogos & TAGS Organizacionais</h3>
-              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Tags, Setores, Postos/Graduações e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
+              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Tags, Setores, Funções e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
             </div>
           </div>
 
@@ -3061,7 +3061,7 @@
     /* --- aba TAGS: Catálogos divididos em Pessoal e Material (v1.5) --- */
     const rotCat = {
       destinos: '📍 Destinos (Pessoal)',
-      funcoes: '🎖️ Postos / Graduações (Pessoal)',
+      funcoes: '🎖️ Funções (Pessoal)',
       tags: '🏷️ Situação do Material (Material)',
       material_tipos: '📦 Tipos de Material (Material)',
       material_classes: '🎖️ Classes de Material (Material)',
