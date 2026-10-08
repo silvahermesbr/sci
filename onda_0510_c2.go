@@ -123,6 +123,20 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := res.LastInsertId()
 	a.st.Auditoria(&u.ID, "designar_funcao_membro", "funcao_membros", &id, loginMembro+" ["+tit+"]", ipDe(r))
+	// R3 (ordem 08/10): sincroniza o DISPLAY da sessão — usuario_papeis.funcao_id
+	// alimenta funcao_nome no /api/me e a derivação de papel-conf no core.js
+	// (encarregado/auxiliar). A fonte do PODER continua sendo SÓ funcao_membros;
+	// aqui é espelho de exibição. Falha de espelho NUNCA derruba a designação
+	// (o poder já está gravado).
+	func() {
+		var nPapel int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, req.UsuarioID, escopo).Scan(&nPapel)
+		if nPapel > 0 {
+			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = ? WHERE usuario_id = ? AND grupo_id = ?`, req.FuncaoID, req.UsuarioID, escopo)
+		} else {
+			_, _ = a.st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?, ?, 'operador', ?)`, req.UsuarioID, escopo, req.FuncaoID)
+		}
+	}()
 	jsonOK(w, map[string]any{"ok": true, "id": id})
 }
 
