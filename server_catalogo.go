@@ -162,6 +162,14 @@ func (a *App) hCatalogoEditar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
+	if t == "funcoes" {
+		var itemTipo string
+		_ = a.st.db.QueryRow(`SELECT COALESCE(tipo, 'antiguidade') FROM funcoes WHERE id = ?`, id).Scan(&itemTipo)
+		if itemTipo == "grupo" && u.Papel != "admin" {
+			jsonErro(w, http.StatusForbidden, "edição de função de grupo é exclusiva do administrador")
+			return
+		}
+	}
 	var req struct {
 		Nome  string `json:"nome"`
 		Sigla string `json:"sigla"`
@@ -262,16 +270,22 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 		)
 		SELECT ` + t + `.id, ` + t + `.nome` + extra + `, ` + t + `.pai_id, ` + t + `.ativo, ` + t + `.grupo_id, ` + t + `.antiguidade
 		FROM ` + t + ` LEFT JOIN cam ON cam.id = ` + t + `.id`
+	whereClauses := []string{}
 	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
 		// Doutrina: todos os membros da hierarquia têm visibilidade das tags de superiores, do próprio grupo e de subordinados
 		ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
 		ids = append(ids, a.gruposSubordinadosAtivos(esc)...)
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-		args = make([]any, len(ids))
-		for i, id := range ids {
-			args[i] = id
+		for _, id := range ids {
+			args = append(args, id)
 		}
-		q += ` WHERE ` + t + `.grupo_id IS NULL OR ` + t + `.grupo_id IN (` + ph + `)`
+		whereClauses = append(whereClauses, `(`+t+`.grupo_id IS NULL OR `+t+`.grupo_id IN (`+ph+`))`)
+	}
+	if t == "funcoes" {
+		whereClauses = append(whereClauses, `(`+t+`.tipo = 'antiguidade' OR `+t+`.tipo IS NULL)`)
+	}
+	if len(whereClauses) > 0 {
+		q += ` WHERE ` + strings.Join(whereClauses, " AND ")
 	}
 	q += ` ORDER BY cam.caminho, antiguidade, nome`
 	rows, err := a.st.db.Query(q, args...)
@@ -314,10 +328,21 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 		Sigla   string `json:"sigla"`
 		Cor     string `json:"cor"`
 		GrupoID *int64 `json:"grupo_id"`
+		Tipo    string `json:"tipo"`
 	}
 	if err = decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
 		jsonErro(w, http.StatusBadRequest, "nome obrigatório")
 		return
+	}
+	tipo := "antiguidade"
+	if t == "funcoes" {
+		if strings.TrimSpace(req.Tipo) != "" {
+			tipo = strings.ToLower(strings.TrimSpace(req.Tipo))
+			if tipo != "antiguidade" && tipo != "grupo" {
+				jsonErro(w, http.StatusBadRequest, "tipo inválido: deve ser 'antiguidade' ou 'grupo'")
+				return
+			}
+		}
 	}
 	nome := strings.TrimSpace(req.Nome)
 	u := usuarioDoCtx(r)
@@ -348,6 +373,8 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 		q = `INSERT INTO setores (nome, sigla, grupo_id) VALUES (?, NULLIF(?,''), ?)`
 	case "tags":
 		q = `INSERT INTO tags (nome, cor, grupo_id) VALUES (?, NULLIF(?,''), ?)`
+	case "funcoes":
+		q = `INSERT INTO funcoes (nome, grupo_id, tipo) VALUES (?, ?, ?)`
 	default:
 		q = `INSERT INTO ` + t + ` (nome, grupo_id) VALUES (?,?)`
 	}
@@ -356,6 +383,8 @@ func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	if t == "setores" || t == "tags" {
 		res, err = a.st.db.Exec(q, nome, map[bool]string{true: req.Sigla, false: req.Cor}[t == "setores"], grupoID)
+	} else if t == "funcoes" {
+		res, err = a.st.db.Exec(q, nome, grupoID, tipo)
 	} else {
 		res, err = a.st.db.Exec(q, nome, grupoID)
 	}
@@ -385,6 +414,14 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !a.podeGestaoPessoal(u)) {
 		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
+	}
+	if t == "funcoes" {
+		var itemTipo string
+		_ = a.st.db.QueryRow(`SELECT COALESCE(tipo, 'antiguidade') FROM funcoes WHERE id = ?`, id).Scan(&itemTipo)
+		if itemTipo == "grupo" && u.Papel != "admin" {
+			jsonErro(w, http.StatusForbidden, "exclusão de função de grupo é exclusiva do administrador")
+			return
+		}
 	}
 	if esc := escopoDoUsuario(u); esc > 0 {
 		var donoGrupo int64
