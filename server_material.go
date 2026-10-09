@@ -89,6 +89,11 @@ func (a *App) hMaterialResponsaveisList(w http.ResponseWriter, r *http.Request) 
 // hMaterialResponsaveisSave
 // -----------------------------------------------------------------
 func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if !(u.Papel == "admin" || u.Papel == "gerente" || a.ehEncarregadoDeMaterial(u)) {
+		jsonErro(w, http.StatusForbidden, "somente gerente ou encarregado de material define responsáveis")
+		return
+	}
 	var req struct {
 		GrupoID               int64 `json:"grupo_id"`
 		SetorID               int64 `json:"setor_id"`
@@ -99,8 +104,13 @@ func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
 	}
+	esc := escopoDoUsuario(u)
+	if a.ehEncarregadoDeMaterial(u) && u.Papel != "admin" {
+		if u.GrupoID != nil && *u.GrupoID > 0 {
+			req.GrupoID = *u.GrupoID
+		}
+	}
 	if req.GrupoID <= 0 {
-		u := usuarioDoCtx(r)
 		if u.GrupoID != nil && *u.GrupoID > 0 {
 			req.GrupoID = *u.GrupoID
 		} else {
@@ -108,13 +118,19 @@ func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	encID := req.EncarregadoID
-	if encID <= 0 {
-		encID = 0
+	if esc > 0 && req.GrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "recurso fora do seu escopo")
+		return
 	}
-	auxID := req.AuxiliarEncarregadoID
-	if auxID <= 0 {
-		auxID = 0
+	var setorVal, encVal, auxVal *int64
+	if req.SetorID > 0 {
+		setorVal = &req.SetorID
+	}
+	if req.EncarregadoID > 0 {
+		encVal = &req.EncarregadoID
+	}
+	if req.AuxiliarEncarregadoID > 0 {
+		auxVal = &req.AuxiliarEncarregadoID
 	}
 	if _, err := a.st.db.Exec(`INSERT INTO grupo_setor_responsaveis (grupo_id, setor_id, encarregado_id, auxiliar_encarregado_id, atualizado_em)
 		VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -122,7 +138,7 @@ func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) 
 			encarregado_id = excluded.encarregado_id,
 			auxiliar_encarregado_id = excluded.auxiliar_encarregado_id,
 			atualizado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-		req.GrupoID, req.SetorID, encID, auxID); err != nil {
+		req.GrupoID, setorVal, encVal, auxVal); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
