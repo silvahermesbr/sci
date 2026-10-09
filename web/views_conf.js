@@ -2186,7 +2186,7 @@
       const regras = [];
 
       const optSetores = (setores || []).filter(s => s.ativo !== 0);
-      const optFuncoes = (funcoes || []).filter(f => f.ativo !== 0);
+      const optFuncoes = ((funcoes && funcoes.funcoes) || funcoes || []).filter(f => f.ativo !== 0);
 
       const alvo = $('#corpoRelatorios');
       alvo.innerHTML = `

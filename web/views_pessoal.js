@@ -125,7 +125,7 @@
       if (a && a.pessoa_id != null) mapaApresentacao[a.pessoa_id] = a;
     });
     const podeApresentacao = typeof window.gestorPessoal === 'function' ? (window.gestorPessoal() || (typeof window.ehEncarregado === 'function' && window.ehEncarregado())) : false;
-    let optSetores = ativosDe(setores), optFuncoes = ativosDe(funcoes);
+    let optSetores = ativosDe(setores), optFuncoes = ativosDe((funcoes && funcoes.funcoes) || funcoes);
     setoresCat = setores; funcoesCat = funcoes; // cache
 
     async function atualizarSelectsCatalogos() {
@@ -134,7 +134,7 @@
           api('/api/catalogo/setores'), api('/api/catalogo/funcoes')
         ]);
         optSetores = ativosDe(setoresNovos);
-        optFuncoes = ativosDe(funcoesNovas);
+        optFuncoes = ativosDe((funcoesNovas && funcoesNovas.funcoes) || funcoesNovas);
         const selS = $('#pSetor'), selF = $('#pFuncao');
         if (selS) {
           const val = selS.value;

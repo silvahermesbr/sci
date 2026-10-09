@@ -681,7 +681,7 @@
       api('/api/catalogo/funcoes')
     ]);
     const tipos = tiposRes.tipos || [];
-    const funcoes = (funcoesRes || []).filter(f => f.ativo);
+    const funcoes = ((funcoesRes && funcoesRes.funcoes) || funcoesRes || []).filter(f => f.ativo);
 
     const valTipo = ehEdicao ? turno.tipo_id : (tipos[0] ? tipos[0].id : 0);
     const valHi = ehEdicao ? ((turno.data_inicio || '').slice(11, 16) || '07:00') : '07:00';
@@ -1006,7 +1006,7 @@
 
     const tipos = tiposRes.tipos || [];
     const pessoas = pesRes.pessoas || [];
-    const funcoes = (funcoesRes || []).filter(f => f.ativo);
+    const funcoes = ((funcoesRes && funcoesRes.funcoes) || funcoesRes || []).filter(f => f.ativo);
 
     let dadosMod = { id: 0, nome: '', descricao: '', postos: [], aptos: [] };
     if (modeloID > 0) {

@@ -446,7 +446,7 @@
       api('/api/catalogo/funcoes').catch(() => []),
       api('/api/catalogo/setores').catch(() => [])
     ]);
-    const funcoesLista = Array.isArray(funcoesRes) ? (funcoesRes.funcoes || funcoesRes) : (funcoesRes.funcoes || []);
+    const funcoesLista = (funcoesRes && (funcoesRes.funcoes || funcoesRes)) || [];
     const setoresLista = (Array.isArray(setoresRes) ? setoresRes : []).filter(s => s.ativo !== false);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
     // ITEM 2 (ordem Diretor 06/10): login é identificação SENSÍVEL — só o admin
