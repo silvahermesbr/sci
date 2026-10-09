@@ -108,6 +108,9 @@
     // (senha de conta segue gerente/admin no servidor).
     if (!eu || (eu.papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal()))) { location.hash = '#/hoje'; return; }
     // ordem 06/10: quem chega aqui sem papel do sistema é encarregado/auxiliar —
+    // fix 09/10: podeDesignar = poder REAL de designar (gerente/admin no
+    // servidor); gestorPessoal() de designado não injeta botões que o
+    // servidor nega (403), nem esconde do gerente.
     // o servidor nega exclusão de catálogo/pessoa, senha e mover; o front esconde.
     const souFuncaoPessoal = eu.papel !== 'gerente';
     const podeDesignar = eu && (eu.papel === 'gerente' || eu.papel === 'admin');

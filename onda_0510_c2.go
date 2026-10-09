@@ -165,16 +165,15 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	id, _ := res.LastInsertId()
 	a.st.Auditoria(&u.ID, "designar_funcao_membro", "funcao_membros", &id, loginMembro+" ["+tit+"]", ipDe(r))
 
-	// Sincroniza o display da sessão
-	func() {
-		var nPapel int
-		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, req.UsuarioID, grupoAlvo).Scan(&nPapel)
-		if nPapel > 0 {
-			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = ? WHERE usuario_id = ? AND grupo_id = ?`, req.FuncaoID, req.UsuarioID, grupoAlvo)
-		} else {
-			_, _ = a.st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?, ?, 'operador', ?)`, req.UsuarioID, grupoAlvo, req.FuncaoID)
-		}
-	}()
+	// Sincroniza o DISPLAY da sessão (funcao_nome do papel ativo) — SOMENTE
+	// preenchendo funcao_id de linha que já existe e está sem função. NUNCA
+	// cria linha em usuario_papeis: o sync antigo fabricava papel='operador'
+	// para conta designada sem papel (CHECK de usuario_papeis rejeita '' e o
+	// INSERT com 'operador' virava a SESSÃO do designado no próximo login —
+	// papel do sistema trava o poder e o encarregado ficava sem módulo, bug
+	// da ordem 09/10). O display do designado puro vem de funcao_membros
+	// (FuncoesGrupoDoUsuario → /api/me funcoes_grupo).
+	_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = ? WHERE usuario_id = ? AND grupo_id = ? AND funcao_id IS NULL`, req.FuncaoID, req.UsuarioID, grupoAlvo)
 	jsonOK(w, map[string]any{"ok": true, "id": id})
 }
 
