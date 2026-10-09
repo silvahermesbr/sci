@@ -20,13 +20,7 @@ package main
 
 import (
 	"net/http"
-	"strings"
 )
-
-// containsNomeFuncao: nome normalizado (minúsculas, sem acento) contém agulha.
-func containsNomeFuncao(nome, agulha string) bool {
-	return strings.Contains(normSemAcento(nome), agulha)
-}
 
 // ehAuxiliarDePessoal: wrapper de compatibilidade delegando para ehEncarregadoDePessoal.
 // Detecção por chave, nunca por nome (anti-escalação).
@@ -34,29 +28,24 @@ func (a *App) ehAuxiliarDePessoal(u *Usuario) bool {
 	return a.ehEncarregadoDePessoal(u)
 }
 
-// funcaoIDPorNome: id da função do catálogo do GRUPO (ou global) cujo nome
-// normalizado contém a agulha — grupo específico tem precedência sobre global.
-// Nil = o grupo não tem função que casa (nada a designar).
-func (a *App) funcaoIDPorNome(grupoID *int64, agulha string) *int64 {
-	if grupoID == nil || *grupoID <= 0 {
-		return nil
+// funcaoIDPorChave: id da função com a chave imutável pedida; função do GRUPO
+// ganha da global. Nil = cadeira não resolvida.
+func (a *App) funcaoIDPorChave(grupoID *int64, chave string) *int64 {
+	var id int64
+	var err error
+	if grupoID != nil && *grupoID > 0 {
+		err = a.st.db.QueryRow(`SELECT id FROM funcoes
+			WHERE chave = ? AND ativo = 1 AND (grupo_id = ? OR grupo_id IS NULL)
+			ORDER BY (grupo_id IS NULL) ASC LIMIT 1`, chave, *grupoID).Scan(&id)
+	} else {
+		err = a.st.db.QueryRow(`SELECT id FROM funcoes
+			WHERE chave = ? AND ativo = 1 AND grupo_id IS NULL
+			LIMIT 1`, chave).Scan(&id)
 	}
-	rows, err := a.st.db.Query(`SELECT id, nome FROM funcoes
-		 WHERE grupo_id = ? OR grupo_id IS NULL
-		 ORDER BY CASE WHEN grupo_id IS NULL THEN 1 ELSE 0 END`, *grupoID)
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var id int64
-		var nome string
-		if rows.Scan(&id, &nome) == nil && containsNomeFuncao(nome, agulha) {
-			fid := id
-			return &fid
-		}
-	}
-	return nil
+	return &id
 }
 
 // podeGestaoPessoal: quem gere pessoal — ADMIN e GERENTE sempre (os handlers
@@ -111,7 +100,7 @@ func (a *App) atribuiFuncaoPessoal(u *Usuario, grupoDaPessoa *int64, funcaoNova,
 	if !a.podeGestaoPessoal(u) {
 		return false, "sem permissão para editar pessoal"
 	}
-	auxID := a.funcaoIDPorNome(grupoDaPessoa, "auxiliar")
+	auxID := a.funcaoIDPorChave(grupoDaPessoa, "enc_pessoal")
 	mesmoValor := func(a, b *int64) bool {
 		return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 	}

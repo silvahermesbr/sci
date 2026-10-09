@@ -42,14 +42,14 @@ func onda0610Setup(t *testing.T, app *App, st *Store) (gid, gidFora, fEnc, fAux,
 		t.Fatalf("criar função outra: %v", err)
 	}
 
-	criaUsuarioTeste(t, st, "enc01", "senha-enc", "")          // encarregado: SEM papel
-	criaUsuarioTeste(t, st, "aux01", "senha-aux", "")          // auxiliar: SEM papel
-	criaUsuarioTeste(t, st, "encFora", "senha-encf", "")       // encarregado do grupo alheio
-	criaUsuarioTeste(t, st, "auxFora", "senha-auxf", "")       // auxiliar do grupo alheio
-	criaUsuarioTeste(t, st, "ger01", "senha-ger", "gerente")   // gerente do grupo
-	criaUsuarioTeste(t, st, "op01", "senha-op", "operador")    // operador do grupo
-	criaUsuarioTeste(t, st, "com01", "senha-com", "")          // comum SEM grupo
-	criaUsuarioTeste(t, st, "adm01", "senha-adm", "admin")     // admin
+	criaUsuarioTeste(t, st, "enc01", "senha-enc", "")        // encarregado: SEM papel
+	criaUsuarioTeste(t, st, "aux01", "senha-aux", "")        // auxiliar: SEM papel
+	criaUsuarioTeste(t, st, "encFora", "senha-encf", "")     // encarregado do grupo alheio
+	criaUsuarioTeste(t, st, "auxFora", "senha-auxf", "")     // auxiliar do grupo alheio
+	criaUsuarioTeste(t, st, "ger01", "senha-ger", "gerente") // gerente do grupo
+	criaUsuarioTeste(t, st, "op01", "senha-op", "operador")  // operador do grupo
+	criaUsuarioTeste(t, st, "com01", "senha-com", "")        // comum SEM grupo
+	criaUsuarioTeste(t, st, "adm01", "senha-adm", "admin")   // admin
 
 	// Resolve IDs (precisa ser ANTES das designações)
 	var enc01ID, aux01ID, encForaID, auxForaID int64
@@ -284,40 +284,48 @@ func TestOnda0610AuxiliarEspelhaEncarregado(t *testing.T) {
 func TestOnda0610NomeacaoFuncaoAuxiliar(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
-	_, _, _, fAux, fOutra, pSilva, _ := onda0610Setup(t, app, st)
+	_, _, fEnc, fAux, fOutra, pSilva, _ := onda0610Setup(t, app, st)
 	_ = st
 	ckEnc := loginAs(t, app, "enc01", "senha-enc")
 	ckAux := loginAs(t, app, "aux01", "senha-aux")
 	ckGer := loginAs(t, app, "ger01", "senha-ger")
 
-	// encarregado DEFINE a auxiliar do grupo
-	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Teste 0610", "status": "ativo", "funcao_id": fAux}, ckEnc); rr.Code != http.StatusOK {
-		t.Fatalf("F1: encarregado define auxiliar (200), veio %d", rr.Code)
+	// (a) enc de pessoal define cadeira enc_pessoal (funcao_id = fEnc) → 200
+	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Teste 0610", "status": "ativo", "funcao_id": fEnc}, ckEnc); rr.Code != http.StatusOK {
+		t.Fatalf("F1: encarregado define enc_pessoal (200), veio %d", rr.Code)
 	}
-	// encarregado NÃO define outra função
+	// (b) enc define função sem chave ("Furriel" / fOutra) → 403
 	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Teste 0610", "status": "ativo", "funcao_id": fOutra}, ckEnc); rr.Code != http.StatusForbidden {
 		t.Fatalf("F1: encarregado define função qualquer deve 403, veio %d", rr.Code)
 	}
-	// auxiliar REENVIA a mesma função (edição de campos) → passa
-	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Editada", "status": "ativo", "funcao_id": fAux}, ckAux); rr.Code != http.StatusOK {
+	// (b2) enc define função antiga sem chave ("Auxiliar de Pessoal" / fAux) → 403
+	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Teste 0610", "status": "ativo", "funcao_id": fAux}, ckEnc); rr.Code != http.StatusForbidden {
+		t.Fatalf("F1: encarregado define função sem chave deve 403, veio %d", rr.Code)
+	}
+	// (c) auxiliar REENVIA o mesmo valor (edição de campos mantendo fEnc) → 200
+	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Editada", "status": "ativo", "funcao_id": fEnc}, ckAux); rr.Code != http.StatusOK {
 		t.Fatalf("F1: auxiliar reenvia mesma função (200), veio %d", rr.Code)
 	}
-	// auxiliar troca para outra função → 403
+	// auxiliar troca para outra função sem chave → 403
 	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Editada", "status": "ativo", "funcao_id": fOutra}, ckAux); rr.Code != http.StatusForbidden {
 		t.Fatalf("F1: auxiliar define função qualquer deve 403, veio %d", rr.Code)
 	}
-	// gerente define QUALQUER função
+	// (d) enc LIMPA a cadeira (funcao_id null) → 200
+	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Teste 0610", "status": "ativo", "funcao_id": nil}, ckEnc); rr.Code != http.StatusOK {
+		t.Fatalf("F1: encarregado limpa a cadeira (200), veio %d", rr.Code)
+	}
+	// (e) gerente define QUALQUER função → 200
 	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Teste 0610", "status": "ativo", "funcao_id": fOutra}, ckGer); rr.Code != http.StatusOK {
 		t.Fatalf("F1: gerente define função qualquer (200), veio %d", rr.Code)
 	}
-	// encarregado define a auxiliar de novo (volta) — gerente deixou outra função
-	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Teste 0610", "status": "ativo", "funcao_id": fAux}, ckEnc); rr.Code != http.StatusOK {
-		t.Fatalf("F1: encarregado volta p/ auxiliar (200), veio %d", rr.Code)
+	// encarregado define a cadeira enc_pessoal de novo (volta) — gerente deixou outra função
+	if rr, _ := doJSONReq(app, "PATCH", "/api/pessoas/"+idi(pSilva), map[string]any{"nome_guerra": "SILVA", "nome_completo": "Silva Teste 0610", "status": "ativo", "funcao_id": fEnc}, ckEnc); rr.Code != http.StatusOK {
+		t.Fatalf("F1: encarregado volta p/ enc_pessoal (200), veio %d", rr.Code)
 	}
-	// persistência: função da pessoa é a auxiliar
+	// persistência: função da pessoa é a cadeira enc_pessoal
 	var fid int64
-	if err := st.db.QueryRow(`SELECT COALESCE(funcao_id,0) FROM pessoas WHERE id = ?`, pSilva).Scan(&fid); err != nil || fid != fAux {
-		t.Fatalf("F1: função da pessoa não persistiu como auxiliar (fid=%d err=%v)", fid, err)
+	if err := st.db.QueryRow(`SELECT COALESCE(funcao_id,0) FROM pessoas WHERE id = ?`, pSilva).Scan(&fid); err != nil || fid != fEnc {
+		t.Fatalf("F1: função da pessoa não persistiu como enc_pessoal (fid=%d err=%v)", fid, err)
 	}
 }
 
