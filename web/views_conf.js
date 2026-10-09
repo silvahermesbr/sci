@@ -497,19 +497,16 @@
       setores = setores.filter(s => !s.grupo_id || s.grupo_id === window.ME.grupo_id);
     }
     setores.sort((a, b) => (a.sigla || a.nome || '').localeCompare(b.sigla || b.nome || '', 'pt', { sensitivity: 'base' }));
-    let funcoes = [];
-    try { funcoes = await api('/api/catalogo/funcoes'); } catch (e) { funcoes = []; }
-    const pracaNode = funcoes.find(f => f.pai_id === null && f.nome === 'Praças');
-    const oficiais = funcoes.filter(f => f.pai_id === null && f.nome !== 'Praças' && (f.ativo === 1 || f.ativo === true));
-    const pracasList = pracaNode ? funcoes.filter(f => f.pai_id === pracaNode.id && (f.ativo === 1 || f.ativo === true)) : [];
-    oficiais.sort((a, b) => (a.antiguidade || 0) - (b.antiguidade || 0));
-    pracasList.sort((a, b) => (a.antiguidade || 0) - (b.antiguidade || 0));
-    const oficiaisHTML = oficiais.map(f => `
-      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" data-grupo="oficiais" value="${f.id}"><span>${esc(f.nome)}</span></label>
+    // correção 09/10 (ordem do dono): a conferência por antiguidade usa a
+    // escada DO GRUPO (tags que o gerente mantém no catálogo "Antiguidade
+    // (Pessoal)"), não a lista global — endpoint escopado no grupo da conferência.
+    let antig = { funcoes: [], tem_tags: true, aviso: '' };
+    try { antig = await api('/api/conferencia/funcoes-antiguidade'); } catch (e) { antig.funcoes = []; }
+    const antigHTML = (antig.funcoes || []).map(f => `
+      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" value="${f.id}"><span>${esc(f.nome)}</span></label>
     `).join('');
-    const pracasHTML = pracasList.map(f => `
-      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" data-grupo="pracas" value="${f.id}"><span>${esc(f.nome)}</span></label>
-    `).join('');
+    const avisoSemTags = antig.tem_tags ? '' :
+      `<div id="cfaAvisoSemTags" style="font-size:12px;color:var(--verm-txt,#b00020);border:1px solid currentColor;border-radius:6px;padding:8px 10px;margin-bottom:8px">${esc(antig.aviso || 'Grupo sem tags de antiguidade — cadastre no catálogo do grupo (módulo Pessoal)')}</div>`;
 
     const setoresHTML = setores.map(s => `
       <label class="cfd-setor-item-modal">
@@ -546,17 +543,14 @@
           </div>
         </div>
         <div class="campo" id="cfaBlocoAntiguidade" style="margin-bottom:14px;display:none">
-          <label style="font-weight:700;margin-bottom:6px;display:block">Postos e graduações convocados</label>
+          <label style="font-weight:700;margin-bottom:6px;display:block">Postos e graduações convocados (antiguidade do grupo)</label>
+          ${avisoSemTags}
           <div style="display:flex;gap:6px;margin-bottom:8px">
-            <button type="button" class="acao-linha" id="cfaTodosOficiais" style="font-size:11px;padding:2px 8px">Todos os oficiais</button>
-            <button type="button" class="acao-linha" id="cfaTodasPracas" style="font-size:11px;padding:2px 8px">Todas as praças</button>
+            <button type="button" class="acao-linha" id="cfaTodasFuncoes" style="font-size:11px;padding:2px 8px">Todas</button>
             <button type="button" class="acao-linha" id="cfaLimparFuncoes" style="font-size:11px;padding:2px 8px">Limpar</button>
           </div>
           <div class="cfd-lista-setores-modal">
-            <div style="font-size:11px;font-weight:700;color:var(--tx2);margin:4px 0 2px;text-transform:uppercase">Oficiais</div>
-            ${oficiaisHTML || '<span class="vazio">Nenhuma função cadastrada</span>'}
-            <div style="font-size:11px;font-weight:700;color:var(--tx2);margin:8px 0 2px;text-transform:uppercase">Praças</div>
-            ${pracasHTML || '<span class="vazio">Nenhuma função cadastrada</span>'}
+            ${antigHTML || '<span class="vazio">Nenhuma tag de antiguidade cadastrada</span>'}
           </div>
         </div>
         <div class="modal-acoes" style="justify-content:flex-end;gap:8px">
@@ -584,8 +578,7 @@
         alvos.forEach(c => { c.checked = !todos; });
       };
     };
-    ligaGrupo('#cfaTodosOficiais', '#cfaBlocoAntiguidade .cfa-chk-funcao[data-grupo="oficiais"]');
-    ligaGrupo('#cfaTodasPracas', '#cfaBlocoAntiguidade .cfa-chk-funcao[data-grupo="pracas"]');
+    ligaGrupo('#cfaTodasFuncoes', '#cfaBlocoAntiguidade .cfa-chk-funcao');
     const btLimpar = m.querySelector('#cfaLimparFuncoes');
     if (btLimpar) btLimpar.onclick = (ev) => {
       ev.preventDefault();
@@ -613,8 +606,16 @@
       const marcados = Array.from(m.querySelectorAll('.cfd-chk-setor:checked')).map(c => +c.value);
       const modo = (m.querySelector('input[name="cfaModalidade"]:checked') || {}).value || 'setores';
       const funcoesMarcadas = Array.from(m.querySelectorAll('.cfa-chk-funcao:checked')).map(c => +c.value);
-      if (modo === 'antiguidade' && funcoesMarcadas.length === 0) {
-        toast('Selecione ao menos um posto/graduação', 'erro'); return;
+      if (modo === 'antiguidade') {
+        // R3: grupo sem tags de antiguidade → modalidade BLOQUEADA com aviso
+        // claro; nunca cai silenciosamente na lista global.
+        if (!antig.tem_tags) {
+          toast(antig.aviso || 'Grupo sem tags de antiguidade — cadastre no catálogo do grupo (módulo Pessoal)', 'erro');
+          return;
+        }
+        if (funcoesMarcadas.length === 0) {
+          toast('Selecione ao menos um posto/graduação', 'erro'); return;
+        }
       }
       try {
         let r;

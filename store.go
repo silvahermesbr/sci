@@ -167,6 +167,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV41(); err != nil { // índice único de conferências abertas de material
 		return nil, err
 	}
+	if err := s.migrarV42(); err != nil { // antiguidade do GRUPO: limpa seed global se órfã (correção 09/10)
+		return nil, err
+	}
 	return s, nil
 }
 

@@ -13,19 +13,21 @@ import (
 func semeiaCenarioAntiguidade(t *testing.T, app *App, st *Store) (grupoID, setorID, p3SgtID, pSdID, gerUID, chefeUID int64) {
 	t.Helper()
 
-	var funcaoSgt, funcaoSd int64
-	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE nome = '3º Sargento' AND tipo = 'antiguidade'`).Scan(&funcaoSgt); err != nil {
-		t.Fatalf("migração v40 não semeou 3º Sargento: %v", err)
-	}
-	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE nome = 'Soldado EV' AND tipo = 'antiguidade'`).Scan(&funcaoSd); err != nil {
-		t.Fatalf("migração v40 não semeou Soldado EV: %v", err)
-	}
-
 	res, err := st.db.Exec(`INSERT INTO grupos (nome, codigo) VALUES ('Cia Conf Antiguidade', 'CCA1')`)
 	if err != nil {
 		t.Fatalf("grupo: %v", err)
 	}
 	grupoID, _ = res.LastInsertId()
+
+	// correção 09/10: o filtro de conferência só aceita antiguidade DO GRUPO —
+	// o cenário semeia as tags do grupo (nomes distintos da seed global v40).
+	var funcaoSgt, funcaoSd int64
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, antiguidade) VALUES ('Sargento do Grupo', ?, 'antiguidade', 1) RETURNING id`, grupoID).Scan(&funcaoSgt); err != nil {
+		t.Fatalf("funcao sgt do grupo: %v", err)
+	}
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id, tipo, antiguidade) VALUES ('Soldado do Grupo', ?, 'antiguidade', 2) RETURNING id`, grupoID).Scan(&funcaoSd); err != nil {
+		t.Fatalf("funcao sd do grupo: %v", err)
+	}
 
 	res, err = st.db.Exec(`INSERT INTO setores (nome, grupo_id) VALUES ('Comunicações', ?)`, grupoID)
 	if err != nil {
@@ -65,33 +67,27 @@ func semeiaCenarioAntiguidade(t *testing.T, app *App, st *Store) (grupoID, setor
 	return
 }
 
-func TestV40MigraSemeiaFuncoesAntiguidade(t *testing.T) {
+func TestV42MigracaoAntiguidadeGrupo(t *testing.T) {
 	_, st, cleanup := setupTestApp(t)
 	defer cleanup()
 
+	// correção 09/10: a v40 semeava catálogo global inventado (grupo_id NULL).
+	// A v42 apaga a seed quando nada referencia (banco novinho: nada referencia)
+	// — a antiguidade válida é a cadastrada pelo gerente em cada grupo.
 	var n int
-	if err := st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE tipo = 'antiguidade'`).Scan(&n); err != nil {
-		t.Fatalf("count funcoes: %v", err)
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE grupo_id IS NULL AND (tipo = 'antiguidade' OR tipo IS NULL)`).Scan(&n); err != nil {
+		t.Fatalf("count seed global: %v", err)
 	}
-	if n < 14 {
-		t.Fatalf("esperava >= 14 funções de antiguidade semeadas, obtive %d", n)
+	if n != 0 {
+		t.Fatalf("v42 deveria ter apagado a seed global órfã, restaram %d", n)
 	}
-	var paiID int64
-	var paiNome string
-	if err := st.db.QueryRow(`SELECT f.pai_id, COALESCE(p.nome,'') FROM funcoes f LEFT JOIN funcoes p ON p.id = f.pai_id WHERE f.nome = '3º Sargento' AND f.tipo = 'antiguidade'`).Scan(&paiID, &paiNome); err != nil {
-		t.Fatalf("3º Sargento não semeada: %v", err)
+	// idempotência: rodar de novo não duplica nem re-semeia
+	if err := st.migrarV42(); err != nil {
+		t.Fatalf("migrarV42 idempotente: %v", err)
 	}
-	if paiID == 0 || paiNome != "Praças" {
-		t.Fatalf("3º Sargento deveria ser filha do nó 'Praças', pai=%d (%s)", paiID, paiNome)
-	}
-	// idempotência: rodar de novo não duplica
-	if err := st.migrarV40(); err != nil {
-		t.Fatalf("migrarV40 idempotente: %v", err)
-	}
-	var n2 int
-	_ = st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE nome = '3º Sargento' AND tipo = 'antiguidade'`).Scan(&n2)
-	if n2 != 1 {
-		t.Fatalf("seed não é idempotente: %d ocorrências de 3º Sargento", n2)
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE grupo_id IS NULL AND (tipo = 'antiguidade' OR tipo IS NULL)`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("seed global reapareceu ao rodar v42 de novo (%d)", n)
 	}
 }
 
@@ -102,9 +98,10 @@ func TestConferenciaPorAntiguidadeFiltro(t *testing.T) {
 	grupoID, _, p3SgtID, pSdID, _, _ := semeiaCenarioAntiguidade(t, app, st)
 	ckGer := loginAs(t, app, "ger_conf_a", "senha12345")
 
+	// correção 09/10: o filtro usa a tag do GRUPO (função da pessoa semeada)
 	var fSgt int64
-	if err := st.db.QueryRow(`SELECT id FROM funcoes WHERE nome = '3º Sargento' AND tipo = 'antiguidade'`).Scan(&fSgt); err != nil {
-		t.Fatalf("3º Sargento: %v", err)
+	if err := st.db.QueryRow(`SELECT funcao_id FROM pessoas WHERE id = ?`, p3SgtID).Scan(&fSgt); err != nil {
+		t.Fatalf("funcao do grupo: %v", err)
 	}
 
 	// T2a: iniciar com funcao_ids (sem setores) → 200 + conferência criada
@@ -120,7 +117,7 @@ func TestConferenciaPorAntiguidadeFiltro(t *testing.T) {
 		t.Fatalf("conferencia_id ausente: %v", res)
 	}
 
-	// T2b: hoje traz modo=antiguidade, funcoes_filtro com 3º Sargento e só a pessoa do filtro
+	// T2b: hoje traz modo=antiguidade, funcoes_filtro com a tag do grupo e só a pessoa do filtro
 	rr, res = doJSONReq(app, "GET", "/api/conferencia/hoje", nil, ckGer)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("hoje falhou: %d", rr.Code)
@@ -129,7 +126,7 @@ func TestConferenciaPorAntiguidadeFiltro(t *testing.T) {
 		t.Fatalf("esperava modo=antiguidade, obtive %v", res["modo"])
 	}
 	filtro, _ := res["funcoes_filtro"].([]any)
-	if len(filtro) != 1 || filtro[0] != "3º Sargento" {
+	if len(filtro) != 1 || filtro[0] != "Sargento do Grupo" {
 		t.Fatalf("funcoes_filtro inesperado: %v", res["funcoes_filtro"])
 	}
 	pessoas, _ := res["pessoas"].([]any)
@@ -186,10 +183,9 @@ func TestPreFechamentoSetor(t *testing.T) {
 	_, setorID, p3SgtID, pSdID, _, chefeUID := semeiaCenarioAntiguidade(t, app, st)
 	ckGer := loginAs(t, app, "ger_conf_a", "senha12345")
 
+	// despacha conferência com filtro + setor (tag do grupo, correção 09/10)
 	var fSgt int64
-	_ = st.db.QueryRow(`SELECT id FROM funcoes WHERE nome = '3º Sargento' AND tipo = 'antiguidade'`).Scan(&fSgt)
-
-	// despacha conferência com filtro + setor
+	_ = st.db.QueryRow(`SELECT funcao_id FROM pessoas WHERE id = ?`, p3SgtID).Scan(&fSgt)
 	rr, res := doJSONReq(app, "POST", "/api/conferencia/despachar", map[string]any{
 		"nome":       "Conf PreFech",
 		"setores":    []int64{setorID},

@@ -44,15 +44,18 @@ func (a *App) validarSetoresDoGrupo(grupoID int64, setores []int64) ([]int64, er
 	return unicos, nil
 }
 
-// validarFuncoesAntiguidade (onda 09/10): valida que cada id existe, está ativo
-// e é função de posto/graduação (tipo 'antiguidade' ou legado NULL). Chame ANTES
-// de criar a conferência — erro aqui é 400, nunca conferência órfã.
-func (a *App) validarFuncoesAntiguidade(ids []int64) error {
+// validarFuncoesAntiguidadeDoGrupo (correção 09/10 — ordem do dono): valida
+// que cada id existe, está ativo, é função de posto/graduação (tipo
+// 'antiguidade' ou legado NULL) e pertence ao GRUPO da conferência
+// (funcoes.grupo_id = grupoID). A seed global (grupo_id NULL) NÃO vale mais
+// para conferências novas — antiguidade é a cadastrada pelo gerente do grupo.
+// Chame ANTES de criar a conferência — erro aqui é 400, nunca conferência órfã.
+func (a *App) validarFuncoesAntiguidadeDoGrupo(grupoID int64, ids []int64) error {
 	for _, fid := range ids {
 		var n int
-		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE id = ? AND ativo = 1 AND (tipo = 'antiguidade' OR tipo IS NULL)`, fid).Scan(&n)
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE id = ? AND ativo = 1 AND (tipo = 'antiguidade' OR tipo IS NULL) AND grupo_id = ?`, fid, grupoID).Scan(&n)
 		if n == 0 {
-			return fmt.Errorf("funcao_id %d invalida ou nao e de antiguidade", fid)
+			return fmt.Errorf("funcao_id %d invalida, inativa ou nao pertence ao grupo", fid)
 		}
 	}
 	return nil
@@ -187,9 +190,10 @@ func (a *App) hConferenciaDespachar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// onda 09/10: funcao_ids inválido → 400 ANTES de criar a conferência
+	// (correção 09/10: só vale função de antiguidade DO GRUPO da conferência)
 	if len(req.FuncaoIDs) > 0 {
-		if err := a.validarFuncoesAntiguidade(req.FuncaoIDs); err != nil {
-			jsonErro(w, http.StatusBadRequest, "posto/graduação inválido no filtro")
+		if err := a.validarFuncoesAntiguidadeDoGrupo(*u.GrupoID, req.FuncaoIDs); err != nil {
+			jsonErro(w, http.StatusBadRequest, "posto/graduação inválido no filtro (precisa ser tag de antiguidade do grupo)")
 			return
 		}
 	}
