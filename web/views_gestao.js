@@ -446,7 +446,7 @@
       api('/api/catalogo/funcoes').catch(() => []),
       api('/api/catalogo/setores').catch(() => [])
     ]);
-    const funcoesLista = Array.isArray(funcoesRes) ? funcoesRes : (funcoesRes.funcoes || []);
+    const funcoesLista = Array.isArray(funcoesRes) ? (funcoesRes.funcoes || funcoesRes) : (funcoesRes.funcoes || []);
     const setoresLista = (Array.isArray(setoresRes) ? setoresRes : []).filter(s => s.ativo !== false);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
     // ITEM 2 (ordem Diretor 06/10): login é identificação SENSÍVEL — só o admin
@@ -847,11 +847,12 @@
               </select>
             </div>
             <div class="campo" style="flex:1">
-              <label>Função / Encarregado (opcional)</label>
+              <label>Antiguidade (opcional)</label>
               <select id="nuFuncao">
                 <option value="">— Nenhuma —</option>
                 ${funcoesLista.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
               </select>
+              <div style="font-size:11.5px; color:var(--tx3); margin-top:4px">Grau de antiguidade para exibição e ordem em relatórios. Designação de Encarregados: módulo Pessoal › Aba Funções.</div>
             </div>
           </div>
 
@@ -1003,11 +1004,12 @@
           </div>
 
           <div class="campo" style="margin-bottom:12px">
-            <label>Função (Opcional)</label>
+            <label>Antiguidade (opcional)</label>
             <select id="apFuncao">
               <option value="">— Nenhuma / Padrão —</option>
               ${funcoesLista.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
             </select>
+            <div style="font-size:11.5px; color:var(--tx3); margin-top:4px">Grau de antiguidade para exibição e ordem em relatórios. Designação de Encarregados: módulo Pessoal › Aba Funções.</div>
           </div>
 
           <div id="apAjuda" style="font-size:12px; color:var(--tx2); background:var(--painel2); border:1px solid var(--borda); border-radius:6px; padding:10px; margin-bottom:14px">
@@ -2059,7 +2061,7 @@
   }
 
   /* =====================================================================
-     #/grupos — GERENCIAR (f2): estrutura do grupo — Tags · Grupos · Operadores.
+     #/grupos — GERENCIAR (f2): estrutura do grupo — Antiguidade · Grupos · Operadores.
      O Pessoal (Efetivo · Funções · Setores) saiu para web/views_pessoal.js
      (módulo Pessoal, rota #/pessoal) — divisão gerir grupo × gerir pessoal.
      ===================================================================== */
@@ -2090,7 +2092,7 @@
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px">
             <div>
               <h3 style="margin:0 0 4px">Catálogos & TAGS Organizacionais</h3>
-              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Tags, Setores, Funções e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
+              <p style="color:var(--tx2); font-size:12.5px; margin:0">Gerencie Antiguidade, Setores e Destinos. Superiores podem editar itens próprios e de subordinados; itens de superiores são somente leitura (🔒).</p>
             </div>
           </div>
           <div style="background:var(--painel2); border:1px solid var(--borda); border-radius:var(--raio); padding:14px; margin-bottom:16px">
@@ -2103,7 +2105,7 @@
                 <select id="cgT">
                   <optgroup label="Tags de Pessoal">
                     <option value="destinos">📍 Destinos (Faltas Justificadas)</option>
-                    <option value="funcoes">🎖️ Funções</option>
+                    <option value="funcoes">🎖️ Antiguidade</option>
                   </optgroup>
                   <optgroup label="Tags de Material">
                     <option value="tags">🏷️ Situação do Material (Disponível, etc.)</option>
