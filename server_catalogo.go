@@ -328,9 +328,18 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 			out = append(out, linha)
 		}
 	}
-	// v368: envelope {funcoes, total} — total prova que a lista de antiguidade
-	// é o payload inteiro (front exibe cadeiras de grupo nunca mais aqui).
-	jsonOK(w, map[string]any{"funcoes": out, "total": len(out)})
+	// v368, correção 09/10 (regressão em produção): o envelope {funcoes, total}
+	// é EXCLUSIVO do catálogo de funções (contrato v368 cravado em
+	// TestCatalogoFuncoes*). Estava no fim do handler SEM escopo de `t` e
+	// embrulhava TODOS os catálogos ({t}); o front consome setores/tags/etc.
+	// como array (ativosDe/forEach) → TypeError → toast "Falha ao carregar a
+	// tela" ao abrir o módulo Pessoal como gerente. Consumidores do envelope
+	// de funções usam `funcoesRes.funcoes || funcoesRes` — seguem compatíveis.
+	if t == "funcoes" {
+		jsonOK(w, map[string]any{"funcoes": out, "total": len(out)})
+		return
+	}
+	jsonOK(w, out)
 }
 
 func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
