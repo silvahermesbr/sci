@@ -14,7 +14,14 @@ func (s *Store) migrarV40() error {
 	var v int
 	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 40`).Scan(&v)
 	if v == 40 {
-		return nil
+		// Defesa (revisão 09/10): marca 40 pode ter sido gravada em banco de dev
+		// por binário que usava v40 para o índice de material — só pular se a
+		// tabela desta migração realmente existir.
+		var n int
+		_ = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conferencia_funcoes'`).Scan(&n)
+		if n > 0 {
+			return nil
+		}
 	}
 
 	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS conferencia_funcoes (
