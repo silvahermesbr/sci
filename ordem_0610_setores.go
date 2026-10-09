@@ -33,10 +33,11 @@ func (a *App) hSetorExcluir(w http.ResponseWriter, r *http.Request) {
 	// módulo Pessoal (f2): enc/aux de pessoal EXCLUEM setor SÓ do PRÓPRIO grupo
 	// (sem subordinados — mesmo padrão do hGrupoNomearChefe); gerente mantém a
 	// hierarquia (próprio + subordinados); admin entra sempre.
-	// NOTE: função de pessoal = tem poder SEM papel do sistema — por isso o
-	// filtro é podeGestaoPessoal && Papel vazio, senão o gerente (que tem
-	// podeGestaoPessoal=true) cairia no ramo restrito e perderia subordinados.
-	encAux := u != nil && (u.Papel == "" || u.Papel == "encarregado") && a.podeGestaoPessoal(u)
+	// v367: o ramo restrito é por DESIGNAÇÃO na cadeira 'enc_pessoal', qualquer
+	// papel (operador/chefe_setor designados entram). Gerente/admin NÃO entram:
+	// podeGestaoPessoal(gerente)=true e o ramo restrito não consulta subordinados
+	// — excluí-los aqui preserva a hierarquia ampla deles (bug já cometido).
+	encAux := u != nil && u.Papel != "gerente" && u.Papel != "admin" && a.podeGestaoPessoal(u)
 	if u == nil || (u.Papel != "gerente" && u.Papel != "admin" && !encAux) {
 		jsonErro(w, http.StatusForbidden, "gestão de setores é do gerente ou do encarregado/auxiliar de pessoal")
 		return

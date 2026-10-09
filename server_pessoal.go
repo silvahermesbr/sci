@@ -285,10 +285,10 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if solicitante.Papel == "operador" || solicitante.Papel == "chefe_setor" {
-		jsonErro(w, http.StatusForbidden, "usuário sem permissão para editar outros usuários")
-		return
-	}
+	// v367: SEM trava por papel aqui — o bloco acima já devolveu 403 para
+	// não-admin/gerente SEM designação (fail-closed); operador/chefe_setor
+	// designados na cadeira enc_pessoal editam dentro das restrições de alvo
+	// e grupo impostas acima (doutrina: designação manda, qualquer papel).
 	if solicitante.Papel == "gerente" {
 		var alvoPapel string
 		var alvoGrupo int64
@@ -1167,16 +1167,14 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	//   ele seleciona os chefes de setor do grupo, e os chefes selecionam os
 	//   operadores dentre os usuários do seu setor.
 	// - CHEFE_SETOR promove a OPERADOR somente usuário DO SEU SETOR.
-	// - OPERADOR não cria conta nenhuma.
+	// - v367: designado na cadeira 'enc_pessoal' cria contas MESMO COM papel de
+	//   sistema (operador/chefe_setor) — o cargo manda; sem designação segue sem
+	//   criar. Gerente/admin inalterados.
 	// A liberação do menu de gestão no front é atrelada à FUNÇÃO de encarregado
-	// de pessoal (catálogo do grupo); a defesa dura aqui é por PAPEL.
-	if u.Papel == "operador" {
-		jsonErro(w, http.StatusForbidden, "operador não cria contas")
-		return
-	}
-	// ordem 06/10: ENCARREGADO/AUXILIAR DE PESSOAL (sem papel do sistema) criam
-	// contas, mas só operador/chefe_setor do PRÓPRIO grupo — criar gerente/admin
-	// é poder de gerente/admin.
+	// de pessoal (catálogo do grupo); a defesa dura aqui é pela DESIGNAÇÃO.
+	// ordem 06/10: ENCARREGADO/AUXILIAR DE PESSOAL criam contas, mas só
+	// operador/chefe_setor do PRÓPRIO grupo — criar gerente/admin é poder de
+	// gerente/admin.
 	if u.Papel != "admin" && u.Papel != "gerente" && a.podeGestaoPessoal(u) {
 		if papel != "operador" && papel != "chefe_setor" {
 			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar de pessoal só designa operador ou chefe de setor do próprio grupo")
@@ -1200,15 +1198,17 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			req.GrupoID = u.GrupoID // força o próprio grupo, ignore o que vier no corpo
+		// v367: o ramo do DESIGNADO vem ANTES dos papéis de sistema — operador/
+		// chefe_setor com cadeira 'enc_pessoal' criam operador/chefe_setor do
+		// próprio grupo (grupo já forçado acima); sem designação caem nos ramos
+		// de papel abaixo.
+		case a.podeGestaoPessoal(u):
 		case u.Papel == "chefe_setor":
 			if papel != "operador" {
 				jsonErro(w, http.StatusForbidden, "chefe de setor só designa operadores")
 				return
 			}
 			req.GrupoID = u.GrupoID
-		case a.podeGestaoPessoal(u):
-			// encarregado/auxiliar: já validado acima (só operador/chefe_setor
-			// do próprio grupo — grupo já forçado). Passa.
 		default:
 			jsonErro(w, http.StatusForbidden, "sem permissão para criar contas")
 			return

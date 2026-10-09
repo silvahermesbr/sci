@@ -211,19 +211,35 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 	}
 
 	// ==========================================
-	// PERSONA 6: Operador & Chefe de Setor
+	// PERSONA 6: Operador & Chefe de Setor (doutrina v367)
+	// O Operador FOI designado AUXILIAR de Enc. Pessoal no setup (linha do
+	// ckGerente) — v367: designação manda em qualquer papel, então ele TEM
+	// gestão de pessoal. O Chefe de Setor NÃO tem designação → segue 403
+	// (fail-closed preservado).
 	// ==========================================
-	for nome, ck := range map[string]*http.Cookie{"Operador": ckOperador, "Chefe de Setor": ckChefe} {
-		// Conferência: 200 (operam rotas normais de conferência)
-		rr, _ = doJSONReq(app, "GET", "/api/conferencias/hoje", nil, ck)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("%s deve acessar conferencias/hoje (200), veio %d", nome, rr.Code)
-		}
-		// Gestão de Pessoal: 403 (sem acesso)
-		rr, _ = doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "Invasor"}, ck)
-		if rr.Code != http.StatusForbidden {
-			t.Fatalf("%s NÃO deve gerenciar pessoas (403), veio %d", nome, rr.Code)
-		}
+	// Operador (aux de enc_pessoal designado): conferência 200...
+	rr, _ = doJSONReq(app, "GET", "/api/conferencias/hoje", nil, ckOperador)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Operador deve acessar conferencias/hoje (200), veio %d", rr.Code)
+	}
+	// ...e gestão de pessoal ABERTA (cria no próprio grupo, payload válido → 200)
+	rr, _ = doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "Criado Pelo Operador", "nome_completo": "Criado Pelo Operador Aux"}, ckOperador)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Operador designado aux de Enc. Pessoal deve gerenciar pessoas (200), veio %d", rr.Code)
+	}
+	// Operador NÃO pode designar membros (designação é exclusiva de gerente/admin)
+	rr, _ = doJSONReq(app, "POST", "/api/grupo/funcoes/membros", map[string]any{"funcao_id": fPess, "usuario_id": idOperador, "titularidade": "auxiliar"}, ckOperador)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("Operador não pode designar membros (403), veio %d", rr.Code)
+	}
+	// Chefe de Setor SEM designação: conferência 200, gestão de pessoal 403
+	rr, _ = doJSONReq(app, "GET", "/api/conferencias/hoje", nil, ckChefe)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("Chefe deve acessar conferencias/hoje (200), veio %d", rr.Code)
+	}
+	rr, _ = doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "Invasor Chefe"}, ckChefe)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("Chefe sem designação NÃO deve gerenciar pessoas (403), veio %d", rr.Code)
 	}
 
 	// ==========================================
@@ -250,9 +266,15 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 		t.Fatalf("Anti-escalação violada! Renomear item deu poder indevido (esperado 403, veio %d)", rr.Code)
 	}
 
-	// 2. Operador tenta criar função com tipo='grupo' -> 403 (middleware de papel age ANTES do gate hardcoded)
+	// 2. Operador tenta criar função com tipo='grupo' -> JAMIS cria (v367:
+	// designado passa pela guarda de middleware e morre no gate hardcoded 400;
+	// sem designação morre 403 no middleware — o invariante é NÃO CRIAR).
 	rr, _ = doJSONReq(app, "POST", "/api/catalogo/funcoes", map[string]any{"nome": "Tentativa Hacker", "tipo": "grupo"}, ckOperador)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("Operador criar função tipo=grupo deve ser 403 (guarda de papel), veio %d", rr.Code)
+	if rr.Code == http.StatusOK || rr.Code == http.StatusCreated {
+		t.Fatalf("Operador NÃO pode criar função tipo=grupo (veio %d)", rr.Code)
+	}
+	var nHack int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE nome='Tentativa Hacker'`).Scan(&nHack); err != nil || nHack != 0 {
+		t.Fatalf("função tipo=grupo do operador NÃO pode ser criada (count=%d, err=%v)", nHack, err)
 	}
 }
