@@ -494,9 +494,10 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// onda 09/10: funcao_ids inválido → 400 ANTES de criar a conferência
+	// (correção 09/10: só vale função de antiguidade DO GRUPO da conferência)
 	if len(req.FuncaoIDs) > 0 {
-		if err := a.validarFuncoesAntiguidade(req.FuncaoIDs); err != nil {
-			jsonErro(w, http.StatusBadRequest, "posto/graduação inválido no filtro")
+		if err := a.validarFuncoesAntiguidadeDoGrupo(*u.GrupoID, req.FuncaoIDs); err != nil {
+			jsonErro(w, http.StatusBadRequest, "posto/graduação inválido no filtro (precisa ser tag de antiguidade do grupo)")
 			return
 		}
 	}
@@ -1587,6 +1588,8 @@ func (a *App) rotasConferencia() {
 	m.Handle("POST /api/conferencia/{id}/setor/{setor_id}/reabrir", confMarcarAuth(a.hConferenciaSetorReabrir))
 	// onda 09/10: pré-fechamento — lista rápida do setor p/ conferência no modal antes do Despachar
 	m.Handle("GET /api/conferencia/{id}/setor/{setor_id}/pre_fechamento", confMarcarAuth(a.hSetorPreFechamento))
+	// correção 09/10: escada de antiguidade DO GRUPO p/ o picker do modal (sem seed global)
+	m.Handle("GET /api/conferencia/funcoes-antiguidade", a.auth(false, a.hConferenciaFuncoesAntiguidade))
 	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.auth(false, a.hConferenciaPDF))
 
 	// Escala de guarda (onda 05/10): gerente designa chefe/operador; chefe

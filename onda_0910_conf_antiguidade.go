@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 func (s *Store) migrarV40() error {
@@ -242,4 +243,149 @@ func (a *App) hSetorPreFechamento(w http.ResponseWriter, r *http.Request) {
 		"verificados": verificados,
 		"itens":       itens,
 	})
+}
+
+// ---------- CORREÇÃO 09/10 (ordem do dono): antiguidade é a DO GRUPO --------
+// A conferência por antiguidade NÃO inventa postos/graduações: usa as tags
+// mantidas pelo gerente no catálogo do grupo (funcoes.grupo_id = grupo). A
+// seed global da v40 (grupo_id NULL) sai do cardápio: o picker tem endpoint
+// próprio escopado, a validação de criação exige grupo, e a v42 apaga a seed
+// quando nada a referencia (linhas referenciadas ficam inertes — compat R4).
+
+// avisoSemTagsAntiguidade: mensagem única front/back (R3).
+const avisoSemTagsAntiguidade = "Grupo sem tags de antiguidade — cadastre no catálogo do grupo (módulo Pessoal)"
+
+// FuncaoAntig: item da escada de antiguidade de um grupo (tag do gerente).
+type FuncaoAntig struct {
+	ID          int64
+	Nome        string
+	PaiID       *int64
+	Antiguidade int
+}
+
+// funcoesAntiguidadeDoGrupo devolve as tags de antiguidade DO GRUPO
+// (funcoes.grupo_id = grupo), ordenadas pelo campo antiguidade. soAtivas=true
+// filtra ativo=1 (criação de conferência). Sem herança de grupo superior:
+// cada grupo confere pela escada que o próprio gerente cadastrou.
+func (a *App) funcoesAntiguidadeDoGrupo(grupoID int64, soAtivas bool) []FuncaoAntig {
+	out := []FuncaoAntig{}
+	q := `SELECT id, nome, pai_id, COALESCE(antiguidade, 999) FROM funcoes
+	      WHERE grupo_id = ? AND (tipo = 'antiguidade' OR tipo IS NULL)`
+	if soAtivas {
+		q += ` AND ativo = 1`
+	}
+	q += ` ORDER BY COALESCE(antiguidade, 999), id`
+	rows, err := a.st.db.Query(q, grupoID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var f FuncaoAntig
+		if rows.Scan(&f.ID, &f.Nome, &f.PaiID, &f.Antiguidade) == nil {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// GET /api/conferencia/funcoes-antiguidade — alimenta o picker "por
+// antiguidade" do modal. Escopo = grupo da conferência, que nasce no grupo do
+// usuário logado (escopoDoUsuario). Admin (sem grupo) recebe lista vazia +
+// flag de aviso — nunca a lista global.
+func (a *App) hConferenciaFuncoesAntiguidade(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	escopo := escopoDoUsuario(u)
+	if escopo <= 0 {
+		jsonOK(w, map[string]any{
+			"funcoes":  []map[string]any{},
+			"total":    0,
+			"tem_tags": false,
+			"aviso":    avisoSemTagsAntiguidade,
+		})
+		return
+	}
+	lista := a.funcoesAntiguidadeDoGrupo(escopo, true)
+	its := []map[string]any{}
+	for _, f := range lista {
+		pai := int64(0)
+		if f.PaiID != nil {
+			pai = *f.PaiID
+		}
+		its = append(its, map[string]any{
+			"id":          f.ID,
+			"nome":        f.Nome,
+			"pai_id":      pai,
+			"antiguidade": f.Antiguidade,
+		})
+	}
+	resp := map[string]any{
+		"funcoes":  its,
+		"total":    len(its),
+		"tem_tags": len(its) > 0,
+	}
+	if len(its) == 0 {
+		resp["aviso"] = avisoSemTagsAntiguidade
+	}
+	jsonOK(w, resp)
+}
+
+// migrarV43 (correção 09/10): a conferência por antiguidade usa a escada DO
+// GRUPO (tags do gerente), não a seed global inventada pela v40.
+//   - Novas conferências só aceitam funcao com grupo_id = grupo da conferência
+//     (validação nos handlers) — o picker não oferece mais a seed global.
+//   - A seed global (funcoes.grupo_id IS NULL AND tipo 'antiguidade') é APAGADA
+//     SOMENTE se nada referenciar (pessoas, usuarios, usuario_papeis,
+//     conferencia_funcoes). Linhas referenciadas ficam no banco: conferências
+//     já criadas continuam abrindo e conferindo (compat), mas deixam de ser
+//     oferecidas para novas conferências. Idempotente; nunca renumera v40/v41.
+func (s *Store) migrarV43() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 43`).Scan(&v)
+	if v == 43 {
+		return nil
+	}
+
+	ids := []int64{}
+	rows, err := s.db.Query(`SELECT id FROM funcoes WHERE grupo_id IS NULL AND (tipo = 'antiguidade' OR tipo IS NULL)`)
+	if err != nil {
+		return fmt.Errorf("migração v43 select seed global: %w", err)
+	}
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+
+	if len(ids) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		args := make([]any, len(ids))
+		for i, id := range ids {
+			args[i] = id
+		}
+		referencias := []string{
+			`SELECT COUNT(*) FROM pessoas WHERE funcao_id IN (` + ph + `)`,
+			`SELECT COUNT(*) FROM usuarios WHERE funcao_id IN (` + ph + `)`,
+			`SELECT COUNT(*) FROM usuario_papeis WHERE funcao_id IN (` + ph + `)`,
+			`SELECT COUNT(*) FROM conferencia_funcoes WHERE funcao_id IN (` + ph + `)`,
+		}
+		total := 0
+		for _, rq := range referencias {
+			var n int
+			if err := s.db.QueryRow(rq, args...).Scan(&n); err != nil {
+				return fmt.Errorf("migração v42 checagem de referências: %w", err)
+			}
+			total += n
+		}
+		if total == 0 {
+			if _, e := s.db.Exec(`DELETE FROM funcoes WHERE grupo_id IS NULL AND (tipo = 'antiguidade' OR tipo IS NULL)`, args...); e != nil {
+				return fmt.Errorf("migração v42 delete seed global: %w", e)
+			}
+		}
+		// Com referências: mantém as linhas (compat R4) — picker e validação já
+		// não as oferecem/aceitam para conferências novas.
+	}
+	return s.marcarVersao(43)
 }

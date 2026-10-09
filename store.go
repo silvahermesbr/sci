@@ -170,6 +170,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV42(); err != nil { // destrava designado estrangulado + crava chave em cadeira sem chave (encarregados)
 		return nil, err
 	}
+	if err := s.migrarV43(); err != nil { // antiguidade do GRUPO: limpa seed global se órfã (correção 09/10; renumerada v42->v43 na integração — colisão com migração dos encarregados)
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2450,6 +2453,7 @@ func (s *Store) migrarV34() error {
 //     tem UM chefe), usuario_id repetível entre setores (multi-chefia);
 //   - usuario_papeis.papel='chefe_setor' vira SÓ o acesso de sessão: existe
 //     enquanto o usuário comanda ≥1 setor no grupo (purga em nomear/destituir).
+//
 // BACKFILL do estado atual: para cada setor S, o usuário com papel chefe_setor
 // cujo usuarios.setor_id = S (modelo do item 1). Idempotente: CREATE TABLE IF
 // NOT EXISTS + INSERT OR IGNORE (UNIQUE setor_id deduplica re-execuções).
@@ -2741,7 +2745,6 @@ func (s *Store) migrarV38() error {
 		}
 	}
 
-
 	// Reserva operacional nasce desativada ("0")
 	_, _ = s.db.Exec(`UPDATE configuracoes SET valor = '0' WHERE chave = 'MODO_RESERVA' AND valor = '1'`)
 
@@ -2811,23 +2814,23 @@ func (s *Store) migrarV41() error {
 
 // migrarV42 (fix/encarregado-acesso-modulos 09/10 — ordem do dono: "o escalado
 // deve ter acesso a TODOS os módulos que o respectivo encarregado tem"):
-//   1. DESTRAVA o designado estrangulado: o sync antigo do POST
-//      /api/grupo/funcoes/membros fabricava linha em usuario_papeis com
-//      papel='operador' para conta SEM papel do sistema; no login seguinte essa
-//      linha virava o papel ATIVO da sessão e o portão anti-escalação
-//      (operador não ganha poder por designação) negava tudo. Defesa
-//      sqlite_master nas tabelas dependentes: apaga SÓ a linha-fantasia
-//      (papel='operador' SEM comando real — não é chefe em chefe_setores, não é
-//      gerente ativo, sem linha gêmea em usuarios.papel='operador') e move
-//      sessões que apontavam para ela para o caminho do designado puro
-//      (papel_ativo_id = NULL). Conta que TEM operador real em usuarios.papel
-//      não é tocada (o papel dela é legítimo e permanece).
-//   2. CRAVA chave nas cadeiras de grupo sem chave: designação feita sobre
-//      função de grupo SEM chave (janela pré-v39/banco legado) não concedia
-//      poder nenhum — a detecção é por chave imutável. Resolve para
-//      'enc_pessoal'/'enc_material' pelo nome normalizado; colisão de nome
-//      com chave já existente = linha legada descartada (só uma cadeira por
-//      chave, índice único). Idempotente.
+//  1. DESTRAVA o designado estrangulado: o sync antigo do POST
+//     /api/grupo/funcoes/membros fabricava linha em usuario_papeis com
+//     papel='operador' para conta SEM papel do sistema; no login seguinte essa
+//     linha virava o papel ATIVO da sessão e o portão anti-escalação
+//     (operador não ganha poder por designação) negava tudo. Defesa
+//     sqlite_master nas tabelas dependentes: apaga SÓ a linha-fantasia
+//     (papel='operador' SEM comando real — não é chefe em chefe_setores, não é
+//     gerente ativo, sem linha gêmea em usuarios.papel='operador') e move
+//     sessões que apontavam para ela para o caminho do designado puro
+//     (papel_ativo_id = NULL). Conta que TEM operador real em usuarios.papel
+//     não é tocada (o papel dela é legítimo e permanece).
+//  2. CRAVA chave nas cadeiras de grupo sem chave: designação feita sobre
+//     função de grupo SEM chave (janela pré-v39/banco legado) não concedia
+//     poder nenhum — a detecção é por chave imutável. Resolve para
+//     'enc_pessoal'/'enc_material' pelo nome normalizado; colisão de nome
+//     com chave já existente = linha legada descartada (só uma cadeira por
+//     chave, índice único). Idempotente.
 func (s *Store) migrarV42() error {
 	var v int
 	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 42`).Scan(&v)
@@ -2943,4 +2946,3 @@ func (s *Store) migrarV42() error {
 
 	return s.marcarVersao(42)
 }
-
