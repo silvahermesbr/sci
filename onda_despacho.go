@@ -15,6 +15,7 @@ type confIniciarReq struct {
 	PrazoFinal  string  `json:"prazo_final"`
 	Encarregado *int64  `json:"encarregado_usuario_id"`
 	Setores     []int64 `json:"setores"`
+	FuncaoIDs   []int64 `json:"funcao_ids"`
 }
 
 // validarSetoresDoGrupo verifica se cada setor existe, está ativo e pertence ao grupo (ou é global).
@@ -41,6 +42,20 @@ func (a *App) validarSetoresDoGrupo(grupoID int64, setores []int64) ([]int64, er
 		unicos = append(unicos, sid)
 	}
 	return unicos, nil
+}
+
+// validarFuncoesAntiguidade (onda 09/10): valida que cada id existe, está ativo
+// e é função de posto/graduação (tipo 'antiguidade' ou legado NULL). Chame ANTES
+// de criar a conferência — erro aqui é 400, nunca conferência órfã.
+func (a *App) validarFuncoesAntiguidade(ids []int64) error {
+	for _, fid := range ids {
+		var n int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM funcoes WHERE id = ? AND ativo = 1 AND (tipo = 'antiguidade' OR tipo IS NULL)`, fid).Scan(&n)
+		if n == 0 {
+			return fmt.Errorf("funcao_id %d invalida ou nao e de antiguidade", fid)
+		}
+	}
+	return nil
 }
 
 // criarConferenciaBase cria a conferência com tipo padrão, aplica carry-over e escalas,
@@ -127,6 +142,14 @@ func (a *App) criarConferenciaBase(u *Usuario, req confIniciarReq) (int64, error
 		  AND s.id IN (SELECT DISTINCT setor_id FROM pessoas WHERE grupo_id = ? AND status = 'ativo' AND setor_id IS NOT NULL)
 	`, id, grupoID, grupoID)
 
+	// FuncaoIDs: filtro de antiguidade na conferencia (já validados nos handlers
+	// ANTES da criação — aqui só semea; onda 09/10)
+	if len(req.FuncaoIDs) > 0 {
+		for _, fid := range req.FuncaoIDs {
+			_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO conferencia_funcoes (conferencia_id, funcao_id) VALUES (?, ?)`, id, fid)
+		}
+	}
+
 	return id, nil
 }
 
@@ -161,6 +184,14 @@ func (a *App) hConferenciaDespachar(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "setor inválido ou inexistente")
 		return
+	}
+
+	// onda 09/10: funcao_ids inválido → 400 ANTES de criar a conferência
+	if len(req.FuncaoIDs) > 0 {
+		if err := a.validarFuncoesAntiguidade(req.FuncaoIDs); err != nil {
+			jsonErro(w, http.StatusBadRequest, "posto/graduação inválido no filtro")
+			return
+		}
 	}
 
 	cid, err := a.criarConferenciaBase(u, req)

@@ -44,6 +44,11 @@ func (a *App) hConferenciaEstado(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// onda 09/10: conferência POR ANTIGUIDADE — o hash por setor reflete SÓ o
+	// subconjunto convocado (mesmo predicado de hoje/pessoas). Sem filtro,
+	// predFiltro fica vazio e a query é idêntica à legado.
+	predFiltro, argsFiltro := a.predicadoAntiguidade(cid)
+
 	// UMA query: para cada setor ativo do escopo, concatenação determinística
 	// do estado de CADA militar (pessoa sem lançamento contribui token
 	// constante '-') + status setorial + contagens. A ordem é p.id (estável
@@ -51,28 +56,28 @@ func (a *App) hConferenciaEstado(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.st.db.Query(`
 		SELECT s.id,
 		       COALESCE((SELECT cs.status FROM conferencia_setores cs
-		                 WHERE cs.conferencia_id = ? AND cs.setor_id = s.id), 'nao_iniciada'),
+		         WHERE cs.conferencia_id = ? AND cs.setor_id = s.id), 'nao_iniciada'),
 		       (SELECT group_concat(x.tok, '')
 		          FROM (SELECT COALESCE((
-		                 SELECT pr.pessoa_id || ':' || COALESCE(pr.situacao, '') || ':'
-		                        || COALESCE(pr.destino_id, 0) || ':' || COALESCE(pr.observacao, '') || ':'
-		                        || COALESCE(pr.verificado, 0)
-		                 FROM presencas pr
-		                 WHERE pr.conferencia_id = ? AND pr.pessoa_id = p.id), '-')
-		                 AS tok
-		              FROM pessoas p
-		              WHERE p.setor_id = s.id AND p.status = 'ativo'
-		                AND (? <= 0 OR p.grupo_id = ?)
-		              ORDER BY p.id) x),
+		         SELECT pr.pessoa_id || ':' || COALESCE(pr.situacao, '') || ':'
+		                || COALESCE(pr.destino_id, 0) || ':' || COALESCE(pr.observacao, '') || ':'
+		                || COALESCE(pr.verificado, 0)
+		         FROM presencas pr
+		         WHERE pr.conferencia_id = ? AND pr.pessoa_id = p.id), '-')
+		         AS tok
+		      FROM pessoas p
+		      WHERE p.setor_id = s.id AND p.status = 'ativo'
+		        AND (? <= 0 OR p.grupo_id = ?)` + predFiltro + `
+		      ORDER BY p.id) x),
 		       (SELECT COUNT(*) FROM pessoas p3
-		         WHERE p3.setor_id = s.id AND p3.status = 'ativo' AND (? <= 0 OR p3.grupo_id = ?)),
+		         WHERE p3.setor_id = s.id AND p3.status = 'ativo' AND (? <= 0 OR p3.grupo_id = ?)` + predFiltro + `),
 		       (SELECT COUNT(*) FROM pessoas p4
 		         JOIN presencas pr2 ON pr2.conferencia_id = ? AND pr2.pessoa_id = p4.id AND pr2.verificado = 1
-		         WHERE p4.setor_id = s.id AND p4.status = 'ativo' AND (? <= 0 OR p4.grupo_id = ?))
+		         WHERE p4.setor_id = s.id AND p4.status = 'ativo' AND (? <= 0 OR p4.grupo_id = ?)` + predFiltro + `)
 		FROM setores s
 		WHERE s.ativo = 1 AND (? <= 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
 		ORDER BY s.id
-	`, cid, cid, escopo, escopo, escopo, escopo, cid, escopo, escopo, escopo, escopo)
+	`, cid, cid, escopo, escopo, argsFiltro, escopo, escopo, argsFiltro, cid, escopo, escopo, argsFiltro, escopo, escopo)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return

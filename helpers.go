@@ -37,6 +37,13 @@ func decodificar(r *http.Request, v any) error {
 }
 
 func (a *App) pessoasAtivas(escopo int64) []map[string]any {
+	return a.pessoasAtivasOpt(escopo, nil)
+}
+
+// pessoasAtivasOpt: pessoasAtivas com filtro opcional de funções (onda 09/10,
+// conferência por antiguidade). funcoes não vazio → só entram pessoas cuja
+// função (p.funcao_id, u2.funcao_id ou up2.funcao_id) esteja na lista.
+func (a *App) pessoasAtivasOpt(escopo int64, funcoes []int64) []map[string]any {
 	q := `
 		SELECT p.id, p.nome_guerra, p.nome_completo, COALESCE(s.nome,''),
 		       COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), ''))),
@@ -49,14 +56,30 @@ func (a *App) pessoasAtivas(escopo int64) []map[string]any {
 		LEFT JOIN usuario_papeis up2 ON up2.usuario_id = u2.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL)
 		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		WHERE p.status = 'ativo'`
+	funcoesArgs := []any{}
+	if len(funcoes) > 0 {
+		ph := ""
+		for i := range funcoes {
+			if i > 0 {
+				ph += ","
+			}
+			ph += "?"
+		}
+		q += ` AND (p.funcao_id IN (` + ph + `) OR u2.funcao_id IN (` + ph + `) OR up2.funcao_id IN (` + ph + `))`
+		for i := 0; i < 3; i++ {
+			for _, fid := range funcoes {
+				funcoesArgs = append(funcoesArgs, fid)
+			}
+		}
+	}
 	var rows *sql.Rows
 	var err error
 	if escopo > 0 {
 		rows, err = a.st.db.Query(q+` AND p.grupo_id = ?
-			ORDER BY COALESCE(s.nome,''), p.nome_guerra`, escopo)
+			ORDER BY COALESCE(s.nome,''), p.nome_guerra`, append(funcoesArgs, escopo)...)
 	} else if escopo == 0 {
 		rows, err = a.st.db.Query(q + `
-			ORDER BY COALESCE(s.nome,''), p.nome_guerra`)
+			ORDER BY COALESCE(s.nome,''), p.nome_guerra`, funcoesArgs...)
 	} else {
 		return []map[string]any{}
 	}

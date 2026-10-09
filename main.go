@@ -19,7 +19,7 @@ import (
 // (v38 = f3: novo modelo de encarregados com tipo='antiguidade'|'grupo' e chaves
 // imutáveis 'enc_pessoal'|'enc_material', índice parcial único e reserva desativada).
 // Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 39
+const versaoSchemaBinario = 40
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio

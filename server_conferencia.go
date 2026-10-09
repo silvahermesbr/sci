@@ -91,23 +91,44 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	}
 	temDespachos := len(despachadosMap) > 0
 
+	// Filtro por funções (antiguidade)
+	var filtroFuncoes []int64
+	var temFiltroFuncoes bool
+	var predFuncoes string
+	var argsPredFuncoes []any
+	if f.ID > 0 {
+		filtroFuncoes = a.funcoesFiltroDaConferencia(f.ID)
+		temFiltroFuncoes = len(filtroFuncoes) > 0
+		if temFiltroFuncoes {
+			predFuncoes, argsPredFuncoes = a.predicadoAntiguidade(f.ID)
+		}
+	}
+
 	var setoresStatus []map[string]any
 	if f.ID > 0 {
-		qSetores := `
-			SELECT s.id, s.nome, COALESCE(s.sigla, ''),
-			       COALESCE(cs.status, 'nao_iniciada'),
-			       cs.concluido_por, COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), cs.concluido_em,
-			       COUNT(DISTINCT p.id) AS total_efetivo,
-			       COUNT(DISTINCT CASE WHEN pr.verificado = 1 THEN p.id ELSE NULL END) AS total_verificados
-			FROM setores s
-			JOIN pessoas p ON p.setor_id = s.id AND p.status = 'ativo' AND (? <= 0 OR p.grupo_id = ?)
-			LEFT JOIN conferencia_setores cs ON cs.setor_id = s.id AND cs.conferencia_id = ?
-			LEFT JOIN usuarios u ON u.id = cs.concluido_por
-			LEFT JOIN presencas pr ON pr.conferencia_id = ? AND pr.pessoa_id = p.id
-			WHERE s.ativo = 1 AND (? <= 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
-			GROUP BY s.id, s.nome, s.sigla, cs.status, cs.concluido_por, u.nome_guerra, u.login, cs.concluido_em
-			ORDER BY s.nome ASC`
-		sRows, sErr := a.st.db.Query(qSetores, escopo, escopo, f.ID, f.ID, escopo, escopo)
+		qSetores := `SELECT s.id, s.nome, COALESCE(s.sigla, ''),
+		       COALESCE(cs.status, 'nao_iniciada'),
+		       cs.concluido_por, COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), cs.concluido_em,
+		       COUNT(DISTINCT p.id) AS total_efetivo,
+		       COUNT(DISTINCT CASE WHEN pr.verificado = 1 THEN p.id ELSE NULL END) AS total_verificados
+		FROM setores s
+		JOIN pessoas p ON p.setor_id = s.id AND p.status = 'ativo' AND (? <= 0 OR p.grupo_id = ?)`
+		if temFiltroFuncoes {
+			qSetores += predFuncoes
+		}
+		qSetores += `
+		LEFT JOIN conferencia_setores cs ON cs.setor_id = s.id AND cs.conferencia_id = ?
+		LEFT JOIN usuarios u ON u.id = cs.concluido_por
+		LEFT JOIN presencas pr ON pr.conferencia_id = ? AND pr.pessoa_id = p.id
+		WHERE s.ativo = 1 AND (? <= 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
+		GROUP BY s.id, s.nome, s.sigla, cs.status, cs.concluido_por, u.nome_guerra, u.login, cs.concluido_em
+		ORDER BY s.nome ASC`
+		qArgs := []any{escopo, escopo}
+		for _, a := range argsPredFuncoes {
+			qArgs = append(qArgs, a)
+		}
+		qArgs = append(qArgs, f.ID, f.ID, escopo, escopo)
+		sRows, sErr := a.st.db.Query(qSetores, qArgs...)
 		if sErr == nil {
 			for sRows.Next() {
 				var sid int64
@@ -154,7 +175,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	dataOntem := tHoje.AddDate(0, 0, -1).Format("2006-01-02")
 	escaladosOntem := a.escaladosNaData(escopo, dataOntem)
 
-	pessoasGrupo := a.pessoasAtivas(escopo)
+	pessoasGrupo := a.pessoasAtivasOpt(escopo, filtroFuncoes)
 	totalBanco := len(pessoasGrupo)
 
 	// ordem 08/10 — corte por CONTEXTO ATIVO: chefe_setor e operador só
@@ -239,6 +260,33 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	}
 	totalSetores := len(setoresStatus)
 
+	// onda 09/10: modo da conferência + nomes das funções do filtro (antiguidade)
+	modoConf := "setores"
+	nomesFiltro := []string{}
+	if temFiltroFuncoes {
+		modoConf = "antiguidade"
+		ph := ""
+		argsNome := []any{}
+		for i, fid := range filtroFuncoes {
+			if i > 0 {
+				ph += ","
+			}
+			ph += "?"
+			argsNome = append(argsNome, fid)
+		}
+		rowsN, eN := a.st.db.Query(`SELECT nome FROM funcoes WHERE id IN (`+ph+`)
+			ORDER BY CASE WHEN tipo = 'antiguidade' THEN COALESCE(antiguidade, 999) ELSE 999 END, nome`, argsNome...)
+		if eN == nil {
+			for rowsN.Next() {
+				var nm string
+				if rowsN.Scan(&nm) == nil {
+					nomesFiltro = append(nomesFiltro, nm)
+				}
+			}
+			rowsN.Close()
+		}
+	}
+
 	jsonOK(w, map[string]any{
 		"conferencia":      form,
 		"setores_status":   setoresStatus,
@@ -250,6 +298,8 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		"total_verificado": totalVerificado,
 		"setores_fechados": setoresFechados,
 		"total_setores":    totalSetores,
+		"modo":             modoConf,
+		"funcoes_filtro":   nomesFiltro,
 	})
 }
 
@@ -439,6 +489,14 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 		setoresUnicos, err = a.validarSetoresDoGrupo(*u.GrupoID, req.Setores)
 		if err != nil {
 			jsonErro(w, http.StatusBadRequest, "setor inválido ou inexistente")
+			return
+		}
+	}
+
+	// onda 09/10: funcao_ids inválido → 400 ANTES de criar a conferência
+	if len(req.FuncaoIDs) > 0 {
+		if err := a.validarFuncoesAntiguidade(req.FuncaoIDs); err != nil {
+			jsonErro(w, http.StatusBadRequest, "posto/graduação inválido no filtro")
 			return
 		}
 	}
@@ -1527,6 +1585,8 @@ func (a *App) rotasConferencia() {
 	m.Handle("DELETE /api/conferencia/{id}", confAuth(a.hConferenciaDescartar))
 	m.Handle("POST /api/conferencia/{id}/setor/{setor_id}/concluir", confMarcarAuth(a.hConferenciaSetorConcluir))
 	m.Handle("POST /api/conferencia/{id}/setor/{setor_id}/reabrir", confMarcarAuth(a.hConferenciaSetorReabrir))
+	// onda 09/10: pré-fechamento — lista rápida do setor p/ conferência no modal antes do Despachar
+	m.Handle("GET /api/conferencia/{id}/setor/{setor_id}/pre_fechamento", confMarcarAuth(a.hSetorPreFechamento))
 	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.auth(false, a.hConferenciaPDF))
 
 	// Escala de guarda (onda 05/10): gerente designa chefe/operador; chefe
