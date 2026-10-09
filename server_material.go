@@ -481,9 +481,9 @@ func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request
 	if req.Data == "" {
 		req.Data = time.Now().In(a.horaLocal).Format("2006-01-02")
 	}
-	setorVal := req.SetorID
-	if setorVal <= 0 {
-		setorVal = 0
+	var setorVal *int64
+	if req.SetorID > 0 {
+		setorVal = &req.SetorID
 	}
 	res, err := a.st.db.Exec(
 		`INSERT INTO material_conferencias (grupo_id, setor_id, data, status, aberta_por, aberta_em)
@@ -520,7 +520,7 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	var data, st, apNome, abertaEm, fechadaEm, obs string
 	if err := a.st.db.QueryRow(
 		`SELECT mc.id, mc.grupo_id, COALESCE(mc.setor_id, 0), mc.data, mc.status,
-		        mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''), mc.aberta_em, mc.fechada_em,
+		        mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''), mc.aberta_em, COALESCE(mc.fechada_em, ''),
 		        COALESCE(mc.observacao, '')
 		 FROM material_conferencias mc
 		 LEFT JOIN usuarios ua ON ua.id = mc.aberta_por
