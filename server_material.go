@@ -870,6 +870,23 @@ func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 		ativo = 0
 	}
 	if req.ID > 0 {
+		var catGrupoID sql.NullInt64
+		if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_categorias WHERE id = ?`, req.ID).Scan(&catGrupoID); err != nil {
+			jsonErro(w, http.StatusNotFound, "categoria não encontrada")
+			return
+		}
+		if !catGrupoID.Valid || catGrupoID.Int64 == 0 {
+			if u.Papel != "admin" {
+				jsonErro(w, http.StatusForbidden, "apenas admin pode editar categoria global")
+				return
+			}
+		} else {
+			esc := escopoDoUsuario(u)
+			if esc > 0 && catGrupoID.Int64 != esc {
+				jsonErro(w, http.StatusForbidden, "categoria fora do seu escopo")
+				return
+			}
+		}
 		_, err := a.st.db.Exec(`UPDATE material_categorias SET nome = ?, ativo = ? WHERE id = ?`, req.Nome, ativo, req.ID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -888,11 +905,29 @@ func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
 	idStr := r.PathValue("id")
 	id, _ := strconv.ParseInt(idStr, 10, 64)
 	if id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "ID inválido")
 		return
+	}
+	var catGrupoID sql.NullInt64
+	if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_categorias WHERE id = ?`, id).Scan(&catGrupoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "categoria não encontrada")
+		return
+	}
+	if !catGrupoID.Valid || catGrupoID.Int64 == 0 {
+		if u.Papel != "admin" {
+			jsonErro(w, http.StatusForbidden, "apenas admin pode excluir categoria global")
+			return
+		}
+	} else {
+		esc := escopoDoUsuario(u)
+		if esc > 0 && catGrupoID.Int64 != esc {
+			jsonErro(w, http.StatusForbidden, "categoria fora do seu escopo")
+			return
+		}
 	}
 	var count int
 	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM material_itens WHERE categoria_id = ?`, id).Scan(&count)
