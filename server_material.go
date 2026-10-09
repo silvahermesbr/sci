@@ -1903,7 +1903,7 @@ func (a *App) hMaterialEtiquetasLotePDF(w http.ResponseWriter, r *http.Request) 
 
 // authMaterial: middleware de acesso ao módulo Material.
 // Se a reserva operacional estiver ativa, responde 423 Locked.
-// Permite gerente, operador, chefe_setor E encarregado/auxiliar de material
+// Permite gerente, operador E encarregado/auxiliar de material
 // (designação por chave 'enc_material'). Admin mantém o comportamento de reservaAuth.
 func (a *App) authMaterial(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1917,7 +1917,7 @@ func (a *App) authMaterial(next http.HandlerFunc) http.Handler {
 				jsonErro(w, http.StatusUnauthorized, "não autenticado")
 				return
 			}
-			if u.Papel == "gerente" || u.Papel == "operador" || u.Papel == "chefe_setor" || a.ehEncarregadoDeMaterial(u) {
+			if u.Papel == "gerente" || u.Papel == "operador" || a.ehEncarregadoDeMaterial(u) {
 				next(w, r)
 				return
 			}
