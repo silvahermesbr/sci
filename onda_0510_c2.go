@@ -227,7 +227,7 @@ func (a *App) hFuncaoMembrosDel(w http.ResponseWriter, r *http.Request) {
 	// cadeira antiga.) Sem linha em usuario_papeis → nada a fazer (não inventa).
 	if uidAlvo.Valid && fidAlvo.Valid && fidAlvo.Int64 > 0 {
 		if u.Papel == "admin" {
-			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND funcao_id = ?`, uidAlvo.Int64, fidAlvo.Int64)
+			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND COALESCE(grupo_id,-1) = ? AND funcao_id = ?`, uidAlvo.Int64, gidAlvo.Int64, fidAlvo.Int64)
 		} else {
 			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND grupo_id = ? AND funcao_id = ?`, uidAlvo.Int64, escopo, fidAlvo.Int64)
 		}

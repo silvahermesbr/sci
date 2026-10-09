@@ -285,10 +285,10 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if solicitante.Papel == "operador" || solicitante.Papel == "chefe_setor" {
-		jsonErro(w, http.StatusForbidden, "usuário sem permissão para editar outros usuários")
-		return
-	}
+	// v367: SEM trava por papel aqui — o bloco acima já devolveu 403 para
+	// não-admin/gerente SEM designação (fail-closed); operador/chefe_setor
+	// designados na cadeira enc_pessoal editam dentro das restrições de alvo
+	// e grupo impostas acima (doutrina: designação manda, qualquer papel).
 	if solicitante.Papel == "gerente" {
 		var alvoPapel string
 		var alvoGrupo int64
