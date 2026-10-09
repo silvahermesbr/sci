@@ -440,25 +440,30 @@ func (a *App) hMaterialConferenciasList(w http.ResponseWriter, r *http.Request) 
 func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	var req struct {
-		GrupoID int64 `json:"grupo_id"`
-		SetorID int64 `json:"setor_id"`
-		Data    string
+		GrupoID int64  `json:"grupo_id"`
+		SetorID int64  `json:"setor_id"`
+		Data    string `json:"data"`
 	}
 	if err := decodificar(r, &req); err != nil {
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
 	}
-	if req.GrupoID <= 0 {
-		u2 := usuarioDoCtx(r)
-		if u2.GrupoID != nil && *u2.GrupoID > 0 {
-			req.GrupoID = *u2.GrupoID
+	esc := escopoDoUsuario(u)
+	if req.GrupoID > 0 {
+		if esc > 0 && req.GrupoID != esc {
+			jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+			return
+		}
+	} else {
+		if u.GrupoID != nil && *u.GrupoID > 0 {
+			req.GrupoID = *u.GrupoID
 		} else {
 			jsonErro(w, http.StatusBadRequest, "grupo_id é obrigatório")
 			return
 		}
 	}
 	if req.Data == "" {
-		req.Data = time.Now().In(a.horaLocal).Format("YYYY-MM-DD")
+		req.Data = time.Now().In(a.horaLocal).Format("2006-01-02")
 	}
 	setorVal := req.SetorID
 	if setorVal <= 0 {
@@ -494,6 +499,7 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
 	var id, gid, sid, apID int64
 	var data, st, apNome, abertaEm, fechadaEm, obs string
 	if err := a.st.db.QueryRow(
@@ -505,6 +511,10 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		 WHERE mc.id = ?`, confID).
 		Scan(&id, &gid, &sid, &data, &st, &apID, &apNome, &abertaEm, &fechadaEm, &obs); err != nil {
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && gid != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
 	rows, rerr := a.st.db.Query(
@@ -555,6 +565,15 @@ func (a *App) hMaterialConferenciaBipar(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	u := usuarioDoCtx(r)
+	var confGrupoID int64
+	if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_conferencias WHERE id = ?`, confID).Scan(&confGrupoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+		return
+	}
 	var req struct {
 		ItemID              int64  `json:"item_id"`
 		CodigoPatrimonio    string `json:"codigo_patrimonio"`
@@ -614,6 +633,15 @@ func (a *App) hMaterialConferenciaFechar(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	u := usuarioDoCtx(r)
+	var confGrupoID int64
+	if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_conferencias WHERE id = ?`, confID).Scan(&confGrupoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+		return
+	}
 	_, err = a.st.db.Exec(
 		`UPDATE material_conferencias SET status = 'fechada', fechada_por = ?, fechada_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		 WHERE id = ? AND status = 'aberta'`, u.ID, confID)
