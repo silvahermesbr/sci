@@ -1094,7 +1094,8 @@ function rotear() {
   if (h === '#/mensagens' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
   // ordem 06/10 (P4): relatórios liberados ao encarregado/auxiliar de pessoal
   // (o servidor já aceita a função nos dados do grupo; mesmo escopo do gerente)
-  if (h === '#/relatorios' && papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal() && papel === 'encarregado')) { chamarView('ViewSemModulo'); return; }
+  // fix 09/10: gestorPessoal() cobre o designado puro (sem papel-conf exigido).
+  if (h === '#/relatorios' && papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal())) { chamarView('ViewSemModulo'); return; }
   // Fix P0: a onda apagou os cases de #/hoje e #/mensagens do router — gerente e
   // operador caíam no fallback (app em branco). Re-ligados (ViewMensagens aceita sub-aba).
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
@@ -1106,6 +1107,8 @@ function rotear() {
   if (h === '#/drive') { chamarView('ViewDrive'); return; }
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
   if (h === '#/material') {
+    // fix 09/10 (encarregado de material): gerente OU designado enc_material —
+    // gestorMaterial() espelha o authMaterial do servidor (detecta por chave).
     if (papel === 'gerente' || (window.gestorMaterial && window.gestorMaterial())) chamarView('ViewMaterial');
     else chamarView('ViewSemModulo');
     return;
@@ -1127,8 +1130,9 @@ function rotear() {
   }
   if (h === '#/pessoal') {
     // módulo Pessoal (f2): gerente OU encarregado/auxiliar de pessoal —
-    // espelho do portão de #/grupos; operador/chefe/admin → rota inicial.
-    if (papel === 'gerente' || (papel === 'encarregado' && window.gestorPessoal && window.gestorPessoal())) chamarView('ViewPessoal');
+    // fix 09/10: gestorPessoal() cobre o designado puro (funcoes_grupo com
+    // chave enc_pessoal) sem exigir papel-conf; servidor valida de novo.
+    if (papel === 'gerente' || window.gestorPessoal && window.gestorPessoal()) chamarView('ViewPessoal');
     else irPara(rotaInicial());
     return;
   }

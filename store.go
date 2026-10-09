@@ -167,6 +167,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV41(); err != nil { // índice único de conferências abertas de material
 		return nil, err
 	}
+	if err := s.migrarV42(); err != nil { // destrava designado estrangulado + crava chave em cadeira sem chave (encarregados)
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2804,5 +2807,140 @@ func (s *Store) migrarV41() error {
 	}
 
 	return s.marcarVersao(41)
+}
+
+// migrarV42 (fix/encarregado-acesso-modulos 09/10 — ordem do dono: "o escalado
+// deve ter acesso a TODOS os módulos que o respectivo encarregado tem"):
+//   1. DESTRAVA o designado estrangulado: o sync antigo do POST
+//      /api/grupo/funcoes/membros fabricava linha em usuario_papeis com
+//      papel='operador' para conta SEM papel do sistema; no login seguinte essa
+//      linha virava o papel ATIVO da sessão e o portão anti-escalação
+//      (operador não ganha poder por designação) negava tudo. Defesa
+//      sqlite_master nas tabelas dependentes: apaga SÓ a linha-fantasia
+//      (papel='operador' SEM comando real — não é chefe em chefe_setores, não é
+//      gerente ativo, sem linha gêmea em usuarios.papel='operador') e move
+//      sessões que apontavam para ela para o caminho do designado puro
+//      (papel_ativo_id = NULL). Conta que TEM operador real em usuarios.papel
+//      não é tocada (o papel dela é legítimo e permanece).
+//   2. CRAVA chave nas cadeiras de grupo sem chave: designação feita sobre
+//      função de grupo SEM chave (janela pré-v39/banco legado) não concedia
+//      poder nenhum — a detecção é por chave imutável. Resolve para
+//      'enc_pessoal'/'enc_material' pelo nome normalizado; colisão de nome
+//      com chave já existente = linha legada descartada (só uma cadeira por
+//      chave, índice único). Idempotente.
+func (s *Store) migrarV42() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 42`).Scan(&v)
+	if v == 42 {
+		return nil
+	}
+
+	// defesa sqlite_master: banco velho pode não ter as tabelas do domínio
+	var temTabela func(string) bool
+	temTabela = func(nome string) bool {
+		var n int
+		_ = s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?`, nome).Scan(&n)
+		return n > 0
+	}
+
+	// --- 1. destrava o designado estrangulado (papel-fantasia 'operador') ---
+	if temTabela("usuario_papeis") && temTabela("chefe_setores") && temTabela("usuarios") && temTabela("sessoes") {
+		if _, err := s.db.Exec(`DELETE FROM usuario_papeis
+			WHERE papel = 'operador'
+			  AND NOT EXISTS (SELECT 1 FROM usuarios u WHERE u.papel = 'operador'
+			                  AND u.id = usuario_papeis.usuario_id)
+			  AND NOT EXISTS (SELECT 1 FROM chefe_setores cs WHERE cs.usuario_id = usuario_papeis.usuario_id
+			                  AND cs.grupo_id = usuario_papeis.grupo_id)
+			  AND NOT EXISTS (SELECT 1 FROM usuario_papeis g2 WHERE g2.usuario_id = usuario_papeis.usuario_id
+			                  AND g2.papel = 'gerente' AND g2.grupo_id IS usuario_papeis.grupo_id)`); err != nil {
+			return fmt.Errorf("migração v42 destrava papel fantasia: %w", err)
+		}
+		// sessão presa no papel apagado volta ao caminho do designado puro
+		if _, err := s.db.Exec(`UPDATE sessoes SET papel_ativo_id = NULL
+			WHERE papel_ativo_id IS NOT NULL
+			  AND NOT EXISTS (SELECT 1 FROM usuario_papeis up WHERE up.id = sessoes.papel_ativo_id)`); err != nil {
+			return fmt.Errorf("migração v42 solta sessões órfãs: %w", err)
+		}
+	}
+
+	// --- 2. crava chave nas cadeiras de grupo sem chave ---
+	if temTabela("funcoes") && temTabela("funcao_membros") {
+		rows, err := s.db.Query(`SELECT id, nome FROM funcoes WHERE tipo = 'grupo' AND chave IS NULL`)
+		if err != nil {
+			return fmt.Errorf("migração v42 query funcoes sem chave: %w", err)
+		}
+		type cadeiraSemChave struct {
+			id   int64
+			nome string
+		}
+		var pendentes []cadeiraSemChave
+		for rows.Next() {
+			var c cadeiraSemChave
+			if err := rows.Scan(&c.id, &c.nome); err != nil {
+				rows.Close()
+				return fmt.Errorf("migração v42 scan: %w", err)
+			}
+			pendentes = append(pendentes, c)
+		}
+		rows.Close() // libera a conexão antes de escrever (pool=1)
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("migração v42 rows: %w", err)
+		}
+		for _, c := range pendentes {
+			var chave string
+			switch normSemAcento(c.nome) {
+			case "encarregado de pessoal":
+				chave = "enc_pessoal"
+			case "encarregado de material":
+				chave = "enc_material"
+			default:
+				continue // função de grupo sem chave canônica: nada a cravar
+			}
+			var oficialID int64
+			_ = s.db.QueryRow(`SELECT id FROM funcoes WHERE chave = ? AND ativo = 1 ORDER BY (grupo_id IS NULL) ASC LIMIT 1`, chave).Scan(&oficialID)
+			if oficialID > 0 {
+				// cadeira OFICIAL já existe (seed v39): desativa a legada e
+				// REAPONTA as designações dela para a oficial — designação na
+				// legada não podia conceder poder (chave NULL); na oficial concede.
+				if _, err := s.db.Exec(`UPDATE funcoes SET ativo = 0 WHERE id = ?`, c.id); err != nil {
+					return fmt.Errorf("migração v42 desativa legada %d: %w", c.id, err)
+				}
+				rowsFM, err := s.db.Query(`SELECT id FROM funcao_membros WHERE funcao_id = ?`, c.id)
+				if err != nil {
+					return fmt.Errorf("migração v42 query designações legadas: %w", err)
+				}
+				var fmIDs []int64
+				for rowsFM.Next() {
+					var fmID int64
+					if rowsFM.Scan(&fmID) == nil {
+						fmIDs = append(fmIDs, fmID)
+					}
+				}
+				rowsFM.Close()
+				if err := rowsFM.Err(); err != nil {
+					return fmt.Errorf("migração v42 rows designações: %w", err)
+				}
+				for _, fmID := range fmIDs {
+					res, err := s.db.Exec(`UPDATE OR IGNORE funcao_membros SET funcao_id = ? WHERE id = ?`, oficialID, fmID)
+					if err != nil {
+						return fmt.Errorf("migração v42 reaponta designação %d: %w", fmID, err)
+					}
+					if n, _ := res.RowsAffected(); n == 0 {
+						// designado já tem cadeira na oficial (UNIQUE): a linha
+						// legada é duplicata — some (o poder vem da oficial).
+						if _, err := s.db.Exec(`DELETE FROM funcao_membros WHERE id = ?`, fmID); err != nil {
+							return fmt.Errorf("migração v42 limpa duplicata %d: %w", fmID, err)
+						}
+					}
+				}
+				continue
+			}
+			if _, err := s.db.Exec(`UPDATE funcoes SET chave = ? WHERE id = ?`, chave, c.id); err != nil {
+				return fmt.Errorf("migração v42 crava chave %s: %w", chave, err)
+			}
+		}
+	}
+
+	return s.marcarVersao(42)
 }
 
