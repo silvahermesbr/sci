@@ -89,6 +89,11 @@ func (a *App) hMaterialResponsaveisList(w http.ResponseWriter, r *http.Request) 
 // hMaterialResponsaveisSave
 // -----------------------------------------------------------------
 func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	if !(u.Papel == "admin" || u.Papel == "gerente" || a.ehEncarregadoDeMaterial(u)) {
+		jsonErro(w, http.StatusForbidden, "somente gerente ou encarregado de material define responsáveis")
+		return
+	}
 	var req struct {
 		GrupoID               int64 `json:"grupo_id"`
 		SetorID               int64 `json:"setor_id"`
@@ -99,8 +104,13 @@ func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
 	}
+	esc := escopoDoUsuario(u)
+	if a.ehEncarregadoDeMaterial(u) && u.Papel != "admin" {
+		if u.GrupoID != nil && *u.GrupoID > 0 {
+			req.GrupoID = *u.GrupoID
+		}
+	}
 	if req.GrupoID <= 0 {
-		u := usuarioDoCtx(r)
 		if u.GrupoID != nil && *u.GrupoID > 0 {
 			req.GrupoID = *u.GrupoID
 		} else {
@@ -108,13 +118,19 @@ func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	encID := req.EncarregadoID
-	if encID <= 0 {
-		encID = 0
+	if esc > 0 && req.GrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "recurso fora do seu escopo")
+		return
 	}
-	auxID := req.AuxiliarEncarregadoID
-	if auxID <= 0 {
-		auxID = 0
+	var setorVal, encVal, auxVal *int64
+	if req.SetorID > 0 {
+		setorVal = &req.SetorID
+	}
+	if req.EncarregadoID > 0 {
+		encVal = &req.EncarregadoID
+	}
+	if req.AuxiliarEncarregadoID > 0 {
+		auxVal = &req.AuxiliarEncarregadoID
 	}
 	if _, err := a.st.db.Exec(`INSERT INTO grupo_setor_responsaveis (grupo_id, setor_id, encarregado_id, auxiliar_encarregado_id, atualizado_em)
 		VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -122,7 +138,7 @@ func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) 
 			encarregado_id = excluded.encarregado_id,
 			auxiliar_encarregado_id = excluded.auxiliar_encarregado_id,
 			atualizado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
-		req.GrupoID, req.SetorID, encID, auxID); err != nil {
+		req.GrupoID, setorVal, encVal, auxVal); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -138,6 +154,16 @@ func (a *App) hMaterialItemAnexosList(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "item_id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
 	rows, err := a.st.db.Query(
 		`SELECT id, nome_arquivo, tipo_mime, tamanho, criado_em
 		 FROM material_item_anexos WHERE item_id = ? ORDER BY criado_em DESC`, itemID)
@@ -147,6 +173,9 @@ func (a *App) hMaterialItemAnexosList(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	var lista []map[string]any
+	if lista == nil {
+		lista = make([]map[string]any, 0)
+	}
 	for rows.Next() {
 		var id int64
 		var nome, mime, criadoEm string
@@ -170,6 +199,17 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "item_id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
+
 	var req struct {
 		NomeArquivo string `json:"nome_arquivo"`
 		TipoMIME    string `json:"tipo_mime"`
@@ -180,18 +220,32 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(req.NomeArquivo) == "" {
-		jsonErro(w, http.StatusBadRequest, "nome_arquivo é obrigatório")
+	if strings.TrimSpace(req.NomeArquivo) == "" || strings.TrimSpace(req.DadosBase64) == "" {
+		jsonErro(w, http.StatusBadRequest, "Nome do arquivo e dados em base64 são obrigatórios")
 		return
 	}
-	if req.Tamanho > 10*1024*1024 {
-		jsonErro(w, http.StatusRequestEntityTooLarge, "Anexo muito grande (máx 10 MB)")
+	const maxAnexoBase64 = 800 * 1024
+	if len(req.DadosBase64) > maxAnexoBase64 {
+		jsonErro(w, http.StatusRequestEntityTooLarge, "anexo acima do teto (máx. ~600 KB)")
+		return
+	}
+	mime := strings.ToLower(strings.TrimSpace(req.TipoMIME))
+	switch mime {
+	case "application/pdf", "image/png", "image/jpeg", "image/webp":
+		// permitido
+	default:
+		jsonErro(w, http.StatusBadRequest, "tipo não permitido (use PDF, PNG, JPEG ou WEBP)")
+		return
+	}
+	nome := sanitizarNomeArquivo(req.NomeArquivo)
+	if nome == "" {
+		jsonErro(w, http.StatusBadRequest, "nome de arquivo inválido")
 		return
 	}
 	res, err := a.st.db.Exec(
 		`INSERT INTO material_item_anexos (item_id, nome_arquivo, tipo_mime, tamanho, dados_base64, criado_em)
 		 VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-		itemID, strings.TrimSpace(req.NomeArquivo), strVal(&req.TipoMIME),
+		itemID, nome, mime,
 		req.Tamanho, req.DadosBase64)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -199,7 +253,7 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	var anexoID int64
 	anexoID, _ = res.LastInsertId()
-	jsonOK(w, map[string]any{"ok": true, "id": anexoID})
+	jsonOK(w, map[string]any{"ok": true, "id": anexoID, "nome_arquivo": nome})
 }
 
 // -----------------------------------------------------------------
@@ -211,6 +265,7 @@ func (a *App) hMaterialItemAnexoGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "anexo_id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
 	var id, itemID int64
 	var nome, mime string
 	var tam int64
@@ -220,6 +275,15 @@ func (a *App) hMaterialItemAnexoGet(w http.ResponseWriter, r *http.Request) {
 		 FROM material_item_anexos WHERE id = ?`, anexoID).
 		Scan(&id, &itemID, &nome, &mime, &tam, &dados, &criadoEm); err != nil {
 		jsonErro(w, http.StatusNotFound, "anexo não encontrado")
+		return
+	}
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
 	jsonOK(w, map[string]any{
@@ -236,6 +300,21 @@ func (a *App) hMaterialItemAnexoDel(w http.ResponseWriter, r *http.Request) {
 	anexoID, err := strconv.ParseInt(r.PathValue("anexo_id"), 10, 64)
 	if err != nil || anexoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "anexo_id inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	var itemID int64
+	if err := a.st.db.QueryRow(`SELECT item_id FROM material_item_anexos WHERE id = ?`, anexoID).Scan(&itemID); err != nil {
+		jsonErro(w, http.StatusNotFound, "anexo não encontrado")
+		return
+	}
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
 	_, err = a.st.db.Exec(`DELETE FROM material_item_anexos WHERE id = ?`, anexoID)
@@ -255,6 +334,16 @@ func (a *App) hMaterialItemComentariosList(w http.ResponseWriter, r *http.Reques
 		jsonErro(w, http.StatusBadRequest, "item_id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
 	rows, err := a.st.db.Query(
 		`SELECT mic.id, mic.texto, mic.criado_em, mic.operador_id, COALESCE(u.nome_guerra, u.login, '')
 		 FROM material_item_comentarios mic
@@ -267,6 +356,9 @@ func (a *App) hMaterialItemComentariosList(w http.ResponseWriter, r *http.Reques
 	}
 	defer rows.Close()
 	var lista []map[string]any
+	if lista == nil {
+		lista = make([]map[string]any, 0)
+	}
 	for rows.Next() {
 		var id, opID int64
 		var texto, criadoEm, opNome string
@@ -290,6 +382,15 @@ func (a *App) hMaterialItemComentarioAdd(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	u := usuarioDoCtx(r)
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
 	var req struct {
 		Texto string `json:"texto"`
 	}
@@ -355,29 +456,34 @@ func (a *App) hMaterialConferenciasList(w http.ResponseWriter, r *http.Request) 
 func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	var req struct {
-		GrupoID int64 `json:"grupo_id"`
-		SetorID int64 `json:"setor_id"`
-		Data    string
+		GrupoID int64  `json:"grupo_id"`
+		SetorID int64  `json:"setor_id"`
+		Data    string `json:"data"`
 	}
 	if err := decodificar(r, &req); err != nil {
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
 	}
-	if req.GrupoID <= 0 {
-		u2 := usuarioDoCtx(r)
-		if u2.GrupoID != nil && *u2.GrupoID > 0 {
-			req.GrupoID = *u2.GrupoID
+	esc := escopoDoUsuario(u)
+	if req.GrupoID > 0 {
+		if esc > 0 && req.GrupoID != esc {
+			jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+			return
+		}
+	} else {
+		if u.GrupoID != nil && *u.GrupoID > 0 {
+			req.GrupoID = *u.GrupoID
 		} else {
 			jsonErro(w, http.StatusBadRequest, "grupo_id é obrigatório")
 			return
 		}
 	}
 	if req.Data == "" {
-		req.Data = time.Now().In(a.horaLocal).Format("YYYY-MM-DD")
+		req.Data = time.Now().In(a.horaLocal).Format("2006-01-02")
 	}
-	setorVal := req.SetorID
-	if setorVal <= 0 {
-		setorVal = 0
+	var setorVal *int64
+	if req.SetorID > 0 {
+		setorVal = &req.SetorID
 	}
 	res, err := a.st.db.Exec(
 		`INSERT INTO material_conferencias (grupo_id, setor_id, data, status, aberta_por, aberta_em)
@@ -409,17 +515,22 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
 	var id, gid, sid, apID int64
 	var data, st, apNome, abertaEm, fechadaEm, obs string
 	if err := a.st.db.QueryRow(
 		`SELECT mc.id, mc.grupo_id, COALESCE(mc.setor_id, 0), mc.data, mc.status,
-		        mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''), mc.aberta_em, mc.fechada_em,
+		        mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''), mc.aberta_em, COALESCE(mc.fechada_em, ''),
 		        COALESCE(mc.observacao, '')
 		 FROM material_conferencias mc
 		 LEFT JOIN usuarios ua ON ua.id = mc.aberta_por
 		 WHERE mc.id = ?`, confID).
 		Scan(&id, &gid, &sid, &data, &st, &apID, &apNome, &abertaEm, &fechadaEm, &obs); err != nil {
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && gid != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
 	rows, rerr := a.st.db.Query(
@@ -470,6 +581,15 @@ func (a *App) hMaterialConferenciaBipar(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	u := usuarioDoCtx(r)
+	var confGrupoID int64
+	if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_conferencias WHERE id = ?`, confID).Scan(&confGrupoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+		return
+	}
 	var req struct {
 		ItemID              int64  `json:"item_id"`
 		CodigoPatrimonio    string `json:"codigo_patrimonio"`
@@ -529,6 +649,15 @@ func (a *App) hMaterialConferenciaFechar(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	u := usuarioDoCtx(r)
+	var confGrupoID int64
+	if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_conferencias WHERE id = ?`, confID).Scan(&confGrupoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+		return
+	}
 	_, err = a.st.db.Exec(
 		`UPDATE material_conferencias SET status = 'fechada', fechada_por = ?, fechada_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')
 		 WHERE id = ? AND status = 'aberta'`, u.ID, confID)
@@ -577,7 +706,7 @@ func (a *App) hMaterialCautelaReciboPDF(w http.ResponseWriter, r *http.Request) 
 	var itemGrupoID int64
 	q := `SELECT mc.data_saida, COALESCE(mc.data_devolucao, ''), COALESCE(mc.obs_saida, ''), COALESCE(mc.obs_devolucao, ''), mc.status,
 	             mi.nome, mi.codigo_patrimonio, COALESCE(mi.numero_serie, '—'), mi.grupo_id,
-	             COALESCE(cat.nome, 'Geral'), COALESCE(mi.nivel_sensibilidade, 'padrao'),
+	             COALESCE(cat.nome, 'Geral'), COALESCE(NULLIF(mi.sensibilidade, ''), 'convencional'),
 	             p.nome_guerra, p.nome_completo, COALESCE(s.nome, 'Indefinido'), COALESCE(fu.nome, 'Indefinida'), COALESCE(g.nome, 'Geral'),
 	             COALESCE(NULLIF(ue.nome_guerra,''), NULLIF(ue.nome_completo,''), '—'), COALESCE(NULLIF(ur.nome_guerra,''), NULLIF(ur.nome_completo,''), '—')
 	      FROM material_cautelas mc
@@ -741,6 +870,23 @@ func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 		ativo = 0
 	}
 	if req.ID > 0 {
+		var catGrupoID sql.NullInt64
+		if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_categorias WHERE id = ?`, req.ID).Scan(&catGrupoID); err != nil {
+			jsonErro(w, http.StatusNotFound, "categoria não encontrada")
+			return
+		}
+		if !catGrupoID.Valid || catGrupoID.Int64 == 0 {
+			if u.Papel != "admin" {
+				jsonErro(w, http.StatusForbidden, "apenas admin pode editar categoria global")
+				return
+			}
+		} else {
+			esc := escopoDoUsuario(u)
+			if esc > 0 && catGrupoID.Int64 != esc {
+				jsonErro(w, http.StatusForbidden, "categoria fora do seu escopo")
+				return
+			}
+		}
 		_, err := a.st.db.Exec(`UPDATE material_categorias SET nome = ?, ativo = ? WHERE id = ?`, req.Nome, ativo, req.ID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -759,11 +905,29 @@ func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
 	idStr := r.PathValue("id")
 	id, _ := strconv.ParseInt(idStr, 10, 64)
 	if id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "ID inválido")
 		return
+	}
+	var catGrupoID sql.NullInt64
+	if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_categorias WHERE id = ?`, id).Scan(&catGrupoID); err != nil {
+		jsonErro(w, http.StatusNotFound, "categoria não encontrada")
+		return
+	}
+	if !catGrupoID.Valid || catGrupoID.Int64 == 0 {
+		if u.Papel != "admin" {
+			jsonErro(w, http.StatusForbidden, "apenas admin pode excluir categoria global")
+			return
+		}
+	} else {
+		esc := escopoDoUsuario(u)
+		if esc > 0 && catGrupoID.Int64 != esc {
+			jsonErro(w, http.StatusForbidden, "categoria fora do seu escopo")
+			return
+		}
 	}
 	var count int
 	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM material_itens WHERE categoria_id = ?`, id).Scan(&count)
@@ -1332,16 +1496,16 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 
 	q := `
 		SELECT mc.id, mc.item_id, mi.nome, mi.codigo_patrimonio,
-		       mc.pessoa_id, p.nome_guerra, p.nome_completo,
-		       mc.responsavel_entrega_id, ue.login,
+		       COALESCE(mc.pessoa_id, 0), COALESCE(p.nome_guerra, ''), COALESCE(p.nome_completo, ''),
+		       COALESCE(mc.responsavel_entrega_id, 0), COALESCE(ue.login, ''),
 		       COALESCE(mc.responsavel_recebimento_id, 0), COALESCE(ur.login, ''),
 		       mc.data_saida, COALESCE(mc.data_devolucao, ''),
 		       COALESCE(mc.obs_saida, ''), COALESCE(mc.obs_devolucao, ''),
 		       mc.status, COALESCE(mc.quantidade, 1), COALESCE(mi.sensibilidade, 'convencional')
 		FROM material_cautelas mc
 		JOIN material_itens mi ON mi.id = mc.item_id
-		JOIN pessoas p ON p.id = mc.pessoa_id
-		JOIN usuarios ue ON ue.id = mc.responsavel_entrega_id
+		LEFT JOIN pessoas p ON p.id = mc.pessoa_id
+		LEFT JOIN usuarios ue ON ue.id = mc.responsavel_entrega_id
 		LEFT JOIN usuarios ur ON ur.id = mc.responsavel_recebimento_id
 		WHERE (? <= 0 OR mi.grupo_id = ?)`
 	args := []any{escopo, escopo}
@@ -1739,7 +1903,7 @@ func (a *App) hMaterialEtiquetasLotePDF(w http.ResponseWriter, r *http.Request) 
 
 // authMaterial: middleware de acesso ao módulo Material.
 // Se a reserva operacional estiver ativa, responde 423 Locked.
-// Permite gerente, operador, chefe_setor E encarregado/auxiliar de material
+// Permite gerente, operador E encarregado/auxiliar de material
 // (designação por chave 'enc_material'). Admin mantém o comportamento de reservaAuth.
 func (a *App) authMaterial(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1753,7 +1917,7 @@ func (a *App) authMaterial(next http.HandlerFunc) http.Handler {
 				jsonErro(w, http.StatusUnauthorized, "não autenticado")
 				return
 			}
-			if u.Papel == "gerente" || u.Papel == "operador" || u.Papel == "chefe_setor" || a.ehEncarregadoDeMaterial(u) {
+			if u.Papel == "gerente" || u.Papel == "operador" || a.ehEncarregadoDeMaterial(u) {
 				next(w, r)
 				return
 			}

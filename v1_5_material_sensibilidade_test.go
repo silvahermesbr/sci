@@ -45,9 +45,9 @@ func TestV15_MaterialSensibilidade(t *testing.T) {
 	resP, _ := st.db.Exec(`INSERT INTO pessoas (grupo_id, setor_id, nome_guerra, nome_completo, status) VALUES (?, ?, 'Oliveira', 'Marcos Oliveira', 'ativo')`, gid, sID)
 	pID, _ := resP.LastInsertId()
 
-	resUChefeMat, _ := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, setor_id, ativo) VALUES ('chefe_mat', 'hash', 'chefe_setor', ?, ?, 1)`, gid, sID)
+	resUChefeMat, _ := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, setor_id, ativo) VALUES ('chefe_mat', 'hash', 'gerente', ?, ?, 1)`, gid, sID)
 	uID, _ := resUChefeMat.LastInsertId()
-	_, _ = st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'chefe_setor')`, uID, gid)
+	_, _ = st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'gerente')`, uID, gid)
 
 	tok, _, err := st.CriarSessao(uID, time.Hour)
 	if err != nil {

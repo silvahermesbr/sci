@@ -16,8 +16,7 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v38 = f3: novo modelo de encarregados com tipo='antiguidade'|'grupo' e chaves
-// imutáveis 'enc_pessoal'|'enc_material', índice parcial único e reserva desativada).
+// (v40 = f1: índice único real para material_conferencias abertas).
 // Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
 const versaoSchemaBinario = 40
 
