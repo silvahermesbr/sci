@@ -51,7 +51,7 @@ func TestV15_MaterialEvolucao_SetorGaragemEConferencia(t *testing.T) {
 	resPadTit, _ := st.db.Exec(`INSERT INTO pessoas (grupo_id, setor_id, nome_guerra, nome_completo, status) VALUES (?, ?, 'Sd Santos', 'Pedro Santos', 'ativo')`, gid, sID)
 	padTitID, _ := resPadTit.LastInsertId()
 
-	resU, _ := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, setor_id, ativo) VALUES ('operador_mat', 'hash', 'gerente', ?, ?, 1)`, gid, sID)
+	resU, _ := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, setor_id, ativo) VALUES ('gerente_mat', 'hash', 'gerente', ?, ?, 1)`, gid, sID)
 	uID, _ := resU.LastInsertId()
 	_, _ = st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'gerente')`, uID, gid)
 

@@ -22,25 +22,7 @@ func strVal(s *string) string {
 	return *s
 }
 
-// gerarPDFMinimo: produz um PDF mínimo válido (cabeçalho+texto).
-// Usado pelo hMaterialConferenciaPDF como stub até a implementação completa.
-func (a *App) gerarPDFMinimo(titulo, conteudo string) []byte {
-	// PDF mínimo: 1 página com texto simples
-	enc := func(s string) string {
-		s = strings.Replace(s, "\\", "\\\\", -1)
-		s = strings.Replace(s, "(", "\\(", -1)
-		s = strings.Replace(s, ")", "\\)", -1)
-		return s
-	}
-	et := enc(titulo)
-	ec := enc(conteudo)
-	// Content stream: Mostra título e conteúdo
-	content := fmt.Sprintf("BT /F1 14 Tf 100 700 Td (%s) Tj ET BT /F1 10 Tf 100 670 Td (%s) Tj ET", et, ec)
-	slen := len(content)
-	// Monta o PDF inline
-	pdfStr := fmt.Sprintf("%%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length %d>>stream\n%s\nendstream\nendobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Courier>>endobj\nxref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000105 00000 n \n0000000192 00000 n \n0000000370 00000 n \ntrailer<</Size 6/Root 1 0 R>>\nstartxref\n420\n%%%%EOF", slen, content)
-	return []byte(pdfStr)
-}
+
 
 // -----------------------------------------------------------------
 // hMaterialResponsaveisList
@@ -481,11 +463,31 @@ func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request
 	if req.Data == "" {
 		req.Data = time.Now().In(a.horaLocal).Format("2006-01-02")
 	}
+
+	tx, err := a.st.db.Begin()
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback()
+
 	var setorVal *int64
 	if req.SetorID > 0 {
 		setorVal = &req.SetorID
 	}
-	res, err := a.st.db.Exec(
+
+	var countAberta int
+	if req.SetorID > 0 {
+		_ = tx.QueryRow(`SELECT COUNT(*) FROM material_conferencias WHERE grupo_id = ? AND setor_id = ? AND data = ? AND status = 'aberta'`, req.GrupoID, req.SetorID, req.Data).Scan(&countAberta)
+	} else {
+		_ = tx.QueryRow(`SELECT COUNT(*) FROM material_conferencias WHERE grupo_id = ? AND setor_id IS NULL AND data = ? AND status = 'aberta'`, req.GrupoID, req.Data).Scan(&countAberta)
+	}
+	if countAberta > 0 {
+		jsonErro(w, http.StatusConflict, "Já existe conferência aberta para este grupo/setor/data")
+		return
+	}
+
+	res, err := tx.Exec(
 		`INSERT INTO material_conferencias (grupo_id, setor_id, data, status, aberta_por, aberta_em)
 		 VALUES (?, ?, ?, 'aberta', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
 		req.GrupoID, setorVal, req.Data, u.ID)
@@ -497,12 +499,38 @@ func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request
 		}
 		return
 	}
-	var confID int64
-	confID, _ = res.LastInsertId()
+	confID, _ := res.LastInsertId()
 	if confID <= 0 {
 		jsonErro(w, http.StatusInternalServerError, "falha ao obter ID da conferência")
 		return
 	}
+
+	// Popula checklist com itens do inventário no escopo da conferência (excluindo baixados)
+	if req.SetorID > 0 {
+		_, err = tx.Exec(`
+			INSERT INTO material_conferencia_itens (conferencia_id, item_id, status, quantidade_esperada, quantidade_conferida, conferido_em)
+			SELECT ?, id, 'presente', COALESCE(quantidade, 1), 0, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+			FROM material_itens
+			WHERE grupo_id = ? AND status <> 'baixado' AND setor_id = ?`,
+			confID, req.GrupoID, req.SetorID)
+	} else {
+		_, err = tx.Exec(`
+			INSERT INTO material_conferencia_itens (conferencia_id, item_id, status, quantidade_esperada, quantidade_conferida, conferido_em)
+			SELECT ?, id, 'presente', COALESCE(quantidade, 1), 0, strftime('%Y-%m-%dT%H:%M:%fZ','now')
+			FROM material_itens
+			WHERE grupo_id = ? AND status <> 'baixado' AND setor_id IS NULL`,
+			confID, req.GrupoID)
+	}
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao popular itens da conferência: "+err.Error())
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	jsonOK(w, map[string]any{"id": confID, "ok": true})
 }
 
@@ -516,16 +544,19 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	var id, gid, sid, apID int64
-	var data, st, apNome, abertaEm, fechadaEm, obs string
+	var id, gid, apID int64
+	var sid *int64
+	var data, st, apNome, abertaEm, fechadaEm, obs, gNome, sNome string
 	if err := a.st.db.QueryRow(
-		`SELECT mc.id, mc.grupo_id, COALESCE(mc.setor_id, 0), mc.data, mc.status,
-		        mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''), mc.aberta_em, COALESCE(mc.fechada_em, ''),
-		        COALESCE(mc.observacao, '')
+		`SELECT mc.id, mc.grupo_id, COALESCE(g.nome, ''), mc.setor_id, COALESCE(s.nome, 'Carga Geral'),
+		        mc.data, mc.status, mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''),
+		        mc.aberta_em, COALESCE(mc.fechada_em, ''), COALESCE(mc.observacao, '')
 		 FROM material_conferencias mc
+		 JOIN grupos g ON g.id = mc.grupo_id
+		 LEFT JOIN setores s ON s.id = mc.setor_id
 		 LEFT JOIN usuarios ua ON ua.id = mc.aberta_por
 		 WHERE mc.id = ?`, confID).
-		Scan(&id, &gid, &sid, &data, &st, &apID, &apNome, &abertaEm, &fechadaEm, &obs); err != nil {
+		Scan(&id, &gid, &gNome, &sid, &sNome, &data, &st, &apID, &apNome, &abertaEm, &fechadaEm, &obs); err != nil {
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
 		return
 	}
@@ -533,9 +564,10 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
+
 	rows, rerr := a.st.db.Query(
-		`SELECT mci.id, mci.item_id, mi.nome, mci.status,
-		        mci.quantidade_esperada, mci.quantidade_conferida,
+		`SELECT mci.id, mci.item_id, mi.nome, mi.codigo_patrimonio, COALESCE(mi.sensibilidade, 'convencional'),
+		        mci.status, mci.quantidade_esperada, mci.quantidade_conferida,
 		        mci.conferido_por, COALESCE(uc.nome_guerra, uc.login, ''),
 		        COALESCE(mci.observacao, '')
 		 FROM material_conferencia_itens mci
@@ -550,24 +582,49 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	var itens []map[string]any
 	for rows.Next() {
-		var ciID, itemID, cpID int64
-		var itemNome, st, obsStr string
+		var ciID, itemID int64
+		var cpID *int64
+		var itemNome, codPat, sens, st, obsStr, cpNome string
 		var qtdEsp, qtdConf int64
-		var cpNome string
-		if rows.Scan(&ciID, &itemID, &itemNome, &st, &qtdEsp, &qtdConf, &cpID, &cpNome, &obsStr) == nil {
+		if err := rows.Scan(&ciID, &itemID, &itemNome, &codPat, &sens, &st, &qtdEsp, &qtdConf, &cpID, &cpNome, &obsStr); err == nil {
+			var cpIDVal int64
+			if cpID != nil {
+				cpIDVal = *cpID
+			}
 			itens = append(itens, map[string]any{
-				"id": ciID, "item_id": itemID, "item_nome": itemNome, "status": st,
-				"quantidade_esperada": qtdEsp, "quantidade_conferida": qtdConf,
-				"conferido_por": cpID, "conferido_por_nome": cpNome, "observacao": obsStr,
+				"id":                   ciID,
+				"item_id":              itemID,
+				"item_nome":            itemNome,
+				"nome":                 itemNome,
+				"codigo_patrimonio":    codPat,
+				"sensibilidade":        sens,
+				"status":               st,
+				"quantidade_esperada":  qtdEsp,
+				"quantidade_conferida": qtdConf,
+				"conferido_por":        cpIDVal,
+				"conferido_por_nome":   cpNome,
+				"observacao":           obsStr,
 			})
 		}
 	}
+	var sidVal int64
+	if sid != nil {
+		sidVal = *sid
+	}
 	jsonOK(w, map[string]any{
-		"id": id, "grupo_id": gid, "setor_id": sid,
-		"data": data, "status": st,
-		"aberta_por": apID, "aberta_por_nome": apNome,
-		"aberta_em": abertaEm, "fechada_em": fechadaEm,
-		"observacao": obs, "itens": itens,
+		"id":              id,
+		"grupo_id":        gid,
+		"grupo_nome":      gNome,
+		"setor_id":        sidVal,
+		"setor_nome":      sNome,
+		"data":            data,
+		"status":          st,
+		"aberta_por":      apID,
+		"aberta_por_nome": apNome,
+		"aberta_em":       abertaEm,
+		"fechada_em":      fechadaEm,
+		"observacao":      obs,
+		"itens":           itens,
 	})
 }
 
@@ -670,21 +727,102 @@ func (a *App) hMaterialConferenciaFechar(w http.ResponseWriter, r *http.Request)
 
 // -----------------------------------------------------------------
 // hMaterialConferenciaPDF — relatório de conferência de material via PDF
-// (implementação mínima para compatibilidade com o teste de evolução).
 // -----------------------------------------------------------------
 func (a *App) hMaterialConferenciaPDF(w http.ResponseWriter, r *http.Request) {
+	if a.reservaAtivo() {
+		jsonErro(w, http.StatusLocked, "módulo em reserva (indisponível nesta instalação)")
+		return
+	}
 	confID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || confID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
 		return
 	}
-	// Gera um PDF mínimo válido com os dados da conferência
-	dados := fmt.Sprintf("Pronto de Material - Conferencia #%d", confID)
-	pdf := a.gerarPDFMinimo("PRONTO DE MATERIAL", dados)
+	u := usuarioDoCtx(r)
+
+	var p ProntoMaterialPDF
+	p.ID = confID
+	var sid *int64
+	var apID int64
+	var fpID *int64
+	var gNome, sNome, st, data, apNome, fpNome, abertaEm, fechadaEm, obs string
+
+	err = a.st.db.QueryRow(`
+		SELECT mc.id, COALESCE(g.nome, '1ª Cia (Geral)'), mc.setor_id, COALESCE(s.nome, 'Carga Geral'),
+		       mc.data, mc.status, mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''),
+		       mc.aberta_em, mc.fechada_por, COALESCE(uf.nome_guerra, uf.login, ''),
+		       COALESCE(mc.fechada_em, ''), COALESCE(mc.observacao, '')
+		FROM material_conferencias mc
+		JOIN grupos g ON g.id = mc.grupo_id
+		LEFT JOIN setores s ON s.id = mc.setor_id
+		LEFT JOIN usuarios ua ON ua.id = mc.aberta_por
+		LEFT JOIN usuarios uf ON uf.id = mc.fechada_por
+		WHERE mc.id = ?`, confID).Scan(
+		&p.ID, &gNome, &sid, &sNome,
+		&data, &st, &apID, &apNome,
+		&abertaEm, &fpID, &fpNome,
+		&fechadaEm, &obs)
+	if err != nil {
+		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
+		return
+	}
+	p.GrupoNome = gNome
+	p.SetorNome = sNome
+	p.Data = data
+	p.Status = st
+	p.AbertaPorNome = apNome
+	p.AbertaEm = abertaEm
+	p.FechadaPorNome = fpNome
+	p.FechadaEm = fechadaEm
+	p.Observacao = obs
+
+	rows, rerr := a.st.db.Query(`
+		SELECT mci.item_id, mi.nome, mi.codigo_patrimonio, COALESCE(mc.nome, 'Geral'),
+		       mci.quantidade_esperada, mci.quantidade_conferida, mci.status,
+		       COALESCE(uc.nome_guerra, uc.login, '—'), COALESCE(mci.observacao, '')
+		FROM material_conferencia_itens mci
+		JOIN material_itens mi ON mi.id = mci.item_id
+		LEFT JOIN material_categorias mc ON mc.id = mi.categoria_id
+		LEFT JOIN usuarios uc ON uc.id = mci.conferido_por
+		WHERE mci.conferencia_id = ?
+		ORDER BY mi.nome`, confID)
+	if rerr != nil {
+		jsonErro(w, http.StatusInternalServerError, rerr.Error())
+		return
+	}
+	defer rows.Close()
+
+	totais := map[string]int{"total": 0, "presente": 0, "acautelado": 0, "manutencao": 0, "ausente": 0, "nao_conferido": 0}
+	for rows.Next() {
+		var it ProntoMaterialItemPDF
+		if err := rows.Scan(&it.ItemID, &it.Nome, &it.CodigoPatrimonio, &it.CategoriaNome,
+			&it.QuantidadeEsperada, &it.QuantidadeConferida, &it.Status,
+			&it.ConferidoPorNome, &it.Observacao); err == nil {
+			totais["total"]++
+			if it.QuantidadeConferida == 0 {
+				totais["nao_conferido"]++
+			} else {
+				totais[it.Status]++
+			}
+			p.Itens = append(p.Itens, it)
+		}
+	}
+	p.Totais = totais
+
+	login := "Sistema"
+	if u != nil {
+		login = u.Login
+	}
+	pdfBytes, err := a.gerarProntoMaterialPDF(p, login)
+	if err != nil {
+		jsonErro(w, http.StatusInternalServerError, "erro ao gerar pronto de material em PDF: "+err.Error())
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="pronto_material_%d.pdf"`, confID))
-	w.Header().Set("Content-Length", strconv.Itoa(len(pdf)))
-	_, _ = w.Write(pdf)
+	w.Header().Set("Content-Length", strconv.Itoa(len(pdfBytes)))
+	_, _ = w.Write(pdfBytes)
 }
 
 func (a *App) hMaterialCautelaReciboPDF(w http.ResponseWriter, r *http.Request) {
@@ -949,6 +1087,7 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 	escopo := escopoDoUsuario(u)
 	statusQ := r.URL.Query().Get("status")
 	catQ := r.URL.Query().Get("categoria_id")
+	garagemQ := r.URL.Query().Get("garagem")
 
 	q := `
 		SELECT mi.id, mi.grupo_id, COALESCE(g.nome, ''), mi.categoria_id, COALESCE(mc.nome, 'Sem Categoria'),
@@ -957,10 +1096,19 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(mi.sensibilidade, 'convencional'), COALESCE(mi.quantidade, 1),
 		       COALESCE((SELECT SUM(mc.quantidade) FROM material_cautelas mc WHERE mc.item_id = mi.id AND mc.status = 'ativa'), 0),
 		       caut.id, caut.pessoa_id, p.nome_guerra, p.nome_completo, caut.data_saida, COALESCE(caut.obs_saida, ''),
-		       ue.login
+		       ue.login,
+		       mi.setor_id, COALESCE(s.nome, ''),
+		       mv.item_id, COALESCE(mv.placa, ''), COALESCE(mv.renavam, ''),
+		       mv.padrinho_titular_id, COALESCE(pt.nome_guerra, ''),
+		       mv.padrinho_substituto_id, COALESCE(ps.nome_guerra, ''),
+		       COALESCE(mv.hodometro_atual, 0), COALESCE(mv.combustivel_atual, 'cheio')
 		FROM material_itens mi
 		LEFT JOIN material_categorias mc ON mc.id = mi.categoria_id
 		LEFT JOIN grupos g ON g.id = mi.grupo_id
+		LEFT JOIN setores s ON s.id = mi.setor_id
+		LEFT JOIN material_viaturas mv ON mv.item_id = mi.id
+		LEFT JOIN pessoas pt ON pt.id = mv.padrinho_titular_id
+		LEFT JOIN pessoas ps ON ps.id = mv.padrinho_substituto_id
 		LEFT JOIN material_cautelas caut ON caut.item_id = mi.id AND caut.status = 'ativa'
 		LEFT JOIN pessoas p ON p.id = caut.pessoa_id
 		LEFT JOIN usuarios ue ON ue.id = caut.responsavel_entrega_id
@@ -977,6 +1125,9 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 			args = append(args, cid)
 		}
 	}
+	if garagemQ == "1" {
+		q += ` AND (mi.categoria_id IN (SELECT id FROM material_categorias WHERE LOWER(nome) LIKE '%viatur%') OR mv.item_id IS NOT NULL)`
+	}
 	q += ` ORDER BY mi.status, mc.nome, mi.nome`
 
 	rows, err := a.st.db.Query(q, args...)
@@ -989,14 +1140,21 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 	var lista []map[string]any
 	for rows.Next() {
 		var id, gid int64
-		var catID *int64
-		var gNome, catNome, nome, cod, numSerie, status, obs, criadoEm, sens, sensibilidade string
+		var catID, setorID, mvItemID, padTitID, padSubID *int64
+		var gNome, catNome, nome, cod, numSerie, status, obs, criadoEm, sens, sensibilidade, setorNome string
+		var mvPlaca, mvRenavam, padTitNome, padSubNome, mvCombustivel string
+		var mvHodometro int64
 		var quantidade, qtdAcautelada int
 		var cautID, pesID *int64
 		var pNomeGuerra, pNomeCompleto, dtSaida, obsSaida, opEntrega *string
 		if err := rows.Scan(&id, &gid, &gNome, &catID, &catNome, &nome, &cod, &numSerie, &status, &obs, &criadoEm, &sens,
 			&sensibilidade, &quantidade, &qtdAcautelada,
-			&cautID, &pesID, &pNomeGuerra, &pNomeCompleto, &dtSaida, &obsSaida, &opEntrega); err == nil {
+			&cautID, &pesID, &pNomeGuerra, &pNomeCompleto, &dtSaida, &obsSaida, &opEntrega,
+			&setorID, &setorNome,
+			&mvItemID, &mvPlaca, &mvRenavam,
+			&padTitID, &padTitNome,
+			&padSubID, &padSubNome,
+			&mvHodometro, &mvCombustivel); err == nil {
 
 			dispQtd := quantidade - qtdAcautelada
 			if dispQtd < 0 {
@@ -1007,6 +1165,8 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 				"id":                    id,
 				"grupo_id":              gid,
 				"grupo_nome":            gNome,
+				"setor_id":              setorID,
+				"setor_nome":            setorNome,
 				"categoria_id":          catID,
 				"categoria_nome":        catNome,
 				"nome":                  nome,
@@ -1032,6 +1192,18 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 					"responsavel_entrega":  opEntrega,
 				}
 			}
+			if mvItemID != nil {
+				item["viatura"] = map[string]any{
+					"placa":                    mvPlaca,
+					"renavam":                  mvRenavam,
+					"padrinho_titular_id":      padTitID,
+					"padrinho_titular_nome":    padTitNome,
+					"padrinho_substituto_id":   padSubID,
+					"padrinho_substituto_nome": padSubNome,
+					"hodometro_atual":          mvHodometro,
+					"combustivel_atual":        mvCombustivel,
+				}
+			}
 			lista = append(lista, item)
 		}
 	}
@@ -1045,18 +1217,25 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ID                 int64  `json:"id"`
-		GrupoID            *int64 `json:"grupo_id"`
-		CategoriaID        *int64 `json:"categoria_id"`
-		Nome               string `json:"nome"`
-		CodigoPatrimonio   string `json:"codigo_patrimonio"`
-		Patrimonio         string `json:"patrimonio"`
-		NumeroSerie        string `json:"numero_serie"`
-		Status             string `json:"status"`
-		Observacao         string `json:"observacao"`
-		NivelSensibilidade string `json:"nivel_sensibilidade"`
-		Sensibilidade      string `json:"sensibilidade"`
-		Quantidade         int    `json:"quantidade"`
+		ID                   int64  `json:"id"`
+		GrupoID              *int64 `json:"grupo_id"`
+		SetorID              *int64 `json:"setor_id"`
+		CategoriaID          *int64 `json:"categoria_id"`
+		Nome                 string `json:"nome"`
+		CodigoPatrimonio     string `json:"codigo_patrimonio"`
+		Patrimonio           string `json:"patrimonio"`
+		NumeroSerie          string `json:"numero_serie"`
+		Status               string `json:"status"`
+		Observacao           string `json:"observacao"`
+		NivelSensibilidade   string `json:"nivel_sensibilidade"`
+		Sensibilidade        string `json:"sensibilidade"`
+		Quantidade           int    `json:"quantidade"`
+		Placa                string `json:"placa"`
+		Renavam              string `json:"renavam"`
+		PadrinhoTitularID    *int64 `json:"padrinho_titular_id"`
+		PadrinhoSubstitutoID *int64 `json:"padrinho_substituto_id"`
+		HodometroAtual       int64  `json:"hodometro_atual"`
+		CombustivelAtual     string `json:"combustivel_atual"`
 	}
 	if err := decodificar(r, &req); err != nil || strings.TrimSpace(req.Nome) == "" {
 		jsonErro(w, http.StatusBadRequest, "Nome é obrigatório")
@@ -1064,6 +1243,17 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(req.CodigoPatrimonio) == "" && strings.TrimSpace(req.Patrimonio) != "" {
 		req.CodigoPatrimonio = strings.TrimSpace(req.Patrimonio)
+	}
+
+	// Validação de SetorID se informado
+	var setorVal *int64
+	if req.SetorID != nil && *req.SetorID > 0 {
+		var count int
+		if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM setores WHERE id = ?`, *req.SetorID).Scan(&count); err != nil || count == 0 {
+			jsonErro(w, http.StatusBadRequest, "setor inválido")
+			return
+		}
+		setorVal = req.SetorID
 	}
 
 	// v1.5: Normalização de Sensibilidade (apenas 'convencional' e 'controlado')
@@ -1121,12 +1311,56 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 		req.NivelSensibilidade = "padrao"
 	}
 
+	salvarViaturaSeNecessario := func(itemID int64) error {
+		temViatura := strings.TrimSpace(req.Placa) != "" ||
+			strings.TrimSpace(req.Renavam) != "" ||
+			(req.PadrinhoTitularID != nil && *req.PadrinhoTitularID > 0) ||
+			(req.PadrinhoSubstitutoID != nil && *req.PadrinhoSubstitutoID > 0) ||
+			req.HodometroAtual > 0 ||
+			strings.TrimSpace(req.CombustivelAtual) != ""
+
+		if !temViatura {
+			return nil
+		}
+
+		comb := strings.TrimSpace(req.CombustivelAtual)
+		switch comb {
+		case "cheio", "3/4", "1/2", "1/4":
+			// ok
+		default:
+			comb = "cheio"
+		}
+
+		var padTit, padSub *int64
+		if req.PadrinhoTitularID != nil && *req.PadrinhoTitularID > 0 {
+			padTit = req.PadrinhoTitularID
+		}
+		if req.PadrinhoSubstitutoID != nil && *req.PadrinhoSubstitutoID > 0 {
+			padSub = req.PadrinhoSubstitutoID
+		}
+
+		_, err := a.st.db.Exec(`
+			INSERT INTO material_viaturas (item_id, placa, renavam, padrinho_titular_id,
+			       padrinho_substituto_id, hodometro_atual, combustivel_atual, atualizado_em)
+			VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			ON CONFLICT(item_id) DO UPDATE SET
+				placa = excluded.placa,
+				renavam = excluded.renavam,
+				padrinho_titular_id = excluded.padrinho_titular_id,
+				padrinho_substituto_id = excluded.padrinho_substituto_id,
+				hodometro_atual = excluded.hodometro_atual,
+				combustivel_atual = excluded.combustivel_atual,
+				atualizado_em = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+			itemID, strings.TrimSpace(req.Placa), strings.TrimSpace(req.Renavam), padTit, padSub, req.HodometroAtual, comb)
+		return err
+	}
+
 	if req.ID > 0 {
 		resIt, err := a.st.db.Exec(`
 			UPDATE material_itens
-			SET categoria_id = ?, nome = ?, codigo_patrimonio = ?, numero_serie = ?, status = ?, observacao = ?, nivel_sensibilidade = ?, sensibilidade = ?, quantidade = ?
+			SET setor_id = ?, categoria_id = ?, nome = ?, codigo_patrimonio = ?, numero_serie = ?, status = ?, observacao = ?, nivel_sensibilidade = ?, sensibilidade = ?, quantidade = ?
 			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
-			req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.Sensibilidade, req.Quantidade, req.ID, escopoDoUsuario(u), grupoID)
+			setorVal, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.Sensibilidade, req.Quantidade, req.ID, escopoDoUsuario(u), grupoID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
@@ -1136,20 +1370,28 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusNotFound, "item não encontrado no seu escopo")
 			return
 		}
+		if err := salvarViaturaSeNecessario(req.ID); err != nil {
+			jsonErro(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		a.st.Auditoria(&u.ID, "editar", "material_itens", &req.ID, req.Nome+" ("+req.CodigoPatrimonio+")", ipDe(r))
 		jsonOK(w, map[string]any{"ok": true, "id": req.ID})
 		return
 	}
 
 	res, err := a.st.db.Exec(`
-		INSERT INTO material_itens (grupo_id, categoria_id, nome, codigo_patrimonio, numero_serie, status, observacao, nivel_sensibilidade, sensibilidade, quantidade)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		grupoID, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.Sensibilidade, req.Quantidade)
+		INSERT INTO material_itens (grupo_id, setor_id, categoria_id, nome, codigo_patrimonio, numero_serie, status, observacao, nivel_sensibilidade, sensibilidade, quantidade)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		grupoID, setorVal, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.Sensibilidade, req.Quantidade)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	newID, _ := res.LastInsertId()
+	if err := salvarViaturaSeNecessario(newID); err != nil {
+		jsonErro(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	a.st.Auditoria(&u.ID, "criar", "material_itens", &newID, req.Nome+" ("+req.CodigoPatrimonio+")", ipDe(r))
 	jsonOK(w, map[string]any{"ok": true, "id": newID})
 }

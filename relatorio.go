@@ -1196,6 +1196,157 @@ func (a *App) gerarInventarioMaterialPDF(inv InventarioRelatorioPDF, operador st
 	return buf.Bytes(), nil
 }
 
+// ProntoMaterialItemPDF representa um item dentro do relatório de conferência diária de material.
+type ProntoMaterialItemPDF struct {
+	ItemID              int64  `json:"item_id"`
+	Nome                string `json:"nome"`
+	CodigoPatrimonio    string `json:"codigo_patrimonio"`
+	CategoriaNome       string `json:"categoria_nome"`
+	QuantidadeEsperada  int64  `json:"quantidade_esperada"`
+	QuantidadeConferida int64  `json:"quantidade_conferida"`
+	Status              string `json:"status"`
+	ConferidoPorNome    string `json:"conferido_por_nome"`
+	Observacao          string `json:"observacao"`
+}
+
+// ProntoMaterialPDF contém os dados estruturados para emissão do Pronto Diário de Material.
+type ProntoMaterialPDF struct {
+	ID              int64                   `json:"id"`
+	GrupoNome       string                  `json:"grupo_nome"`
+	SetorNome       string                  `json:"setor_nome"`
+	Data            string                  `json:"data"`
+	Status          string                  `json:"status"`
+	AbertaPorNome   string                  `json:"aberta_por_nome"`
+	AbertaEm        string                  `json:"aberta_em"`
+	FechadaPorNome  string                  `json:"fechada_por_nome"`
+	FechadaEm       string                  `json:"fechada_em"`
+	EncarregadoNome string                  `json:"encarregado_nome"`
+	AuxiliarNome    string                  `json:"auxiliar_nome"`
+	Observacao      string                  `json:"observacao"`
+	Totais          map[string]int          `json:"totais"`
+	Itens           []ProntoMaterialItemPDF `json:"itens"`
+}
+
+// gerarProntoMaterialPDF: Relatório oficial de Conferência Diária / Pronto de Material (v2.0)
+func (a *App) gerarProntoMaterialPDF(p ProntoMaterialPDF, operador string) ([]byte, error) {
+	T := cp1252Traduz.Replace
+	sub := fmt.Sprintf("Unidade/Grupo: %s · Setor: %s · Data: %s", p.GrupoNome, p.SetorNome, p.Data)
+	pdf := a.novoPDF("P", "PRONTO DIÁRIO DE MATERIAL", sub, operador)
+
+	// 1. Resumo da Conferência Diária
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("1. RESUMO DA CONFERÊNCIA DIÁRIA"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	cards := [][2]string{
+		{"TOTAL ITENS", strconv.Itoa(p.Totais["total"])},
+		{"PRESENTES", strconv.Itoa(p.Totais["presente"])},
+		{"ACAUTELADOS", strconv.Itoa(p.Totais["acautelado"])},
+		{"MANUTENÇÃO", strconv.Itoa(p.Totais["manutencao"])},
+		{"NÃO CONFERIDOS", strconv.Itoa(p.Totais["nao_conferido"])},
+	}
+	yCards := pdf.GetY()
+	for i, c := range cards {
+		x := 14 + float64(i)*36.4
+		pdf.SetXY(x, yCards)
+		pdf.SetFillColor(248, 250, 252)
+		pdf.SetDrawColor(203, 213, 225)
+		pdf.Rect(x, yCards, 34.5, 13, "FD")
+
+		pdf.SetXY(x, yCards+1.5)
+		pdf.SetFont("Helvetica", "B", 7)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(34.5, 3.5, T(c[0]), "", 0, "C", false, 0, "")
+
+		pdf.SetXY(x, yCards+5.5)
+		pdf.SetFont("Helvetica", "B", 11)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.CellFormat(34.5, 6, T(c[1]), "", 0, "C", false, 0, "")
+	}
+	pdf.SetY(yCards + 17)
+
+	// 2. Tabela de Itens
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.CellFormat(0, 5, T("2. DISCRIMINAÇÃO DOS ITENS & CONFERÊNCIA"), "", 1, "L", false, 0, "")
+	pdf.Ln(1)
+
+	if len(p.Itens) == 0 {
+		pdf.SetFont("Helvetica", "I", 8.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(182, 8, T("Nenhum item relacionado nesta conferência."), "1", 1, "C", false, 0, "")
+	} else {
+		col := []string{"Patrimônio", "Item / Descrição", "Esperado", "Conferido", "Situação", "Conferido por", "Observação"}
+		larg := []float64{24, 48, 16, 16, 22, 26, 30}
+		al := []string{"C", "L", "C", "C", "C", "L", "L"}
+		pdfTabelaCabecalho(pdf, col, larg)
+
+		for idx, it := range p.Itens {
+			if pdf.GetY() > 260 {
+				pdf.AddPage()
+				pdfTabelaCabecalho(pdf, col, larg)
+			}
+			qtdConfStr := "—"
+			if it.QuantidadeConferida > 0 {
+				qtdConfStr = strconv.FormatInt(it.QuantidadeConferida, 10)
+			}
+			stRot := map[string]string{
+				"presente":   "Presente",
+				"acautelado": "Acautelado",
+				"ausente":    "Ausente / Falta",
+				"manutencao": "Manutenção",
+				"baixado":    "Baixado",
+			}
+			stTxt := it.Status
+			if r, ok := stRot[stTxt]; ok {
+				stTxt = r
+			}
+			vals := []string{
+				it.CodigoPatrimonio,
+				it.Nome,
+				strconv.FormatInt(it.QuantidadeEsperada, 10),
+				qtdConfStr,
+				stTxt,
+				it.ConferidoPorNome,
+				it.Observacao,
+			}
+			pdfTabelaLinha(pdf, vals, larg, al, idx%2 == 1)
+		}
+	}
+
+	pdf.Ln(6)
+	if pdf.GetY() > 250 {
+		pdf.AddPage()
+	}
+
+	yAss := pdf.GetY() + 10
+	pdf.SetDrawColor(148, 163, 184)
+	pdf.SetLineWidth(0.3)
+	pdf.Line(20, yAss, 95, yAss)
+	pdf.Line(105, yAss, 180, yAss)
+
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetTextColor(30, 41, 59)
+	pdf.SetXY(20, yAss+2)
+	pdf.CellFormat(75, 4, T("Encarregado de Material"), "", 0, "C", false, 0, "")
+	pdf.SetXY(105, yAss+2)
+	pdf.CellFormat(75, 4, T("Gerente / Chefe de Setor"), "", 1, "C", false, 0, "")
+
+	pdf.SetFont("Helvetica", "", 7)
+	pdf.SetTextColor(100, 116, 139)
+	pdf.SetXY(20, yAss+6)
+	pdf.CellFormat(75, 3.5, T("Conferência Física Executada"), "", 0, "C", false, 0, "")
+	pdf.SetXY(105, yAss+6)
+	pdf.CellFormat(75, 3.5, T("Visto da Autoridade Responsável"), "", 1, "C", false, 0, "")
+
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 func str(v any) string {
 	if s, ok := v.(string); ok {
 		return s
