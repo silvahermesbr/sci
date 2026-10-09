@@ -149,7 +149,7 @@
       api('/api/catalogo/funcoes').catch(() => []),
       api('/api/catalogo/setores').catch(() => [])
     ]);
-    const funcoesLista = Array.isArray(funcoesRes) ? funcoesRes : (funcoesRes.funcoes || []);
+    const funcoesLista = (funcoesRes && (funcoesRes.funcoes || funcoesRes)) || [];
     const setoresLista = (Array.isArray(setoresRes) ? setoresRes : []).filter(s => s.ativo !== false);
     const nomeGrupo = gid => (grupos.find(g => g.id === gid) || {}).nome || '—';
     // ITEM 2 (ordem Diretor 06/10): login é identificação SENSÍVEL — só o admin
@@ -550,11 +550,12 @@
               </select>
             </div>
             <div class="campo" style="flex:1">
-              <label>Função / Encarregado (opcional)</label>
+              <label>Antiguidade (opcional)</label>
               <select id="nuFuncao">
                 <option value="">— Nenhuma —</option>
                 ${funcoesLista.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
               </select>
+              <div style="font-size:11.5px; color:var(--tx3); margin-top:4px">Grau de antiguidade para exibição e ordem em relatórios. Designação de Encarregados: módulo Pessoal › Aba Funções.</div>
             </div>
           </div>
 
@@ -706,11 +707,12 @@
           </div>
 
           <div class="campo" style="margin-bottom:12px">
-            <label>Função (Opcional)</label>
+            <label>Antiguidade (opcional)</label>
             <select id="apFuncao">
               <option value="">— Nenhuma / Padrão —</option>
               ${funcoesLista.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
             </select>
+            <div style="font-size:11.5px; color:var(--tx3); margin-top:4px">Grau de antiguidade para exibição e ordem em relatórios. Designação de Encarregados: módulo Pessoal › Aba Funções.</div>
           </div>
 
           <div id="apAjuda" style="font-size:12px; color:var(--tx2); background:var(--painel2); border:1px solid var(--borda); border-radius:6px; padding:10px; margin-bottom:14px">

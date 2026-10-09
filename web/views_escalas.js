@@ -681,7 +681,7 @@
       api('/api/catalogo/funcoes')
     ]);
     const tipos = tiposRes.tipos || [];
-    const funcoes = (funcoesRes || []).filter(f => f.ativo);
+    const funcoes = ((funcoesRes && funcoesRes.funcoes) || funcoesRes || []).filter(f => f.ativo);
 
     const valTipo = ehEdicao ? turno.tipo_id : (tipos[0] ? tipos[0].id : 0);
     const valHi = ehEdicao ? ((turno.data_inicio || '').slice(11, 16) || '07:00') : '07:00';
@@ -1006,7 +1006,7 @@
 
     const tipos = tiposRes.tipos || [];
     const pessoas = pesRes.pessoas || [];
-    const funcoes = (funcoesRes || []).filter(f => f.ativo);
+    const funcoes = ((funcoesRes && funcoesRes.funcoes) || funcoesRes || []).filter(f => f.ativo);
 
     let dadosMod = { id: 0, nome: '', descricao: '', postos: [], aptos: [] };
     if (modeloID > 0) {
@@ -1307,7 +1307,7 @@
                       Início: <b>${fmtData(t.data_inicio)} às ${(t.data_inicio||'').slice(11,16)}</b><br>
                       Término: <b>${fmtData(t.data_fim)} às ${(t.data_fim||'').slice(11,16)}</b>
                     </div>
-                    ${t.funcao_escala ? `<div style="font-size:12px; color:var(--tx3); margin-top:4px">Função: ${esc(t.funcao_escala)}</div>` : ''}
+                    ${t.funcao_escala ? `<div style="font-size:12px; color:var(--tx3); margin-top:4px">Antiguidade: ${esc(t.funcao_escala)}</div>` : ''}
                   </div>
                 `).join('')}
               </div>
@@ -1344,7 +1344,7 @@
                   <tr>
                     <th>Data</th>
                     <th>Posto / Serviço</th>
-                    <th>Função Cumprida</th>
+                    <th>Antiguidade Cumprida</th>
                     <th>Unidade</th>
                   </tr>
                 </thead>

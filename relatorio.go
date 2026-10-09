@@ -816,7 +816,7 @@ func (a *App) gerarFichaPessoalPDF(f FichaPessoalPDF, operador string) ([]byte, 
 		pdf.CellFormat(182, 6, T("Nenhum serviço de escala recente ou programado registrado."), "1", 1, "C", false, 0, "")
 		pdf.Ln(3)
 	} else {
-		colEsc := []string{"Início do Turno", "Término do Turno", "Tipo de Serviço / Posto", "Função Escalada"}
+		colEsc := []string{"Início do Turno", "Término do Turno", "Tipo de Serviço / Posto", "Antiguidade Escalada"}
 		largEsc := []float64{40, 40, 52, 50}
 		pdfTabelaCabecalho(pdf, colEsc, largEsc)
 		for idx, e := range f.Escalas {
@@ -939,7 +939,7 @@ func (a *App) gerarReciboCautelaPDF(r ReciboCautelaPDF, operador string) ([]byte
 		itensTomador := [][2]string{
 			{"Nome de Guerra", r.PessoaNomeGuerra},
 			{"Nome Completo", r.PessoaCompleto},
-			{"Antiguidade / Posto", r.PessoaFuncao},
+			{"Antiguidade", r.PessoaFuncao},
 			{"Setor / Pelotão", r.PessoaSetor},
 			{"Unidade / Grupo", r.PessoaGrupo},
 		}
