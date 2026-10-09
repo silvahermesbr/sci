@@ -35,11 +35,11 @@ func TestAjustesEscalas(t *testing.T) {
 	gerSub := loginAs(t, app, "op_sub", "senha12345")
 
 	// Criar postos/graduações (funcoes) ordenadas por antiguidade
-	resSd, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('Soldado', ?, 10)`, paiID)
+	resSd, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('Soldado Ajustes', ?, 10)`, paiID)
 	sdID, _ := resSd.LastInsertId()
-	resCb, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('Cabo', ?, 20)`, paiID)
+	resCb, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('Cabo Ajustes', ?, 20)`, paiID)
 	cbID, _ := resCb.LastInsertId()
-	resTen, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('1º Tenente', ?, 40)`, paiID)
+	resTen, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('1º Tenente Ajustes', ?, 40)`, paiID)
 	tenID, _ := resTen.LastInsertId()
 
 	// Criar pessoas no Batalhão Pai
@@ -456,7 +456,7 @@ func TestEscalaRelatorioDiaPDFComPostoGrad(t *testing.T) {
 	gid := int64(resG["id"].(float64))
 	ger := loginAs(t, app, "cap_cmd", "cmd_password")
 
-	resF, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('3º Sargento', ?, 25)`, gid)
+	resF, _ := st.db.Exec(`INSERT INTO funcoes (nome, grupo_id, antiguidade) VALUES ('3º Sargento Escalas', ?, 25)`, gid)
 	sgtID, _ := resF.LastInsertId()
 
 	resPes, _ := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, funcao_id, status) VALUES ('Macedo', 'Felipe Macedo', ?, ?, 'ativo')`, gid, sgtID)

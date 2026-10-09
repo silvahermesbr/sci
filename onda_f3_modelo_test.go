@@ -22,7 +22,7 @@ func TestF3Migracao38IdempotenteEBackfill(t *testing.T) {
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome) VALUES ('gerente') RETURNING id`).Scan(&fGer); err != nil {
 		t.Fatalf("inserir gerente: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO funcoes (nome) VALUES ('Soldado EV') RETURNING id`).Scan(&fOutra); err != nil {
+	if err := st.db.QueryRow(`INSERT INTO funcoes (nome) VALUES ('soldado f3 outra') RETURNING id`).Scan(&fOutra); err != nil {
 		t.Fatalf("inserir soldado: %v", err)
 	}
 
