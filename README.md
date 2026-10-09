@@ -1,56 +1,55 @@
 # SCI — Sistema de Controle Interno (3º B Com GE)
 
-Controle digital de presença por **conferências de pessoal**. 1 binário Go + SQLite em
-arquivo + frontend embutido — sem Docker, sem npm, sem serviços externos.
+Controle digital de **presença por conferências** (pessoal e material) da OM.
+Um binário Go com frontend embutido e banco SQLite em arquivo: **sem Docker, sem npm,
+sem serviços externos**. Um processo, um arquivo de dados, backup integrado.
 
-## Rodar
+## Stack
+
+- **Backend:** Go puro (servidor HTTP + API + migrações de schema no binário).
+- **Banco:** SQLite em arquivo (`SCI_DATA_DIR`), modo WAL, migrations versionadas
+  (`schema_migrations`, schema atual **v41**).
+- **Frontend:** embutido no binário (pasta `web/`), servido pelo próprio Go.
+
+## Como rodar
 
 ```bash
 SCI_PORT=10003 SCI_DATA_DIR=./dados ./sci
 ```
 
-- Primeiro boot cria `admin/admin` (senha padrão — troque no botão "Senha"; mín. 8).
-- `SCI_PORT` (padrão 10003) · `SCI_DATA_DIR` (padrão `./dados`) · `SCI_OM_TITULO`
-  (padrão "SCI - Sistema de Controle Interno").
+- Primeiro boot cria **admin/admin** — troque a senha no botão "Senha" (mín. 8 caracteres).
+- Variáveis: `SCI_PORT` (padrão 10003), `SCI_DATA_DIR` (padrão `./dados`).
 
-## Fluxo de conferência
-
-1. **Conferência** → iniciar (data + local opcional). A conferência fica **ABERTA**.
-2. Lista do efetivo ativo por setor: todo mundo **presente por padrão**; toque no nome
-   cicla `presente → falta → atraso → justificada`; falta pede **motivo**, justificada
-   pede **destino + motivo**; ✅ marca "verifiquei" (contador n/N na barra).
-3. **✕ Fechar conferência** grava tudo em 1 transação e arquiva.
-4. **Conferências** (lista agrupada por dia): status Aberta/Fechada, horário de criação
-   ou fechamento, operador, **Relatório PDF** (só para fechadas — com horário de
-   fechamento, horário de geração e nome do operador).
-5. **Relatórios** por dia/semana/mês/período, com **% EFETIVO PRONTO** (só presentes sem
-   ressalva) — impressão em preto e branco.
-
-## Zero perda de dados
-
-- Banco 100% em arquivo (WAL + synchronous FULL + FK); sessões e auditoria em tabelas.
-- Backup automático: a cada conferência fechada, no boot, via botão (com download no
-  navegador), via `sci backup` (cron) — `VACUUM INTO` + sha256 + MANIFEST; falha acende
-  FLAG.
-- Migrações de schema versionadas no binário (schema_migrations v1..v3).
-- Nada é apagado: fechado não se edita; comentários são append-only.
-
-## Admin
-
-- CRUD de efetivo, catálogos (setores, funções, destinos, tags, tipos de conferência),
-  contas (usuário/admin) com redefinição de senha, backup.
-
-## Operação no host
+## Build e CI
 
 ```bash
-# subir (sobrevive à sessão):
-cd ~/projetos/sci && setsid nohup env SCI_PORT=10003 SCI_DATA_DIR=$HOME/projetos/sci/dados \
-  ./sci >> server.log 2>&1 < /dev/null &
-# watchdog (re-levanta em 3 falhas; cron */5 de reforço):
-setsid nohup bash ops/watchdog_sci.sh >> watchdog.log 2>&1 < /dev/null &
+go build ./...        # compila
+go test ./...         # suíte completa de testes
+bash ci.sh            # build + health + backup (o gate de CI do projeto)
 ```
 
-## Decisões registradas
+## Estrutura
 
-`../PLANO_DECISOES_2026-09-28.md` (status, comentários pós-fechamento, justificada =
-falta justificada, várias conferências/dia, grupos admin→gerente→operador etc.).
+```
+*.go            backend na raiz (servidor, módulos, migrações, testes _test.go)
+web/            frontend embutido (JS puro, sem build)
+ops/            E2E de produção, watchdog e scripts de operação
+docs/           handoffs, plano de decisões, roadmap, relatório de limpeza
+docs/historico/ relatórios históricos de ondas/fases encerradas
+ci.sh           gate de CI (build + health + backup)
+```
+
+## Módulos
+
+- **Conferência** por setor e por **antiguidade**, com pré-fechamento e relatório PDF.
+- **Pessoal** — efetivo com funções e **encarregados** (cadeiras com chave: Gerente,
+  Enc. Pessoal, Enc. Material).
+- **Material** — itens por setor, viaturas, checklist de conferência, pronto PDF.
+- **Grupos** e **Relatórios** (simples e detalhado, por período).
+- **Drive local** (anexos), **Email interno** e **Mural de avisos**.
+
+## Segurança dos dados (LGPD)
+
+O diretório `dados/` contém dados pessoais de militares e **NUNCA vai ao repositório**
+(já coberto pelo `.gitignore`). Backups ficam fora do controle de versão e usam
+`VACUUM INTO` + sha256 + MANIFEST.
