@@ -161,6 +161,9 @@ func AbrirStore(dataDir string) (*Store, error) {
 	if err := s.migrarV39(); err != nil {
 		return nil, err
 	}
+	if err := s.migrarV40(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -2783,3 +2786,19 @@ func (s *Store) migrarV39() error {
 
 	return s.marcarVersao(39)
 }
+
+// migrarV40: índice único real para conferências de material abertas por grupo/setor/data
+func (s *Store) migrarV40() error {
+	var v int
+	_ = s.db.QueryRow(`SELECT versao FROM schema_migrations WHERE versao = 40`).Scan(&v)
+	if v == 40 {
+		return nil
+	}
+
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_mat_conf_unica ON material_conferencias (grupo_id, COALESCE(setor_id,0), data) WHERE status = 'aberta'`); err != nil {
+		return fmt.Errorf("migração v40 índice material_conferencias: %w", err)
+	}
+
+	return s.marcarVersao(40)
+}
+

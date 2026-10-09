@@ -706,7 +706,7 @@ func (a *App) hMaterialCautelaReciboPDF(w http.ResponseWriter, r *http.Request) 
 	var itemGrupoID int64
 	q := `SELECT mc.data_saida, COALESCE(mc.data_devolucao, ''), COALESCE(mc.obs_saida, ''), COALESCE(mc.obs_devolucao, ''), mc.status,
 	             mi.nome, mi.codigo_patrimonio, COALESCE(mi.numero_serie, '—'), mi.grupo_id,
-	             COALESCE(cat.nome, 'Geral'), COALESCE(mi.nivel_sensibilidade, 'padrao'),
+	             COALESCE(cat.nome, 'Geral'), COALESCE(NULLIF(mi.sensibilidade, ''), 'convencional'),
 	             p.nome_guerra, p.nome_completo, COALESCE(s.nome, 'Indefinido'), COALESCE(fu.nome, 'Indefinida'), COALESCE(g.nome, 'Geral'),
 	             COALESCE(NULLIF(ue.nome_guerra,''), NULLIF(ue.nome_completo,''), '—'), COALESCE(NULLIF(ur.nome_guerra,''), NULLIF(ur.nome_completo,''), '—')
 	      FROM material_cautelas mc
@@ -1496,16 +1496,16 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 
 	q := `
 		SELECT mc.id, mc.item_id, mi.nome, mi.codigo_patrimonio,
-		       mc.pessoa_id, p.nome_guerra, p.nome_completo,
-		       mc.responsavel_entrega_id, ue.login,
+		       COALESCE(mc.pessoa_id, 0), COALESCE(p.nome_guerra, ''), COALESCE(p.nome_completo, ''),
+		       COALESCE(mc.responsavel_entrega_id, 0), COALESCE(ue.login, ''),
 		       COALESCE(mc.responsavel_recebimento_id, 0), COALESCE(ur.login, ''),
 		       mc.data_saida, COALESCE(mc.data_devolucao, ''),
 		       COALESCE(mc.obs_saida, ''), COALESCE(mc.obs_devolucao, ''),
 		       mc.status, COALESCE(mc.quantidade, 1), COALESCE(mi.sensibilidade, 'convencional')
 		FROM material_cautelas mc
 		JOIN material_itens mi ON mi.id = mc.item_id
-		JOIN pessoas p ON p.id = mc.pessoa_id
-		JOIN usuarios ue ON ue.id = mc.responsavel_entrega_id
+		LEFT JOIN pessoas p ON p.id = mc.pessoa_id
+		LEFT JOIN usuarios ue ON ue.id = mc.responsavel_entrega_id
 		LEFT JOIN usuarios ur ON ur.id = mc.responsavel_recebimento_id
 		WHERE (? <= 0 OR mi.grupo_id = ?)`
 	args := []any{escopo, escopo}
