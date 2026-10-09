@@ -283,12 +283,25 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 		whereClauses = append(whereClauses, `(`+t+`.grupo_id IS NULL OR `+t+`.grupo_id IN (`+ph+`))`)
 	}
 	if t == "funcoes" {
+		// v368 (doutrina v359): o catálogo /api/catalogo/funcoes é SOMENTE
+		// ANTIGUIDADE — cadeiras de grupo (tipo='grupo': Encarregado de
+		// Pessoal/Material, Gerente) NUNCA aparecem aqui; elas são designadas
+		// exclusivamente no módulo Pessoal › Aba Funções (funcao_membros, via
+		// /api/grupo/funcoes/membros). O envelope ganhou {funcoes, total} para o
+		// front provar o filtro; a lista continua em "funcoes" (compatível).
+		// Cravado por v368_admin_antiguidade_test.go (TestCatalogoFuncoes*).
 		whereClauses = append(whereClauses, `(`+t+`.tipo = 'antiguidade' OR `+t+`.tipo IS NULL)`)
 	}
 	if len(whereClauses) > 0 {
 		q += ` WHERE ` + strings.Join(whereClauses, " AND ")
 	}
-	q += ` ORDER BY cam.caminho, antiguidade, nome`
+	// v368: catálogo de funções ordena por ANTIGUIDADE (nulos por último —
+	// legado sem grau); demais catálogos mantêm caminho hierárquico.
+	orderPor := "cam.caminho, antiguidade, nome"
+	if t == "funcoes" {
+		orderPor = "(antiguidade IS NULL), antiguidade, nome"
+	}
+	q += ` ORDER BY ` + orderPor
 	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -315,7 +328,9 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 			out = append(out, linha)
 		}
 	}
-	jsonOK(w, out)
+	// v368: envelope {funcoes, total} — total prova que a lista de antiguidade
+	// é o payload inteiro (front exibe cadeiras de grupo nunca mais aqui).
+	jsonOK(w, map[string]any{"funcoes": out, "total": len(out)})
 }
 
 func (a *App) hCatalogoAdd(w http.ResponseWriter, r *http.Request) {
