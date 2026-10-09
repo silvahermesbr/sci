@@ -318,6 +318,16 @@ func (a *App) hMaterialItemComentariosList(w http.ResponseWriter, r *http.Reques
 		jsonErro(w, http.StatusBadRequest, "item_id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
 	rows, err := a.st.db.Query(
 		`SELECT mic.id, mic.texto, mic.criado_em, mic.operador_id, COALESCE(u.nome_guerra, u.login, '')
 		 FROM material_item_comentarios mic
@@ -330,6 +340,9 @@ func (a *App) hMaterialItemComentariosList(w http.ResponseWriter, r *http.Reques
 	}
 	defer rows.Close()
 	var lista []map[string]any
+	if lista == nil {
+		lista = make([]map[string]any, 0)
+	}
 	for rows.Next() {
 		var id, opID int64
 		var texto, criadoEm, opNome string
@@ -353,6 +366,15 @@ func (a *App) hMaterialItemComentarioAdd(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	u := usuarioDoCtx(r)
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
 	var req struct {
 		Texto string `json:"texto"`
 	}
