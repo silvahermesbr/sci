@@ -414,6 +414,115 @@
     };
   }
 
+  /* === Modal de pré-fechamento (conferência rápida) ========================= */
+  async function abrirModalPreFechamentoSetor(cid, sid, sNome) {
+    if (!C || !C.c) return;
+    let dados;
+    try {
+      dados = await api(`/api/conferencia/${cid}/setor/${sid}/pre_fechamento`);
+    } catch (e) {
+      toast('Erro ao carregar pré-fechamento: ' + ((e && e.erro) || (e && e.message) || e), 'erro');
+      return;
+    }
+    await window.ViewConferencia();
+    const itens = dados.itens || [];
+    const renderLista = () => {
+      const verifCount = itens.filter(i => i.verificado).length;
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span id="cfaContagem" style="font-size:12px;color:var(--tx2)">Verificados: <b>${verifCount}/${itens.length}</b></span>
+          <a href="#" id="cfaMarcarTodos" style="font-size:11px;color:var(--tx2)">Marcar todos</a>
+        </div>
+        <div class="cfa-lista">
+          ${itens.map(item => `
+            <label class="cfa-item" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05)">
+              <input type="checkbox" class="cfa-chk" data-pid="${item.pessoa_id}" ${item.verificado ? 'checked' : ''}>
+              <span style="flex:1">
+                <b>${esc(item.nome_guerra)}</b>
+                <small style="color:var(--tx2)">${esc(item.funcao || '')}</small>
+                ${pill(item.situacao)}
+                ${item.observacao ? `<small style="color:var(--tx3)"> · ${esc(item.observacao)}</small>` : ''}
+              </span>
+            </label>
+          `).join('')}
+        </div>`;
+    };
+    const html = `
+      <div class="modal" style="max-width:520px;width:92%">
+        <h3 style="margin-top:0">Conferência rápida — ${esc(sNome)}</h3>
+        <div id="cfaCorpo">${renderLista()}</div>
+        <div class="modal-acoes" style="display:flex;justify-content:flex-end;gap:10px">
+          <button type="button" class="secundario" id="cfaVoltar">Voltar</button>
+          <button type="button" class="primario" style="background:#10b981;border-color:#10b981" id="cfaDespachar">Despachar</button>
+        </div>
+      </div>`;
+    const m = modal(html);
+    const atualizarContagem = () => {
+      const chks = Array.from(m.querySelectorAll('.cfa-chk'));
+      const marcados = chks.filter(c => c.checked).length;
+      const total = chks.length;
+      const span = m.querySelector('#cfaContagem');
+      if (span) span.innerHTML = `Verificados: <b>${marcados}/${total}</b>`;
+    };
+    m.querySelectorAll('.cfa-chk').forEach(ch => {
+      ch.onchange = async () => {
+        const pid = +ch.dataset.pid;
+        const item = itens.find(i => i.pessoa_id === pid);
+        if (!item) return;
+        const novoValor = ch.checked;
+        const situacao = item.situacao !== 'nao_verificado' ? item.situacao : 'presente';
+        try {
+          await api('/api/conferencia/marcar?id=' + cid, {
+            method: 'POST',
+            body: JSON.stringify({ pessoa_id: pid, verificado: novoValor, situacao })
+          });
+        } catch (e) {
+          toast('Erro ao marcar', 'erro');
+          ch.checked = !novoValor;
+          return;
+        }
+        item.verificado = novoValor;
+        if (novoValor && item.situacao === 'nao_verificado') item.situacao = 'presente';
+        atualizarContagem();
+      };
+    });
+    const btMarcarTodos = m.querySelector('#cfaMarcarTodos');
+    if (btMarcarTodos) {
+      btMarcarTodos.onclick = async (ev) => {
+        ev.preventDefault();
+        const pendentes = Array.from(m.querySelectorAll('.cfa-chk:not(:checked)'));
+        if (!pendentes.length) { toast('Todos já estão marcados'); return; }
+        await Promise.all(pendentes.map(async ch => {
+          const pid = +ch.dataset.pid;
+          const item = itens.find(i => i.pessoa_id === pid);
+          if (!item) return;
+          const situacao = item.situacao !== 'nao_verificado' ? item.situacao : 'presente';
+          try {
+            await api('/api/conferencia/marcar?id=' + cid, {
+              method: 'POST',
+              body: JSON.stringify({ pessoa_id: pid, verificado: true, situacao })
+            });
+            ch.checked = true;
+            item.verificado = true;
+            if (item.situacao === 'nao_verificado') item.situacao = 'presente';
+          } catch (e) {}
+        }));
+        atualizarContagem();
+      };
+    }
+    m.querySelector('#cfaVoltar').onclick = () => m.remove();
+    m.querySelector('#cfaDespachar').onclick = async () => {
+      try {
+        await api(`/api/conferencia/${cid}/setor/${sid}/concluir`, { method: 'POST' });
+        toast('Conferência do setor concluída');
+        m.remove();
+        await window.ViewConferencia();
+      } catch (e) {
+        toast('Erro: ' + (e.message || e), 'erro');
+      }
+    };
+  }
+
   /* === Modal Iniciar / Despachar Conferência ================================ */
   async function abrirModalIniciarOuDespacharConf() {
     let setores = [];
@@ -423,6 +532,19 @@
       setores = setores.filter(s => !s.grupo_id || s.grupo_id === window.ME.grupo_id);
     }
     setores.sort((a, b) => (a.sigla || a.nome || '').localeCompare(b.sigla || b.nome || '', 'pt', { sensitivity: 'base' }));
+    let funcoes = [];
+    try { funcoes = await api('/api/catalogo/funcoes'); } catch (e) { funcoes = []; }
+    const pracaNode = funcoes.find(f => f.pai_id === null && f.nome === 'Praças');
+    const oficiais = funcoes.filter(f => f.pai_id === null && f.nome !== 'Praças' && (f.ativo === 1 || f.ativo === true));
+    const pracasList = pracaNode ? funcoes.filter(f => f.pai_id === pracaNode.id && (f.ativo === 1 || f.ativo === true)) : [];
+    oficiais.sort((a, b) => (a.antiguidade || 0) - (b.antiguidade || 0));
+    pracasList.sort((a, b) => (a.antiguidade || 0) - (b.antiguidade || 0));
+    const oficiaisHTML = oficiais.map(f => `
+      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" value="${f.id}"><span>${esc(f.nome)}</span></label>
+    `).join('');
+    const pracasHTML = pracasList.map(f => `
+      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" value="${f.id}"><span>${esc(f.nome)}</span></label>
+    `).join('');
 
     const setoresHTML = setores.map(s => `
       <label class="cfd-setor-item-modal">
@@ -444,6 +566,11 @@
           <small style="color:var(--tx2);font-size:11.5px">Operadores têm até este horário para finalizar a conferência do pessoal do seu setor.</small>
         </div>
         <div class="campo" style="margin-bottom:14px">
+          <label style="font-weight:700;margin-bottom:6px;display:block">Modalidade da conferência</label>
+          <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;margin-right:14px"><input type="radio" name="cfaModalidade" value="setores" checked> Por setor</label>
+          <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="radio" name="cfaModalidade" value="antiguidade"> Por antiguidade</label>
+        </div>
+        <div class="campo" id="cfdBlocoSetores" style="margin-bottom:14px">
           <label style="font-weight:700;margin-bottom:6px;display:block">Setores convocados</label>
           <label class="cfd-chk-todos">
             <input type="checkbox" id="ncTodosSetores" ${setores.length ? 'checked' : ''}>
@@ -453,12 +580,52 @@
             ${setoresHTML}
           </div>
         </div>
+        <div class="campo" id="cfaBlocoAntiguidade" style="margin-bottom:14px;display:none">
+          <label style="font-weight:700;margin-bottom:6px;display:block">Postos e graduações convocados</label>
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <button type="button" class="acao-linha" id="cfaTodosOficiais" style="font-size:11px;padding:2px 8px">Todos os oficiais</button>
+            <button type="button" class="acao-linha" id="cfaTodasPracas" style="font-size:11px;padding:2px 8px">Todas as praças</button>
+            <button type="button" class="acao-linha" id="cfaLimparFuncoes" style="font-size:11px;padding:2px 8px">Limpar</button>
+          </div>
+          <div class="cfd-lista-setores-modal">
+            <div style="font-size:11px;font-weight:700;color:var(--tx2);margin:4px 0 2px;text-transform:uppercase">Oficiais</div>
+            ${oficiaisHTML || '<span class="vazio">Nenhuma função cadastrada</span>'}
+            <div style="font-size:11px;font-weight:700;color:var(--tx2);margin:8px 0 2px;text-transform:uppercase">Praças</div>
+            ${pracasHTML || '<span class="vazio">Nenhuma função cadastrada</span>'}
+          </div>
+        </div>
         <div class="modal-acoes" style="justify-content:flex-end;gap:8px">
           <button type="button" class="acao-linha" id="ncCancelar">Cancelar</button>
           <button type="button" class="primario" id="ncDespachar">Despachar</button>
         </div>
       </div>`;
     const m = modal(html);
+    // Modalidade: por setor × por antiguidade (onda 09/10)
+    const blocoSetores = m.querySelector('#cfdBlocoSetores');
+    const blocoAntig = m.querySelector('#cfaBlocoAntiguidade');
+    m.querySelectorAll('input[name="cfaModalidade"]').forEach(r => {
+      r.onchange = () => {
+        const modo = m.querySelector('input[name="cfaModalidade"]:checked').value;
+        blocoSetores.style.display = modo === 'setores' ? '' : 'none';
+        blocoAntig.style.display = modo === 'antiguidade' ? '' : 'none';
+      };
+    });
+    const ligaGrupo = (btId, seletor) => {
+      const bt = m.querySelector(btId);
+      if (bt) bt.onclick = (ev) => {
+        ev.preventDefault();
+        const alvos = Array.from(m.querySelectorAll(seletor));
+        const todos = alvos.every(c => c.checked);
+        alvos.forEach(c => { c.checked = !todos; });
+      };
+    };
+    ligaGrupo('#cfaTodosOficiais', '#cfaBlocoAntiguidade .cfa-chk-funcao');
+    ligaGrupo('#cfaTodasPracas', '#cfaBlocoAntiguidade .cfa-chk-funcao');
+    const btLimpar = m.querySelector('#cfaLimparFuncoes');
+    if (btLimpar) btLimpar.onclick = (ev) => {
+      ev.preventDefault();
+      m.querySelectorAll('.cfa-chk-funcao').forEach(c => { c.checked = false; });
+    };
     const chkTodos = m.querySelector('#ncTodosSetores');
     const chks = m.querySelectorAll('.cfd-chk-setor');
     if (chkTodos) {
@@ -479,9 +646,24 @@
       const prazo = m.querySelector('#ncPrazo').value;
       if (!nome) { toast('Informe o nome da conferência', 'erro'); return; }
       const marcados = Array.from(m.querySelectorAll('.cfd-chk-setor:checked')).map(c => +c.value);
+      const modo = (m.querySelector('input[name="cfaModalidade"]:checked') || {}).value || 'setores';
+      const funcoesMarcadas = Array.from(m.querySelectorAll('.cfa-chk-funcao:checked')).map(c => +c.value);
+      if (modo === 'antiguidade' && funcoesMarcadas.length === 0) {
+        toast('Selecione ao menos um posto/graduação', 'erro'); return;
+      }
       try {
         let r;
-        if (marcados.length > 0) {
+        if (modo === 'antiguidade') {
+          // onda 09/10 — conferência POR ANTIGUIDADE: funcao_ids define o filtro.
+          // Sem setores marcados → conferência do grupo inteiro (iniciar); com
+          // setores → despachar os setores já afunilados pelo filtro.
+          const corpo = { nome, prazo_final: prazo, funcao_ids: funcoesMarcadas };
+          if (marcados.length > 0) corpo.setores = marcados;
+          r = await api(marcados.length > 0 ? '/api/conferencia/despachar' : '/api/conferencia/iniciar', {
+            method: 'POST',
+            body: JSON.stringify(corpo)
+          });
+        } else if (marcados.length > 0) {
           r = await api('/api/conferencia/despachar', {
             method: 'POST',
             body: JSON.stringify({ nome, prazo_final: prazo, setores: marcados })
@@ -998,6 +1180,8 @@
     }
     C = {
       c: d.conferencia,
+      modo: d.modo || 'setores',
+      funcoesFiltro: d.funcoes_filtro || [],
       pessoas: pessoasLista,
       destinos, est, dest, obs, verif, temComentario,
       escalados, escaladosOntem,
@@ -1227,6 +1411,7 @@
            <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div>` : '<p style="color:var(--tx3);font-size:12px;margin-top:8px">Aguarde o Gerente ou Operador iniciar a conferência do grupo.</p>'}</div>`
       : `<div class="cartao">
          <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span>
+         ${C.modo === 'antiguidade' ? `<div class="cfa-badge" title="Conferência limitada às funções selecionadas">FILTRO POR ANTIGUIDADE: ${esc((C.funcoesFiltro || []).join(', '))}</div>` : ''}
          <div id="confTopoBarra" style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:10px;padding-top:10px;border-top:1px solid var(--borda);flex-wrap:wrap">
            <span id="confContTopo" style="font-size:12.5px;color:var(--tx2)">${contSpan()}</span>
            ${acoesTopo()}
@@ -1281,15 +1466,9 @@
         const sObj = (C.setoresStatus || []).find(x => x.setor_id === meuSetor);
         if (sObj && sObj.status === 'concluida') { toast('Seu setor já está concluído nesta conferência', 'erro'); return; }
         const sNome = sObj ? (sObj.setor_sigla || sObj.setor_nome) : 'Meu Setor';
-        abrirModalConfirmarConclusaoSetor(meuSetor, sNome, async () => {
-          try {
-            await api(`/api/conferencia/${C.c.id}/setor/${meuSetor}/concluir`, { method: 'POST' });
-            toast('Conferência do setor concluída');
-            await window.ViewConferencia();
-          } catch (e) {
-            toast('Erro: ' + (e.message || e), 'erro');
-          }
-        });
+        // onda 09/10: recarrega a view (estado do servidor) e abre modal de
+        // conferência rápida com lista do setor; Despachar confirma a conclusão.
+        abrirModalPreFechamentoSetor(C.c.id, meuSetor, sNome);
       };
     };
     atualizar();
@@ -1348,15 +1527,8 @@
         if (acao === 'concluir') {
           const sObj = (C.setoresStatus || []).find(x => x.setor_id === sid);
           const sNome = sObj ? (sObj.setor_sigla || sObj.setor_nome) : 'Setor';
-          abrirModalConfirmarConclusaoSetor(sid, sNome, async () => {
-            try {
-              await api(`/api/conferencia/${C.c.id}/setor/${sid}/concluir`, { method: 'POST' });
-              toast('Conferência do setor concluída');
-              await window.ViewConferencia();
-            } catch (e) {
-              toast('Erro: ' + (e.message || e), 'erro');
-            }
-          });
+          // onda 09/10: mesmo fluxo do topo — estado do servidor + conferência rápida.
+          abrirModalPreFechamentoSetor(C.c.id, sid, sNome);
           return;
         }
         try {
