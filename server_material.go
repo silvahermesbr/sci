@@ -138,6 +138,16 @@ func (a *App) hMaterialItemAnexosList(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "item_id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
 	rows, err := a.st.db.Query(
 		`SELECT id, nome_arquivo, tipo_mime, tamanho, criado_em
 		 FROM material_item_anexos WHERE item_id = ? ORDER BY criado_em DESC`, itemID)
@@ -147,6 +157,9 @@ func (a *App) hMaterialItemAnexosList(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	var lista []map[string]any
+	if lista == nil {
+		lista = make([]map[string]any, 0)
+	}
 	for rows.Next() {
 		var id int64
 		var nome, mime, criadoEm string
@@ -170,6 +183,17 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "item_id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
+
 	var req struct {
 		NomeArquivo string `json:"nome_arquivo"`
 		TipoMIME    string `json:"tipo_mime"`
@@ -180,18 +204,32 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
 	}
-	if strings.TrimSpace(req.NomeArquivo) == "" {
-		jsonErro(w, http.StatusBadRequest, "nome_arquivo é obrigatório")
+	if strings.TrimSpace(req.NomeArquivo) == "" || strings.TrimSpace(req.DadosBase64) == "" {
+		jsonErro(w, http.StatusBadRequest, "Nome do arquivo e dados em base64 são obrigatórios")
 		return
 	}
-	if req.Tamanho > 10*1024*1024 {
-		jsonErro(w, http.StatusRequestEntityTooLarge, "Anexo muito grande (máx 10 MB)")
+	const maxAnexoBase64 = 800 * 1024
+	if len(req.DadosBase64) > maxAnexoBase64 {
+		jsonErro(w, http.StatusRequestEntityTooLarge, "anexo acima do teto (máx. ~600 KB)")
+		return
+	}
+	mime := strings.ToLower(strings.TrimSpace(req.TipoMIME))
+	switch mime {
+	case "application/pdf", "image/png", "image/jpeg", "image/webp":
+		// permitido
+	default:
+		jsonErro(w, http.StatusBadRequest, "tipo não permitido (use PDF, PNG, JPEG ou WEBP)")
+		return
+	}
+	nome := sanitizarNomeArquivo(req.NomeArquivo)
+	if nome == "" {
+		jsonErro(w, http.StatusBadRequest, "nome de arquivo inválido")
 		return
 	}
 	res, err := a.st.db.Exec(
 		`INSERT INTO material_item_anexos (item_id, nome_arquivo, tipo_mime, tamanho, dados_base64, criado_em)
 		 VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))`,
-		itemID, strings.TrimSpace(req.NomeArquivo), strVal(&req.TipoMIME),
+		itemID, nome, mime,
 		req.Tamanho, req.DadosBase64)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -199,7 +237,7 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	var anexoID int64
 	anexoID, _ = res.LastInsertId()
-	jsonOK(w, map[string]any{"ok": true, "id": anexoID})
+	jsonOK(w, map[string]any{"ok": true, "id": anexoID, "nome_arquivo": nome})
 }
 
 // -----------------------------------------------------------------
@@ -211,6 +249,7 @@ func (a *App) hMaterialItemAnexoGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "anexo_id inválido")
 		return
 	}
+	u := usuarioDoCtx(r)
 	var id, itemID int64
 	var nome, mime string
 	var tam int64
@@ -220,6 +259,15 @@ func (a *App) hMaterialItemAnexoGet(w http.ResponseWriter, r *http.Request) {
 		 FROM material_item_anexos WHERE id = ?`, anexoID).
 		Scan(&id, &itemID, &nome, &mime, &tam, &dados, &criadoEm); err != nil {
 		jsonErro(w, http.StatusNotFound, "anexo não encontrado")
+		return
+	}
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
 	jsonOK(w, map[string]any{
@@ -236,6 +284,21 @@ func (a *App) hMaterialItemAnexoDel(w http.ResponseWriter, r *http.Request) {
 	anexoID, err := strconv.ParseInt(r.PathValue("anexo_id"), 10, 64)
 	if err != nil || anexoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "anexo_id inválido")
+		return
+	}
+	u := usuarioDoCtx(r)
+	var itemID int64
+	if err := a.st.db.QueryRow(`SELECT item_id FROM material_item_anexos WHERE id = ?`, anexoID).Scan(&itemID); err != nil {
+		jsonErro(w, http.StatusNotFound, "anexo não encontrado")
+		return
+	}
+	var itemGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "item não encontrado")
+		return
+	}
+	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
 	_, err = a.st.db.Exec(`DELETE FROM material_item_anexos WHERE id = ?`, anexoID)
