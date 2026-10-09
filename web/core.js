@@ -62,6 +62,10 @@ function ehEncMaterialUsuario(u) {
   return funcaoNomeContem(u, 'material');
 }
 
+// v367: papel de sistema NÃO é mais apagado pelo cargo — conta 'operador' com
+// cadeira enc_* mantém papel 'operador' (rótulo OPERADOR); a sidebar ACRESCENTA
+// os módulos do cargo e os gestores derivam de funcoes_grupo, não do papel.
+// A derivação papel-conf 'encarregado' resta só para conta SEM papel do sistema.
 function definirUsuario(u) {
   if (u && !u.papel && (ehEncPessoalUsuario(u) || ehEncMaterialUsuario(u))) {
     u.papel = 'encarregado';
@@ -666,17 +670,43 @@ definirUsuario(usuario);
     const svgMaterial = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
     const svgPerfil = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
     if (papel === 'operador') {
+      // v367: o papel de sistema dá a BASE e o CARGO (funcoes_grupo) ACRESCENTA
+      // módulos — encarregado designado não perde os itens do operador, ganha
+      // os do enc_pessoal/enc_material. Sem designação, sidebar igual à de antes.
       itens = [
-        ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
         ['#/hoje', 'CONFERÊNCIA', svgConf]
       ];
+      const mapaOp = new Map();
+      const addItemOp = (rota, rotulo, svg, extra) => {
+        if (!mapaOp.has(rota)) mapaOp.set(rota, [rota, rotulo, svg, extra]);
+      };
+      if (window.ehEncPessoal && window.ehEncPessoal()) {
+        addItemOp('#/pessoal', 'PESSOAL', svgPes);
+      }
+      if (window.ehEncMaterial && window.ehEncMaterial()) {
+        addItemOp('#/material', 'MATERIAL', svgMaterial);
+      }
+      if (mapaOp.size > 0) itens = itens.concat(Array.from(mapaOp.values()));
     } else if (papel === 'chefe_setor') {
+      // v367: mesma composição base+cargo do operador.
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
         ['#/mensagens', 'EMAIL INTERNO', svgMsg, true]
       ];
+      const mapaCs = new Map();
+      const addItemCs = (rota, rotulo, svg, extra) => {
+        if (!mapaCs.has(rota)) mapaCs.set(rota, [rota, rotulo, svg, extra]);
+      };
+      if (window.ehEncPessoal && window.ehEncPessoal()) {
+        addItemCs('#/pessoal', 'PESSOAL', svgPes);
+      }
+      if (window.ehEncMaterial && window.ehEncMaterial()) {
+        addItemCs('#/material', 'MATERIAL', svgMaterial);
+      }
+      if (mapaCs.size > 0) itens = itens.concat(Array.from(mapaCs.values()));
     } else if (papel === 'gerente') {
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
@@ -1108,7 +1138,8 @@ function rotear() {
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
   if (h === '#/material') {
     // fix 09/10 (encarregado de material): gerente OU designado enc_material —
-    // gestorMaterial() espelha o authMaterial do servidor (detecta por chave).
+    // gestorMaterial() espelha o authMaterial do servidor (detecta por chave;
+    // v367: designado COM papel de sistema incluído — funcoes_grupo, não papel).
     if (papel === 'gerente' || (window.gestorMaterial && window.gestorMaterial())) chamarView('ViewMaterial');
     else chamarView('ViewSemModulo');
     return;

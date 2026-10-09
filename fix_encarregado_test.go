@@ -237,30 +237,46 @@ func TestEncFuncaoSemChaveGanhaPoderAposV42(t *testing.T) {
 	}
 }
 
-// TestEncPapelSistemaTrava (T3/R5): doutrina 08/10 — papel do sistema trava.
-// Operador designado (mesmo titular) segue SEM poder; e a v42 NÃO destrava a
-// conta cujo usuarios.papel já é operador (papel real permanece).
-func TestEncPapelSistemaTrava(t *testing.T) {
+// TestEncPapelSistemaDesignadoTemPoder (T3, v367): doutrina NOVA — o CARGO manda:
+// operador designado na cadeira exerce o poder (revoga o trava da v366, paliativo
+// do bug-fantasia morto na fonte); operador SEM designação segue sem poder;
+// designação em UMA cadeira não vaza para a outra; v42 NÃO apaga papel REAL de
+// operador (a linha em usuario_papeis é a cadeira do sistema, não fantasia).
+func TestEncPapelSistemaDesignadoTemPoder(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
-	gid, fPess, _, _, _, ckGerM3 := encSetupBase(t, app, st, "m3")
+	gid, fPess, fMat, _, _, ckGerM3 := encSetupBase(t, app, st, "m3")
 
 	criaUsuarioTeste(t, st, "enc_op_m3", "senha-op", "operador")
 	var idOp int64
 	_ = st.db.QueryRow(`SELECT id FROM usuarios WHERE login='enc_op_m3'`).Scan(&idOp)
 	_, _ = st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, gid, idOp)
-	designarViaAPI(t, app, ckGerM3, fPess, idOp, "titular")
 
+	// ANTES da designação: operador sem cadeira → 403 (fail-closed, v367 mantém)
 	ck := loginAs(t, app, "enc_op_m3", "senha-op")
-	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "OPTRAVA", "nome_completo": "Operador Trava"}, ck); rr.Code != http.StatusForbidden {
-		t.Fatalf("R5: operador designado deve seguir 403, veio %d", rr.Code)
+	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "OPSEMCARGO", "nome_completo": "Operador Sem Cargo"}, ck); rr.Code != http.StatusForbidden {
+		t.Fatalf("operador sem designação deve 403, veio %d", rr.Code)
 	}
-	// leitura de material: operador JÁ tem por desenho (authMaterial libera
-	// operador) — o teste de trava é no domínio de PESSOAL do designado.
-	if rr, _ := doJSONReq(app, "POST", "/api/material/itens", map[string]any{"nome": "Item de Operador"}, ck); rr.Code != http.StatusOK {
-		t.Fatalf("sanidade: operador comum lê/escreve material por desenho do authMaterial (200), veio %d", rr.Code)
+	if rr, _ := doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": gid, "setor_id": 0, "encarregado_id": 0, "auxiliar_encarregado_id": 0}, ck); rr.Code != http.StatusForbidden {
+		t.Fatalf("operador sem designação: rota de cargo do material deve 403, veio %d", rr.Code)
 	}
-	// a linha de papel REAL do operador sobrevive à v42 (não é fantasia)
+
+	// designado em enc_pessoal: poder do cargo na MESMA sessão (papel segue 'operador')
+	designarViaAPI(t, app, ckGerM3, fPess, idOp, "titular")
+	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "OPCARGO", "nome_completo": "Operador Com Cargo", "status": "ativo"}, ck); rr.Code != http.StatusOK {
+		t.Fatalf("v367: operador designado enc_pessoal deve 200, veio %d (%v)", rr.Code, res)
+	}
+	if rr, _ := doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": gid, "setor_id": 0, "encarregado_id": 0, "auxiliar_encarregado_id": 0}, ck); rr.Code != http.StatusForbidden {
+		t.Fatalf("designado SÓ em enc_pessoal: rota de cargo do material deve 403, veio %d", rr.Code)
+	}
+
+	// designado TAMBÉM em enc_material (auxiliar): rota de cargo do material passa
+	designarViaAPI(t, app, ckGerM3, fMat, idOp, "auxiliar")
+	if rr, res := doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": gid, "setor_id": 0, "encarregado_id": 0, "auxiliar_encarregado_id": 0}, ck); rr.Code != http.StatusOK {
+		t.Fatalf("v367: operador designado enc_material deve 200 na rota de cargo, veio %d (%v)", rr.Code, res)
+	}
+
+	// a v42 não apaga papel REAL de operador (não é fantasia)
 	if _, err := st.db.Exec(`DELETE FROM schema_migrations WHERE versao = 42`); err != nil {
 		t.Fatalf("resetar marcador v42: %v", err)
 	}
@@ -273,8 +289,8 @@ func TestEncPapelSistemaTrava(t *testing.T) {
 		t.Fatalf("v42 apagou papel REAL de operador (n=%d) — regressão", n)
 	}
 	ck2 := loginAs(t, app, "enc_op_m3", "senha-op")
-	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "OPTRAVA2", "nome_completo": "Operador Trava 2"}, ck2); rr.Code != http.StatusForbidden {
-		t.Fatalf("R5: após v42 operador designado deve seguir 403, veio %d", rr.Code)
+	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "OPCARGO2", "nome_completo": "Operador Com Cargo 2", "status": "ativo"}, ck2); rr.Code != http.StatusOK {
+		t.Fatalf("v367: após v42 operador designado segue com o poder do cargo, veio %d", rr.Code)
 	}
 }
 
@@ -302,9 +318,10 @@ func TestEncV42DestravaFantasiaESoltaSessao(t *testing.T) {
 		t.Fatalf("semear fantasia: %v", err)
 	}
 	ck := loginAs(t, app, "enc_comum_m4", "senha-x") // sessão pega a fantasia (única linha)
-	// prova do bug: com a fantasia ativa, o designado está travado
-	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "PRESO", "nome_completo": "Designado Preso"}, ck); rr.Code != http.StatusForbidden {
-		t.Fatalf("estado estrangulado: designado deve estar travado (403), veio %d", rr.Code)
+	// v367: MESMO com a fantasia ativa (papel 'operador' na sessão), o designado
+	// EXERCE o poder — a v366 travava aqui (403); o cargo manda sobre o papel.
+	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "PRESO", "nome_completo": "Designado Preso", "status": "ativo"}, ck); rr.Code != http.StatusOK {
+		t.Fatalf("v367: designado com fantasia ativa deve exercer o poder (200), veio %d (%v)", rr.Code, res)
 	}
 
 	// upgrade: v42 destrava

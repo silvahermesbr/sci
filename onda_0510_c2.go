@@ -165,15 +165,14 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	id, _ := res.LastInsertId()
 	a.st.Auditoria(&u.ID, "designar_funcao_membro", "funcao_membros", &id, loginMembro+" ["+tit+"]", ipDe(r))
 
-	// Sincroniza o DISPLAY da sessão (funcao_nome do papel ativo) — SOMENTE
-	// preenchendo funcao_id de linha que já existe e está sem função. NUNCA
-	// cria linha em usuario_papeis: o sync antigo fabricava papel='operador'
-	// para conta designada sem papel (CHECK de usuario_papeis rejeita '' e o
-	// INSERT com 'operador' virava a SESSÃO do designado no próximo login —
-	// papel do sistema trava o poder e o encarregado ficava sem módulo, bug
-	// da ordem 09/10). O display do designado puro vem de funcao_membros
-	// (FuncoesGrupoDoUsuario → /api/me funcoes_grupo).
-	_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = ? WHERE usuario_id = ? AND grupo_id = ? AND funcao_id IS NULL`, req.FuncaoID, req.UsuarioID, grupoAlvo)
+	// Sincroniza o DISPLAY da sessão (funcao_nome do papel ativo) — v367, R3
+	// ida-e-volta: a linha do designado NAQUELE grupo recebe a função designada
+	// INCONDICIONALMENTE (um funcao_id STALE mostrava cadeira errada no dropdown
+	// de contexto — pior que sobrescrever). NUNCA cria linha em usuario_papeis
+	// (bug 09/10: o sync antigo fabricava papel='operador' e o CHECK/INSERT
+	// virava a SESSÃO do designado no próximo login). Designado puro sem linha
+	// tem o display vindo de funcao_membros (FuncoesGrupoDoUsuario → /api/me).
+	_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = ? WHERE usuario_id = ? AND grupo_id = ?`, req.FuncaoID, req.UsuarioID, grupoAlvo)
 	jsonOK(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -197,6 +196,15 @@ func (a *App) hFuncaoMembrosDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// v367 (R3): dados da designação ANTES do DELETE — o cleanup do display
+	// precisa de quem e qual função estavam na linha removida.
+	var uidAlvo, fidAlvo, gidAlvo sql.NullInt64
+	if u.Papel == "admin" {
+		_ = a.st.db.QueryRow(`SELECT usuario_id, funcao_id, grupo_id FROM funcao_membros WHERE id = ?`, id).Scan(&uidAlvo, &fidAlvo, &gidAlvo)
+	} else {
+		_ = a.st.db.QueryRow(`SELECT usuario_id, funcao_id, grupo_id FROM funcao_membros WHERE id = ? AND grupo_id = ?`, id, escopo).Scan(&uidAlvo, &fidAlvo, &gidAlvo)
+	}
+
 	var res sql.Result
 	if u.Papel == "admin" {
 		res, err = a.st.db.Exec(`DELETE FROM funcao_membros WHERE id = ?`, id)
@@ -213,5 +221,16 @@ func (a *App) hFuncaoMembrosDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.st.Auditoria(&u.ID, "remover_funcao_membro", "funcao_membros", &id, "", ipDe(r))
+	// v367, R3 (volta): limpar o display — se o funcao_id da linha do usuário
+	// NAQUELE grupo apontava para a função removida, volta a NULL. (Era o outro
+	// lado do stale: removida a designação, o dropdown continuava mostrando a
+	// cadeira antiga.) Sem linha em usuario_papeis → nada a fazer (não inventa).
+	if uidAlvo.Valid && fidAlvo.Valid && fidAlvo.Int64 > 0 {
+		if u.Papel == "admin" {
+			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND funcao_id = ?`, uidAlvo.Int64, fidAlvo.Int64)
+		} else {
+			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND grupo_id = ? AND funcao_id = ?`, uidAlvo.Int64, escopo, fidAlvo.Int64)
+		}
+	}
 	jsonOK(w, map[string]any{"ok": true})
 }
