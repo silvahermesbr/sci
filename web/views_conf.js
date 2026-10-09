@@ -379,41 +379,6 @@
     }
   }
 
-  /* === Modal de confirmação ao fechar o setor (chefe/operador) ============== */
-  function abrirModalConfirmarConclusaoSetor(sid, sNome, onConfirmar) {
-    if (!C || !C.c) return;
-    const pessoasSetor = (C.pessoas || []).filter(p => p.setor_id === sid || (sNome && (p.setor || '').toLowerCase() === sNome.toLowerCase()));
-    const presentes = pessoasSetor.filter(p => {
-      const v = C.est ? C.est[p.id] : null;
-      const sit = (typeof v === 'object' && v !== null) ? v.situacao : (v || 'nao_verificado');
-      const verificado = (typeof v === 'object' && v !== null && v.verificado) || (C.verif && C.verif.has(p.id));
-      return verificado && sit === 'presente';
-    }).length;
-
-    const html = `
-      <div class="modal" style="max-width:440px;width:92%">
-        <h3 style="margin-top:0">Confira seu efetivo</h3>
-        <div class="cfd-modal-confirm-corpo" style="margin:16px 0 20px">
-          <p style="font-size:15px;line-height:1.5;margin:0 0 8px;color:var(--tx)">
-            <b>${presentes}</b> presentes registrados no setor <b>${esc(sNome || 'do setor')}</b>.
-          </p>
-          <p style="font-size:12.5px;color:var(--tx2);margin:0">
-            Deseja confirmar e concluir a conferência do seu setor?
-          </p>
-        </div>
-        <div class="modal-acoes" style="display:flex;justify-content:flex-end;gap:10px">
-          <button type="button" class="secundario" id="cfdVoltarSetor">Voltar</button>
-          <button type="button" class="primario" id="cfdConfirmarSetor">Confirmar</button>
-        </div>
-      </div>`;
-    const m = modal(html);
-    m.querySelector('#cfdVoltarSetor').onclick = () => m.remove();
-    m.querySelector('#cfdConfirmarSetor').onclick = async () => {
-      m.remove();
-      if (typeof onConfirmar === 'function') await onConfirmar();
-    };
-  }
-
   /* === Modal de pré-fechamento (conferência rápida) ========================= */
   async function abrirModalPreFechamentoSetor(cid, sid, sNome) {
     if (!C || !C.c) return;
@@ -540,10 +505,10 @@
     oficiais.sort((a, b) => (a.antiguidade || 0) - (b.antiguidade || 0));
     pracasList.sort((a, b) => (a.antiguidade || 0) - (b.antiguidade || 0));
     const oficiaisHTML = oficiais.map(f => `
-      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" value="${f.id}"><span>${esc(f.nome)}</span></label>
+      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" data-grupo="oficiais" value="${f.id}"><span>${esc(f.nome)}</span></label>
     `).join('');
     const pracasHTML = pracasList.map(f => `
-      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" value="${f.id}"><span>${esc(f.nome)}</span></label>
+      <label style="font-size:11px;display:flex;align-items:center;gap:4px"><input type="checkbox" class="cfa-chk-funcao" data-grupo="pracas" value="${f.id}"><span>${esc(f.nome)}</span></label>
     `).join('');
 
     const setoresHTML = setores.map(s => `
@@ -619,8 +584,8 @@
         alvos.forEach(c => { c.checked = !todos; });
       };
     };
-    ligaGrupo('#cfaTodosOficiais', '#cfaBlocoAntiguidade .cfa-chk-funcao');
-    ligaGrupo('#cfaTodasPracas', '#cfaBlocoAntiguidade .cfa-chk-funcao');
+    ligaGrupo('#cfaTodosOficiais', '#cfaBlocoAntiguidade .cfa-chk-funcao[data-grupo="oficiais"]');
+    ligaGrupo('#cfaTodasPracas', '#cfaBlocoAntiguidade .cfa-chk-funcao[data-grupo="pracas"]');
     const btLimpar = m.querySelector('#cfaLimparFuncoes');
     if (btLimpar) btLimpar.onclick = (ev) => {
       ev.preventDefault();
