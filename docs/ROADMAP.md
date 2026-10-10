@@ -71,7 +71,7 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
 
 ### D. Corrigir os 3 bugs de campo (relatos do comando)
 
-**D1 — "2 chefes de setor simultâneos" (chefe-zumbi):**
+**D1 — "2 chefes de setor simultâneos" (chefe-zumbi) — ✅ CONCLUÍDO (v1.5.4-D1):**
 - **Causa-raiz:** `chefeComandaSetor` (onda_0510_conf_escopo.go:145-164) aceita fallbacks
   `usuarios.setor_id` e `pessoas.setor_id`; `hGrupoNomearChefe` (onda_0510_escalas.go:297) escreve
   `usuarios.setor_id` como efeito colateral e NADA o limpa na destituição/troca (documentado em
@@ -81,6 +81,15 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   comandos legados em `chefe_setores` antes), OU invalidar `usuarios.setor_id` ao destituir;
   decisão registrada no `ARQUITETURA.md` §Chefias. Teste: nomear A, trocar p/ B, A perde
   concluir/reabrir/marcar do setor IMEDIATAMENTE.
+- **Executado (decisão D-2 — materializar e remover fallbacks):** migração **v44** materializa as
+  chefias legadas pendentes (`onda_v154_d1.go`; fontes `usuarios.setor_id` → `pessoas.setor_id`,
+  INSERT OR IGNORE — UNIQUE(setor_id) preserva o comando vigente); `chefeComandaSetor` consulta
+  SOMENTE `chefe_setores`; novo `setorAtivoComandado` condiciona o contexto da sessão ao comando
+  vigente em concluir/reabrir/marcar e na leitura do `/hoje`; `hUsuarioPapelAdd`
+  (chefe_setor+setor_id) materializa o comando (UPSERT 1:1) e `hUsuarioPapelDel` revoga os do
+  grupo; `hSetoresAgregado` passa a ler `chefe_setores` (fonte única); `versaoSchemaBinario` → 44.
+  Regressão: `onda_v154_d1_test.go` (substituição 1:1, papel add/del, migração v44, contexto
+  órfão). Resíduo documentado p/ D-5: escala do chefe e pre_fechamento ainda leem o contexto.
 
 **D2 — "Acesso a módulos fora da esfera via URL":**
 - **Causa-raiz:** gates do `rotear()` são cosméticos (ok, por design); o buraco real é servidor:

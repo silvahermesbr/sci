@@ -136,12 +136,13 @@ func (a *App) authConf(prox http.HandlerFunc) http.Handler {
 	return a.authConfCom([]string{"gerente", "operador"}, prox)
 }
 
-// chefeComandaSetor: o papel chefe_setor comanda o setor S? Fonte da verdade =
-// chefe_setores (multi-chefia 06/10). Fallbacks da CONTA LEGADA (chefe criado
-// antes da v35, sem linha em chefe_setores): u.SetorID — o MESMO setor corrente
-// que hMe devolve ao front — e o setor da pessoa vinculada. Sem os fallbacks o
-// chefe legado via o botão "FECHAR MEU SETOR" liberado (hMe usa u.SetorID) e
-// tomava 403 do próprio servidor (regressão 06/10, S4b/TestV15).
+// chefeComandaSetor: o papel chefe_setor comanda o setor S? Fonte ÚNICA de
+// verdade = chefe_setores (multi-chefia 06/10). Os fallbacks da CONTA LEGADA
+// (u.SetorID e pessoas.setor_id) foram REMOVIDOS na v1.5.4-D1 (R-12,
+// chefe-zumbi): eles devolviam poder ao chefe destituído cujo usuarios.setor_id
+// ficou órfão da chefia anterior. Legados pendentes são MATERIALIZADOS na
+// migração v44 antes da troca (decisão D-2). Consulte setorAtivoComandado para
+// o guarda do contexto da sessão.
 func (a *App) chefeComandaSetor(u *Usuario, setorID int64) bool {
 	if u == nil || setorID <= 0 {
 		return false
@@ -149,16 +150,6 @@ func (a *App) chefeComandaSetor(u *Usuario, setorID int64) bool {
 	var comandos int
 	if e := a.st.db.QueryRow(`SELECT COUNT(*) FROM chefe_setores WHERE usuario_id = ? AND setor_id = ?`, u.ID, setorID).Scan(&comandos); e == nil && comandos > 0 {
 		return true
-	}
-	if u.SetorID != nil && *u.SetorID == setorID {
-		return true
-	}
-	if u.PessoaID != nil && *u.PessoaID > 0 {
-		var s *int64
-		_ = a.st.db.QueryRow(`SELECT setor_id FROM pessoas WHERE id = ?`, *u.PessoaID).Scan(&s)
-		if s != nil && *s == setorID {
-			return true
-		}
 	}
 	return false
 }
@@ -183,7 +174,9 @@ func (a *App) guardaSetorNaMarcar(w http.ResponseWriter, u *Usuario, pessoaID in
 			jsonErro(w, http.StatusForbidden, "militar sem setor — não é de comando do chefe")
 			return false
 		}
-		sAtivo := setorDoUsuario(a, u)
+		// v1.5.4-D1 (R-12): o contexto só vale se o chefe AINDA comanda o setor
+		// (setorAtivoComandado) — contexto órfão de chefia anterior não marca.
+		sAtivo := a.setorAtivoComandado(u)
 		if sAtivo != nil && *sAtivo == *pSetor {
 			return true
 		}

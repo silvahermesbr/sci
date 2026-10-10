@@ -1,5 +1,30 @@
 # SCI — Changelog Oficial
 
+## [v1.5.4] — Não lançada
+
+### 🧟 Onda v1.5.4 — D1: mata o "chefe-zumbi" (R-12) — chefe_setores vira fonte única
+- **Causa:** A nomeado chefe do setor S conservava poderes invisíveis depois de substituído por B
+  (ou destituído): o COMANDO (linha em `chefe_setores`) saía, mas o CONTEXTO (`usuarios.setor_id`,
+  jamais limpo na troca/destituição) continuava autorizando via fallbacks do `chefeComandaSetor`
+  (`usuarios.setor_id` → `pessoas.setor_id`) — "2 chefes de setor simultâneos". Fábrica adicional:
+  `hUsuarioPapelAdd` gravava o papel chefe_setor + `usuarios.setor_id` SEM linha em
+  `chefe_setores`; `hSetoresAgregado` lia fonte divergente da UI de catálogo.
+- **Correção (decisão D-2):** `chefe_setores` é a FONTE ÚNICA do comando — fallbacks removidos;
+  novo `setorAtivoComandado` condiciona o contexto da sessão ao comando VIGENTE (concluir setor,
+  reabrir setor, marcar presença e leitura do efetivo no `/hoje`: contexto órfão não lê nem lança);
+  `hUsuarioPapelAdd` (chefe_setor + setor_id) materializa o comando (UPSERT 1:1 — chefe anterior
+  perde a linha) e `hUsuarioPapelDel` do papel revoga os comandos do grupo; `hSetoresAgregado` lê
+  `chefe_setores`. Regressão em `onda_v154_d1_test.go` (substituição 1:1, add/del de papel,
+  contexto órfão — positivo e negativo por persona).
+- **Migração v44 (schema 43 → 44):** materializa os comandos legados ainda pendentes (fontes
+  `usuarios.setor_id` → `pessoas.setor_id`; INSERT OR IGNORE — a UNIQUE(setor_id) preserva o
+  comando vigente; idempotente). `versaoSchemaBinario` subiu junto (44) — sem isso o próprio
+  backup do binário seria rejeitado no import. Resíduo documentado (proposta D-5):
+  `usuarios.setor_id` deixa de ser fonte de autorização e vira contexto/cadastro exibido;
+  designação de escala do chefe e pre_fechamento ainda leem o contexto (sem poder de conferência).
+
+---
+
 ## [v1.5.3] — 2026-10-10
 
 ### 🔐 Onda 10/10 — Frente A (Gap 1): designação pelo encarregado de pessoal

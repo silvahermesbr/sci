@@ -170,15 +170,11 @@ func (a *App) hSetoresAgregado(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(g.nome, ''),
 		       (SELECT COUNT(*) FROM pessoas p WHERE p.setor_id = s.id AND p.status = 'ativo'),
 		       (SELECT COUNT(*) FROM usuarios us WHERE us.setor_id = s.id AND us.ativo = 1),
-		       (SELECT COUNT(*) FROM usuarios us2
-		         JOIN usuario_papeis up2 ON up2.usuario_id = us2.id
-		           AND up2.papel = 'chefe_setor' AND up2.grupo_id = s.grupo_id
-		         WHERE us2.setor_id = s.id AND us2.ativo = 1),
+		       (SELECT COUNT(*) FROM chefe_setores cs2 WHERE cs2.setor_id = s.id),
 		       COALESCE((SELECT COALESCE(NULLIF(cus.nome_guerra, ''), cus.login, '')
-		         FROM usuarios cus
-		         JOIN usuario_papeis cup ON cup.usuario_id = cus.id
-		           AND cup.papel = 'chefe_setor' AND cup.grupo_id = s.grupo_id
-		         WHERE cus.setor_id = s.id AND cus.ativo = 1
+		         FROM chefe_setores cs
+		         JOIN usuarios cus ON cus.id = cs.usuario_id AND cus.ativo = 1
+		         WHERE cs.setor_id = s.id
 		         ORDER BY cus.id LIMIT 1), '')
 		FROM setores s
 		LEFT JOIN grupos g ON g.id = s.grupo_id

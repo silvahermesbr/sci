@@ -16,9 +16,11 @@ import (
 )
 
 // versaoSchemaBinario: maior versão de schema_migrations que ESTE binário conhece
-// (v40 = f1: índice único real para material_conferencias abertas).
+// (v44 = v1.5.4-D1: chefe_setores vira fonte única — materializa chefias legadas).
 // Valida imports de backup (R9): arquivo mais novo que o binário = rejeita.
-const versaoSchemaBinario = 43
+// TEM QUE subir JUNTO com a migração nova na cadeia do executarMigracoes —
+// esquecer transforma o backup do próprio binário em import rejeitado.
+const versaoSchemaBinario = 44
 
 func main() {
 	// footprint: teto suave de heap — GC age antes de o RSS crescer sem freio

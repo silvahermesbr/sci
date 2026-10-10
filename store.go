@@ -1228,7 +1228,7 @@ func tabelaDeCatalogo(tab string) (string, error) {
 	return "", fmt.Errorf("catálogo inválido: %s", tab)
 }
 
-// executarMigracoes: unifica toda a cadeia de migrações v2 até v43 para
+// executarMigracoes: unifica toda a cadeia de migrações v2 até v44 para
 // ser executada tanto na inicialização (AbrirStore) quanto na restauração (ReabrirComArquivo).
 func (s *Store) executarMigracoes() error {
 	if err := s.migrar(); err != nil {
@@ -1355,6 +1355,9 @@ func (s *Store) executarMigracoes() error {
 		return err
 	}
 	if err := s.migrarV43(); err != nil {
+		return err
+	}
+	if err := s.migrarV44(); err != nil {
 		return err
 	}
 	return nil

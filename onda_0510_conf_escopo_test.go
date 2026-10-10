@@ -60,6 +60,15 @@ func ondaEscopoSetup(t *testing.T, app *App, st *Store) (gid, setorA, setorB, pA
 		t.Fatalf("vincular papeis: %v", err)
 	}
 
+	// v1.5.4-D1 (R-12): comando de chefiar = linha em chefe_setores (fonte
+	// única) — o setup semeia na doutrina nova; o chefe-zumbi não deve mais
+	// existir nem em fixture.
+	var ch01ID int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'ch01'`).Scan(&ch01ID); err != nil {
+		t.Fatalf("id ch01: %v", err)
+	}
+	materializaComandoSetor(t, st, ch01ID, gid, setorA)
+
 	if err := st.db.QueryRow(`INSERT INTO pessoas (nome_guerra, nome_completo, setor_id, grupo_id, status) VALUES ('SILVA A','Silva A Comum', ?, ?, 'ativo') RETURNING id`, setorA, gid).Scan(&pA); err != nil {
 		t.Fatalf("criar pessoa A: %v", err)
 	}

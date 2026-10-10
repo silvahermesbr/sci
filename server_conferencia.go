@@ -190,7 +190,13 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		!a.ehEncarregado(u) && !a.ehAuxiliarDePessoal(u)
 	var ativo *int64
 	if ehChefeOuOper {
-		ativo = setorDoUsuario(a, u)
+		// v1.5.4-D1 (R-12): chefe só lê o setor ativo SE ainda o comanda
+		// (setorAtivoComandado); operador mantém o contexto de cadastro.
+		if u.Papel == "chefe_setor" {
+			ativo = a.setorAtivoComandado(u)
+		} else {
+			ativo = setorDoUsuario(a, u)
+		}
 		if ativo != nil {
 			somenteAtivo := []map[string]any{}
 			for _, p := range pessoasGrupo {
@@ -678,7 +684,9 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 		// contexto da sessão (u.SetorID → fallback pessoa vinculada). A
 		// multi-chefia passa a ser exercida TROCANDO o contexto no dropdown,
 		// um setor por vez — sem cruzamento de dados entre setores.
-		sAtivo := setorDoUsuario(a, u)
+		// v1.5.4-D1 (R-12): o contexto só vale se o chefe AINDA comanda o setor
+		// (setorAtivoComandado) — contexto órfão de chefia anterior não conclui.
+		sAtivo := a.setorAtivoComandado(u)
 		if sAtivo == nil || *sAtivo != sid {
 			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de concluir este setor")
 			return
@@ -739,7 +747,8 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 	if u.Papel == "chefe_setor" {
 		// ordem 08/10 — contexto-govena: só reabre o setor ATIVO no contexto
 		// (mesma regra da conclusão; multi-chefia = trocar o contexto).
-		sAtivo := setorDoUsuario(a, u)
+		// v1.5.4-D1 (R-12): contexto órfão de chefia anterior não reabre.
+		sAtivo := a.setorAtivoComandado(u)
 		if sAtivo == nil || *sAtivo != sid {
 			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de reabrir este setor")
 			return

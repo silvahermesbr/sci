@@ -176,6 +176,8 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	// PRÉ-insert (setor inválido não pode deixar linha órfã atrás). Re-atribuição
 	// (papel já existe: UNIQUE usuario+grupo+papel) = TROCA DE SETOR idempotente —
 	// atualiza usuarios.setor_id e responde 200, nunca 400 fake.
+	// v1.5.4-D1 (R-12): o COMANDO é materializado em chefe_setores AQUI (antes
+	// este endpoint só escrevia usuarios.setor_id — fábrica de chefe-zumbi).
 	setorReq := int64(0)
 	if papel == "chefe_setor" && req.SetorID != nil && *req.SetorID > 0 {
 		if req.GrupoID == nil || !a.setorIDValidoNoGrupo(*req.SetorID, *req.GrupoID) {
@@ -199,6 +201,16 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 					jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
 					return
 				}
+				// v1.5.4-D1: troca de setor materializa o novo COMANDO idem.
+				if _, err := a.st.db.Exec(`
+					INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)
+					ON CONFLICT(setor_id) DO UPDATE SET
+					  usuario_id = excluded.usuario_id,
+					  grupo_id = excluded.grupo_id
+				`, *req.GrupoID, setorReq, usuarioID); err != nil {
+					jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+err.Error())
+					return
+				}
 				a.st.Auditoria(&u.ID, "adicionar_papel", "usuario_papeis", &pid,
 					fmt.Sprintf("usuario_id=%d papel=%s grupo_id=%v (troca de setor -> %d)", usuarioID, papel, *req.GrupoID, setorReq), ipDe(r))
 				jsonOK(w, map[string]any{"ok": true, "id": pid})
@@ -213,6 +225,17 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	if setorReq > 0 {
 		if _, err := a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, setorReq, usuarioID); err != nil {
 			jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
+			return
+		}
+		// v1.5.4-D1: materializa o COMANDO (substituição 1:1 — setor sai das
+		// mãos do chefe anterior; fonte única chefe_setores).
+		if _, err := a.st.db.Exec(`
+			INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)
+			ON CONFLICT(setor_id) DO UPDATE SET
+			  usuario_id = excluded.usuario_id,
+			  grupo_id = excluded.grupo_id
+		`, *req.GrupoID, setorReq, usuarioID); err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+err.Error())
 			return
 		}
 	}
@@ -257,15 +280,19 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Se o gerente está excluindo, garantir que o papel pertence ao seu grupo e é operador
+	var pGrupoID *int64
+	var pPapel string
 	if u.Papel == "gerente" {
-		var pGrupoID *int64
-		var pPapel string
 		err := a.st.db.QueryRow(`SELECT grupo_id, papel FROM usuario_papeis WHERE id = ? AND usuario_id = ?`, papelID, usuarioID).Scan(&pGrupoID, &pPapel)
 		dentroDaArvore := func(g int64) bool { return g == *u.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*u.GrupoID), g) }
 		if err != nil || (pPapel != "operador" && pPapel != "chefe_setor") || pGrupoID == nil || u.GrupoID == nil || !dentroDaArvore(*pGrupoID) {
 			jsonErro(w, http.StatusForbidden, "permissão insuficiente para remover este papel")
 			return
 		}
+	} else {
+		// v1.5.4-D1: preciso do papel/grupo do alvo também fora do ramo gerente
+		// (para revogar o COMANDO junto com o papel de chefe_setor).
+		_ = a.st.db.QueryRow(`SELECT grupo_id, papel FROM usuario_papeis WHERE id = ? AND usuario_id = ?`, papelID, usuarioID).Scan(&pGrupoID, &pPapel)
 	}
 
 	// Se alguma sessão estava usando este papel, chavear para outro papel válido do usuário
@@ -279,6 +306,16 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao remover papel: "+err.Error())
 		return
+	}
+
+	// v1.5.4-D1 (R-12): o papel chefe_setor existe enquanto o usuário comanda
+	// ≥1 setor — removê-lo apaga os COMANDOS do grupo (fonte única
+	// chefe_setores), senão o acesso sai e o comando ficava órfão.
+	if pPapel == "chefe_setor" && pGrupoID != nil && *pGrupoID > 0 {
+		if _, err := a.st.db.Exec(`DELETE FROM chefe_setores WHERE usuario_id = ? AND grupo_id = ?`, usuarioID, *pGrupoID); err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao revogar comando de setor: "+err.Error())
+			return
+		}
 	}
 
 	a.st.Auditoria(&u.ID, "remover_papel", "usuario_papeis", &papelID,

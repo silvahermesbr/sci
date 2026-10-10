@@ -51,6 +51,9 @@ func TestChefeSetorEConferencia(t *testing.T) {
 	resUChefe, _ := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, pessoa_id, setor_id, precisa_setup) VALUES ('chefe_com', ?, 'chefe_setor', ?, ?, ?, 0)`, hashPadrao, grupoID, pessoaAID, setorAID)
 	chefeUID, _ := resUChefe.LastInsertId()
 	_, _ = st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'chefe_setor')`, chefeUID, grupoID)
+	// v1.5.4-D1 (R-12): comando materializado em chefe_setores (fonte única) —
+	// fixture antiga vivia do fallback usuarios.setor_id, removido do produto.
+	materializaComandoSetor(t, st, chefeUID, grupoID, setorAID)
 
 	tokenGerente, _, _ := st.CriarSessao(gerenteUID, ttlSessao)
 	tokenChefe, _, _ := st.CriarSessao(chefeUID, ttlSessao)

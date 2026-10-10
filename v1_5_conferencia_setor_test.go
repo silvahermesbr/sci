@@ -64,6 +64,9 @@ func TestV15_ConferenciaPorSetor(t *testing.T) {
 	resUChefe1, _ := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, grupo_id, setor_id, ativo) VALUES ('chefe_cmdo', 'hash', 'chefe_setor', ?, ?, 1)`, gid, s1ID)
 	uChefe1ID, _ := resUChefe1.LastInsertId()
 	_, _ = st.db.Exec(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel) VALUES (?, ?, 'chefe_setor')`, uChefe1ID, gid)
+	// v1.5.4-D1 (R-12): comando materializado em chefe_setores (fonte única) —
+	// fixture antiga vivia do fallback usuarios.setor_id, removido do produto.
+	materializaComandoSetor(t, st, uChefe1ID, gid, s1ID)
 
 	loginToken := func(uid int64) string {
 		tok, _, e := st.CriarSessao(uid, time.Hour)

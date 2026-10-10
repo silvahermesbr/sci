@@ -78,13 +78,24 @@ couber:
 |---|---|---|---|
 | **Papéis de sistema** | `usuario_papeis` (`admin\|gerente\|operador\|chefe_setor`) | Acesso base a módulos (papel ATIVO da sessão) | `escopoDoUsuario`, todas as guardas, `/api/me` |
 | **Cadeiras (funções de grupo)** | `funcao_membros` × `funcoes` tipo='grupo' (chave `enc_pessoal`/`enc_material`, titular/auxiliar) | Poderes espelhados: enc_pessoal→fechar conferência, gerir pessoal; enc_material→módulo material | `podeGestaoPessoal`, `ehEncarregadoDePessoal/Material`, `authMaterial`, `gestorPessoal/Material` (front) |
-| **Chefias de setor** | `chefe_setores` (1 linha por setor — `setor_id` UNIQUE, v35) | Comando do setor p/ conferência (concluir/reabrir/marcar) | `chefeComandaSetor` (+ fallbacks legados — ver R-12), `hCatalogoList` |
+| **Chefias de setor** | `chefe_setores` (1 linha por setor — `setor_id` UNIQUE, v35) | Comando do setor p/ conferência (concluir/reabrir/marcar) | `chefeComandaSetor` (**FONTE ÚNICA** — D-2 executada na v1.5.4-D1, ver R-12), `setorAtivoComandado` (onda_v154_d1.go), `hCatalogoList`, `hSetoresAgregado` |
 
 **Regras vitais:**
-- `chefe_setores` é a fonte da verdade do comando; a UI de setores lê dela (server_catalogo.go:253-257).
-  **MAS** `chefeComandaSetor` (onda_0510_conf_escopo.go:145-164) aceita fallbacks `usuarios.setor_id`
-  e `pessoas.setor_id` — e `usuarios.setor_id` é escrito por `hGrupoNomearChefe`
-  (onda_0510_escalas.go:297) e **nunca limpo na destituição** → chefe-zumbi (defeito R-12).
+- **DECISÃO D-2 (EXECUTADA na v1.5.4-D1, R-12 "chefe-zumbi"):** `chefe_setores` é a FONTE ÚNICA do
+  comando — `chefeComandaSetor` (onda_0510_conf_escopo.go:139) consulta SOMENTE a tabela (os
+  fallbacks `usuarios.setor_id`/`pessoas.setor_id` foram REMOVIDOS) e o novo `setorAtivoComandado`
+  (onda_v154_d1.go) condiciona o CONTEXTO da sessão ao comando vigente: contexto órfão de chefia
+  anterior não conclui, não reabre, não marca e não lê o setor (conclusão da leitura em
+  `hConferenciaHoje`). Toda escrita de chefia MATERIALIZA o comando: `hGrupoNomearChefe`,
+  `hUsuarioPapelAdd` (chefe_setor + setor_id, UPSERT 1:1 por setor — o chefe anterior perde a
+  linha) e a migração **v44** (one-shot que materializou os legados pendentes antes da troca;
+  `hUsuarioPapelDel` do papel chefe_setor apaga os comandos do grupo). O nomear/destituir purge o
+  papel de quem fica SEM comando, como antes.
+- **PROPOSTA D-5 (pendente, decisão de comando):** `usuarios.setor_id` deixa de ser fonte de
+  autorização — vira contexto/cadastro EXIBIDO. Resíduos que ainda leem o contexto sem conferir o
+  comando: designações de escala do chefe (`guardaEscala`/`validaAlvoEscala`,
+  onda_0510_escalas.go:46/:77) e `hSetorPreFechamento` (onda_0910:172) — leitura/designação
+  dentro do próprio grupo; o comando real (concluir/reabrir/marcar) já está estancado.
 - Designação de cadeira **não re-chaveia sessão**: `hFuncaoMembrosSet` só sincroniza
   `usuario_papeis.funcao_id` (display). O poder novo vale a partir do próximo `/api/me`.
 - `hMudarContexto` troca papel/setor ativos da sessão **e reescreve `usuarios.setor_id` global**
@@ -184,18 +195,18 @@ seed global); **sem herança de grupo superior**. ⚠ Ordenação: só o pré-fe
 
 | Método | Rota | Handler (arq:linha) | Guarda | Papéis | Escopo 0/-1/N | W | R | Notas |
 |---|---|---|---|---|---|---|---|---|
-| GET | /api/conferencia/hoje | server_conferencia.go:16 | auth(false) | qualquer | 0+admin: vazio; ⚠-1: escalados de todos; N: conf aberta | DDL lazy CD | conferencias, presencas, CD, CF, CS, escalas | modo+funcoes_filtro; corte por setor ativo/despachos |
+| GET | /api/conferencia/hoje | server_conferencia.go:16 | auth(false) | qualquer | 0+admin: vazio; ⚠-1: escalados de todos; N: conf aberta | DDL lazy CD | conferencias, presencas, CD, CF, CS, escalas | modo+funcoes_filtro; corte por setor ativo/despachos — chefe só lê o setor que AINDA comanda (setorAtivoComandado, v1.5.4-D1/R-12; contexto órfão → pessoas vazias) |
 | GET | /api/conferencia/estado | onda_0610_conf_estado.go:23 | auth(false) | qualquer | 0/-1: hash vazio; N: por setor | — | idem | SHA-1/setor; base do tick 2s |
-| POST | /api/conferencia/iniciar | server_conferencia.go:434 | confMarcarAuth + internas :454-484 | ger/op*/chefe*/enc* | sem grupo 403 | conferencias, presencas(carry+escalas), CS, CF, CD | pessoas, escalas | valida funcao_ids do grupo ANTES (:498); auditoria |
+| POST | /api/conferencia/iniciar | server_conferencia.go:434 | confMarcarAuth + internas :454-484 | ger/op*/chefe*/enc* | sem grupo 403 | conferencias, presencas(carry+escalas), CS, CF, CD | pessoas, escalas | valida funcao_ids do grupo ANTES (:498); auditoria; chefe só inicia setor que comanda (chefeComandaSetor — fonte única chefe_setores, D-1) |
 | POST | /api/conferencia/despachar | onda_despacho.go:160 | confAuth (+operador 403 interno) | ger/enc | sem grupo 403 | +CD | idem | exige ≥1 setor |
 | POST | /api/conferencia/fechar | server_conferencia.go:522 | confAuth + :524 | **só gerente/enc_pessoal** | ⚠-1 fecha de OUTRO grupo (R-1) | presencas upsert, conferencias, CS (tx) | conferencias | sem ✅→nao_verificado; **backupAssíncrono** + broadcast SSE |
-| POST | /api/conferencia/marcar | server_conferencia.go:306 | confMarcarAuth + guardaSetorNaMarcar | ger/enc: grupo; chefe/op: setor próprio | -1: 409 | presencas, CS | pessoas | só justificada tem destino; troca reset obs; SSE |
+| POST | /api/conferencia/marcar | server_conferencia.go:306 | confMarcarAuth + guardaSetorNaMarcar | ger/enc: grupo; chefe/op: setor próprio | -1: 409 | presencas, CS | pessoas | só justificada tem destino; troca reset obs; SSE; ramo chefe exige comando VIGENTE (setorAtivoComandado, v1.5.4-D1/R-12) |
 | GET | /api/conferencia/lista · /api/conferencias | server_conferencia.go:818 (:1584/:1599) | auth(false) | qualquer | ⚠-1: **todas** (R-1) | — | conferencias | ?arq=1 arquivo; senão 7 dias |
 | GET | /api/conferencia/{id} | server_conferencia.go:933 | auth(false) | qualquer | 0: qualquer; ⚠-1: qualquer (R-1); N: própria+subordinados | — | tudo | relatório na tela; ordena situacao/nome ⚠ (R-7) |
 | DELETE | /api/conferencia/{id} | server_conferencia.go:882 | confAuth | ger/op/enc | ⚠-1 (R-1) | comentarios, presencas, CE, conferencias | — | só ABERTA; sem backup |
-| POST | /api/conferencia/{id}/setor/{sid}/concluir | server_conferencia.go:631 | confMarcarAuth | chefe: setor ativo; ger/op/enc | ⚠-1 (R-1) | CS | — | exige aberta |
+| POST | /api/conferencia/{id}/setor/{sid}/concluir | server_conferencia.go:631 | confMarcarAuth | chefe: setor ativo COMANDADO (setorAtivoComandado, v1.5.4-D1/R-12); ger/op/enc | ⚠-1 (R-1) | CS | — | exige aberta |
 | POST | /api/conferencia/{id}/setor/{sid}/reabrir | server_conferencia.go:689 | idem | idem | ⚠-1 (R-1) | CS | — | |
-| GET | …/setor/{sid}/pre_fechamento | onda_0910:138 | confMarcarAuth | idem | ⚠-1 (R-1) | — | pessoas+CF | ordena por antiguidade (só p.funcao_id ⚠) |
+| GET | …/setor/{sid}/pre_fechamento | onda_0910:138 | confMarcarAuth | idem | ⚠-1 (R-1) | — | pessoas+CF | ordena por antiguidade (só p.funcao_id ⚠); ramo chefe ainda lê o CONTEXTO sem conferir comando (resíduo D-5) |
 | GET | /api/conferencia/funcoes-antiguidade | onda_0910:296 | auth(false) | qualquer | ≤0: vazio+aviso | — | funcoes | picker; tags DO grupo |
 | GET | /api/conferencia/{id}/relatorio.pdf | server_conferencia.go:1095 | auth(false) | qualquer | ⚠-1 (R-1) | — | tudo | só FECHADA; filtros; assinatura |
 | POST | /api/conferencia/{id}/arquivar | server_conferencia.go:741 | confAuth | ⚠ doc diz gerente; op/enc passam (R-8) | ⚠-1 (R-1) | conferencias | — | só FECHADA; backup |
@@ -241,7 +252,7 @@ chefe promove operador do seu setor; enc cria operador/chefe do grupo. Senha "sc
 | POST | /api/logout | hLogout :139 | auth(false) | — | — | sessoes | — | |
 | POST | /api/senha | hTrocarSenha :147 | auth(false) | própria | — | usuarios | — | ⚠ não invalida sessões (R-16) |
 | POST | /api/sessao/contexto | mensagens.go:17 | papel próprio | qualquer | — | sessoes, usuarios | — | ⚠ setor de qualquer grupo + reescreve usuarios.setor_id (R-9) |
-| POST/DELETE | /api/usuarios/{id}/papeis[/{pid}] | mensagens.go:84/:233 | ver notas | admin;ger(árvore);**⚠ chefe passa no Del** | 0/N | usuario_papeis, sessoes | — | Del fail-open (R-10); re-chaveia sessões |
+| POST/DELETE | /api/usuarios/{id}/papeis[/{pid}] | mensagens.go:84/:256 | ver notas | admin;ger(árvore);**⚠ chefe passa no Del** | 0/N | usuario_papeis, sessoes, chefe_setores | — | Del fail-open (R-10); re-chaveia sessões; **D-1/R-12**: Add de chefe_setor+setor_id MATERIALIZA o comando (UPSERT 1:1 — chefe anterior perde a linha); Del do papel apaga os comandos do grupo |
 | GET | /api/pessoas/{id}/ficha | hPessoaFicha :391 | auth(false) | qualquer | ⚠-1 vaza (R-1) | — | pessoas… | PII |
 | GET | /api/pessoas | hPessoasList :587 | auth(false) | qualquer | ⚠-1 vê tudo (R-1) | — | pessoas, auditoria | GROUP BY auditoria full-scan |
 | GET | /api/pessoas/apresentacao | onda_presenca_banco.go:21 | auth(false) | qualquer | ⚠-1 (R-1) | (ensure) | lazy table | |
@@ -373,8 +384,9 @@ gerente(árvore)/enc(próprio) — remaneja pessoas/contas p/ SEM SETOR em tx; �
 `chefe_setores`/`grupo_setor_responsaveis` (FK, R-6). `hOperadoresDoSetor`: chefe designa operador do
 seu setor (valida grupo+setor). `setor_sugestoes`: workflow sugere→avalia (ger/chefe/admin) com
 allowlist de efeito revalidada na aplicação (tx, TOCTOU guard) — o padrão-ouro de escrita indireta.
-⚠ `hSetoresAgregado` infere chefe por `usuarios.setor_id` (não `chefe_setores`) — diverge da UI de
-catálogo (R-12). Envelope `{funcoes,total}` é **exclusivo do catálogo de funções** (correção 09/10,
+`hSetoresAgregado` lê chefe/qtd_chefes de `chefe_setores` desde a v1.5.4-D1 (antes inferia por
+`usuario_papeis`+`usuarios.setor_id` — fonte divergente da UI de catálogo, R-12 corrigido). Envelope
+`{funcoes,total}` é **exclusivo do catálogo de funções** (correção 09/10,
 `fb32f18`); demais catálogos devolvem array cru — manter esse contrato em qualquer mudança do
 `hCatalogoList` (regressão cravada em `fix_catalogo_envelope_test.go`).
 
@@ -389,7 +401,7 @@ v9.17 = hierarquia de setor → função → nome. ⚠ rótulo "antiguidade = ID
 
 **Se você alterar, verifique também:** `escopoDoUsuario`/`filtroArvore` (todos os callers de
 relatórios e conferência); `grupo_vinculos` (árvore, herança de catálogo, EhSubordinado duplicado);
-`chefe_setores` (catálogo, conferência, agregado — fontes divergentes R-12); `funcao_membros`
+`chefe_setores` (catálogo, conferência, agregado — FONTE ÚNICA desde a v1.5.4-D1, R-12 corrigido); `funcao_membros`
 (poderes espelhados em 6 guardas + front); backup (ReabrirComArquivo, MANIFEST, ci.sh); NUKE × FKs;
 views_gestao/pessoal/config + core.js (config pública pré-login); tests perfil_e_grupos,
 subordinacao_e_setores, ordem_diretor_hierarquia, api_backup, admin_restricao, v368, sci_ordem_0610_frented.
@@ -515,7 +527,7 @@ Prioridade de correção e plano: ver [`ROADMAP.md`](ROADMAP.md) v1.5.4/v1.5.5. 
 | R-9 | hMudarContexto aceita setor de qualquer grupo e reescreve usuarios.setor_id global | mensagens.go:44-67 | P1 |
 | R-10 | hUsuarioPapelDel fail-open (chefe remove papéis de qualquer um + re-chaveia sessões) | mensagens.go:246-278 | P1 |
 | R-11 | Drive serve HTML inline (MIME do cliente) + Content-Disposition sem escapar | drive.go:701/:764-774 | P1 |
-| R-12 | **Chefe-zumbi**: chefeComandaSetor fallbacks + usuarios.setor_id nunca limpo; hSetoresAgregado usa fonte divergente | onda_0510_conf_escopo.go:145; onda_0510_escalas.go:297; onda_0510_itens79.go:175 | P1 (bug de campo) |
+| R-12 | ~~**Chefe-zumbi**: chefeComandaSetor fallbacks + usuarios.setor_id nunca limpo; hSetoresAgregado usa fonte divergente~~ **CORRIGIDO na onda v1.5.4-D1 (decisão D-2)**: `chefe_setores` vira FONTE ÚNICA — fallbacks `usuarios.setor_id`/`pessoas.setor_id` removidos do `chefeComandaSetor`; novo `setorAtivoComandado` condiciona o CONTEXTO da sessão ao comando vigente (concluir/reabrir/marcar e leitura do `/hoje` — contexto órfão de chefia anterior não autoriza nada); `hUsuarioPapelAdd` (chefe_setor+setor_id) MATERIALIZA o comando (UPSERT 1:1 por setor — chefe anterior perde a linha) e `hUsuarioPapelDel` revoga os comandos do grupo; migração **v44** materializa os legados pendentes (fontes `usuarios.setor_id` → `pessoas.setor_id`, INSERT OR IGNORE — UNIQUE(setor_id) preserva o vigente) e subiu o `versaoSchemaBinario` (44); `hSetoresAgregado` lê `chefe_setores` (igual ao catálogo). Resíduo p/ D-5: designação de escala do chefe e pre_fechamento ainda leem o contexto de cadastro | onda_v154_d1.go (migrarV44 + setorAtivoComandado); onda_0510_conf_escopo.go:139/:179; server_conferencia.go:196/:689/:751; mensagens.go:84/:256; onda_0510_itens79.go:173; onda_v154_d1_test.go | ✅ |
 | R-13 | Escritas multi-statement sem tx (hMensagensEnviar, criarConferenciaBase, hAvisosAdd, hGrupoDestituirChefe…) | mensagens.go:691-718 etc. | P1 |
 | R-14 | Mensagens: operador sem grupo (e gerente/chefe) enviam a qualquer papel de qualquer grupo | mensagens.go:640-678 | P1 |
 | R-15 | excluirArquivada deixa conferencia_escalas órfã (FK sem cascade) | server_conferencia.go:799-803 | P2 |
