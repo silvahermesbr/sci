@@ -78,11 +78,19 @@ func TestAssinaturaNomeCompletoConferencia(t *testing.T) {
 	defer cleanup()
 
 	// gerente com nome completo + função (catálogo do grupo)
-	ck := loginAsPapel(t, app, st, "seedger", "gerente")
+	// v1.5.4-A: o grupo DEVE existir na CONTA antes do login — a sessão
+	// sintetiza o papel com o grupo da conta naquele momento; conta logada
+	// sem grupo fica com usuario_papeis.grupo_id NULL e a guarda central
+	// (exigeEscopo) barra com 403 (classe escopo -1, agora fechada).
 	var gid int64
 	if err := st.db.QueryRow(`INSERT INTO grupos (nome) VALUES ('Grp Assin') RETURNING id`).Scan(&gid); err != nil {
 		t.Fatalf("criar grupo: %v", err)
 	}
+	criaUsuarioTeste(t, st, "seedger", "senha-gerente", "gerente")
+	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login = 'seedger'`, gid); err != nil {
+		t.Fatalf("grupo do gerente: %v", err)
+	}
+	ck := loginAs(t, app, "seedger", "senha-gerente")
 	var fid int64
 	if err := st.db.QueryRow(`INSERT INTO funcoes (nome, grupo_id) VALUES ('Chefe Seção Comunicação', ?) RETURNING id`, gid).Scan(&fid); err != nil {
 		t.Fatalf("criar função: %v", err)
