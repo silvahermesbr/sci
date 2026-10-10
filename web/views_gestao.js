@@ -7,7 +7,8 @@
 'use strict';
 (function () {
   const $ = s => document.querySelector(s);
-  const rotuloPapel = p => p === 'admin' ? 'ADMIN' : p === 'gerente' ? 'GERENTE' : p === 'chefe_setor' ? 'CHEFE DE SETOR' : 'OPERADOR';
+  // v1.6.0 F1: cópia do rotuloPapel do core (este módulo não o importa) — manter as DUAS em sync.
+  const rotuloPapel = p => p === 'admin' ? 'ADMIN' : p === 'gerente' ? 'GERENTE' : p === 'chefe_setor' ? 'CHEFE DE SETOR' : p === 'encarregado' ? 'ENCARREGADO' : p === 'enc_pessoal' ? 'ENCARREGADO DE PESSOAL' : p === 'enc_material' ? 'ENCARREGADO DE MATERIAL' : p === 'sem_funcao' ? 'SEM FUNÇÃO' : 'OPERADOR';
   const quem = () => (typeof ME !== 'undefined' && ME) || window.ME || null;
   const ativosDe = l => (l || []).filter(x => x.ativo === 1 || x.ativo === true);
 

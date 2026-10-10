@@ -1370,6 +1370,9 @@ func (s *Store) executarMigracoes() error {
 	if err := s.migrarV44(); err != nil {
 		return err
 	}
+	if err := s.migrarV45(); err != nil {
+		return err
+	}
 	return nil
 }
 

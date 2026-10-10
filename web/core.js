@@ -89,6 +89,11 @@ function rotuloPapel(p) {
   if (p === 'gerente') return 'GERENTE';
   if (p === 'chefe_setor') return 'CHEFE DE SETOR';
   if (p === 'encarregado') return 'ENCARREGADO';
+  // v1.6.0 F1: cadeiras enc_* materializam linha em usuario_papeis — o dropdown
+  // de contexto passa a exibi-las como papel (rótulo próprio, não mais OPERADOR).
+  if (p === 'enc_pessoal') return 'ENCARREGADO DE PESSOAL';
+  if (p === 'enc_material') return 'ENCARREGADO DE MATERIAL';
+  if (p === 'sem_funcao') return 'SEM FUNÇÃO';
   return 'OPERADOR';
 }
 window.rotuloPapel = rotuloPapel;
@@ -99,8 +104,10 @@ function rotaInicial() {
   // ordem 04/10 — usuário normal (sem papel do sistema) não tem módulos:
   if (['gerente', 'operador', 'chefe_setor'].includes(p)) return '#/hoje';
   if (p === 'encarregado') return '#/hoje'; // onda 05/10: papel-conf derivado (função encarregado)
+  // v1.6.0 F1: contexto enc_* materializado — cada cadeira aterrissa no seu módulo
+  if (p === 'enc_pessoal') return '#/hoje';
+  if (p === 'enc_material') return '#/material';
   return '#/sem-modulo';
-  return '#/hoje';
 }
 
 /* navega p/ hash; se já estiver nele, roteia direto (hashchange não dispara) */
@@ -1118,7 +1125,10 @@ function rotear() {
   // P0 onda 05/10: 'admin' NÃO cai no portão de bloqueio — sem isso as rotas
   // #/admin e #/configuracoes (fim da função) ficavam inalcançáveis para o admin,
   // que era capturado aqui e levado a "Módulo não disponível".
-  if (papel === 'encarregado') { /* onda 05/10: função de encarregado de pessoal passa no portão */ }
+  // v1.6.0 F1: o portão GERAL passa a aceitar os contextos enc_* materializados
+  // (as portas ESPECÍFICAS de módulo vêm nas fases 2/6 — aqui é só não-engolir
+  // o papel novo no bloqueio genérico de "sem módulo").
+  if (papel === 'encarregado' || papel === 'enc_pessoal' || papel === 'enc_material') { /* onda 05/10: função de encarregado de pessoal passa no portão */ }
   else if (papel !== 'admin' && !['gerente', 'operador', 'chefe_setor'].includes(papel)) {
     chamarView('ViewSemModulo'); return;
   }
