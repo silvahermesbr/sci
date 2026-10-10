@@ -40,7 +40,13 @@ inexistente).
 Critério: `git merge-base --is-ancestor origin/<branch> main` → apagar. Main local
 em `8c250b8` no momento da prova.
 
-### Branches REMOTAS apagadas (14 — todas exceto `main`)
+### Branches REMOTAS (14 — todas exceto `main`)
+
+Prova coletada contra main local `8c250b8` antes da exclusão. **Nota factual:** ao
+executar a exclusão, 13 das 14 já **não existiam mais no remoto** (a operação 09/10
+do host Linux já as havia removido; os trackings deste clone Windows é que estavam
+obsoletos). Esta onda apagou de fato do remoto apenas `fix/pessoal-front-ux`
+(ainda em `f954db7`) e fez `git fetch --prune` dos 13 trackings obsoletos.
 
 | Branch | Tip | Prova |
 |---|---|---|
@@ -52,7 +58,7 @@ em `8c250b8` no momento da prova.
 | origin/f3/qa-integracao | ab4841c | merge-base --is-ancestor → ancestral de main |
 | origin/feat/conferencia-antiguidade-fechamento | e79403c | merge-base --is-ancestor → ancestral de main |
 | origin/fix/contexto-setor-conferencia | 0eea546 | merge-base --is-ancestor → ancestral de main |
-| origin/fix/pessoal-front-ux | f954db7 | merge-base --is-ancestor → ancestral de main (via `8c250b8`) |
+| origin/fix/pessoal-front-ux | f954db7 | merge-base --is-ancestor → ancestral de main (via `8c250b8`) — apagada nesta onda |
 | origin/fix/pessoal-funcao-por-chave | 93bde1f | merge-base --is-ancestor → ancestral de main |
 | origin/fix/r2-pessoas-edit | 29ce3ea | merge-base --is-ancestor → ancestral de main |
 | origin/fix/r3-poderes-designacao | 2ff936c | merge-base --is-ancestor → ancestral de main |
