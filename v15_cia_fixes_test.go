@@ -153,12 +153,21 @@ func TestCiaF2IDORAnexos(t *testing.T) {
 	// gerente B + operador B (grupo alheio)
 	// (ordem 04/10: gerente não cria operador — cria chefe de setor, que cria
 	// o operador)
-	_, gerB := criaGrupo(t, app, admin, "G Cia F2 B", "ger_f2b")
+	grupoB, gerB := criaGrupo(t, app, admin, "G Cia F2 B", "ger_f2b")
 	rrChefe, resChefe := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
 		"login": "chefe_f2b", "senha": "senha12345", "papel": "chefe_setor",
 	}, gerB)
 	if rrChefe.Code != http.StatusOK {
 		t.Fatalf("criar chefe B: %d (%v)", rrChefe.Code, resChefe)
+	}
+	// v1.6.0 F4: o chefe precisa de setor no cadastro — a herança do ramo do
+	// chefe (hUsuariosAdd) é o que vincula o setor do operador que ele cria.
+	var setorF2B int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor F2 B', ?, 1) RETURNING id`, grupoB).Scan(&setorF2B); err != nil {
+		t.Fatalf("criar setor B: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE login = 'chefe_f2b'`, setorF2B); err != nil {
+		t.Fatalf("setor do chefe B: %v", err)
 	}
 	chefeB := loginAs(t, app, "chefe_f2b", "senha12345")
 	rrOp, resOp := doJSONReq(app, "POST", "/api/usuarios", map[string]any{

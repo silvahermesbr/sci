@@ -143,6 +143,13 @@ func TestV367ChefeSetorDesignado(t *testing.T) {
 	var idCs int64
 	_ = st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'enc_cs_cs1'`).Scan(&idCs)
 	_, _ = st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, gid, idCs)
+	// v1.6.0 F4: operador nasce com setor — o chefe precisa de setor no
+	// cadastro para a herança do ramo do chefe (hUsuariosAdd) funcionar.
+	var setorCs int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor CS1', ?, 1) RETURNING id`, gid).Scan(&setorCs); err != nil {
+		t.Fatalf("criar setor do chefe: %v", err)
+	}
+	_, _ = st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, setorCs, idCs)
 
 	// sem designação: 403 em escrita de pessoal (fail-closed)
 	ckCs := loginAs(t, app, "enc_cs_cs1", "senha-cs")

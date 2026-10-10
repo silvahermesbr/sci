@@ -127,7 +127,13 @@ func TestOnda0610EncarregadoGestaoProprioGrupo(t *testing.T) {
 		t.Fatalf("E1: encarregado edita pessoa (200), veio %d", rr.Code)
 	}
 	// cria conta operador — grupo forçado
-	if rr, _ := doJSONReq(app, "POST", "/api/usuarios", map[string]any{"login": "op.novo06", "papel": "operador"}, ck); rr.Code != http.StatusOK {
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo) —
+	// o enc envia setor_id do catálogo do grupo
+	var setorOp06 int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('S Op 0610', ?, 1) RETURNING id`, gid).Scan(&setorOp06); err != nil {
+		t.Fatalf("criar setor do operador: %v", err)
+	}
+	if rr, _ := doJSONReq(app, "POST", "/api/usuarios", map[string]any{"login": "op.novo06", "papel": "operador", "setor_id": setorOp06}, ck); rr.Code != http.StatusOK {
 		t.Fatalf("E1: encarregado cria operador (200), veio %d", rr.Code)
 	}
 	var gidConta int64

@@ -480,11 +480,17 @@ func TestFase3MultiCalendariosEInscricaoForcada(t *testing.T) {
 	gerCookie := loginAs(t, app, "ger_cal_next", "senha12345")
 
 	// 2. Criar operador no mesmo grupo
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo)
+	var setorCal int64
+	if err := app.st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor Cal', ?, 1) RETURNING id`, grupoID).Scan(&setorCal); err != nil {
+		t.Fatalf("criar setor: %v", err)
+	}
 	rrOp, resOp := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
 		"login":       "op_cal_sub",
 		"senha":       "senha12345",
 		"papel":       "operador",
 		"grupo_id":    grupoID,
+		"setor_id":    setorCal,
 		"nome_guerra": "SoldadoSub",
 	}, adminCookie)
 	if rrOp.Code != http.StatusOK {

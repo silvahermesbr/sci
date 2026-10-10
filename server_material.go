@@ -2287,6 +2287,7 @@ func (a *App) authMaterial(next http.HandlerFunc) http.Handler {
 				jsonErro(w, http.StatusUnauthorized, "não autenticado")
 				return
 			}
+			if !a.exigeSetorOperador(w, u) { return } // v1.6.0 F4: operador é de setor
 			if u.Papel == "gerente" || u.Papel == "operador" || a.ehEncarregadoDeMaterial(u) {
 				next(w, r)
 				return

@@ -105,13 +105,38 @@ func (a *App) papelConfAutorizado(u *Usuario) bool {
 	return a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u)
 }
 
+// exigeSetorOperador (v1.6.0 FASE 4 — extinção do operador de grupo): o
+// operador é de SETOR. Conta com contexto ativo 'operador' SEM setor resolvido
+// (usuarios.setor_id → pessoas.setor_id) não atua nos módulos operacionais:
+// 403 com a mensagem de reparo. A criação já exige setor (hUsuariosAdd e
+// hUsuarioPapelAdd); contas legadas ficam BLOQUEADAS até atribuição — sem
+// auto-adivinhação (decisão do comando). Ficam FORA, por doutrina: leituras
+// de conferência (hoje/estado/lista/{id} — o corte vazio já protege) e
+// mensagens/mural/drive (comunicação por papel — interpretação registrada).
+// Chamado nos 4 portões de módulo: authConfCom, authMaterial, reservaAuth e
+// os handlers de dados de relatório (escopoRelatorio é helper sem ResponseWriter).
+func (a *App) exigeSetorOperador(w http.ResponseWriter, u *Usuario) bool {
+	if u == nil || u.Papel != "operador" {
+		return true
+	}
+	if setorDoUsuario(a, u) != nil {
+		return true
+	}
+	jsonErro(w, http.StatusForbidden, "conta sem setor atribuído — solicite ao gerente/encarregado")
+	return false
+}
+
 // authConfCom: middleware das áreas de conferência — papeis permitidos +
 // CONTEXTO 'enc_pessoal' ativo (o encarregado de pessoal de verdade só existe
 // no seu contexto; no contexto operador/chefe ele é operador/chefe). Admin
 // segue proibido. Mesma resposta 403 do authPapeis.
+// v1.6.0 Fase 4: operador SEM setor (legado) é barrado aqui — exigeSetorOperador.
 func (a *App) authConfCom(papeis []string, prox http.HandlerFunc) http.Handler {
 	return a.auth(false, func(w http.ResponseWriter, r *http.Request) {
 		u := usuarioDoCtx(r)
+		if !a.exigeSetorOperador(w, u) {
+			return
+		}
 		permitido := false
 		for _, p := range papeis {
 			if u.Papel == p {

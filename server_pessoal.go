@@ -1341,6 +1341,16 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	if req.SetorID != nil && *req.SetorID <= 0 {
 		req.SetorID = nil
 	}
+	// v1.6.0 Fase 4 (extinção do operador de grupo): OPERADOR nasce vinculado a
+	// um SETOR do grupo — sem setor não existe recorte de atuação (as guardas
+	// dos módulos negam com 403 "conta sem setor atribuído", exigeSetorOperador).
+	// A herança do ramo do chefe acima provê o setor quando quem cria é chefe;
+	// gerente/admin informam o setor explícito. Operadores legados sem setor
+	// ficam bloqueados até atribuição (sem auto-adivinhação).
+	if papel == "operador" && (req.SetorID == nil || req.GrupoID == nil || !a.setorIDValidoNoGrupo(*req.SetorID, *req.GrupoID)) {
+		jsonErro(w, http.StatusBadRequest, "operador deve nascer vinculado a um setor do grupo")
+		return
+	}
 	if req.FuncaoID != nil && *req.FuncaoID <= 0 {
 		req.FuncaoID = nil
 	}

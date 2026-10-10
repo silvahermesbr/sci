@@ -198,8 +198,9 @@ func TestD1PapelAddDelMaterializaComando(t *testing.T) {
 
 	// DEL: remover o papel chefe_setor apaga os COMANDOS do grupo.
 	// (o endpoint recusa remover o ÚNICO papel → A ganha um operador antes)
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo)
 	if rr, res = doJSONReq(app, "POST", "/api/usuarios/"+i64(uidA)+"/papeis",
-		map[string]any{"papel": "operador", "grupo_id": gid}, ckGer); rr.Code != http.StatusOK {
+		map[string]any{"papel": "operador", "grupo_id": gid, "setor_id": setorS}, ckGer); rr.Code != http.StatusOK {
 		t.Fatalf("papel add operador (para poder remover o chefe): %d (%v)", rr.Code, res)
 	}
 	var papelChefeID int64

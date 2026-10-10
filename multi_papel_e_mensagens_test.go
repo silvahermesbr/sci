@@ -57,9 +57,15 @@ func TestMultiPapeisEContextoSessao(t *testing.T) {
 	}
 
 	// 3. Atribuir papel de OPERADOR do 2º Pelotão para cmt_pel1 -> DEVE FUNCIONAR (multi-funções)
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo)
+	var setor2ID int64
+	if err := app.st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor Pel 2', ?, 1) RETURNING id`, grupo2ID).Scan(&setor2ID); err != nil {
+		t.Fatalf("criar setor do grupo 2: %v", err)
+	}
 	rr, res = doJSONReq(app, "POST", "/api/usuarios/"+fmtInt(cmt1ID)+"/papeis", map[string]any{
 		"grupo_id": grupo2ID,
 		"papel":    "operador",
+		"setor_id": setor2ID,
 	}, adminCookie)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("falha ao atribuir operador para cmt1 no grupo 2: %v", res)

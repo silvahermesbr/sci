@@ -868,7 +868,7 @@
 
           <div class="form-linha" id="nuLinhaSetor" style="margin-bottom:8px; display:none">
             <div class="campo" style="flex:1">
-              <label>Setor / Seção (escopo do chefe de setor)</label>
+              <label>Setor / Seção (escopo do chefe de setor e do operador — obrigatório)</label>
               <select id="nuSetor"><option value="">— Nenhum —</option>${setoresLista.map(s => `<option value="${s.id}">${esc(s.nome)}${s.sigla ? ' (' + esc(s.sigla) + ')' : ''}</option>`).join('')}</select>
             </div>
           </div>
@@ -893,7 +893,9 @@
 
       selP.onchange = () => {
         const p = selP.value;
-        if (linhaSetor) linhaSetor.style.display = (p === 'chefe_setor') ? 'flex' : 'none';
+        // v1.6.0 Fase 4 (extinção do operador de grupo): operador é de SETOR —
+        // a linha de setor aparece para chefe_setor E operador (obrigatória).
+        if (linhaSetor) linhaSetor.style.display = (p === 'chefe_setor' || p === 'operador') ? 'flex' : 'none';
         if (p === 'admin') {
           grpField.style.display = 'none';
           ajuda.innerHTML = 'ℹ️ <b>Administrador:</b> Acesso irrestrito a configurações globais, backup e governança da estrutura.';
@@ -905,7 +907,7 @@
           ajuda.innerHTML = '🏢 <b>Chefe de Setor:</b> Responsável pela conferência de faltas e presenças exclusivamente do seu próprio setor/efetivo.';
         } else {
           grpField.style.display = 'block';
-          ajuda.innerHTML = 'ℹ️ <b>Operador (Função Múltipla):</b> Acesso operacional diário às conferências e caixa de email compartilhada do grupo.';
+          ajuda.innerHTML = 'ℹ️ <b>Operador (do setor):</b> Acesso operacional diário às conferências do SEU setor. Nasce vinculado a um setor do grupo — conta sem setor fica bloqueada.';
         }
       };
 
@@ -932,8 +934,10 @@
         // onda itens79: setor vai no create quando papel = chefe_setor (hUsuariosAdd
         // JÁ grava usuarios.setor_id — server.go:4604). chefe sem setor pode escolher
         // depois; se selecionado, manda o id do catálogo.
+        // v1.6.0 Fase 4: OPERADOR também nasce com setor (obrigatório — o servidor
+        // recusa com 400 "operador deve nascer vinculado a um setor do grupo").
         const setorSel = div.querySelector('#nuSetor');
-        const setorId = (papel === 'chefe_setor' && setorSel && setorSel.value) ? (+setorSel.value || null) : null;
+        const setorId = ((papel === 'chefe_setor' || papel === 'operador') && setorSel && setorSel.value) ? (+setorSel.value || null) : null;
 
         if (!login || !completo || !guerra) {
           toast('Preencha os campos obrigatórios (*)', 'erro');
@@ -945,6 +949,10 @@
         }
         if (papel === 'gerente' && !grupoId) {
           toast('Gerente deve obrigatoriamente estar vinculado a uma unidade', 'erro');
+          return;
+        }
+        if (papel === 'operador' && !setorId) {
+          toast('Operador deve nascer vinculado a um setor do grupo', 'erro');
           return;
         }
 
@@ -1001,7 +1009,7 @@
 
           <div class="form-linha" id="apLinhaSetor" style="margin-bottom:10px; display:none">
             <div class="campo" style="flex:1">
-              <label>Setor / Seção (obrigatório p/ chefe de setor)</label>
+              <label>Setor / Seção (obrigatório p/ chefe de setor e operador)</label>
               <select id="apSetor"><option value="">— Nenhum —</option>${setoresLista.map(s => `<option value="${s.id}" data-grupo="${s.grupo_id == null ? '' : s.grupo_id}">${esc(s.nome)}${s.sigla ? ' (' + esc(s.sigla) + ')' : ''}</option>`).join('')}</select>
             </div>
           </div>
@@ -1053,8 +1061,10 @@
 
       selP.onchange = () => {
         const p = selP.value;
+        // v1.6.0 Fase 4: a linha de setor aparece para chefe_setor E operador
+        // (obrigatória para ambos — o servidor recusa operador sem setor).
         if (linhaSetor) {
-          const mostrar = (p === 'chefe_setor');
+          const mostrar = (p === 'chefe_setor' || p === 'operador');
           linhaSetor.style.display = mostrar ? 'flex' : 'none';
           if (mostrar) filtrarSetores();
         }
@@ -1069,7 +1079,7 @@
           ajuda.innerHTML = '🏢 <b>Chefe de Setor:</b> Permite ao usuário conduzir a conferência e marcar faltas/presenças de pessoas do seu setor.';
         } else {
           grpField.style.display = 'block';
-          ajuda.innerHTML = '👥 <b>Operador (Função Múltipla):</b> O grupo pode comportar múltiplos operadores com acesso operacional compartilhado.';
+          ajuda.innerHTML = '👥 <b>Operador (do setor):</b> Nasce vinculado a um setor do grupo — atua somente nele. Conta sem setor fica bloqueada.';
         }
       };
 
@@ -1080,10 +1090,15 @@
         const funcaoId = +div.querySelector('#apFuncao').value || null;
         // onda itens79: chefe_setor pode nascer já com o setor (conveniência do
         // formulário; nomear_chefe continua sendo a via canônica).
-        const setorId = (papel === 'chefe_setor' && selSetor && selSetor.value) ? (+selSetor.value || null) : null;
+        // v1.6.0 Fase 4: operador EXIGE setor (o servidor grava usuarios.setor_id).
+        const setorId = ((papel === 'chefe_setor' || papel === 'operador') && selSetor && selSetor.value) ? (+selSetor.value || null) : null;
 
         if (papel !== 'admin' && !grupoId) {
           toast('Selecione o grupo para esta função', 'erro');
+          return;
+        }
+        if (papel === 'operador' && !setorId) {
+          toast('Operador deve nascer vinculado a um setor do grupo', 'erro');
           return;
         }
 
