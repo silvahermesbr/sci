@@ -145,8 +145,14 @@ func (a *App) hMaterialItemAnexosList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador (antes de qualquer leitura).
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var itemGrupo int64
-	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+	var itemSetor *int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), setor_id FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo, &itemSetor); err != nil {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
@@ -156,6 +162,10 @@ func (a *App) hMaterialItemAnexosList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
+	if !setorNoCorte(corte, itemSetor) {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -195,8 +205,14 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var itemGrupo int64
-	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+	var itemSetor *int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), setor_id FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo, &itemSetor); err != nil {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
@@ -206,6 +222,10 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
+	if !setorNoCorte(corte, itemSetor) {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -266,6 +286,11 @@ func (a *App) hMaterialItemAnexoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var id, itemID int64
 	var nome, mime string
 	var tam int64
@@ -278,7 +303,8 @@ func (a *App) hMaterialItemAnexoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var itemGrupo int64
-	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+	var itemSetor *int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), setor_id FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo, &itemSetor); err != nil {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
@@ -288,6 +314,10 @@ func (a *App) hMaterialItemAnexoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
+	if !setorNoCorte(corte, itemSetor) {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -308,13 +338,19 @@ func (a *App) hMaterialItemAnexoDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var itemID int64
 	if err := a.st.db.QueryRow(`SELECT item_id FROM material_item_anexos WHERE id = ?`, anexoID).Scan(&itemID); err != nil {
 		jsonErro(w, http.StatusNotFound, "anexo não encontrado")
 		return
 	}
 	var itemGrupo int64
-	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+	var itemSetor *int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), setor_id FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo, &itemSetor); err != nil {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
@@ -324,6 +360,10 @@ func (a *App) hMaterialItemAnexoDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
+	if !setorNoCorte(corte, itemSetor) {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -345,8 +385,14 @@ func (a *App) hMaterialItemComentariosList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var itemGrupo int64
-	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+	var itemSetor *int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), setor_id FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo, &itemSetor); err != nil {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
@@ -356,6 +402,10 @@ func (a *App) hMaterialItemComentariosList(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
+	if !setorNoCorte(corte, itemSetor) {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -397,8 +447,14 @@ func (a *App) hMaterialItemComentarioAdd(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var itemGrupo int64
-	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err != nil {
+	var itemSetor *int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), setor_id FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo, &itemSetor); err != nil {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
@@ -408,6 +464,10 @@ func (a *App) hMaterialItemComentarioAdd(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if esc > 0 && itemGrupo != esc {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
+	}
+	if !setorNoCorte(corte, itemSetor) {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -437,6 +497,11 @@ func (a *App) hMaterialItemComentarioAdd(w http.ResponseWriter, r *http.Request)
 // -----------------------------------------------------------------
 func (a *App) hMaterialConferenciasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	escopo, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -449,9 +514,16 @@ func (a *App) hMaterialConferenciasList(w http.ResponseWriter, r *http.Request) 
 	      JOIN grupos g ON g.id = mc.grupo_id
 	      LEFT JOIN setores s ON s.id = mc.setor_id
 	      LEFT JOIN usuarios ua ON ua.id = mc.aberta_por
-	      WHERE (? = 0 OR mc.grupo_id = ?)
-	      ORDER BY mc.aberta_em DESC`
-	rows, err := a.st.db.Query(q, escopo, escopo)
+	      WHERE (? = 0 OR mc.grupo_id = ?)`
+	args := []any{escopo, escopo}
+	// v1.6.0 F7: operador só vê as conferências do PRÓPRIO setor (Carga Geral
+	// fica fora do recorte).
+	if corte != nil {
+		q += ` AND mc.setor_id = ?`
+		args = append(args, *corte)
+	}
+	q += ` ORDER BY mc.aberta_em DESC`
+	rows, err := a.st.db.Query(q, args...)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -479,6 +551,12 @@ func (a *App) hMaterialConferenciasList(w http.ResponseWriter, r *http.Request) 
 // -----------------------------------------------------------------
 func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador (antes de abrir a tx — o recorte
+	// consulta o pool e pool=1 não empresta segunda conexão).
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var req struct {
 		GrupoID int64  `json:"grupo_id"`
 		SetorID int64  `json:"setor_id"`
@@ -487,6 +565,12 @@ func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request
 	if err := decodificar(r, &req); err != nil {
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
+	}
+	// v1.6.0 F7 (furo do corpo): o operador inicia SEMPRE no PRÓPRIO setor —
+	// o setor_id do corpo é ignorado (antes, um corpo forjado abria conferência
+	// de setor alheio). O 200 devolve o setor_id EFETIVO para o front.
+	if corte != nil {
+		req.SetorID = *corte
 	}
 	esc, err := a.exigeEscopo(u)
 	if err != nil {
@@ -577,7 +661,9 @@ func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	jsonOK(w, map[string]any{"id": confID, "ok": true})
+	// v1.6.0 F7: o 200 devolve o setor_id EFETIVO da conferência (0 = Carga
+	// Geral) — mais honesto para o front do que um eco do corpo rejeitado.
+	jsonOK(w, map[string]any{"id": confID, "ok": true, "setor_id": req.SetorID})
 }
 
 // -----------------------------------------------------------------
@@ -612,6 +698,16 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if esc > 0 && gid != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+		return
+	}
+	// v1.6.0 F7: operador só lê a conferência do PRÓPRIO setor (Carga Geral
+	// fora do recorte).
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
+	if !setorNoCorte(corte, sid) {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -689,6 +785,11 @@ func (a *App) hMaterialConferenciaBipar(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var confGrupoID int64
 	if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_conferencias WHERE id = ?`, confID).Scan(&confGrupoID); err != nil {
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
@@ -700,6 +801,11 @@ func (a *App) hMaterialConferenciaBipar(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if esc > 0 && confGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+		return
+	}
+	// v1.6.0 F7: conferência de OUTRO setor não recebe bipagem do operador.
+	if !setorNoCorte(corte, materialConfSetor(a.st.db, confID)) {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -725,6 +831,12 @@ func (a *App) hMaterialConferenciaBipar(w http.ResponseWriter, r *http.Request) 
 			jsonErro(w, http.StatusNotFound, "item não encontrado pelo código de patrimônio")
 			return
 		}
+	}
+	// v1.6.0 F7: bipagem é escrita no checklist — item de OUTRO setor não entra
+	// na conferência do operador (por id ou por código de patrimônio).
+	if !setorNoCorte(corte, itemSetorID(a.st.db, req.ItemID)) {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+		return
 	}
 	if req.Status == "" {
 		req.Status = "presente"
@@ -762,6 +874,11 @@ func (a *App) hMaterialConferenciaFechar(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var confGrupoID int64
 	if err := a.st.db.QueryRow(`SELECT grupo_id FROM material_conferencias WHERE id = ?`, confID).Scan(&confGrupoID); err != nil {
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
@@ -773,6 +890,11 @@ func (a *App) hMaterialConferenciaFechar(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if esc > 0 && confGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+		return
+	}
+	// v1.6.0 F7: operador só fecha a conferência do PRÓPRIO setor.
+	if !setorNoCorte(corte, materialConfSetor(a.st.db, confID)) {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -834,6 +956,15 @@ func (a *App) hMaterialConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if esc > 0 && confGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
+		return
+	}
+	// v1.6.0 F7: operador só emite o pronto da conferência do PRÓPRIO setor.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
+	if !setorNoCorte(corte, sid) {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -949,6 +1080,16 @@ func (a *App) hMaterialCautelaReciboPDF(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
 		return
 	}
+	// v1.6.0 F7: recorte de setor — operador só emite recibo de cautela cujo
+	// item é do PRÓPRIO setor.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
+	if !setorNoCorte(corte, cautelaItemSetor(a.st.db, id)) {
+		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
+		return
+	}
 
 	pdf, err := a.gerarReciboCautelaPDF(rec, u.Login)
 	if err != nil {
@@ -975,6 +1116,11 @@ func (a *App) hMaterialInventarioPDF(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 
 	var inv InventarioRelatorioPDF
 	inv.Totais = map[string]int{"total": 0, "disponivel": 0, "acautelado": 0, "manutencao": 0, "baixado": 0}
@@ -999,6 +1145,12 @@ func (a *App) hMaterialInventarioPDF(w http.ResponseWriter, r *http.Request) {
 	if escopo > 0 {
 		q += ` AND mi.grupo_id = ?`
 		args = append(args, escopo)
+	}
+	// v1.6.0 F7: inventário do operador sai só com o PRÓPRIO setor (Carga
+	// Geral fora do recorte).
+	if corte != nil {
+		q += ` AND mi.setor_id = ?`
+		args = append(args, *corte)
 	}
 	q += ` ORDER BY mi.status = 'acautelado' DESC, cat.nome ASC, mi.nome ASC`
 
@@ -1076,6 +1228,13 @@ func (a *App) hMaterialCategoriasList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: o catálogo de categorias é da RESERVA (dimensão de grupo) —
+	// escrita vira gerente/enc_material; o operador mantém a LEITURA (a matriz
+	// da onda registra "categoria: leitura").
+	if u.Papel != "gerente" && !a.ehEncarregadoDeMaterial(u) {
+		jsonErro(w, http.StatusForbidden, "somente gerente ou encarregado de material gerencia o catálogo de categorias")
+		return
+	}
 	esc, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -1131,6 +1290,11 @@ func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: mesma régua da escrita do catálogo (gerente/enc_material).
+	if u.Papel != "gerente" && !a.ehEncarregadoDeMaterial(u) {
+		jsonErro(w, http.StatusForbidden, "somente gerente ou encarregado de material gerencia o catálogo de categorias")
+		return
+	}
 	esc, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -1175,6 +1339,11 @@ func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	escopo, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -1209,6 +1378,12 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN usuarios ue ON ue.id = caut.responsavel_entrega_id
 		WHERE (? = 0 OR mi.grupo_id = ?)`
 	args := []any{escopo, escopo}
+	// v1.6.0 F7: operador lista só o PRÓPRIO setor (Carga Geral — setor NULL —
+	// fica fora do recorte; é material da reserva, não do setor).
+	if corte != nil {
+		q += ` AND mi.setor_id = ?`
+		args = append(args, *corte)
+	}
 
 	if statusQ != "" {
 		q += ` AND mi.status = ?`
@@ -1307,6 +1482,11 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	esc, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -1343,7 +1523,11 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 
 	// Validação de SetorID se informado
 	var setorVal *int64
-	if req.SetorID != nil && *req.SetorID > 0 {
+	if corte != nil {
+		// v1.6.0 F7: operador grava SEMPRE no próprio setor — o setor do CORPO
+		// é ignorado (criação não nasce alheia; edição não realoca o item).
+		setorVal = corte
+	} else if req.SetorID != nil && *req.SetorID > 0 {
 		var count int
 		if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM setores WHERE id = ?`, *req.SetorID).Scan(&count); err != nil || count == 0 {
 			jsonErro(w, http.StatusBadRequest, "setor inválido")
@@ -1452,11 +1636,18 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ID > 0 {
-		resIt, err := a.st.db.Exec(`
+		qUpd := `
 			UPDATE material_itens
 			SET setor_id = ?, categoria_id = ?, nome = ?, codigo_patrimonio = ?, numero_serie = ?, status = ?, observacao = ?, nivel_sensibilidade = ?, sensibilidade = ?, quantidade = ?
-			WHERE id = ? AND (? = 0 OR grupo_id = ?)`,
-			setorVal, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.Sensibilidade, req.Quantidade, req.ID, esc, grupoID)
+			WHERE id = ? AND (? = 0 OR grupo_id = ?)`
+		argsUpd := []any{setorVal, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.Sensibilidade, req.Quantidade, req.ID, esc, grupoID}
+		// v1.6.0 F7: edição exige item do PRÓPRIO setor — item de outro setor
+		// (ou Carga Geral) não bate no WHERE e vira o 404 honesto do P1-2.
+		if corte != nil {
+			qUpd += ` AND setor_id = ?`
+			argsUpd = append(argsUpd, *corte)
+		}
+		resIt, err := a.st.db.Exec(qUpd, argsUpd...)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
@@ -1503,13 +1694,19 @@ func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
 
 	var itemGrupoID int64
 	var itemStatus, itemNome, codPatrimonio string
-	err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), status, nome, codigo_patrimonio FROM material_itens WHERE id = ?`, id).
-		Scan(&itemGrupoID, &itemStatus, &itemNome, &codPatrimonio)
+	var itemSetor *int64
+	err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0), status, nome, codigo_patrimonio, setor_id FROM material_itens WHERE id = ?`, id).
+		Scan(&itemGrupoID, &itemStatus, &itemNome, &codPatrimonio, &itemSetor)
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "Item não encontrado")
 		return
 	}
 
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	esc, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -1517,6 +1714,11 @@ func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
 	}
 	if esc > 0 && itemGrupoID > 0 && itemGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "Você não tem permissão para alterar itens de outro grupo")
+		return
+	}
+	// v1.6.0 F7: exclusão/baixa exige item do PRÓPRIO setor.
+	if !setorNoCorte(corte, itemSetor) {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
 
@@ -1583,6 +1785,12 @@ func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador — resolvido ANTES da tx (o recorte
+	// consulta o pool; pool=1 com tx aberta é deadlock, lição bd6a7af).
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var req struct {
 		ItemID     int64  `json:"item_id"`
 		PessoaID   int64  `json:"pessoa_id"`
@@ -1668,9 +1876,15 @@ func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
-	if esc > 0 {
+	{
 		var itemGrupo int64
-		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, req.ItemID).Scan(&itemGrupo); err != nil || itemGrupo != esc {
+		var itemSetor *int64
+		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0), setor_id FROM material_itens WHERE id = ?`, req.ItemID).Scan(&itemGrupo, &itemSetor); err != nil || (esc > 0 && itemGrupo != esc) {
+			jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+			return
+		}
+		// v1.6.0 F7: cautelar exige item do PRÓPRIO setor (query na tx).
+		if !setorNoCorte(corte, itemSetor) {
 			jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 			return
 		}
@@ -1727,6 +1941,11 @@ func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador — resolvido ANTES da tx (pool=1).
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	var req struct {
 		CautelaID    *int64 `json:"cautela_id"`
 		ItemID       *int64 `json:"item_id"`
@@ -1780,8 +1999,14 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var itemGrupo int64
-		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err == nil {
+		var itemSetor *int64
+		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0), setor_id FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo, &itemSetor); err == nil {
 			if esc > 0 && itemGrupo != esc {
+				jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
+				return
+			}
+			// v1.6.0 F7: devolução exige item do PRÓPRIO setor (query na tx).
+			if !setorNoCorte(corte, itemSetor) {
 				jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 				return
 			}
@@ -1841,6 +2066,11 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 	escopo, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -1865,6 +2095,11 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN usuarios ur ON ur.id = mc.responsavel_recebimento_id
 		WHERE (? = 0 OR mi.grupo_id = ?)`
 	args := []any{escopo, escopo}
+	// v1.6.0 F7: recorte da cautela é o setor do ITEM (cautela não tem setor).
+	if corte != nil {
+		q += ` AND mi.setor_id = ?`
+		args = append(args, *corte)
+	}
 
 	if statusQ != "" {
 		q += ` AND mc.status = ?`
@@ -1965,6 +2200,15 @@ func (a *App) hMaterialAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
 		return
 	}
+	// v1.6.0 F7: recorte de setor — anexo vai na cautela cujo item é do setor.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
+	if !setorNoCorte(corte, cautelaItemSetor(a.st.db, cautelaID)) {
+		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
+		return
+	}
 	// Fix P1-3: teto REAL de anexo — o LimitReader de 1 MB corta o JSON inteiro;
 	// base64 cresce ~4/3, então o DECODED útil máximo aqui é ~600 KB.
 	const maxAnexoBase64 = 800 * 1024 // 800 KB de base64 ≈ 600 KB de arquivo
@@ -2031,6 +2275,15 @@ func (a *App) hMaterialAnexoList(w http.ResponseWriter, r *http.Request) {
 	if !a.cautelaNoEscopo(u, w, cautelaID) {
 		return
 	}
+	// v1.6.0 F7: recorte de setor do operador (setor do item da cautela).
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
+	if !setorNoCorte(corte, cautelaItemSetor(a.st.db, cautelaID)) {
+		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
+		return
+	}
 	rows, err := a.st.db.Query(`
 		SELECT id, cautela_id, nome_arquivo, tipo_mime, tamanho, criado_em
 		FROM material_cautela_anexos
@@ -2078,6 +2331,15 @@ func (a *App) hMaterialAnexoGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !a.cautelaNoEscopo(u, w, cautelaID) {
+		return
+	}
+	// v1.6.0 F7: recorte de setor do operador (setor do item da cautela).
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
+	if !setorNoCorte(corte, cautelaItemSetor(a.st.db, cautelaID)) {
+		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
 		return
 	}
 	var nome, mime, b64 string
@@ -2138,6 +2400,15 @@ func (a *App) hMaterialAnexoDel(w http.ResponseWriter, r *http.Request) {
 	if !a.cautelaNoEscopo(u, w, cautelaID) {
 		return
 	}
+	// v1.6.0 F7: recorte de setor do operador (setor do item da cautela).
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
+	if !setorNoCorte(corte, cautelaItemSetor(a.st.db, cautelaID)) {
+		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
+		return
+	}
 	res, err := a.st.db.Exec(`DELETE FROM material_cautela_anexos WHERE id = ?`, anexoID)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -2160,9 +2431,15 @@ func (a *App) hMaterialItemQRCode(w http.ResponseWriter, r *http.Request) {
 	}
 	var codPatrimonio, nome string
 	var gid int64
-	err = a.st.db.QueryRow(`SELECT codigo_patrimonio, nome, grupo_id FROM material_itens WHERE id = ?`, id).Scan(&codPatrimonio, &nome, &gid)
+	var gSetor *int64
+	err = a.st.db.QueryRow(`SELECT codigo_patrimonio, nome, grupo_id, setor_id FROM material_itens WHERE id = ?`, id).Scan(&codPatrimonio, &nome, &gid, &gSetor)
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "Material não encontrado")
+		return
+	}
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
 		return
 	}
 	esc, err := a.exigeEscopo(u)
@@ -2172,6 +2449,11 @@ func (a *App) hMaterialItemQRCode(w http.ResponseWriter, r *http.Request) {
 	}
 	if esc > 0 && gid != esc {
 		jsonErro(w, http.StatusForbidden, "Acesso restrito ao grupo")
+		return
+	}
+	// v1.6.0 F7: QR do item exige item do PRÓPRIO setor.
+	if !setorNoCorte(corte, gSetor) {
+		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
 	payload := fmt.Sprintf("sci://m:%d:%s", id, codPatrimonio)
@@ -2206,6 +2488,11 @@ func (a *App) hMaterialEtiquetasLotePDF(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
+	// v1.6.0 F7: recorte de setor do operador.
+	corte, ok := recortaSetorMaterial(w, a, u)
+	if !ok {
+		return
+	}
 
 	idsParam := r.URL.Query().Get("ids")
 	var idList []int64
@@ -2228,6 +2515,12 @@ func (a *App) hMaterialEtiquetasLotePDF(w http.ResponseWriter, r *http.Request) 
 	if escopo > 0 {
 		q += ` AND mi.grupo_id = ?`
 		args = append(args, escopo)
+	}
+	// v1.6.0 F7: ids ∩ setor — etiqueta de item de outro setor não sai (a
+	// intersecção vazia cai no 404 "nenhum item selecionado ou encontrado").
+	if corte != nil {
+		q += ` AND mi.setor_id = ?`
+		args = append(args, *corte)
 	}
 	if len(idList) > 0 {
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(idList)), ",")

@@ -699,6 +699,22 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	// v1.6.0 Fase 7 (furo): o operador conclui QUALQUER setor do grupo — o
+	// confMarcarAuth só cobra papel. Espelha o ramo do chefe com o recorte do
+	// operador (setor de CADASTRO: u.SetorID → fallback pessoa vinculada);
+	// sem setor atribuído → 403 com a mensagem única da onda (a mesma que o
+	// guarda central usa para operador sem setor).
+	if u.Papel == "operador" {
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo == nil {
+			jsonErro(w, http.StatusForbidden, "conta sem setor atribuído — solicite ao gerente/encarregado")
+			return
+		}
+		if *sAtivo != sid {
+			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de concluir este setor")
+			return
+		}
+	}
 
 	concluidoEm := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	_, err = a.st.db.Exec(`
@@ -757,6 +773,19 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 		// v1.5.4-D1 (R-12): contexto órfão de chefia anterior não reabre.
 		sAtivo := a.setorAtivoComandado(u)
 		if sAtivo == nil || *sAtivo != sid {
+			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de reabrir este setor")
+			return
+		}
+	}
+	// v1.6.0 Fase 7 (furo): ramo do OPERADOR espelhando o do chefe — só reabre
+	// o setor de cadastro da própria conta; sem setor → 403 (mensagem única).
+	if u.Papel == "operador" {
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo == nil {
+			jsonErro(w, http.StatusForbidden, "conta sem setor atribuído — solicite ao gerente/encarregado")
+			return
+		}
+		if *sAtivo != sid {
 			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de reabrir este setor")
 			return
 		}
