@@ -1,5 +1,14 @@
 # SCI — Changelog Oficial
 
+## [v1.5.2] — 2026-10-10
+
+### 🔀 Onda de consolidação — merge total das frentes em `main`
+- **Merge total:** as 14 branches do repositório (Frentes F1/F2/F3, fixes e integrações) estão contidas em `main`; operação registrada com prova em `docs/historico/onda_consolidacao_1010.md`. Schema binário permanece **43** (nenhuma migração nesta onda).
+- **Pessoal — UX das abas EFETIVO/CHEFIAS (`fix/pessoal-front-ux`):** ordenação por cabeçalho + paginação (20/página) nas tabelas de Efetivo e Chefias, além de auditoria UX documentada (`docs/auditoria-ux-pessoal.md`). Revisão CEO pré-merge manteve o contrato "autocontido" de `views_pessoal.js` — helpers locais `pesTabelaControles/pesOrdenar` no lugar dos globais `window.tabelaControles`, garantindo ordenação/paginação também navegando **direto** a `#/pessoal` (os globais só existiam com `views_gestao.js` previamente carregada).
+- **Cache-bust v369:** 4 refs em `web/index.html` + `CACHEBUST` em `web/lazy.js` (doutrina: bump único por onda, nunca rebaixar o número).
+
+---
+
 ## [v1.5.0] — 2026-10-02
 
 ### 🚀 Novidades & Módulos Principais
