@@ -1754,6 +1754,14 @@ func (a *App) hAvisosCiente(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// v1.5.4-E2 (R-21): ciência é registro sobre o aviso — o aviso tem que estar
+	// no escopo do solicitante (mesma doutrina da listagem: admin global,
+	// grupo da sessão). Sem isso, o id de aviso de OUTRO grupo aceitava ciente
+	// (IDOR de escrita) e id inexistente morria em 500 de FK.
+	if !a.avisoNoEscopo(w, u, id) {
+		return
+	}
+
 	agora := time.Now().UTC().Format(time.RFC3339)
 	_, err = a.st.db.Exec(`
 		INSERT INTO aviso_cientes (aviso_id, usuario_id, papel_id, ciente_em)
@@ -1834,6 +1842,13 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	// v1.5.4-E2 (R-21): detalhes (comentários + cientes, com PII de quem
+	// interage) só saem para quem leria o aviso na LISTAGEM — admin global ou
+	// grupo da sessão. Fora do escopo: 403.
+	if !a.avisoNoEscopo(w, u, id) {
 		return
 	}
 

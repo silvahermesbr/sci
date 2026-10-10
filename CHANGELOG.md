@@ -21,6 +21,7 @@
 
 ### 🪜 Onda v1.5.4 — D3: antiguidade com ordenação unificada nas 3 fontes da tag (R-7)
 - **D3 (R-7):** antiguidade com ordenação unificada nas 3 fontes da tag (pessoa → conta → papel, fonte SQL única `exprAntiguidadeTresFontes` em `onda_0910_conf_antiguidade.go`) na listagem do `/hoje`, pré-fechamento, relatório em tela e PDF de conferência; `iniciar`/`despachar` respondem `sem_tag:[nomes]` (quem ficou fora do filtro por não ter a tag em nenhuma fonte, com recorte aos setores despachados); pré-fechamento voltou a listar os não-marcados (`nao_verificado` — linha NULL era descartada no Scan); sem herança de catálogo entre grupos segue by design (decisão D-1 pendente). Regressão: `onda_v154_d3_test.go`; front do `sem_tag` pendente.
+
 ### 🛡️ Onda v1.5.4 — E1: guardas de autenticação (R-9/R-10/R-14/R-16)
 - **R-9 — contexto de sessão (`POST /api/sessao/contexto`):** o setor passado precisa pertencer ao
   GRUPO do papel ativo; chefe_setor só assume setor que AINDA comanda (`chefe_setores` — fonte única
@@ -45,6 +46,9 @@
   doutrina reusada); deploy com `SCI_ADMIN_SENHA` própria não nasce bloqueado.
 - Regressão completa em `onda_v154_e1_test.go` (7 testes, persona positivo/negativo); testes de
   mensageria anteriores às guardas atualizados à nova doutrina (vínculos de árvore explícitos).
+
+### 🛡️ Onda v1.5.4 — E2: escopo e conteúdo (R-5/R-6/R-8/R-11/R-15/R-21)
+- **Escopo e conteúdo fechados:** foto de usuário com escopo (própria/avatar 200, admin global, grupo vê grupo, 403 fora — R-5); drive só serve `inline` na allowlist de MIME dos anexos de material (PDF/PNG/JPEG/WEBP), resto `attachment`+octet-stream+`nosniff` SEMPRE e filename sanitizado no SERVE (R-11); NUKE de grupo, exclusão de setor e de conferência arquivada completam os DELETEs de FKs NO ACTION em transação (conferencia_escalas, mural com origens de repost, escala_modelos+postos+aptos, material_conferencias+itens, chefe_setores, funcao_membros, grupo_setor_responsaveis, setor_sugestoes, usuario_papeis, funcao_id/setor_id de cadastro) — grupo/setor "rico" sem erro e sem órfãos, e a exclusão de setor revoga comando+papel (doutrina D1) remanejando o material (R-6/R-15); detalhes/ciente de aviso e compartilhamentos de calendário só no escopo do objeto (R-21, resíduo: comentários de aviso); arquivar/descartar conferência viram ato de gerente ou encarregado de pessoal (R-8). Regressão: `onda_v154_e2_test.go` (8 testes persona, positivo e negativo).
 
 ### 🧟 Onda v1.5.4 — D1: mata o "chefe-zumbi" (R-12) — chefe_setores vira fonte única
 - **Causa:** A nomeado chefe do setor S conservava poderes invisíveis depois de substituído por B
