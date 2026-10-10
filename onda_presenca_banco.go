@@ -21,7 +21,11 @@ var estadosApresentacaoValidos = map[string]bool{
 func (a *App) hPessoaApresentacaoGet(w http.ResponseWriter, r *http.Request) {
 	_ = a.ensureTabelaApresentacao()
 	u := usuarioDoCtx(r)
-	esc := escopoDoUsuario(u)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	q := `SELECT pa.pessoa_id, pa.estado, COALESCE(pa.motivo, ''),
 	             COALESCE(NULLIF(u.nome_guerra, ''), COALESCE(u.login, '')),
@@ -33,9 +37,8 @@ func (a *App) hPessoaApresentacaoGet(w http.ResponseWriter, r *http.Request) {
 
 	var (
 		rows *sql.Rows
-		err  error
 	)
-	if esc > 0 && u.Papel != "admin" {
+	if esc > 0 {
 		rows, err = a.st.db.Query(q+` WHERE p.grupo_id = ? ORDER BY pa.definido_em DESC, pa.pessoa_id ASC`, esc)
 	} else {
 		rows, err = a.st.db.Query(q + ` ORDER BY pa.definido_em DESC, pa.pessoa_id ASC`)
@@ -98,9 +101,9 @@ func (a *App) hPessoaApresentacaoSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if u.Papel != "admin" {
-		esc := escopoDoUsuario(u)
-		if esc <= 0 {
-			jsonErro(w, http.StatusForbidden, "sem grupo definido no cadastro")
+		esc, err := a.exigeEscopo(u)
+		if err != nil {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 			return
 		}
 		if gid == nil || *gid != esc {
@@ -157,9 +160,9 @@ func (a *App) hPessoaModificacoes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if u.Papel != "admin" {
-		esc := escopoDoUsuario(u)
-		if esc <= 0 {
-			jsonErro(w, http.StatusForbidden, "sem grupo definido no cadastro")
+		esc, err := a.exigeEscopo(u)
+		if err != nil {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 			return
 		}
 		if gid == nil || *gid != esc {

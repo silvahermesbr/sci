@@ -234,14 +234,19 @@ func TestI6SetoresAgregadoAdminTodos(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
 	gidPai, _, setA, setB, _ := itens79Setup(t, app, st)
-	// chefe REAL p/ a visão: linha de papel chefe_setor NO grupo (o subselect
-	// da agregada casa cup.grupo_id = s.grupo_id; INSERT direto, padrão
-	// api_relatorios_metricas_test.go — fixture não pré-cria linha) —
-	// usuarios.setor_id do ch79 já posto pelo setup.
+	// chefe REAL p/ a visão: linha de papel chefe_setor NO grupo + COMANDO
+	// materializado em chefe_setores — v1.5.4-D1 (R-12): a agregada leu
+	// usuario_papeis+usuarios.setor_id (fonte divergente da UI de catálogo);
+	// agora lê chefe_setores, igual ao catálogo (fonte única).
 	if _, err := st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel)
 		SELECT id, ?, 'chefe_setor' FROM usuarios WHERE login = 'ch79'`, gidPai); err != nil {
 		t.Fatalf("papel do chefe no grupo: %v", err)
 	}
+	var ch79ID int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'ch79'`).Scan(&ch79ID); err != nil {
+		t.Fatalf("id ch79: %v", err)
+	}
+	materializaComandoSetor(t, st, ch79ID, gidPai, setA)
 	ckAdm := loginAs(t, app, "admin", "admin123")
 
 	rr, res := doJSONReq(app, "GET", "/api/setores/agregado", nil, ckAdm)

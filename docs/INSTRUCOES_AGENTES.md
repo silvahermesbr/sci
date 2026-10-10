@@ -54,7 +54,8 @@
 
 - Máquina dev Windows: `go vet ./...`, `go build`, `go test -count=1 ./...` (suíte ~190s, 236
   testes, cobertura 74,6%). `-race` exige cgo/gcc — **rodar no host Linux**, junto com `bash ci.sh`
-  (que é Linux-only e, até a v1.5.4-F, não roda testes — atualize-o no item F).
+  (desde a v1.5.4-F o ci.sh é o gate de verdade: vet + build + teste obrigatórios + smoke de
+  health/backup; continua Linux-only pelo PATH do go — o `-race` segue por conta do host Linux).
 - Cada teste cria SQLite temporário com a cadeia de migrações inteira — quebra de migração falha
   a suíte TODA (bom sinal, não um bug).
 - `ops/carga_conferencia.py` é o harness de carga pós-mudança na conferência (p50/p95).

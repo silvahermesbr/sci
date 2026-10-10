@@ -28,14 +28,13 @@ func podeVerMural(u *Usuario) bool {
 // Escopo: gerente e encarregado vêem o próprio grupo; admin=0 vê tudo; sem grupo=-1 → 403.
 func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
-	if escopo < 0 || (escopo == 0 && u.Papel != "admin") {
-		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
 
 	var rows *sql.Rows
-	var err error
 	if u.Papel == "admin" && escopo == 0 {
 		rows, err = a.st.db.Query(`
 			SELECT f.id, f.nome, f.chave,
@@ -98,13 +97,17 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 // Designação por gerente, admin ou encarregado de pessoal (no próprio grupo, apenas cadeira enc_material).
 func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	isGerOuAdmin := u != nil && (u.Papel == "gerente" || u.Papel == "admin")
-	isEncPessoal := u != nil && a.ehEncarregadoDePessoal(u) && escopoDoUsuario(u) > 0
+	isEncPessoal := u != nil && a.ehEncarregadoDePessoal(u) && escopo > 0
 	if !isGerOuAdmin && !isEncPessoal {
 		jsonErro(w, http.StatusForbidden, "designação de membros de função é restrita a gerente e administrador")
 		return
 	}
-	escopo := escopoDoUsuario(u)
 	if u.Papel == "gerente" && escopo <= 0 {
 		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
 		return
@@ -193,13 +196,17 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 // Designação por gerente, admin ou encarregado de pessoal (no próprio grupo, apenas cadeira enc_material).
 func (a *App) hFuncaoMembrosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	isGerOuAdmin := u != nil && (u.Papel == "gerente" || u.Papel == "admin")
-	isEncPessoal := u != nil && a.ehEncarregadoDePessoal(u) && escopoDoUsuario(u) > 0
+	isEncPessoal := u != nil && a.ehEncarregadoDePessoal(u) && escopo > 0
 	if !isGerOuAdmin && !isEncPessoal {
 		jsonErro(w, http.StatusForbidden, "designação de membros de função é restrita a gerente e administrador")
 		return
 	}
-	escopo := escopoDoUsuario(u)
 	if u.Papel == "gerente" && escopo <= 0 {
 		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
 		return

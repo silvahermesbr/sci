@@ -44,6 +44,11 @@ HTTP-level por persona; documentação disciplinada.
 
 ## v1.5.4 — Estancar (P0 + bugs de campo) — prioridade ALTA, esforço ~2-3 dias
 
+> **ESTADO:** **ONDA CONCLUÍDA** — itens A (fd96c90), B/C (idem), F (7751f70), D1 (7d6a2a9),
+> D2 (6d69a16), D3 (f8a67df), E1 (03fa62a) e E2 (f2fc223) integrados em
+> `onda/v1.5.4-estancar` (HEAD ddb6aa3) com os 25 testes de onda verdes; pendente apenas
+> merge/push para `main` (decisão do comando). Gate de saída: `docs/auditoria-escopos-v154.md`.
+
 Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção é pequena; o que falta
 é a disciplina de tocar todos os pontos listados no `ARQUITETURA.md`.
 
@@ -71,7 +76,7 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
 
 ### D. Corrigir os 3 bugs de campo (relatos do comando)
 
-**D1 — "2 chefes de setor simultâneos" (chefe-zumbi):**
+**D1 — "2 chefes de setor simultâneos" (chefe-zumbi) — ✅ CONCLUÍDO (v1.5.4-D1):**
 - **Causa-raiz:** `chefeComandaSetor` (onda_0510_conf_escopo.go:145-164) aceita fallbacks
   `usuarios.setor_id` e `pessoas.setor_id`; `hGrupoNomearChefe` (onda_0510_escalas.go:297) escreve
   `usuarios.setor_id` como efeito colateral e NADA o limpa na destituição/troca (documentado em
@@ -81,8 +86,17 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   comandos legados em `chefe_setores` antes), OU invalidar `usuarios.setor_id` ao destituir;
   decisão registrada no `ARQUITETURA.md` §Chefias. Teste: nomear A, trocar p/ B, A perde
   concluir/reabrir/marcar do setor IMEDIATAMENTE.
+- **Executado (decisão D-2 — materializar e remover fallbacks):** migração **v44** materializa as
+  chefias legadas pendentes (`onda_v154_d1.go`; fontes `usuarios.setor_id` → `pessoas.setor_id`,
+  INSERT OR IGNORE — UNIQUE(setor_id) preserva o comando vigente); `chefeComandaSetor` consulta
+  SOMENTE `chefe_setores`; novo `setorAtivoComandado` condiciona o contexto da sessão ao comando
+  vigente em concluir/reabrir/marcar e na leitura do `/hoje`; `hUsuarioPapelAdd`
+  (chefe_setor+setor_id) materializa o comando (UPSERT 1:1) e `hUsuarioPapelDel` revoga os do
+  grupo; `hSetoresAgregado` passa a ler `chefe_setores` (fonte única); `versaoSchemaBinario` → 44.
+  Regressão: `onda_v154_d1_test.go` (substituição 1:1, papel add/del, migração v44, contexto
+  órfão). Resíduo documentado p/ D-5: escala do chefe e pre_fechamento ainda leem o contexto.
 
-**D2 — "Acesso a módulos fora da esfera via URL":**
+**D2 — "Acesso a módulos fora da esfera via URL":** — ✅ CONCLUÍDO (v1.5.4-D2):
 - **Causa-raiz:** gates do `rotear()` são cosméticos (ok, por design); o buraco real é servidor:
   (i) classe `-1` (item A); (ii) rotas de PDF/dados com `a.auth(false)` e sem checagem interna de
   papel/escopo — `/api/escalas/pdf`, `/api/escalas/relatorio-dia.pdf`, `/api/escalas/minhas`
@@ -92,8 +106,22 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   escopo p/ material; escopo estrito p/ conferência). Regra nova no mapa: **nenhuma rota de dados
   sem guard declarado na tabela**.
 - **Aceite:** teste por persona: operador/sem-grupo recebe 403 em todos os PDFs de outro escopo.
+- **Executado (v1.5.4-D2):** escalas — `/api/escalas/pdf`, `/api/escalas/relatorio-dia.pdf` (+ a
+  duplicata `/relatorio-dia/pdf`) e `/api/escalas/minhas` exigem `reservaAuth` (minhas também barra
+  conta sem grupo via `exigeEscopo`; a abertura ampla de `minhas` segue PENDENTE p/ M5, decisão
+  D-3); material — `/api/material/inventario/pdf`, `/api/material/cautelas/{id}/recibo.pdf` e
+  `/api/material/conferencias/{id}/pronto.pdf` exigem `authMaterial` (escopo do objeto segue no
+  handler); conferência — `/api/conferencia/{id}/relatorio.pdf` exige `confPDFAuth`: papéis do
+  módulo (gerente/operador/enc_pessoal/auxiliar; admin proibido) e chefe_setor somente se a
+  conferência envolve setor que AINDA comanda (`conferenciaEnvolveSetorComandado` — fonte única
+  `chefe_setores`, D-1). Doutrina §3.I registrada no `ARQUITETURA.md` (nenhuma rota de dados sem
+  guard declarado na tabela). Regressão: `onda_v154_d2_test.go` — matriz por persona: gerente e
+  operador do próprio grupo 200; conta sem grupo 403 em todas as rotas tocadas; admin 403
+  (doutrina de cada módulo); chefe 200 na conferência do setor comandado e 403 na demais; operador
+  de outro grupo 403 nos objetos alheios e, nas rotas confinadas ao escopo da sessão, PDF do
+  PRÓPRIO grupo com prova de não-vazamento pelo texto extraído do PDF.
 
-**D3 — "Antiguidade desconsidera as tags do grupo":**
+**D3 — "Antiguidade desconsidera as tags do grupo" — ✅ CONCLUÍDO (v1.5.4-D3):**
 - **Causa-raiz (3 partes):** (i) o filtro casa a pessoa por 3 fontes (`p.funcao_id` OU
   `usuarios.funcao_id` OU `usuario_papeis.funcao_id`, onda_0910_conf_antiguidade.go:132-134), mas a
   ORDENAÇÃO usa só `p.funcao_id` (`ORDER BY COALESCE(fu.antiguidade,999)`) e o relatório na tela
@@ -107,25 +135,63 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   política de herança.
 - **Aceite:** teste com militar tagueado só na CONTA (não na pessoa) aparece na ordem correta;
   teste de aviso de excluídos.
+- **Executado:** expressões SQL extraídas para fonte única em `onda_0910_conf_antiguidade.go`
+  (`filtroAntiguidadeTresFontes`, `exprAntiguidadeTresFontes` =
+  `COALESCE(fu.antiguidade, fu_u.antiguidade, fu_up.antiguidade, 999)` — precedência
+  pessoa → conta → papel, sem tag = 999 — e `ordemAntiguidadeTresFontes`: antiguidade, nome, id);
+  ordenação unificada em TODOS os pontos do modo antiguidade: listagem do `/hoje`
+  (`pessoasAtivasOpt` com filtro), pré-fechamento, relatório em tela `/{id}` e PDF de conferência
+  (condicionada ao modo — conferência por setores mantém as ordens legadas); `iniciar`/`despachar`
+  respondem `sem_tag:[nomes]` (`militaresSemTagAntiguidade`: ativos do grupo, recorte = setores
+  despachados, fora do filtro por não terem a tag em NENHUMA fonte; `NOT COALESCE(predicado,0)`
+  contorna a lógica tri-estados do `funcao_id` NULL); bônus na mesma consulta: pré-fechamento
+  voltou a listar os não-marcados como `nao_verificado` (`COALESCE(pr.situacao,'')` — o Scan
+  descartava a linha NULL e o checklist nascia vazio). Herança de catálogo: **documentada como SEM
+  herança entre grupos (by design 09/10)**; D-1 segue decisão pendente de comando (M1/M2).
+  Regressão: `onda_v154_d3_test.go` (ordem nas 2 listagens, sem_tag com recorte de setor,
+  negativo do grupo sem tags, relatório em tela + PDF na escada via `extrairTextoPDF`).
+  Pendência: front ainda não consome `sem_tag`.
 
 ### E. Correções de guarda remanescentes (P1 de segurança — IDs R-x do `ARQUITETURA.md` §14)
-- `hUsuarioPapelDel/Add`: allowlist de solicitantes + escopo do alvo (R-10; mensagens.go:112-138, 246-278).
-- `hMudarContexto`: setor precisa pertencer ao grupo do papel ativo; parar de reescrever
-  `usuarios.setor_id` global (R-9; mensagens.go:44-67).
-- `GET /api/usuarios/{id}/foto`: checagem de escopo (R-5; server_pessoal.go:1015).
+- ~~`hUsuarioPapelDel/Add`: allowlist de solicitantes + escopo do alvo (R-10; mensagens.go:112-138, 246-278).~~
+  **✅ CONCLUÍDO (v1.5.4-E1):** `podeGerirPapelAlvo` (onda_v154_e1.go) — admin global; gerente
+  operador/chefe_setor no próprio grupo/árvore; enc/aux de pessoal no próprio grupo (doutrina
+  hUsuariosAdd/v367); fail-closed para qualquer outro solicitante; alvo resolvido ANTES da decisão e
+  re-chaveio de sessões só pós-autorização; trava do único papel mantida.
+- ~~`hMudarContexto`: setor precisa pertencer ao grupo do papel ativo; parar de reescrever
+  `usuarios.setor_id` global (R-9; mensagens.go:44-67).~~
+  **✅ CONCLUÍDO (v1.5.4-E1):** setor pertence ao grupo do PAPEL ATIVO; chefe_setor só o que AINDA
+  comanda (`chefe_setores`, fonte única D1); admin livre; `UPDATE usuarios SET setor_id` removido —
+  contexto vive em `sessoes.setor_ativo_id`; `usuarios.setor_id` = cadastro (proposta D-5).
+- `GET /api/usuarios/{id}/foto`: checagem de escopo (R-5) — ✅ **v1.5.4-E2**: foto própria (avatar)
+  200; admin global; grupo vê grupo; 403 fora (`TestE2FotoUsuarioComEscopo`).
 - Drive: allowlist de MIME p/ `inline` (ou `attachment`+nosniff sempre) e Content-Disposition
-  sanitizado (R-11; drive.go:701-707, 764-774).
+  sanitizado (R-11) — ✅ **v1.5.4-E2**: `mimeDriveInlinavel` (PDF/PNG/JPEG/WEBP, régea dos anexos de
+  material), resto attachment+octet-stream+nosniff e filename saneado no SERVE
+  (`TestE2DriveMIMEInlineSeguro`).
 - NUKE/hSetorExcluir/excluirArquivada: completar DELETEs — `chefe_setores`, `funcao_membros`,
   `avisos`+`aviso_cientes/comentarios`, `material_conferencias`+itens, `escala_modelos`+postos+aptos,
   `setor_sugestoes`, `grupo_setor_responsaveis`, `conferencia_escalas` (R-6, R-15) + teste com grupo
-  "rico" (server_grupos.go:144-186).
+  "rico" — ✅ **v1.5.4-E2**: rol completo em tx nos 3 fluxos (NUKE inclui NULLing de origens de
+  repost e remanejamento de setor/material); setor rico revoga comando+papel (doutrina D1) e
+  remaneja o material (`TestE2NukeGrupoRicoSemOrfaos`, `TestE2ExclusaoSetorRicoSemOrfaos`,
+  `TestE2ExcluirArquivadaApagaEscala`).
 - Mural/calendário: leituras por id sem checar grupo do objeto — `hAvisosDetalhes/Ciente`,
-  `GET /api/calendarios/{id}/compartilhamentos` (R-21).
-- Mensagens: hierarquia de envio — operador SEM grupo (hoje envia a qualquer papel de qualquer
-  grupo) e revisão geral de quem pode enviar para quem (R-14; mensagens.go:640-678).
+  `GET /api/calendarios/{id}/compartilhamentos` (R-21) — ✅ **v1.5.4-E2**: `avisoNoEscopo` (403 fora,
+  404 inexistente) e régua do compartilhar/revogar no calendário; resíduo documentado:
+  `hAvisosComentar` segue sem a checagem (`TestE2MuralAvisoForaDoEscopo`,
+  `TestE2CalendarioCompartilhamentosEscopo`).
+- ~~Mensagens: hierarquia de envio — operador SEM grupo (hoje envia a qualquer papel de qualquer
+  grupo) e revisão geral de quem pode enviar para quem (R-14; mensagens.go:640-678).~~
+  **✅ CONCLUÍDO (v1.5.4-E1):** ninguém envia fora do escopo do papel ativo (próprio grupo +
+  subordinados ativos, `gruposSubordinadosAtivos`); conta sem grupo 403; admin global; matriz
+  documentada no ARQUITETURA §8.
 - Arquivar/descartar conferência: alinhar código à doutrina (só gerente/enc; hoje operador passa)
-  (R-8; server_conferencia.go:741/:882).
-- Troca de senha invalida sessões + admin/admin com troca obrigatória no 1º boot (R-16).
+  (R-8) — ✅ **v1.5.4-E2**: portão gerente/enc_pessoal nos dois handlers (`TestE2ArquivarDescartarSomenteGerenteEnc`).
+- ~~Troca de senha invalida sessões + admin/admin com troca obrigatória no 1º boot (R-16).~~
+  **✅ CONCLUÍDO (v1.5.4-E1):** troca/redefinição de senha invalida as sessões da conta (a corrente
+  é preservada na troca pela própria conta — decisão no mapa §3.C); admin semeado com a senha
+  PADRÃO `admin` nasce `precisa_setup=1` (gate central reusado); senha própria no seed não bloqueia.
 
 ### F. CI passa a gatear de verdade
 - ci.sh: `go vet` + `go test -count=1 ./...` (190s) obrigatórios; `-race` no host Linux.
@@ -241,4 +307,4 @@ desbloqueadas no `rotear()` e no menu; (3) e2e da máquina persona re-executado;
 | D-2 | Fallbacks de `chefeComandaSetor`: remover puros ou materializar legados | v1.5.4-D1 |
 | D-3 | `escalas/minhas` e PDFs de escala: quem acessa quando o módulo volta | M5 |
 | D-4 | Anexos de material: disco (doutrina Drive) vs base64 no banco | M3 |
-| D-5 | `usuarios.setor_id`: coluna de cadastro ou fonte de autorização? (hoje: os dois, o que causa o bug D1) | M2 |
+| D-5 | `usuarios.setor_id`: coluna de cadastro ou fonte de autorização? (**v1.5.4-E1 já aplicou o lado do contexto:** troca de contexto NÃO reescreve mais a coluna — contexto vive em `sessoes.setor_ativo_id`; resta decidir os resíduos de CADASTRO que ainda a leem: designação de escala do chefe e `hSetorPreFechamento`) | M2 |

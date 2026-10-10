@@ -22,6 +22,16 @@ func TestPDFEndpointsV2(t *testing.T) {
 	}
 	gid, _ := resG.LastInsertId()
 
+	// v1.5.4-D2 (R-2): os PDFs de escalas/material/conferência passaram a exigir
+	// o guard do módulo (reservaAuth/authMaterial/confPDFAuth — admin 403). O
+	// leitor destes PDFs aqui é o GERENTE do grupo dono dos dados (grupo na
+	// CONTA antes do login — a sessão sintetiza o papel com o grupo da conta).
+	criaUsuarioTeste(t, st, "ger_pdfv2", "senha-ger-pdfv2", "gerente")
+	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login = 'ger_pdfv2'`, gid); err != nil {
+		t.Fatalf("grupo do gerente: %v", err)
+	}
+	gerCookie := loginAs(t, app, "ger_pdfv2", "senha-ger-pdfv2")
+
 	resP, err := st.db.Exec(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('SILVA', 'Carlos Silva', ?, 'ativo')`, gid)
 	if err != nil {
 		t.Fatalf("erro ao criar pessoa: %v", err)
@@ -55,7 +65,7 @@ func TestPDFEndpointsV2(t *testing.T) {
 	}
 
 	// 3. Testar Recibo de Cautela PDF (/api/material/cautelas/{id}/recibo.pdf)
-	rrCaut, _ := doRawReq(app, "GET", "/api/material/cautelas/1/recibo.pdf", nil, adminCookie)
+	rrCaut, _ := doRawReq(app, "GET", "/api/material/cautelas/1/recibo.pdf", nil, gerCookie)
 	if rrCaut.Code != http.StatusOK {
 		t.Fatalf("esperado 200 em /api/material/cautelas/1/recibo.pdf, obtido: %d - %s", rrCaut.Code, rrCaut.Body.String())
 	}
@@ -63,8 +73,8 @@ func TestPDFEndpointsV2(t *testing.T) {
 		t.Fatalf("resposta de recibo de cautela não começa com %%PDF-1.")
 	}
 
-	// 4. Testar Escalas PDF (/api/escalas/pdf)
-	rrEsc, _ := doRawReq(app, "GET", "/api/escalas/pdf?mes=2026-09", nil, adminCookie)
+	// 4. Testar Escalas PDF (/api/escalas/pdf) — guard do módulo (reservaAuth)
+	rrEsc, _ := doRawReq(app, "GET", "/api/escalas/pdf?mes=2026-09", nil, gerCookie)
 	if rrEsc.Code != http.StatusOK {
 		t.Fatalf("esperado 200 em /api/escalas/pdf, obtido: %d - %s", rrEsc.Code, rrEsc.Body.String())
 	}
@@ -73,7 +83,7 @@ func TestPDFEndpointsV2(t *testing.T) {
 	}
 
 	// 5. Testar Inventário de Material PDF (/api/material/inventario/pdf)
-	rrInv, _ := doRawReq(app, "GET", "/api/material/inventario/pdf", nil, adminCookie)
+	rrInv, _ := doRawReq(app, "GET", "/api/material/inventario/pdf", nil, gerCookie)
 	if rrInv.Code != http.StatusOK {
 		t.Fatalf("esperado 200 em /api/material/inventario/pdf, obtido: %d - %s", rrInv.Code, rrInv.Body.String())
 	}
@@ -122,7 +132,7 @@ func TestPDFEndpointsV2(t *testing.T) {
 		t.Fatalf("esperado funcao 'Comandante de Pelotão', obtido %v", primeiro["funcao"])
 	}
 
-	rrConfPDF, _ := doRawReq(app, "GET", "/api/conferencia/"+strconv.FormatInt(confID, 10)+"/relatorio.pdf", nil, adminCookie)
+	rrConfPDF, _ := doRawReq(app, "GET", "/api/conferencia/"+strconv.FormatInt(confID, 10)+"/relatorio.pdf", nil, gerCookie)
 	if rrConfPDF.Code != http.StatusOK {
 		t.Fatalf("esperado 200 em /api/conferencia/%d/relatorio.pdf, obtido: %d - %s", confID, rrConfPDF.Code, rrConfPDF.Body.String())
 	}

@@ -85,7 +85,12 @@ func (a *App) hConferenciaStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verificar se conferência pertence ao escopo do usuário (admin tem acesso global)
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		http.Error(w, "conta sem grupo definido", http.StatusForbidden)
+		return
+	}
+	if esc > 0 {
 		var gid *int64
 		err := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, confID).Scan(&gid)
 		if err != nil {

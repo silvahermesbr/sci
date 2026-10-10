@@ -545,7 +545,7 @@
                   <tr data-login="${esc(u.login)}" data-nomes="${esc((u.nome_guerra || '') + ' ' + (u.nome_completo || ''))}" data-gid="${u.grupo_id || 0}" data-papeis="${esc(papeisStr)}" data-ativo="${u.ativo ? 1 : 0}">
                     <td style="text-align:center; vertical-align:middle">
                       <div style="width:32px; height:32px; border-radius:50%; overflow:hidden; background:var(--painel3); border:1px solid var(--borda); display:inline-flex; align-items:center; justify-content:center">
-                        ${u.foto_base64 ? `<img src="${u.foto_base64}" style="width:100%; height:100%; object-fit:cover">` : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
+                        ${u.foto_base64 && fotoValida(u.foto_base64) ? `<img src="${esc(u.foto_base64)}" style="width:100%; height:100%; object-fit:cover">` : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
                       </div>
                     </td>
                     <td class="num">#${u.id}</td>
@@ -680,7 +680,7 @@
           <!-- Foto 1x1 e Ações de Imagem -->
           <div style="display:flex; align-items:center; gap:16px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid var(--borda)">
             <div id="mPfFotoBox" style="width:76px; height:76px; border-radius:12px; border:2px solid var(--borda2); overflow:hidden; display:flex; align-items:center; justify-content:center; background:var(--painel2); flex-shrink:0">
-              ${fotoAtual ? `<img src="${fotoAtual}" style="width:100%; height:100%; object-fit:cover">` : `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
+              ${fotoAtual && fotoValida(fotoAtual) ? `<img src="${esc(fotoAtual)}" style="width:100%; height:100%; object-fit:cover">` : `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
             </div>
             <div style="display:flex; flex-direction:column; gap:6px">
               <input type="file" id="mPfInpFile" accept="image/*" style="display:none">
@@ -756,7 +756,9 @@
         if (file) {
           processarFoto1x1(file, (dataUrl) => {
             fotoAtual = dataUrl;
-            fotoBox.innerHTML = `<img src="${fotoAtual}" style="width:100%; height:100%; object-fit:cover">`;
+            if (fotoValida(fotoAtual)) {
+              fotoBox.innerHTML = `<img src="${esc(fotoAtual)}" style="width:100%; height:100%; object-fit:cover">`;
+            }
           });
         }
       };
@@ -2532,7 +2534,7 @@
         <div class="perfil-topo">
           <div class="perfil-foto-wrapper">
             <div class="perfil-foto-preview" id="pfFotoBox">
-              ${fotoAtual ? `<img src="${fotoAtual}" alt="Foto 1x1">` : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
+              ${fotoAtual && fotoValida(fotoAtual) ? `<img src="${esc(fotoAtual)}" alt="Foto 1x1">` : `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5"/></svg>`}
             </div>
           </div>
           <div class="perfil-foto-acoes">
@@ -2634,7 +2636,9 @@
       if (file) {
         processarFoto1x1(file, (dataUrl) => {
           fotoAtual = dataUrl;
-          fotoBox.innerHTML = `<img src="${fotoAtual}" alt="Foto 1x1">`;
+          if (fotoValida(fotoAtual)) {
+            fotoBox.innerHTML = `<img src="${esc(fotoAtual)}" alt="Foto 1x1">`;
+          }
           toast('Foto 1x1 processada. Clique em "Salvar Perfil" para confirmar.', 'ok');
         });
       }
@@ -2703,8 +2707,8 @@
         // Atualiza avatar e nome na Sidebar em tempo real
         const sbAvatar = document.getElementById('sbAvatarWrapper');
         if (sbAvatar) {
-          if (fotoAtual) {
-            sbAvatar.innerHTML = `<img src="${fotoAtual}" class="sidebar-avatar-img" alt="Foto">`;
+          if (fotoAtual && fotoValida(fotoAtual)) {
+            sbAvatar.innerHTML = `<img src="${esc(fotoAtual)}" class="sidebar-avatar-img" alt="Foto">`;
           } else {
             sbAvatar.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
           }

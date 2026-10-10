@@ -4,6 +4,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -141,23 +142,64 @@ func (a *App) hGrupoExcluir(w http.ResponseWriter, r *http.Request) {
 		// MODO NUKE (ordem Tenente 30/09): apaga TODO o rastro do grupo. Ordem respeita
 		// FKs: histórico → vínculos com módulos → catálogos do grupo. Backup automático
 		// é gravado logo após o commit (backupAssincrono no fim do handler).
+		// v1.5.4-E2 (R-6/R-15): o rol cobria só parte das FKs NO ACTION — grupo
+		// "rico" (chefe_setores, funcao_membros, mural, conferências de material,
+		// modelos de escala, sugestões, escalas de guarda) morria em constraint.
+		// Cada DELETE/UPDATE usa 1 parâmetro (o loop injeta só o id do grupo).
 		for _, q := range []string{
 			// 0) auditoria dos usuários do grupo: vínculo anulado (rastro forense
 			// preservado — auditoria.usuario_id não tem CASCADE)
 			`UPDATE auditoria SET usuario_id = NULL WHERE usuario_id IN (SELECT id FROM usuarios WHERE grupo_id = ?)`,
-			// 1) histórico de conferências do grupo (presenças/comentários caem por CASCADE)
+			// 1) histórico de conferências do grupo (presenças/comentários/setores/
+			// funções/despachos caem por CASCADE) — R-15: conferencia_escalas NÃO
+			// tem cascade (nem por conferência, nem por usuário/designante)
 			`DELETE FROM presencas WHERE pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ?)`,
 			`DELETE FROM comentarios WHERE pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ?)`,
+			`DELETE FROM conferencia_escalas WHERE conferencia_id IN (SELECT id FROM conferencias WHERE grupo_id = ?)`,
+			`DELETE FROM conferencia_escalas WHERE usuario_id IN (SELECT id FROM usuarios WHERE grupo_id = ?)`,
+			`DELETE FROM conferencia_escalas WHERE designado_por IN (SELECT id FROM usuarios WHERE grupo_id = ?)`,
 			`DELETE FROM conferencias WHERE grupo_id = ?`,
-			// 2) módulos em reserva (escala/material) ligados ao grupo ou ao pessoal dele
+			// 1.b) mural do grupo (R-6): avisos + cientes + comentários. Repostas
+			// de OUTROS grupos apontando para avisos daqui perdem a origem (FK
+			// avisos.aviso_origem_id sem cascade); cientes/comentários de usuários
+			// do grupo em avisos alheios saem (FK usuario_id sem cascade)
+			`UPDATE avisos SET aviso_origem_id = NULL WHERE aviso_origem_id IN (SELECT id FROM avisos WHERE grupo_id = ?)`,
+			`UPDATE avisos SET grupo_origem_id = NULL WHERE grupo_origem_id = ?`,
+			`DELETE FROM aviso_cientes WHERE aviso_id IN (SELECT id FROM avisos WHERE grupo_id = ?)`,
+			`DELETE FROM aviso_comentarios WHERE aviso_id IN (SELECT id FROM avisos WHERE grupo_id = ?)`,
+			`DELETE FROM avisos WHERE grupo_id = ?`,
+			`DELETE FROM aviso_cientes WHERE usuario_id IN (SELECT id FROM usuarios WHERE grupo_id = ?)`,
+			`DELETE FROM aviso_comentarios WHERE usuario_id IN (SELECT id FROM usuarios WHERE grupo_id = ?)`,
+			// 2) módulos em reserva (escala/material) ligados ao grupo ou ao pessoal dele.
+			// R-6: modelos de escala (postos referenciam escala_tipos SEM cascade —
+			// saem ANTES) e conferências de material (itens caem por CASCADE;
+			// cabeça referencia grupo sem cascade)
 			`DELETE FROM escala_pessoas WHERE pessoa_id IN (SELECT id FROM pessoas WHERE grupo_id = ?)`,
 			`DELETE FROM escala_turnos WHERE grupo_id = ?`,
+			`DELETE FROM escala_modelo_aptos WHERE modelo_id IN (SELECT id FROM escala_modelos WHERE grupo_id = ?)`,
+			`DELETE FROM escala_modelo_postos WHERE modelo_id IN (SELECT id FROM escala_modelos WHERE grupo_id = ?)`,
+			`DELETE FROM escala_modelos WHERE grupo_id = ?`,
 			`DELETE FROM escala_tipos WHERE grupo_id = ?`,
+			`DELETE FROM material_conferencia_itens WHERE conferencia_id IN (SELECT id FROM material_conferencias WHERE grupo_id = ?)`,
+			`DELETE FROM material_conferencias WHERE grupo_id = ?`,
 			`DELETE FROM material_cautelas WHERE item_id IN (SELECT id FROM material_itens WHERE grupo_id = ?)`,
 			`DELETE FROM material_itens WHERE grupo_id = ?`,
 			`DELETE FROM material_categorias WHERE grupo_id = ?`,
 			// 3) catálogos de organização do grupo (referências já apagadas acima).
+			// R-6: chefias (chefe_setores), cadeiras (funcao_membros), responsáveis
+			// de material, sugestões de setor e papéis do grupo; funcao_id/setor_id
+			// de cadastro (pessoas/contas/papéis) viram NULL antes das tabelas-mãe.
 			// setores/funções: 2 passes — filho (pai_id) antes do pai, self-FK exige
+			`UPDATE pessoas SET funcao_id = NULL WHERE funcao_id IN (SELECT id FROM funcoes WHERE grupo_id = ?)`,
+			`UPDATE usuarios SET funcao_id = NULL WHERE funcao_id IN (SELECT id FROM funcoes WHERE grupo_id = ?)`,
+			`UPDATE usuario_papeis SET funcao_id = NULL WHERE funcao_id IN (SELECT id FROM funcoes WHERE grupo_id = ?)`,
+			`UPDATE pessoas SET setor_id = NULL WHERE setor_id IN (SELECT id FROM setores WHERE grupo_id = ?)`,
+			`UPDATE usuarios SET setor_id = NULL WHERE setor_id IN (SELECT id FROM setores WHERE grupo_id = ?)`,
+			`DELETE FROM chefe_setores WHERE grupo_id = ?`,
+			`DELETE FROM funcao_membros WHERE grupo_id = ?`,
+			`DELETE FROM grupo_setor_responsaveis WHERE grupo_id = ?`,
+			`DELETE FROM setor_sugestoes WHERE grupo_id = ?`,
+			`DELETE FROM usuario_papeis WHERE grupo_id = ?`,
 			`DELETE FROM setores WHERE pai_id IS NOT NULL AND grupo_id = ?`,
 			`DELETE FROM funcoes WHERE pai_id IS NOT NULL AND grupo_id = ?`,
 			`DELETE FROM tags WHERE grupo_id = ?`,
@@ -217,7 +259,16 @@ func podeAdministrar(u *Usuario) bool {
 }
 
 func (a *App) hGruposList(w http.ResponseWriter, r *http.Request) {
-	escopo := escopoDoUsuario(usuarioDoCtx(r))
+	u := usuarioDoCtx(r)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		if errors.Is(err, ErrContaSemGrupo) {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+			return
+		}
+		jsonErro(w, http.StatusUnauthorized, "não autenticado")
+		return
+	}
 	jsonOK(w, a.gruposComCodigo(escopo))
 }
 
@@ -351,6 +402,9 @@ func (a *App) hVinculoList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) gruposComCodigo(escopo int64) []map[string]any {
+	if escopo < 0 {
+		return []map[string]any{}
+	}
 	rows, err := a.st.db.Query(`
 		SELECT g.id, g.nome, COALESCE(g.codigo,''), g.criado_em,
 		       (SELECT COUNT(*) FROM usuarios u WHERE u.grupo_id = g.id) AS contas,
@@ -396,6 +450,15 @@ func (a *App) gruposComCodigo(escopo int64) []map[string]any {
 
 func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		if errors.Is(err, ErrContaSemGrupo) {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+			return
+		}
+		jsonErro(w, http.StatusUnauthorized, "não autenticado")
+		return
+	}
 	rows, err := a.st.db.Query(`
 		SELECT g.id, g.nome, COALESCE(g.codigo,''),
 		       (SELECT COUNT(*) FROM pessoas p WHERE p.grupo_id = g.id AND p.status = 'ativo'),
@@ -468,9 +531,9 @@ func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 			raizes = append(raizes, id)
 		}
 	}
-	if u != nil && u.Papel != "admin" && u.GrupoID != nil {
+	if escopo > 0 {
 		// gerente/operador: árvore enraizada no PRÓPRIO grupo
-		if raiz := montar(*u.GrupoID, 0); raiz != nil {
+		if raiz := montar(escopo, 0); raiz != nil {
 			jsonOK(w, []*GrupoN{raiz})
 			return
 		}

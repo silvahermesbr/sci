@@ -40,13 +40,31 @@ func (a *App) hMudarContexto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Se setor_id foi passado, validar
+	// Se setor_id foi passado, validar (v1.5.4-E1, R-9): o setor tem que
+	// pertencer ao GRUPO do PAPEL ATIVO da sessão; chefe_setor só setores que
+	// AINDA comanda (chefe_setores — fonte única desde a v1.5.4-D1); admin é
+	// global. Antes: qualquer setor ATIVO de QUALQUER grupo era aceito.
 	if req.SetorID != nil && *req.SetorID > 0 {
 		var setorValido int
 		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM setores WHERE id = ? AND ativo = 1`, *req.SetorID).Scan(&setorValido)
 		if setorValido == 0 {
 			jsonErro(w, http.StatusBadRequest, "setor inválido ou inativo")
 			return
+		}
+		if papel != "admin" {
+			if grupoID == nil {
+				jsonErro(w, http.StatusForbidden, "papel ativo sem grupo não assume setor")
+				return
+			}
+			if papel == "chefe_setor" {
+				if !a.chefeComandaSetorNoGrupo(u, *req.SetorID, *grupoID) {
+					jsonErro(w, http.StatusForbidden, "setor fora do seu comando — o chefe só atua no setor que comanda, no grupo do papel ativo")
+					return
+				}
+			} else if !a.setorIDValidoNoGrupo(*req.SetorID, *grupoID) {
+				jsonErro(w, http.StatusForbidden, "setor não pertence ao grupo do papel ativo")
+				return
+			}
 		}
 	} else if papel == "chefe_setor" && grupoID != nil {
 		var firstSid int64
@@ -63,9 +81,11 @@ func (a *App) hMudarContexto(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, "falha ao atualizar contexto da sessão")
 		return
 	}
-	if req.SetorID != nil && *req.SetorID > 0 {
-		_, _ = a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, *req.SetorID, u.ID)
-	}
+	// v1.5.4-E1 (R-9, proposta D-5): o `UPDATE usuarios SET setor_id` global
+	// foi REMOVIDO. O contexto da sessão vive em sessoes.setor_ativo_id
+	// (UsuarioDaSessao o sobrepõe a cada leitura); reescrever o cadastro
+	// global afetava TODAS as outras sessões do usuário. usuarios.setor_id
+	// passa a ser cadastro/exibição — decisão final é a D-5, pendente.
 
 	novoU, err := a.st.UsuarioDaSessao(c.Value)
 	if err != nil || novoU == nil {
@@ -109,27 +129,24 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Permissões: Admin cria qualquer papel. Gerente só cria operador/chefe_setor no seu próprio grupo.
-	if u.Papel == "operador" || u.Papel == "chefe_setor" {
-		jsonErro(w, http.StatusForbidden, "operador ou chefe de setor não gerencia papéis")
-		return
-	}
-	if u.Papel == "gerente" {
-		if papel != "operador" && papel != "chefe_setor" {
-			jsonErro(w, http.StatusForbidden, "gerente só pode atribuir papel de operador ou chefe de setor")
+	// Permissões (v1.5.4-E1, R-10): allowlist de solicitantes FAIL-CLOSED —
+	// antes, qualquer papel fora de {operador, chefe_setor, gerente} (base não
+	// reconhecida) passava reto com poder de admin. Doutrina do hUsuariosAdd
+	// (v367/0610): admin é global; gerente atribui operador/chefe_setor no
+	// próprio grupo/árvore; designado na cadeira enc_pessoal, operador/
+	// chefe_setor do próprio grupo.
+	if u.Papel != "admin" {
+		alvoGrupo := req.GrupoID
+		if alvoGrupo == nil {
+			alvoGrupo = u.GrupoID
+		}
+		if !a.podeGerirPapelAlvo(u, papel, alvoGrupo) {
+			jsonErro(w, http.StatusForbidden, "permissão insuficiente para atribuir este papel")
 			return
 		}
-		if u.GrupoID == nil {
-			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
-			return
-		}
-		dentroDaArvore := func(g int64) bool { return g == *u.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*u.GrupoID), g) }
-		if req.GrupoID != nil && *req.GrupoID != *u.GrupoID {
-			if !dentroDaArvore(*req.GrupoID) {
-				jsonErro(w, http.StatusForbidden, "gerente só pode atribuir papel no próprio grupo ou em subordinados")
-				return
-			}
-		} else {
+		// gerente/enc gravam no grupo do próprio escopo quando o corpo não
+		// traz grupo (nunca nasce papel de sistema sem grupo)
+		if req.GrupoID == nil && u.GrupoID != nil {
 			req.GrupoID = u.GrupoID
 		}
 	}
@@ -176,6 +193,8 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	// PRÉ-insert (setor inválido não pode deixar linha órfã atrás). Re-atribuição
 	// (papel já existe: UNIQUE usuario+grupo+papel) = TROCA DE SETOR idempotente —
 	// atualiza usuarios.setor_id e responde 200, nunca 400 fake.
+	// v1.5.4-D1 (R-12): o COMANDO é materializado em chefe_setores AQUI (antes
+	// este endpoint só escrevia usuarios.setor_id — fábrica de chefe-zumbi).
 	setorReq := int64(0)
 	if papel == "chefe_setor" && req.SetorID != nil && *req.SetorID > 0 {
 		if req.GrupoID == nil || !a.setorIDValidoNoGrupo(*req.SetorID, *req.GrupoID) {
@@ -199,6 +218,16 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 					jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
 					return
 				}
+				// v1.5.4-D1: troca de setor materializa o novo COMANDO idem.
+				if _, err := a.st.db.Exec(`
+					INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)
+					ON CONFLICT(setor_id) DO UPDATE SET
+					  usuario_id = excluded.usuario_id,
+					  grupo_id = excluded.grupo_id
+				`, *req.GrupoID, setorReq, usuarioID); err != nil {
+					jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+err.Error())
+					return
+				}
 				a.st.Auditoria(&u.ID, "adicionar_papel", "usuario_papeis", &pid,
 					fmt.Sprintf("usuario_id=%d papel=%s grupo_id=%v (troca de setor -> %d)", usuarioID, papel, *req.GrupoID, setorReq), ipDe(r))
 				jsonOK(w, map[string]any{"ok": true, "id": pid})
@@ -213,6 +242,17 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	if setorReq > 0 {
 		if _, err := a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, setorReq, usuarioID); err != nil {
 			jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
+			return
+		}
+		// v1.5.4-D1: materializa o COMANDO (substituição 1:1 — setor sai das
+		// mãos do chefe anterior; fonte única chefe_setores).
+		if _, err := a.st.db.Exec(`
+			INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)
+			ON CONFLICT(setor_id) DO UPDATE SET
+			  usuario_id = excluded.usuario_id,
+			  grupo_id = excluded.grupo_id
+		`, *req.GrupoID, setorReq, usuarioID); err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+err.Error())
 			return
 		}
 	}
@@ -243,8 +283,23 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u := usuarioDoCtx(r)
-	if u.Papel == "operador" {
-		jsonErro(w, http.StatusForbidden, "operador não gerencia papéis")
+
+	// v1.5.4-E1 (R-10): o alvo é resolvido ANTES de qualquer decisão — o Del
+	// era FAIL-OPEN (só o operador era barrado nominalmente; chefe, sem-papel
+	// e qualquer conta fora do ramo gerente caíam no braço sem checagem e
+	// removiam papéis de qualquer um, re-chaveando as sessões do alvo).
+	var pGrupoID *int64
+	var pPapel string
+	if err := a.st.db.QueryRow(`SELECT grupo_id, papel FROM usuario_papeis WHERE id = ? AND usuario_id = ?`, papelID, usuarioID).Scan(&pGrupoID, &pPapel); err != nil {
+		jsonErro(w, http.StatusNotFound, "papel inexistente para este usuário")
+		return
+	}
+
+	// Allowlist de solicitantes + escopo do alvo (mesma doutrina do Add e do
+	// hUsuariosAdd — ver podeGerirPapelAlvo). Falha ANTES de qualquer escrita:
+	// o re-chaveio de sessão do alvo só ocorre quando a remoção é legítima.
+	if !a.podeGerirPapelAlvo(u, pPapel, pGrupoID) {
+		jsonErro(w, http.StatusForbidden, "permissão insuficiente para remover este papel")
 		return
 	}
 
@@ -254,18 +309,6 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 	if totalPapeis <= 1 {
 		jsonErro(w, http.StatusBadRequest, "não é possível remover o único papel do usuário")
 		return
-	}
-
-	// Se o gerente está excluindo, garantir que o papel pertence ao seu grupo e é operador
-	if u.Papel == "gerente" {
-		var pGrupoID *int64
-		var pPapel string
-		err := a.st.db.QueryRow(`SELECT grupo_id, papel FROM usuario_papeis WHERE id = ? AND usuario_id = ?`, papelID, usuarioID).Scan(&pGrupoID, &pPapel)
-		dentroDaArvore := func(g int64) bool { return g == *u.GrupoID || int64Contem(a.gruposSubordinadosAtivos(*u.GrupoID), g) }
-		if err != nil || (pPapel != "operador" && pPapel != "chefe_setor") || pGrupoID == nil || u.GrupoID == nil || !dentroDaArvore(*pGrupoID) {
-			jsonErro(w, http.StatusForbidden, "permissão insuficiente para remover este papel")
-			return
-		}
 	}
 
 	// Se alguma sessão estava usando este papel, chavear para outro papel válido do usuário
@@ -279,6 +322,16 @@ func (a *App) hUsuarioPapelDel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, "falha ao remover papel: "+err.Error())
 		return
+	}
+
+	// v1.5.4-D1 (R-12): o papel chefe_setor existe enquanto o usuário comanda
+	// ≥1 setor — removê-lo apaga os COMANDOS do grupo (fonte única
+	// chefe_setores), senão o acesso sai e o comando ficava órfão.
+	if pPapel == "chefe_setor" && pGrupoID != nil && *pGrupoID > 0 {
+		if _, err := a.st.db.Exec(`DELETE FROM chefe_setores WHERE usuario_id = ? AND grupo_id = ?`, usuarioID, *pGrupoID); err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao revogar comando de setor: "+err.Error())
+			return
+		}
 	}
 
 	a.st.Auditoria(&u.ID, "remover_papel", "usuario_papeis", &papelID,
@@ -637,16 +690,34 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validação de Hierarquia de Envio:
-	// Operador só pode enviar para o mesmo grupo, para seu gerente, ou responder a quem enviou (pai_id).
-	if u.Papel == "operador" && u.GrupoID != nil {
+	// Validação de Hierarquia de Envio (v1.5.4-E1, R-14): NINGUÉM envia para
+	// fora do escopo do papel ativo — próprio grupo + subordinados ativos
+	// (gruposSubordinadosAtivos, mesma doutrina de árvore do resto do
+	// sistema). Antes só o operador COM grupo era restrito: gerente, chefe e
+	// o próprio operador SEM grupo enviavam a qualquer papel de qualquer
+	// grupo. Admin segue global (infraestrutura — matriz de autorização);
+	// a caixa 'admin' permanece destino alcançável de qualquer escopo; a
+	// resposta a um despacho (pai_id) alcança o remetente da mensagem pai.
+	if u.Papel != "admin" {
+		if u.GrupoID == nil {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo não envia mensagens")
+			return
+		}
+
+		// POOL DE 1 CONEXÃO: alcance resolvido em listas antes das queries;
+		// cursor fechado antes de qualquer Exec.
+		gruposAlcance := append([]int64{*u.GrupoID}, a.gruposSubordinadosAtivos(*u.GrupoID)...)
+		marcas := strings.TrimSuffix(strings.Repeat("?,", len(gruposAlcance)), ",")
+		argsAlcance := make([]any, 0, len(gruposAlcance))
+		for _, g := range gruposAlcance {
+			argsAlcance = append(argsAlcance, g)
+		}
+
 		var permitidoPara []int64
-		// Busca quem o operador pode enviar
-		rowsP, _ := a.st.db.Query(`
+		rowsP, errP := a.st.db.Query(`
 			SELECT id FROM usuario_papeis
-			WHERE grupo_id = ? OR papel = 'admin' OR (grupo_id = ? AND papel = 'gerente')`,
-			*u.GrupoID, *u.GrupoID)
-		if rowsP != nil {
+			WHERE papel = 'admin' OR grupo_id IN (`+marcas+`)`, argsAlcance...)
+		if errP == nil {
 			for rowsP.Next() {
 				var pID int64
 				if rowsP.Scan(&pID) == nil {
@@ -671,7 +742,7 @@ func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 
 		for _, dID := range req.DestinatarioPapelIDs {
 			if !mapaPerm[dID] {
-				jsonErro(w, http.StatusForbidden, "operadores só podem enviar mensagens para membros da própria equipe ou gerência")
+				jsonErro(w, http.StatusForbidden, "destinatário fora do escopo do seu papel — envio restrito ao próprio grupo e subordinados")
 				return
 			}
 		}
@@ -1387,11 +1458,11 @@ func (a *App) hAvisosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	// Onda C2 (05/10): mural em TODOS os papéis com grupo + leitura global do
 	// admin (escopo 0 → sem filtro). Sem grupo e sem ser admin → 403.
-	if !podeVerMural(u) {
-		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
-	escopo := escopoDoUsuario(u)
 
 	var filtroGrupo string
 	var args []any
@@ -1683,6 +1754,14 @@ func (a *App) hAvisosCiente(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// v1.5.4-E2 (R-21): ciência é registro sobre o aviso — o aviso tem que estar
+	// no escopo do solicitante (mesma doutrina da listagem: admin global,
+	// grupo da sessão). Sem isso, o id de aviso de OUTRO grupo aceitava ciente
+	// (IDOR de escrita) e id inexistente morria em 500 de FK.
+	if !a.avisoNoEscopo(w, u, id) {
+		return
+	}
+
 	agora := time.Now().UTC().Format(time.RFC3339)
 	_, err = a.st.db.Exec(`
 		INSERT INTO aviso_cientes (aviso_id, usuario_id, papel_id, ciente_em)
@@ -1763,6 +1842,13 @@ func (a *App) hAvisosDetalhes(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
+		return
+	}
+
+	// v1.5.4-E2 (R-21): detalhes (comentários + cientes, com PII de quem
+	// interage) só saem para quem leria o aviso na LISTAGEM — admin global ou
+	// grupo da sessão. Fora do escopo: 403.
+	if !a.avisoNoEscopo(w, u, id) {
 		return
 	}
 

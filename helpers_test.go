@@ -45,6 +45,20 @@ func loginAsPapel(t *testing.T, app *App, st *Store, login, papel string, senha 
 	return loginAs(t, app, login, s)
 }
 
+// materializaComandoSetor: grava a linha de COMANDO em chefe_setores — a fonte
+// ÚNICA de autorização de chefia desde a v1.5.4-D1 (R-12, chefe-zumbi; decisão
+// D-2). Setups que criavam chefe via SQL direto (papel chefe_setor +
+// usuarios.setor_id, SEM a linha) dependiam dos fallbacks removidos do produto
+// — aqui o teste semeia o estado na doutrina NOVA, nunca re-adicionando
+// fallback no produto. (Setups que nomeiam via API já materializam sozinhos.)
+func materializaComandoSetor(t *testing.T, st *Store, usuarioID, grupoID, setorID int64) {
+	t.Helper()
+	if _, err := st.db.Exec(`INSERT OR IGNORE INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)`,
+		grupoID, setorID, usuarioID); err != nil {
+		t.Fatalf("materializar comando (usuario %d, setor %d): %v", usuarioID, setorID, err)
+	}
+}
+
 // doRawReq: request com corpo arbitrário (multipart, binário) e headers explícitos.
 func doRawReqH(app *App, method, path string, body io.Reader, contentType string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, body)

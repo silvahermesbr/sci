@@ -16,7 +16,11 @@ import (
 func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	a.ensureTabelaDespachos()
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var f struct {
 		ID       int64
 		Status   string
@@ -37,7 +41,6 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	var err error
 	// v9.14.2: ?id=N abre conferência específica (várias simultâneas); senão a mais recente
 	idQ := r.URL.Query().Get("id")
 	qHoje := `SELECT id, status, data, criado_em FROM conferencias
@@ -112,7 +115,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		       COUNT(DISTINCT p.id) AS total_efetivo,
 		       COUNT(DISTINCT CASE WHEN pr.verificado = 1 THEN p.id ELSE NULL END) AS total_verificados
 		FROM setores s
-		JOIN pessoas p ON p.setor_id = s.id AND p.status = 'ativo' AND (? <= 0 OR p.grupo_id = ?)`
+		JOIN pessoas p ON p.setor_id = s.id AND p.status = 'ativo' AND (? = 0 OR p.grupo_id = ?)`
 		if temFiltroFuncoes {
 			qSetores += predFuncoes
 		}
@@ -120,7 +123,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN conferencia_setores cs ON cs.setor_id = s.id AND cs.conferencia_id = ?
 		LEFT JOIN usuarios u ON u.id = cs.concluido_por
 		LEFT JOIN presencas pr ON pr.conferencia_id = ? AND pr.pessoa_id = p.id
-		WHERE s.ativo = 1 AND (? <= 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
+		WHERE s.ativo = 1 AND (? = 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
 		GROUP BY s.id, s.nome, s.sigla, cs.status, cs.concluido_por, u.nome_guerra, u.login, cs.concluido_em
 		ORDER BY s.nome ASC`
 		qArgs := []any{escopo, escopo}
@@ -187,7 +190,13 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		!a.ehEncarregado(u) && !a.ehAuxiliarDePessoal(u)
 	var ativo *int64
 	if ehChefeOuOper {
-		ativo = setorDoUsuario(a, u)
+		// v1.5.4-D1 (R-12): chefe só lê o setor ativo SE ainda o comanda
+		// (setorAtivoComandado); operador mantém o contexto de cadastro.
+		if u.Papel == "chefe_setor" {
+			ativo = a.setorAtivoComandado(u)
+		} else {
+			ativo = setorDoUsuario(a, u)
+		}
 		if ativo != nil {
 			somenteAtivo := []map[string]any{}
 			for _, p := range pessoasGrupo {
@@ -305,7 +314,11 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		PessoaID   int64   `json:"pessoa_id"`
 		Situacao   string  `json:"situacao"`
@@ -329,7 +342,7 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	qMark += ` ORDER BY id DESC LIMIT 1`
-	err := a.st.db.QueryRow(qMark, argsMark...).Scan(&confID, &status)
+	err = a.st.db.QueryRow(qMark, argsMark...).Scan(&confID, &status)
 	if err != nil {
 		jsonErro(w, http.StatusConflict, "nenhuma conferência aberta")
 		return
@@ -516,11 +529,23 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 
 	data := time.Now().In(a.horaLocal).Format("2006-01-02")
 	a.st.Auditoria(&u.ID, "iniciar", "conferencias", &id, "data="+data+" (carry over e escalas aplicados)", ipDe(r))
-	jsonOK(w, map[string]any{"id": id, "data": data, "conferencia_id": id})
+	resp := map[string]any{"id": id, "data": data, "conferencia_id": id}
+	// v1.5.4-D3 (R-7): no modo antiguidade a resposta carrega quem ficou FORA do
+	// filtro por não ter a tag em NENHUMA das 3 fontes — o front avisa, em vez
+	// de o militar sumir em silêncio da listagem.
+	if len(req.FuncaoIDs) > 0 {
+		resp["sem_tag"] = a.militaresSemTagAntiguidade(*u.GrupoID, id, setoresUnicos)
+	}
+	jsonOK(w, resp)
 }
 
 func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if u.Papel != "gerente" && !a.ehEncarregado(u) {
 		jsonErro(w, http.StatusForbidden, "fechar a conferência é ato do gerente ou do encarregado de pessoal")
 		return
@@ -550,7 +575,7 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// REGRA (28/09): só quem pertence ao grupo da conferência a fecha
-	if esc := escopoDoUsuario(u); esc > 0 {
+	if esc > 0 {
 		var gid *int64
 		qerr := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, req.ID).Scan(&gid)
 		if qerr != nil {
@@ -651,7 +676,12 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusBadRequest, "conferência já está fechada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && confGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -661,7 +691,9 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 		// contexto da sessão (u.SetorID → fallback pessoa vinculada). A
 		// multi-chefia passa a ser exercida TROCANDO o contexto no dropdown,
 		// um setor por vez — sem cruzamento de dados entre setores.
-		sAtivo := setorDoUsuario(a, u)
+		// v1.5.4-D1 (R-12): o contexto só vale se o chefe AINDA comanda o setor
+		// (setorAtivoComandado) — contexto órfão de chefia anterior não conclui.
+		sAtivo := a.setorAtivoComandado(u)
 		if sAtivo == nil || *sAtivo != sid {
 			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de concluir este setor")
 			return
@@ -709,7 +741,12 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "conferência já está fechada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && confGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -717,7 +754,8 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 	if u.Papel == "chefe_setor" {
 		// ordem 08/10 — contexto-govena: só reabre o setor ATIVO no contexto
 		// (mesma regra da conclusão; multi-chefia = trocar o contexto).
-		sAtivo := setorDoUsuario(a, u)
+		// v1.5.4-D1 (R-12): contexto órfão de chefia anterior não reabre.
+		sAtivo := a.setorAtivoComandado(u)
 		if sAtivo == nil || *sAtivo != sid {
 			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de reabrir este setor")
 			return
@@ -751,13 +789,26 @@ func (a *App) hConferenciaArquivar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "conferência inexistente")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		if gid == nil || *gid != esc {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
 			return
 		}
 	} else if u.Papel != "admin" && u.Papel != "gerente" {
 		jsonErro(w, http.StatusForbidden, "sem acesso")
+		return
+	}
+	// v1.5.4-E2 (R-8): arquivar é ato de comando do grupo — gerente ou
+	// encarregado de pessoal (mesma régua do fechar); o operador lança, não
+	// arquiva. O confAuth deixa o operador entrar; este portão o barra.
+	// (esc <= 0 aqui é só o admin, esc 0 — gerente sem grupo já levou 403.)
+	if u.Papel != "gerente" && !a.ehEncarregado(u) {
+		jsonErro(w, http.StatusForbidden, "arquivar conferência é ato do gerente ou do encarregado de pessoal")
 		return
 	}
 	if status != "fechada" {
@@ -799,6 +850,10 @@ func (a *App) hConferenciaExcluirArquivada(w http.ResponseWriter, r *http.Reques
 	for _, q := range []string{
 		`DELETE FROM comentarios WHERE conferencia_id = ?`,
 		`DELETE FROM presencas WHERE conferencia_id = ?`,
+		// v1.5.4-E2 (R-15): a escala de guarda da conferência NÃO tem CASCADE na
+		// FK — sem este DELETE, a exclusão morria (FK NO ACTION) ou deixava a
+		// linha órfã apontando para conferência inexistente.
+		`DELETE FROM conferencia_escalas WHERE conferencia_id = ?`,
 		`DELETE FROM conferencias WHERE id = ?`,
 	} {
 		if _, e := tx.Exec(q, id); e != nil {
@@ -817,7 +872,11 @@ func (a *App) hConferenciaExcluirArquivada(w http.ResponseWriter, r *http.Reques
 
 func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	q := `
 		SELECT c.id, c.data, COALESCE(c.hora,''), COALESCE(c.local,''), c.status,
 		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), c.criado_em, c.fechada_em,
@@ -830,7 +889,6 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 		FROM conferencias c
 		LEFT JOIN usuarios u ON u.id = c.criado_por`
 	var rows *sql.Rows
-	var err error
 	// ordem Tenente 30/09: aba CONFERÊNCIAS tem filtro de período (padrão: últimos 7 dias);
 	// arquivadas vêm SÓ na aba ARQUIVO (?arq=1, sem limite de período)
 	if r.URL.Query().Get("arq") == "1" {
@@ -892,13 +950,21 @@ func (a *App) hConferenciaDescartar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "conferência inexistente")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		if gid == nil || *gid != esc {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
 			return
 		}
-	} else if u.Papel != "admin" {
-		jsonErro(w, http.StatusForbidden, "sem acesso")
+	}
+	// v1.5.4-E2 (R-8): descartar destrói a conferência — ato do gerente ou do
+	// encarregado de pessoal (mesma régua do fechar/arquivar); operador 403.
+	if u.Papel != "gerente" && !a.ehEncarregado(u) {
+		jsonErro(w, http.StatusForbidden, "descartar conferência é ato do gerente ou do encarregado de pessoal")
 		return
 	}
 	if status != "aberta" {
@@ -958,13 +1024,25 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	// IDOR + HERANÇA (ordem Tenente 28/09 noite): grupo acessa a PRÓPRIA conferência;
 	// superior acessa TAMBÉM as de subordinados com vínculo ativo (relatório fechado).
 	uCtx := usuarioDoCtx(r)
-	if esc := escopoDoUsuario(uCtx); esc > 0 {
+	esc, err := a.exigeEscopo(uCtx)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		var gid int64
 		qerr := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM conferencias WHERE id = ?`, id).Scan(&gid)
 		if qerr != nil || (gid != esc && !int64Contem(a.gruposSubordinadosAtivos(esc), gid)) {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
 			return
 		}
+	}
+	// v1.5.4-D3 (R-7): no modo antiguidade o relatório em tela segue a escada —
+	// antiguidade unificada das 3 fontes da tag — e não mais situacao/nome
+	// (a conferência por antiguidade saía fora de ordem na tela).
+	ordem := ` ORDER BY pr.situacao, p.nome_guerra, p.id`
+	if a.conferenciaEmModoAntiguidade(id) {
+		ordem = ` ORDER BY ` + ordemAntiguidadeTresFontes("p.nome_guerra")
 	}
 	rows, e := a.st.db.Query(`
 		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
@@ -981,8 +1059,7 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN destinos d ON d.id = pr.destino_id
 		LEFT JOIN usuarios u ON u.id = pr.marcado_por
-		WHERE pr.conferencia_id = ?
-		ORDER BY pr.situacao, p.nome_guerra`, id)
+		WHERE pr.conferencia_id = ?`+ordem, id)
 	if e != nil {
 		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
@@ -1022,6 +1099,13 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[string]any, map[string]int, error) {
+	// v1.5.4-D3 (R-7): PDF de conferência POR ANTIGUIDADE sai na escada
+	// (antiguidade unificada das 3 fontes da tag), na mesma ordem do relatório
+	// em tela; conferência por setores mantém a ordem por caminho de função.
+	ordem := ` ORDER BY COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor'), p.nome_guerra COLLATE NOCASE`
+	if a.conferenciaEmModoAntiguidade(id) {
+		ordem = ` ORDER BY ` + ordemAntiguidadeTresFontes("p.nome_guerra")
+	}
 	rows, e := a.st.db.Query(`
 		WITH RECURSIVE cam_setor(id, caminho) AS (
 		  SELECT id, nome FROM setores WHERE pai_id IS NULL
@@ -1049,8 +1133,7 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN destinos d ON d.id = pr.destino_id
 		JOIN usuarios u ON u.id = pr.marcado_por
-		WHERE pr.conferencia_id = ?
-		ORDER BY COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor'), p.nome_guerra COLLATE NOCASE`, id)
+		WHERE pr.conferencia_id = ?` + ordem, id)
 	if e != nil {
 		return nil, nil, e
 	}
@@ -1093,6 +1176,12 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 }
 
 func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
+	uCtx := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(uCtx)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -1126,8 +1215,7 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// IDOR + HERANÇA (28/09 noite): superior gera o relatório FECHADO do subordinado.
-	uCtx := usuarioDoCtx(r)
-	if esc := escopoDoUsuario(uCtx); esc > 0 {
+	if esc > 0 {
 		var gid int64
 		qerr := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM conferencias WHERE id = ?`, id).Scan(&gid)
 		if qerr != nil || (gid != esc && !int64Contem(a.gruposSubordinadosAtivos(esc), gid)) {
@@ -1420,6 +1508,12 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 }
 
 func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		ConferenciaID int64  `json:"conferencia_id"`
 		PessoaID      int64  `json:"pessoa_id"`
@@ -1431,9 +1525,8 @@ func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "conferencia_id, pessoa_id e comentario obrigatórios")
 		return
 	}
-	u := usuarioDoCtx(r)
 	// IDOR (revisão TAKEDA/SHORYU): comentário só na conferência DO PRÓPRIO grupo
-	if esc := escopoDoUsuario(u); esc > 0 {
+	if esc > 0 {
 		var gid *int64
 		if err := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, req.ConferenciaID).Scan(&gid); err != nil || gid == nil || *gid != esc {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
@@ -1449,7 +1542,7 @@ func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 		var n int
 		var q2 string
 		args2 := []any{*req.TagID}
-		if esc := escopoDoUsuario(u); esc > 0 {
+		if esc > 0 {
 			ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
 			marks := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
 			q2 = `SELECT COUNT(*) FROM tags WHERE id = ? AND ativo = 1 AND (grupo_id IS NULL OR grupo_id IN (` + marks + `))`
@@ -1486,7 +1579,12 @@ func (a *App) hComentariosList(w http.ResponseWriter, r *http.Request) {
 	}
 	// IDOR: grupo só lista comentários da própria conferência
 	u := usuarioDoCtx(r)
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		var gid *int64
 		if qerr := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, id).Scan(&gid); qerr != nil || gid == nil || *gid != esc {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
@@ -1520,6 +1618,9 @@ func (a *App) hComentariosList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) escaladosNaData(grupoID int64, data string) []map[string]any {
+	if grupoID < 0 {
+		return []map[string]any{}
+	}
 	q := `SELECT ep.pessoa_id, et.id, et.tipo_id, COALESCE(etp.nome, ''), COALESCE(ep.funcao_escala, ''), et.data_inicio, et.data_fim,
 	             p.nome_guerra, p.nome_completo, COALESCE(s.nome, ''), COALESCE(f.nome, '')
 	      FROM escala_pessoas ep
@@ -1528,7 +1629,7 @@ func (a *App) escaladosNaData(grupoID int64, data string) []map[string]any {
 	      JOIN pessoas p ON p.id = ep.pessoa_id
 	      LEFT JOIN setores s ON s.id = p.setor_id
 	      LEFT JOIN funcoes f ON f.id = p.funcao_id
-	      WHERE (? <= 0 OR et.grupo_id = ?)
+	      WHERE (? = 0 OR et.grupo_id = ?)
 	        AND substr(et.data_inicio, 1, 10) <= ? AND substr(COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), 1, 10) >= ?
 	      ORDER BY et.id, p.nome_guerra`
 	rows, err := a.st.db.Query(q, grupoID, grupoID, data, data)
@@ -1557,6 +1658,53 @@ func (a *App) escaladosNaData(grupoID int64, data string) []map[string]any {
 		}
 	}
 	return res
+}
+
+// confPDFAuth (v1.5.4-D2, R-2): guarda do relatório PDF da conferência — os
+// MESMOS papéis do módulo (gerente, operador, encarregado/auxiliar de pessoal;
+// admin segue PROIBIDO, doutrina da matriz §4) e o chefe_setor só para
+// conferência que envolve setor que AINDA comanda (chefe_setores é a fonte
+// única do comando — decisão D-2/v1.5.4-D1; comando revogado não lê relatório).
+// O recorte de escopo (exigeEscopo + conferência do próprio grupo/subordinados)
+// permanece dentro do handler, que é quem conhece o status e o grupo da
+// conferência. Autorização pulverizada (103 prólogos) é débito da v1.5.5;
+// aqui a guarda fica ao lado das rotas, como confAuth/confMarcarAuth.
+func (a *App) confPDFAuth(next http.HandlerFunc) http.Handler {
+	return a.auth(false, func(w http.ResponseWriter, r *http.Request) {
+		u := usuarioDoCtx(r)
+		permitido := false
+		switch u.Papel {
+		case "gerente", "operador":
+			permitido = true
+		case "chefe_setor":
+			permitido = a.conferenciaEnvolveSetorComandado(u, r)
+		}
+		if !permitido && u.Papel != "admin" {
+			// ordem 06/10: encarregado E auxiliar de pessoal espelham os papéis
+			permitido = a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u)
+		}
+		if !permitido {
+			http.Error(w, `{"erro":"papel sem acesso a esta área"}`, http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	})
+}
+
+// conferenciaEnvolveSetorComandado: a conferência {id} tem em
+// conferencia_setores algum setor com linha VIGENTE em chefe_setores para o
+// usuário (multi-chefia 06/10). Consulta única e sem rows aberto (pool = 1).
+func (a *App) conferenciaEnvolveSetorComandado(u *Usuario, r *http.Request) bool {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return false
+	}
+	var envolvidos int
+	_ = a.st.db.QueryRow(`
+		SELECT COUNT(*) FROM conferencia_setores cs
+		JOIN chefe_setores ch ON ch.setor_id = cs.setor_id AND ch.usuario_id = ?
+		WHERE cs.conferencia_id = ?`, u.ID, id).Scan(&envolvidos)
+	return envolvidos > 0
 }
 
 // ---------- rotas rotasConferencia ----------
@@ -1590,7 +1738,9 @@ func (a *App) rotasConferencia() {
 	m.Handle("GET /api/conferencia/{id}/setor/{setor_id}/pre_fechamento", confMarcarAuth(a.hSetorPreFechamento))
 	// correção 09/10: escada de antiguidade DO GRUPO p/ o picker do modal (sem seed global)
 	m.Handle("GET /api/conferencia/funcoes-antiguidade", a.auth(false, a.hConferenciaFuncoesAntiguidade))
-	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.auth(false, a.hConferenciaPDF))
+	// v1.5.4-D2 (R-2): relatório PDF com guarda do módulo (papel + comando de
+	// setor p/ chefe) além do recorte de escopo interno do handler.
+	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.confPDFAuth(a.hConferenciaPDF))
 
 	// Escala de guarda (onda 05/10): gerente designa chefe/operador; chefe
 	// designa operador do próprio setor; admin → 403 no handler (regra escopada).

@@ -730,6 +730,25 @@ func (a *App) hDriveUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/drive/download/{id} - Download ou Visualização em Stream Físico
+
+// mimeDriveInlinavel: v1.5.4-E2 (R-11). Allowlist de MIME confiável para servir
+// um arquivo do drive INLINE — a mesma lista dos anexos de material (fix P1-1:
+// PDF, PNG, JPEG, WEBP). O `tipo` gravado no upload vem do CLIENTE (header do
+// multipart), então HTML/SVG/texto hostil podia entrar e o download com
+// `?inline=1` renderizava na origem — stored XSS com CSP unsafe-inline. Fora da
+// allowlist (ou vazio/sujo): só attachment com octet-stream + nosniff.
+func mimeDriveInlinavel(tipo string) (string, bool) {
+	t := strings.ToLower(strings.TrimSpace(tipo))
+	if i := strings.IndexByte(t, ';'); i >= 0 {
+		t = strings.TrimSpace(t[:i]) // tira parâmetros (charset etc.)
+	}
+	switch t {
+	case "application/pdf", "image/png", "image/jpeg", "image/webp":
+		return t, true
+	}
+	return t, false
+}
+
 func (a *App) hDriveDownload(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	if u.Papel == "admin" {
@@ -761,14 +780,23 @@ func (a *App) hDriveDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 
-	inline := r.URL.Query().Get("inline") == "1"
+	// v1.5.4-E2 (R-11): o `inline` do cliente só vale para MIME da allowlist —
+	// o resto desce como attachment SEMPRE (defesa em profundidade: o banco pode
+	// ter tipo hostil de banco legado, o gate é aqui e não no upload).
+	// nosniff SEMPRE; filename sanitizado (sem aspas/quebras/caracteres de
+	// controle — sanitizarNomeArquivo), nunca interpolado cru no header.
 	disp := "attachment"
-	if inline {
-		disp = "inline"
+	mimeSaida := "application/octet-stream"
+	if confiavel, ok := mimeDriveInlinavel(tipo); ok {
+		mimeSaida = confiavel
+		if r.URL.Query().Get("inline") == "1" {
+			disp = "inline"
+		}
 	}
 
-	w.Header().Set("Content-Type", tipo)
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`%s; filename="%s"`, disp, nomeOriginal))
+	w.Header().Set("Content-Type", mimeSaida)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disp, sanitizarNomeArquivo(nomeOriginal)))
 	w.Header().Set("Content-Length", strconv.FormatInt(tamanho, 10))
 
 	http.ServeContent(w, r, nomeOriginal, time.Now(), f)

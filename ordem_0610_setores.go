@@ -14,6 +14,11 @@ package main
 //   - setor REFERENCIADO por histórico (conferencia_setores FK real) NÃO é
 //     apagado: 409 "possui histórico — desative" (doutrina de imutabilidade do
 //     histórico de conferências preservada);
+//   - v1.5.4-E2 (R-6): o comando sobre o setor sai junto (chefe_setores; papel
+//     chefe_setor purgado quando era o último comando no grupo) e as
+//     referências de setor do módulo Material (itens/cautelas/conferências) e
+//     os responsáveis (grupo_setor_responsaveis) são limpos/remanejados — nada
+//     de FK NO ACTION abortando nem órfãos;
 //   - gerente fora do escopo (setor de outro grupo) → 403.
 
 import (
@@ -42,7 +47,11 @@ func (a *App) hSetorExcluir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "gestão de setores é do gerente ou do encarregado/auxiliar de pessoal")
 		return
 	}
-	esc := escopoDoUsuario(u)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if esc <= 0 {
 		jsonErro(w, http.StatusForbidden, "sem escopo de grupo para excluir setor")
 		return
@@ -84,8 +93,8 @@ func (a *App) hSetorExcluir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// UMA transação: remaneja todo o pessoal (pessoas + contas) para SEM SETOR e
-	// apaga o setor. Pool = 1 conn: dentro da tx, só Exec — sem QueryRow/Query
-	// aninhados (nada de cursor aberto durante escrita).
+	// apaga o setor. Pool = 1 conn: dentro da tx, só Exec/Query pela tx — sem
+	// acesso ao pool com cursor aberto.
 	tx, err := a.st.db.Begin()
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -104,6 +113,67 @@ func (a *App) hSetorExcluir(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if n, e2 := res.RowsAffected(); e2 == nil {
 		nContas = n
+	}
+	// v1.5.4-E2 (R-6): o setor morre, o COMANDO sobre ele vai junto —
+	// chefe_setores.setor_id é FK sem cascade e a linha remanescente era
+	// chefe-zumbi. Mesma doutrina do D1/hUsuarioPapelDel: o papel chefe_setor
+	// existe enquanto o usuário comanda ≥1 setor no grupo — quem perdeu aqui o
+	// ÚLTIMO comando perde o papel (sessão re-chaveada para outro papel, como
+	// no Del de papel; sem outro papel, a sessão cai por CASCADE e ele re-loga).
+	if _, e := tx.Exec(`DELETE FROM chefe_setores WHERE setor_id = ?`, id); e != nil {
+		jsonErro(w, http.StatusInternalServerError, "revogação dos comandos do setor falhou: "+e.Error())
+		return
+	}
+	rowsZ, e := tx.Query(`SELECT id, usuario_id FROM usuario_papeis
+		WHERE papel = 'chefe_setor' AND grupo_id = ?
+		  AND NOT EXISTS (SELECT 1 FROM chefe_setores cs
+		                  WHERE cs.usuario_id = usuario_papeis.usuario_id AND cs.grupo_id = usuario_papeis.grupo_id)`, donoGrupo)
+	if e != nil {
+		jsonErro(w, http.StatusInternalServerError, "varredura de chefias órfãs falhou: "+e.Error())
+		return
+	}
+	type papelOrfao struct {
+		id, uid int64
+	}
+	var orfaos []papelOrfao
+	for rowsZ.Next() {
+		var p papelOrfao
+		if rowsZ.Scan(&p.id, &p.uid) == nil {
+			orfaos = append(orfaos, p)
+		}
+	}
+	rowsZ.Close()
+	for _, pz := range orfaos {
+		var outro int64
+		_ = tx.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND id != ?
+			ORDER BY (papel = 'operador') DESC LIMIT 1`, pz.uid, pz.id).Scan(&outro)
+		if outro > 0 {
+			if _, e := tx.Exec(`UPDATE sessoes SET papel_ativo_id = ? WHERE papel_ativo_id = ?`, outro, pz.id); e != nil {
+				jsonErro(w, http.StatusInternalServerError, "re-chaveamento de sessão falhou: "+e.Error())
+				return
+			}
+		}
+		if _, e := tx.Exec(`DELETE FROM usuario_papeis WHERE id = ?`, pz.id); e != nil {
+			jsonErro(w, http.StatusInternalServerError, "purga de chefia órfã falhou: "+e.Error())
+			return
+		}
+	}
+	// v1.5.4-E2 (R-6): responsáveis de material do setor (FK sem cascade é
+	// CASCADE aqui, mas a saída é explícita) e referências de setor do módulo
+	// Material — remanejadas para SEM SETOR, mesma doutrina do pessoal.
+	if _, e := tx.Exec(`DELETE FROM grupo_setor_responsaveis WHERE setor_id = ?`, id); e != nil {
+		jsonErro(w, http.StatusInternalServerError, "limpeza dos responsáveis do setor falhou: "+e.Error())
+		return
+	}
+	for _, q := range []string{
+		`UPDATE material_itens SET setor_id = NULL WHERE setor_id = ?`,
+		`UPDATE material_cautelas SET setor_id = NULL WHERE setor_id = ?`,
+		`UPDATE material_conferencias SET setor_id = NULL WHERE setor_id = ?`,
+	} {
+		if _, e := tx.Exec(q, id); e != nil {
+			jsonErro(w, http.StatusInternalServerError, "remanejamento do material do setor falhou: "+e.Error())
+			return
+		}
 	}
 	if _, e := tx.Exec(`DELETE FROM setores WHERE id = ?`, id); e != nil {
 		// corrida com histórico criado entre o COUNT e a tx (defesa em

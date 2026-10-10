@@ -18,7 +18,11 @@ func (a *App) hEscalasPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	mes := strings.TrimSpace(r.URL.Query().Get("mes"))
 	de := strings.TrimSpace(r.URL.Query().Get("de"))
@@ -137,7 +141,11 @@ func (a *App) hEscalasPDF(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasTiposList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	rows, err := a.st.db.Query(
 		`SELECT id, COALESCE(grupo_id, 0), nome, COALESCE(descricao, ''), ativo, criado_em
 		 FROM escala_tipos
@@ -165,6 +173,10 @@ func (a *App) hEscalasTiposList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasTiposAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if _, err := a.exigeEscopo(u); err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		ID        int64  `json:"id"`
 		Nome      string `json:"nome"`
@@ -204,6 +216,10 @@ func (a *App) hEscalasTiposAdd(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasTiposDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	if _, err := a.exigeEscopo(u); err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	idStr := r.PathValue("id")
 	id, _ := strconv.ParseInt(idStr, 10, 64)
 	if id <= 0 {
@@ -404,7 +420,11 @@ func (a *App) verificarFaixaPostoGrad(funcaoID *int64, minID *int64, maxID *int6
 
 func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	de := r.URL.Query().Get("de")
 	ate := r.URL.Query().Get("ate")
 	mes := r.URL.Query().Get("mes")
@@ -536,8 +556,9 @@ func (a *App) hEscalasTurnosList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel != "admin" && u.GrupoID == nil {
-		jsonErro(w, http.StatusForbidden, "Usuário sem grupo definido")
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
 	var req struct {
@@ -606,7 +627,7 @@ func (a *App) hEscalasTurnosSave(w http.ResponseWriter, r *http.Request) {
 			SET tipo_id = ?, data_inicio = ?, data_fim = ?, observacao = ?, posto_grad_min_id = ?, posto_grad_max_id = ?
 			WHERE id = ? AND (? = 0 OR grupo_id = ?)`,
 			req.TipoID, req.DataInicio, req.DataFim, req.Observacao, req.PostoGradMinID, req.PostoGradMaxID,
-			turnoID, escopoDoUsuario(u), grupoID)
+			turnoID, esc, grupoID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
@@ -661,8 +682,12 @@ func (a *App) hEscalasTurnosDel(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "ID inválido")
 		return
 	}
-	escopo := escopoDoUsuario(u)
-	res, err := a.st.db.Exec(`DELETE FROM escala_turnos WHERE id = ? AND (? <= 0 OR grupo_id = ?)`, id, escopo, escopo)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	res, err := a.st.db.Exec(`DELETE FROM escala_turnos WHERE id = ? AND (? = 0 OR grupo_id = ?)`, id, escopo, escopo)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -678,7 +703,11 @@ func (a *App) hEscalasTurnosDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasHoje(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	dataHoje := time.Now().In(a.horaLocal).Format("2006-01-02")
 	escalados := a.escaladosNaData(escopo, dataHoje)
 	jsonOK(w, map[string]any{"data": dataHoje, "escalados": escalados})
@@ -686,12 +715,16 @@ func (a *App) hEscalasHoje(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasModelosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	q := `SELECT em.id, em.nome, COALESCE(em.descricao,''), em.ativo, em.criado_em,
 	             (SELECT COUNT(*) FROM escala_modelo_postos emp WHERE emp.modelo_id = em.id) AS total_postos,
 	             (SELECT COUNT(*) FROM escala_modelo_aptos ema WHERE ema.modelo_id = em.id) AS total_aptos
 	      FROM escala_modelos em
-	      WHERE (em.grupo_id = ? OR ? <= 0)
+	      WHERE (em.grupo_id = ? OR ? = 0)
 	      ORDER BY em.nome ASC`
 	rows, err := a.st.db.Query(q, escopo, escopo)
 	if err != nil {
@@ -753,7 +786,12 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "Modelo não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && modeloGrupo != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && modeloGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "modelo fora do seu escopo")
 		return
 	}
@@ -838,7 +876,11 @@ func (a *App) hEscalasModelosGet(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasModelosSave(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if escopo <= 0 {
 		jsonErro(w, http.StatusBadRequest, "Usuário deve pertencer a um grupo")
 		return
@@ -950,7 +992,11 @@ func (a *App) hEscalasModelosDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	// Fix cia-F5: modelo referenciado por turnos explodia em 500 FK cru
 	// (e ficava permanentemente indeletável). Pre-check: turnos apontando o
 	// modelo → 409 com instrução; sem turnos → DELETE normal (dono/escopo).
@@ -963,7 +1009,7 @@ func (a *App) hEscalasModelosDel(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusConflict, "modelo aplicado em turnos; exclua os turnos primeiro")
 		return
 	}
-	res, err := a.st.db.Exec(`DELETE FROM escala_modelos WHERE id = ? AND (? <= 0 OR grupo_id = ?)`, id, escopo, escopo)
+	res, err := a.st.db.Exec(`DELETE FROM escala_modelos WHERE id = ? AND (? = 0 OR grupo_id = ?)`, id, escopo, escopo)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -978,7 +1024,11 @@ func (a *App) hEscalasModelosDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		ModeloID int64  `json:"modelo_id"`
 		Data     string `json:"data"` // YYYY-MM-DD
@@ -988,11 +1038,20 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "modelo_id e data são obrigatórios")
 		return
 	}
-	if escopo <= 0 && req.GrupoID != nil && *req.GrupoID > 0 {
+	if escopo == 0 && req.GrupoID != nil && *req.GrupoID > 0 {
 		escopo = *req.GrupoID
 	}
+	var modeloGrupo int64
+	if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id, 0) FROM escala_modelos WHERE id = ?`, req.ModeloID).Scan(&modeloGrupo); err != nil {
+		jsonErro(w, http.StatusNotFound, "modelo não encontrado")
+		return
+	}
+	if escopo > 0 && modeloGrupo != escopo {
+		jsonErro(w, http.StatusForbidden, "modelo fora do seu escopo")
+		return
+	}
 	if escopo <= 0 {
-		_ = a.st.db.QueryRow(`SELECT COALESCE(grupo_id, 0) FROM escala_modelos WHERE id = ?`, req.ModeloID).Scan(&escopo)
+		escopo = modeloGrupo
 	}
 	if escopo <= 0 {
 		_ = a.st.db.QueryRow(`SELECT id FROM grupos ORDER BY id LIMIT 1`).Scan(&escopo)
@@ -1093,7 +1152,11 @@ func (a *App) hEscalasAplicarModelo(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasLimparDia(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		Data    string `json:"data"` // YYYY-MM-DD
 		GrupoID *int64 `json:"grupo_id"`
@@ -1102,13 +1165,13 @@ func (a *App) hEscalasLimparDia(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "data obrigatória")
 		return
 	}
-	if escopo <= 0 && req.GrupoID != nil && *req.GrupoID > 0 {
+	if escopo == 0 && req.GrupoID != nil && *req.GrupoID > 0 {
 		escopo = *req.GrupoID
 	}
 
 	res, err := a.st.db.Exec(`
 		DELETE FROM escala_turnos
-		WHERE (? <= 0 OR grupo_id = ?) AND data_inicio LIKE ?`,
+		WHERE (? = 0 OR grupo_id = ?) AND data_inicio LIKE ?`,
 		escopo, escopo, req.Data+"%")
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -1136,7 +1199,11 @@ func (a *App) hEscalasTurnoAlocar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	var turno struct {
 		ID              int64
@@ -1262,7 +1329,11 @@ func (a *App) hEscalasTurnoDelegar(w http.ResponseWriter, r *http.Request) {
 	}
 
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	if req.GrupoDelegadoID != nil && *req.GrupoDelegadoID > 0 {
 		subs := a.gruposSubordinadosAtivos(escopo)
@@ -1273,7 +1344,7 @@ func (a *App) hEscalasTurnoDelegar(w http.ResponseWriter, r *http.Request) {
 		ra, err := a.st.db.Exec(`
 			UPDATE escala_turnos
 			SET grupo_delegado_id = ?, status_delegacao = 'delegado'
-			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
+			WHERE id = ? AND (? = 0 OR grupo_id = ?)`,
 			*req.GrupoDelegadoID, turnoID, escopo, escopo)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -1289,7 +1360,7 @@ func (a *App) hEscalasTurnoDelegar(w http.ResponseWriter, r *http.Request) {
 		ra, err := a.st.db.Exec(`
 			UPDATE escala_turnos
 			SET grupo_delegado_id = NULL, status_delegacao = 'proprio'
-			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
+			WHERE id = ? AND (? = 0 OR grupo_id = ?)`,
 			turnoID, escopo, escopo)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -1311,7 +1382,11 @@ func (a *App) hEscalasTurnoCandidatos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	var turno struct {
 		ID              int64  `json:"id"`
@@ -1388,7 +1463,7 @@ func (a *App) hEscalasTurnoCandidatos(w http.ResponseWriter, r *http.Request) {
 		FROM pessoas p
 		LEFT JOIN funcoes fu ON fu.id = p.funcao_id
 		LEFT JOIN setores s ON s.id = p.setor_id
-		WHERE p.status = 'ativo' AND (? <= 0 OR p.grupo_id = ?)
+		WHERE p.status = 'ativo' AND (? = 0 OR p.grupo_id = ?)
 		ORDER BY fu.antiguidade ASC, p.nome_guerra ASC`, grupoMilitares, grupoMilitares)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
@@ -1435,7 +1510,11 @@ func (a *App) hEscalasTurnoCandidatos(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasAlterarFase(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		Data string `json:"data"` // YYYY-MM-DD
 		Fase string `json:"fase"` // aberto | preenchido | aprovado | publicado
@@ -1472,7 +1551,11 @@ func (a *App) hEscalasAlterarFase(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	data := r.URL.Query().Get("data")
 	if data == "" {
 		data = time.Now().In(a.horaLocal).Format("2006-01-02")
@@ -1490,7 +1573,7 @@ func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
 	_ = a.st.db.QueryRow(`
 		SELECT COALESCE(fase, 'aberto')
 		FROM escala_turnos
-		WHERE (grupo_id = ? OR ? <= 0) AND data_inicio LIKE ?
+		WHERE (? = 0 OR grupo_id = ?) AND data_inicio LIKE ?
 		ORDER BY id DESC LIMIT 1`, escopo, escopo, data+"%").Scan(&fase)
 
 	q := `SELECT et.id, etp.nome, et.data_inicio, COALESCE(NULLIF(et.data_fim, ''), et.data_inicio),
@@ -1504,7 +1587,7 @@ func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
 	      LEFT JOIN funcoes fu ON fu.id = p.funcao_id
 	      LEFT JOIN setores s ON s.id = p.setor_id
 	      LEFT JOIN grupos gd ON gd.id = et.grupo_delegado_id
-	      WHERE (et.grupo_id = ? OR ? <= 0)
+	      WHERE (? = 0 OR et.grupo_id = ?)
 	        AND (et.data_inicio LIKE ? OR (substr(et.data_inicio, 1, 10) <= ? AND substr(COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), 1, 10) >= ?))
 	      ORDER BY et.data_inicio ASC, et.id ASC`
 
@@ -1574,6 +1657,14 @@ func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasMinhas(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.5.4-D2 (R-2): conta sem grupo (-1) não lê nada do módulo — mesmo
+	// prólogo das rotas irmãs (hEscalasPDF/hEscalasRelatorioDiaPDF). A leitura
+	// em si já é confinada à pessoa da sessão; a guarda barra o -1 pela doutrina
+	// "sem grupo = nada" e a abertura ampla segue PENDENTE p/ M5 (decisão D-3).
+	if _, err := a.exigeEscopo(u); err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if u.PessoaID == nil {
 		jsonOK(w, map[string]any{
 			"escalas_aptas":   []any{},
@@ -1700,7 +1791,9 @@ func (a *App) rotasEscalas() {
 	m.Handle("GET /api/escalas/turnos", a.reservaAuth(a.hEscalasTurnosList))
 	m.Handle("POST /api/escalas/turnos", a.reservaAuth(a.hEscalasTurnosSave))
 	m.Handle("GET /api/escalas/hoje", a.reservaAuth(a.hEscalasHoje))
-	m.Handle("GET /api/escalas/pdf", a.auth(false, a.hEscalasPDF))
+	// v1.5.4-D2 (R-2): rota de PDF deixa de ser auth(false) pelada e recebe o
+	// MESMO guard do módulo (reservaAuth). Quem acessa escalas, vê PDF de escala.
+	m.Handle("GET /api/escalas/pdf", a.reservaAuth(a.hEscalasPDF))
 
 	// Escalas 2.0 (v1.5) — Modelos, Fases, Delegação e Minhas Escalas
 	m.Handle("GET /api/escalas/modelos", a.reservaAuth(a.hEscalasModelosList))
@@ -1713,9 +1806,14 @@ func (a *App) rotasEscalas() {
 	m.Handle("POST /api/escalas/turnos/{id}/delegar", a.reservaAuth(a.hEscalasTurnoDelegar))
 	m.Handle("GET /api/escalas/turnos/{id}/candidatos", a.reservaAuth(a.hEscalasTurnoCandidatos))
 	m.Handle("PATCH /api/escalas/fase", a.reservaAuth(a.hEscalasAlterarFase))
-	m.Handle("GET /api/escalas/relatorio-dia.pdf", a.auth(false, a.hEscalasRelatorioDiaPDF))
-	m.Handle("GET /api/escalas/relatorio-dia/pdf", a.auth(false, a.hEscalasRelatorioDiaPDF))
-	m.Handle("GET /api/escalas/minhas", a.auth(false, a.hEscalasMinhas))
+	// v1.5.4-D2 (R-2): mesmas guardas do módulo nas rotas de PDF/dados que
+	// estavam auth(false) sem guarda de papel (duplicata relatorio-dia incluída).
+	// PENDÊNCIA D-3 (decisão de comando, não desta onda): reabrir `minhas` a
+	// todos os papéis quando o módulo for reativado (M5) — hoje exige
+	// reservaAuth (gerente/operador/chefe_setor) + conta COM grupo.
+	m.Handle("GET /api/escalas/relatorio-dia.pdf", a.reservaAuth(a.hEscalasRelatorioDiaPDF))
+	m.Handle("GET /api/escalas/relatorio-dia/pdf", a.reservaAuth(a.hEscalasRelatorioDiaPDF))
+	m.Handle("GET /api/escalas/minhas", a.reservaAuth(a.hEscalasMinhas))
 }
 
 func (a *App) reservaAuth(next http.HandlerFunc) http.Handler {

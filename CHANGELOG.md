@@ -1,5 +1,81 @@
 # SCI — Changelog Oficial
 
+## [v1.5.4] — Não lançada
+
+### 🔒 Onda v1.5.4 — D2: rotas de PDF/dados com o mesmo guard do módulo (R-2)
+- **Causa:** rotas de dados/PDF registradas com `a.auth(false)` sem guarda de papel/escopo — os
+  portões do `rotear()` no front são cosméticos por design e o servidor era a parte furada:
+  `/api/escalas/pdf`, `/api/escalas/relatorio-dia.pdf` (+ duplicata `/relatorio-dia/pdf`) e
+  `/api/escalas/minhas`; os PDFs de material `inventario/pdf`, `cautelas/{id}/recibo.pdf` e
+  `conferencias/{id}/pronto.pdf`; e `/api/conferencia/{id}/relatorio.pdf` (sem guarda de papel).
+- **Correção:** escalas exigem `reservaAuth` (gerente/operador/chefe_setor; admin 403; `minhas`
+  também barra conta sem grupo — a abertura ampla segue PENDENTE p/ M5, decisão D-3); material
+  exige `authMaterial` (gerente/operador/enc_material; escopo do objeto segue no handler);
+  conferência exige a nova guarda `confPDFAuth` — papéis do módulo (gerente/operador/enc_pessoal/
+  auxiliar; admin proibido) e chefe_setor somente quando a conferência envolve setor que AINDA
+  comanda (`conferenciaEnvolveSetorComandado`, fonte única `chefe_setores` — D-1). Doutrina nova
+  registrada no `ARQUITETURA.md` §3.I: **nenhuma rota de dados sem guard declarado na tabela**.
+- **Regressão:** `onda_v154_d2_test.go` (matriz por persona — gerente/operador do próprio grupo
+  200; conta sem grupo 403 em todas; admin 403; chefe só com setor comandado; operador de outro
+  grupo 403 nos objetos alheios e PDF do próprio grupo sem vazamento, provado pelo texto do PDF).
+
+### 🪜 Onda v1.5.4 — D3: antiguidade com ordenação unificada nas 3 fontes da tag (R-7)
+- **D3 (R-7):** antiguidade com ordenação unificada nas 3 fontes da tag (pessoa → conta → papel, fonte SQL única `exprAntiguidadeTresFontes` em `onda_0910_conf_antiguidade.go`) na listagem do `/hoje`, pré-fechamento, relatório em tela e PDF de conferência; `iniciar`/`despachar` respondem `sem_tag:[nomes]` (quem ficou fora do filtro por não ter a tag em nenhuma fonte, com recorte aos setores despachados); pré-fechamento voltou a listar os não-marcados (`nao_verificado` — linha NULL era descartada no Scan); sem herança de catálogo entre grupos segue by design (decisão D-1 pendente). Regressão: `onda_v154_d3_test.go`; front do `sem_tag` pendente.
+
+### 🛡️ Onda v1.5.4 — E1: guardas de autenticação (R-9/R-10/R-14/R-16)
+- **R-9 — contexto de sessão (`POST /api/sessao/contexto`):** o setor passado precisa pertencer ao
+  GRUPO do papel ativo; chefe_setor só assume setor que AINDA comanda (`chefe_setores` — fonte única
+  desde a D1); admin segue global. O `UPDATE usuarios SET setor_id` global foi REMOVIDO: o contexto
+  vive em `sessoes.setor_ativo_id` (`UsuarioDaSessao` o sobrepõe); `usuarios.setor_id` vira cadastro
+  (proposta D-5, decisão pendente). Regressão: `onda_v154_e1_test.go` (outro grupo 403, setor não
+  comandado 403, comandado 200 sem reescrita do cadastro, admin livre).
+- **R-10 — gestão de papéis (`POST|DELETE /api/usuarios/{id}/papeis[/{pid}]`):** fim do fail-open do
+  Del — allowlist de solicitantes fail-closed (`podeGerirPapelAlvo`): admin global; gerente
+  operador/chefe_setor no próprio grupo/árvore; enc/aux de pessoal (o cargo manda, v367) no próprio
+  grupo; alvo resolvido ANTES de qualquer decisão, e o re-chaveio de sessões do alvo só ocorre com
+  remoção legítima. Trava "não remover o único papel" mantida.
+- **R-14 — hierarquia de envio (`POST /api/mensagens`):** ninguém envia para fora do escopo do papel
+  ativo (próprio grupo + subordinados ativos — `gruposSubordinadosAtivos`); conta sem grupo não envia
+  a ninguém (403); admin segue global; caixa admin continua destino alcançável e a resposta a
+  despacho (`pai_id`) alcança o remetente da mensagem pai. Matriz de envio documentada no
+  ARQUITETURA §8.
+- **R-16 — senha/sessões:** troca de senha (própria ou por gerente/admin) invalida as sessões da
+  conta — na troca pela própria conta a sessão CORRENTE é preservada (quem trocou não cai; decisão
+  no ARQUITETURA §3.C); redefinição por outrem derruba todas. Admin semeado no 1º boot com a senha
+  PADRÃO `admin` nasce com troca obrigatória (`precisa_setup=1` — gate central do middleware auth,
+  doutrina reusada); deploy com `SCI_ADMIN_SENHA` própria não nasce bloqueado.
+- Regressão completa em `onda_v154_e1_test.go` (7 testes, persona positivo/negativo); testes de
+  mensageria anteriores às guardas atualizados à nova doutrina (vínculos de árvore explícitos).
+
+### 🛡️ Onda v1.5.4 — E2: escopo e conteúdo (R-5/R-6/R-8/R-11/R-15/R-21)
+- **Escopo e conteúdo fechados:** foto de usuário com escopo (própria/avatar 200, admin global, grupo vê grupo, 403 fora — R-5); drive só serve `inline` na allowlist de MIME dos anexos de material (PDF/PNG/JPEG/WEBP), resto `attachment`+octet-stream+`nosniff` SEMPRE e filename sanitizado no SERVE (R-11); NUKE de grupo, exclusão de setor e de conferência arquivada completam os DELETEs de FKs NO ACTION em transação (conferencia_escalas, mural com origens de repost, escala_modelos+postos+aptos, material_conferencias+itens, chefe_setores, funcao_membros, grupo_setor_responsaveis, setor_sugestoes, usuario_papeis, funcao_id/setor_id de cadastro) — grupo/setor "rico" sem erro e sem órfãos, e a exclusão de setor revoga comando+papel (doutrina D1) remanejando o material (R-6/R-15); detalhes/ciente de aviso e compartilhamentos de calendário só no escopo do objeto (R-21, resíduo: comentários de aviso); arquivar/descartar conferência viram ato de gerente ou encarregado de pessoal (R-8). Regressão: `onda_v154_e2_test.go` (8 testes persona, positivo e negativo).
+
+### 🧟 Onda v1.5.4 — D1: mata o "chefe-zumbi" (R-12) — chefe_setores vira fonte única
+- **Causa:** A nomeado chefe do setor S conservava poderes invisíveis depois de substituído por B
+  (ou destituído): o COMANDO (linha em `chefe_setores`) saía, mas o CONTEXTO (`usuarios.setor_id`,
+  jamais limpo na troca/destituição) continuava autorizando via fallbacks do `chefeComandaSetor`
+  (`usuarios.setor_id` → `pessoas.setor_id`) — "2 chefes de setor simultâneos". Fábrica adicional:
+  `hUsuarioPapelAdd` gravava o papel chefe_setor + `usuarios.setor_id` SEM linha em
+  `chefe_setores`; `hSetoresAgregado` lia fonte divergente da UI de catálogo.
+- **Correção (decisão D-2):** `chefe_setores` é a FONTE ÚNICA do comando — fallbacks removidos;
+  novo `setorAtivoComandado` condiciona o contexto da sessão ao comando VIGENTE (concluir setor,
+  reabrir setor, marcar presença e leitura do efetivo no `/hoje`: contexto órfão não lê nem lança);
+  `hUsuarioPapelAdd` (chefe_setor + setor_id) materializa o comando (UPSERT 1:1 — chefe anterior
+  perde a linha) e `hUsuarioPapelDel` do papel revoga os comandos do grupo; `hSetoresAgregado` lê
+  `chefe_setores`. Regressão em `onda_v154_d1_test.go` (substituição 1:1, add/del de papel,
+  contexto órfão — positivo e negativo por persona).
+- **Migração v44 (schema 43 → 44):** materializa os comandos legados ainda pendentes (fontes
+  `usuarios.setor_id` → `pessoas.setor_id`; INSERT OR IGNORE — a UNIQUE(setor_id) preserva o
+  comando vigente; idempotente). `versaoSchemaBinario` subiu junto (44) — sem isso o próprio
+  backup do binário seria rejeitado no import. Resíduo documentado (proposta D-5):
+  `usuarios.setor_id` deixa de ser fonte de autorização e vira contexto/cadastro exibido;
+  designação de escala do chefe e pre_fechamento ainda leem o contexto (sem poder de conferência).
+
+### 🚪 Onda v1.5.4 — Gate de saída: cache-bust v371, auditoria de escopo, higiene
+- **Cache-bust v371** (4 refs `index.html` + `CACHEBUST` do `lazy.js` — `web/core.js`, `web/ui_helpers.js` e `web/views_gestao.js` mudaram no `fd96c90`); **auditoria de escopos pós-onda criada** (`docs/auditoria-escopos-v154.md` — 8 módulos × classes provadas; divergências mapa×código R-1/R-3/R-4 e schema v44 corrigidas no `ARQUITETURA.md`); higiene: `.claude/` no `.gitignore`.
+
+---
+
 ## [v1.5.3] — 2026-10-10
 
 ### 🔐 Onda 10/10 — Frente A (Gap 1): designação pelo encarregado de pessoal

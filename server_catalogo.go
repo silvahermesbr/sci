@@ -17,9 +17,12 @@ import (
 
 func (a *App) hTagsDisponiveis(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var rows *sql.Rows
-	var err error
 	if escopo > 0 {
 		ids := append([]int64{escopo}, a.gruposSuperioresAtivos(escopo)...)
 		marks := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
@@ -65,7 +68,11 @@ func (a *App) hCatalogoReparentar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "gestão de catálogos é exclusiva do gerente ou administrador")
 		return
 	}
-	esc := escopoDoUsuario(u)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		PaiID       *int64 `json:"pai_id"`
 		Antiguidade *int   `json:"antiguidade"`
@@ -181,7 +188,12 @@ func (a *App) hCatalogoEditar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	nome := strings.TrimSpace(req.Nome)
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		var donoGrupo int64
 		if e := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); e != nil {
 			jsonErro(w, http.StatusNotFound, "item não encontrado")
@@ -217,9 +229,10 @@ func (a *App) hCatalogoEditar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) filtroArvore(escopo int64, alias string) treeFilter {
-	// FIX S4 (verif5): guarda AQUI — chamadores diretos (query de pessoas do
-	// bundle) não podem gerar "grupo_id IN (0)" no escopo global (esvaziava a lista).
-	if escopo <= 0 {
+	if escopo < 0 {
+		return treeFilter{clause: ` AND 1 = 0`}
+	}
+	if escopo == 0 {
 		return treeFilter{}
 	}
 	ids := append([]int64{escopo}, a.gruposSubordinadosAtivos(escopo)...)
@@ -232,7 +245,10 @@ func (a *App) filtroArvore(escopo int64, alias string) treeFilter {
 }
 
 func (a *App) clSetor(escopo int64) string {
-	if escopo <= 0 {
+	if escopo < 0 {
+		return " AND 1 = 0"
+	}
+	if escopo == 0 {
 		return ""
 	}
 	return a.filtroArvore(escopo, "f").clause
@@ -272,7 +288,13 @@ func (a *App) hCatalogoList(w http.ResponseWriter, r *http.Request) {
 		SELECT ` + t + `.id, ` + t + `.nome` + extra + `, ` + t + `.pai_id, ` + t + `.ativo, ` + t + `.grupo_id, ` + t + `.antiguidade
 		FROM ` + t + ` LEFT JOIN cam ON cam.id = ` + t + `.id`
 	whereClauses := []string{}
-	if esc := escopoDoUsuario(usuarioDoCtx(r)); esc > 0 {
+	u := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		// Doutrina: todos os membros da hierarquia têm visibilidade das tags de superiores, do próprio grupo e de subordinados
 		ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
 		ids = append(ids, a.gruposSubordinadosAtivos(esc)...)
@@ -452,7 +474,12 @@ func (a *App) hCatalogoDel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		var donoGrupo int64
 		if err := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM `+t+` WHERE id = ?`, id).Scan(&donoGrupo); err != nil {
 			jsonErro(w, http.StatusNotFound, "item não encontrado")
@@ -668,9 +695,9 @@ func (a *App) verificarAtrasosSLA() {
 
 func (a *App) hSetorSugestoesList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
-	if escopo <= 0 && u.Papel != "admin" {
-		jsonErro(w, http.StatusForbidden, "usuário sem grupo definido")
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
 
@@ -745,7 +772,11 @@ func (a *App) hSetorSugestoesList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hSetorSugestoesAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if escopo <= 0 {
 		jsonErro(w, http.StatusForbidden, "usuário sem grupo operacional")
 		return
@@ -887,7 +918,11 @@ func aplicarEfeitoSugestaoTx(ex executorSQL, tipoAcao string, dados map[string]a
 
 func (a *App) hSetorSugestoesAvaliar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	// Apenas chefes (gerente, chefe_setor ou admin) podem avaliar sugestões
 	if u.Papel != "admin" && u.Papel != "gerente" && u.Papel != "chefe_setor" {

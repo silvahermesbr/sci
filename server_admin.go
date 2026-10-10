@@ -256,26 +256,96 @@ func (a *App) hBackupImportar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, "backup de segurança falhou — nada alterado: "+err.Error())
 		return
 	}
-	// 4) swap atômico: fecha pool → remove alvo+wal/shm → rename → reabre+migra
-	novo := a.st.arquivo + ".novo"
-	_ = os.Remove(novo)
-	if err = os.Rename(tmpNome, novo); err != nil {
+	segPath := filepath.Join(a.st.dataDir, "backups", nomeSeg)
+
+	// 4) swap atômico para sci.db: fecha pool → backup temporário de sci.db → rename direto para sci.db → limpa wal/shm → reabre+migra
+	canonicalDB := filepath.Join(a.st.dataDir, "sci.db")
+	bakPath := canonicalDB + ".bak"
+
+	// Fecha o pool atual para liberar locks de arquivo (crucial no Windows)
+	if err = a.st.Close(); err != nil {
+		jsonErro(w, http.StatusInternalServerError, "falha ao fechar banco atual: "+err.Error())
+		return
+	}
+
+	_ = os.Remove(bakPath)
+	if err = os.Rename(canonicalDB, bakPath); err != nil {
+		// Se rename falhar, tenta copiar e remover
+		if err = copiarArquivoDisco(canonicalDB, bakPath); err == nil {
+			_ = os.Remove(canonicalDB)
+		}
+	}
+
+	_ = os.Remove(canonicalDB)
+	if err = os.Rename(tmpNome, canonicalDB); err != nil {
+		// Falha ao mover o novo banco para sci.db -> rollback imediato
+		if _, e := os.Stat(bakPath); e == nil {
+			_ = os.Rename(bakPath, canonicalDB)
+		} else {
+			_ = copiarArquivoDisco(segPath, canonicalDB)
+		}
+		_ = a.st.ReabrirComArquivo(canonicalDB)
 		jsonErro(w, http.StatusInternalServerError, "preparar swap falhou — nada alterado: "+err.Error())
 		return
 	}
-	// o defer os.Remove(tmpNome) vira no-op (arquivo renomeado)
-	if err = a.st.ReabrirComArquivo(novo); err != nil {
-		// rollback: volta o arquivo de segurança para o lugar
-		_ = a.st.ReabrirComArquivo(a.st.arquivo)
-		jsonErro(w, http.StatusInternalServerError, "swap falhou — banco reaberto no estado anterior: "+err.Error())
+
+	// Limpa WAL e SHM órfãos
+	_ = os.Remove(canonicalDB + "-wal")
+	_ = os.Remove(canonicalDB + "-shm")
+	_ = os.Remove(canonicalDB + ".novo")
+	_ = os.Remove(bakPath + "-wal")
+	_ = os.Remove(bakPath + "-shm")
+
+	// Reabre e executa a cadeia de migrações v2..v43 unificada
+	if err = a.st.ReabrirComArquivo(canonicalDB); err != nil {
+		// Rollback seguro em caso de falha de integridade ou migração
+		if a.st.db != nil {
+			_ = a.st.db.Close()
+		}
+		_ = os.Remove(canonicalDB)
+		_ = os.Remove(canonicalDB + "-wal")
+		_ = os.Remove(canonicalDB + "-shm")
+
+		if _, e := os.Stat(bakPath); e == nil {
+			_ = os.Rename(bakPath, canonicalDB)
+		} else {
+			_ = copiarArquivoDisco(segPath, canonicalDB)
+		}
+		_ = os.Remove(canonicalDB + "-wal")
+		_ = os.Remove(canonicalDB + "-shm")
+		_ = a.st.ReabrirComArquivo(canonicalDB)
+
+		jsonErro(w, http.StatusInternalServerError, "swap falhou na migração — banco restaurado ao estado anterior: "+err.Error())
 		return
 	}
-	_ = os.Remove(a.st.arquivo + "-wal")
-	_ = os.Remove(a.st.arquivo + "-shm")
+
+	// Sucesso: remove o .bak temporário
+	_ = os.Remove(bakPath)
+
+	var schemaFinal int
+	_ = a.st.db.QueryRow(`SELECT COALESCE(MAX(versao),0) FROM schema_migrations`).Scan(&schemaFinal)
+
 	u := usuarioDoCtx(r)
 	a.st.Auditoria(&u.ID, "importar_backup", "banco", nil,
-		fmt.Sprintf("schema=%d seguranca=%s", versaoArq, nomeSeg), ipDe(r))
-	jsonOK(w, map[string]any{"ok": true, "schema": versaoArq, "seguranca": "backups/" + nomeSeg})
+		fmt.Sprintf("schema=%d seguranca=%s", schemaFinal, nomeSeg), ipDe(r))
+	jsonOK(w, map[string]any{"ok": true, "schema": schemaFinal, "seguranca": "backups/" + nomeSeg})
+}
+
+func copiarArquivoDisco(origem, destino string) error {
+	in, err := os.Open(origem)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(destino)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, err = io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 func (a *App) hConfiguracoesGet(w http.ResponseWriter, _ *http.Request) {
@@ -348,7 +418,11 @@ func (a *App) hConfiguracoesSet(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hNotificacoesHub(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	prazoHoras := 24
 	var cfgPrazo string
