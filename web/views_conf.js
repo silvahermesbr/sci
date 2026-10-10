@@ -952,9 +952,9 @@
     const ehChefeSetor = (window.ME && window.ME.papel) === 'chefe_setor';
     const ehOperador = (window.ME && window.ME.papel) === 'operador';
     const ehGerente = (window.ME && window.ME.papel) === 'gerente';
-    const ehEnc = !!(window.ehEncarregado && window.ehEncarregado());
+    const ehEncP = !!(window.ehEncPessoal && window.ehEncPessoal());
     const ehGestor = !!(window.gestorPessoal && window.gestorPessoal());
-    const podeIniciar = ehGerente || ehEnc || ehGestor;
+    const podeIniciar = ehGerente || ehEncP || ehGestor;
     $('#app').innerHTML = `<h2>Conferências</h2>${abasTela}${seletor}
       <div class="cartao" style="margin-bottom:10px">
         <div class="campo" style="margin:0">

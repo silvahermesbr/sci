@@ -113,7 +113,8 @@
     // servidor nega (403), nem esconde do gerente.
     // o servidor nega exclusão de catálogo/pessoa, senha e mover; o front esconde.
     const souFuncaoPessoal = eu.papel !== 'gerente';
-    const podeDesignar = eu && (eu.papel === 'gerente' || eu.papel === 'admin');
+    const ehGerente = !!(window.ME && window.ME.papel === 'gerente');
+    const podeDesignar = (window.ME && window.ME.papel === 'gerente') || !!(window.gestorPessoal && window.gestorPessoal());
     navAtiva('#/pessoal');
     $('#app').innerHTML = '<div class="carregando">…</div>';
     const [grupos, pessoas, setores, funcoes, contas, apresentacaoDados] = await Promise.all([
@@ -337,7 +338,7 @@
         const linhas = await api('/api/grupo/funcoes/membros');
         const porFuncao = {};
         (linhas || []).forEach(l => {
-          (porFuncao[l.funcao_id] = porFuncao[l.funcao_id] || { funcao_id: l.funcao_id, funcao_nome: l.funcao_nome, membros: [] }).membros.push(l);
+          (porFuncao[l.funcao_id] = porFuncao[l.funcao_id] || { funcao_id: l.funcao_id, funcao_nome: l.funcao_nome, chave: l.chave, membros: [] }).membros.push(l);
         });
         const ids = Object.keys(porFuncao).sort((a, b) => String(porFuncao[a].funcao_nome).localeCompare(String(porFuncao[b].funcao_nome)));
         if (!ids.length) { tb.innerHTML = `<tr><td colspan="${podeDesignar ? 3 : 2}"><span class="vazio">nenhuma função no catálogo</span></td></tr>`; return; }
@@ -345,23 +346,28 @@
           .map(c => `<option value="${c.id}">${esc(c.nome_guerra || c.login)} (${esc(c.login)})</option>`).join('');
         tb.innerHTML = ids.map(fid => {
           const f = porFuncao[fid];
+          // Onda 10/10: espelha a trava do servidor (hFuncaoMembrosSet/Del) —
+          // quem não é gerente só mexe na cadeira enc_material; o servidor
+          // devolve `chave` (fix: sem ele a trava visual caía no nome, frágil).
+          const desab = !ehGerente && f.chave !== 'enc_material';
+          const disAttr = desab ? ' disabled title="Esta cadeira só é alterada pelo gerente"' : '';
           const membros = f.membros.filter(m => m.membro_id > 0);
           const titular = membros.find(m => m.titularidade === 'titular');
           const auxiliares = membros.filter(m => m.titularidade === 'auxiliar');
-          const remBtTit = podeDesignar && titular ? ` <button class="acao-linha" data-remfun="${titular.membro_id}">remover</button>` : '';
+          const remBtTit = podeDesignar && titular ? ` <button class="acao-linha" data-remfun="${titular.membro_id}"${disAttr}>remover</button>` : '';
           const linhaTit = titular
             ? `<b>👑 ${esc(titular.nome_guerra || titular.login)}</b>${remBtTit}`
             : '<span style="color:var(--tx3)">sem titular</span>';
           const linhasAux = auxiliares.map(m => {
-            const remBtAux = podeDesignar ? ` <button class="acao-linha" data-remfun="${m.membro_id}">remover</button>` : '';
+            const remBtAux = podeDesignar ? ` <button class="acao-linha" data-remfun="${m.membro_id}"${disAttr}>remover</button>` : '';
             return `<div style="margin-top:4px">${esc(m.nome_guerra || m.login)}${remBtAux}</div>`;
           }).join('');
           const colDesignar = podeDesignar ? `
             <td>
               <div class="form-linha" style="gap:6px;align-items:center;flex-wrap:wrap">
-                <select data-seluser="${f.funcao_id}" style="min-width:170px"><option value="">— conta —</option>${opContas}</select>
-                <select data-seltit="${f.funcao_id}"><option value="titular">titular</option><option value="auxiliar">auxiliar</option></select>
-                <button class="primario" data-addfun="${f.funcao_id}" style="font-size:12px;padding:4px 12px">Designar</button>
+                <select data-seluser="${f.funcao_id}" style="min-width:170px"${disAttr}><option value="">— conta —</option>${opContas}</select>
+                <select data-seltit="${f.funcao_id}"${disAttr}><option value="titular">titular</option><option value="auxiliar">auxiliar</option></select>
+                <button class="primario" data-addfun="${f.funcao_id}" style="font-size:12px;padding:4px 12px"${disAttr}>Designar</button>
               </div>
             </td>` : '';
           return `<tr>
@@ -372,6 +378,7 @@
         if (podeDesignar) {
           tb.querySelectorAll('[data-addfun]').forEach(bt => {
             bt.onclick = async () => {
+              if (bt.disabled) return;
               const fID = +bt.dataset.addfun;
               const selU = tb.querySelector(`[data-seluser="${fID}"]`);
               const selT = tb.querySelector(`[data-seltit="${fID}"]`);
@@ -382,6 +389,7 @@
           });
           tb.querySelectorAll('[data-remfun]').forEach(bt => {
             bt.onclick = async () => {
+              if (bt.disabled) return;
               const r = await processar(() => api('/api/grupo/funcoes/membros/' + bt.dataset.remfun, { method: 'DELETE' }), 'Removendo designação…');
               if (r.ok) carregarFuncoesMembros();
             };

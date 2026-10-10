@@ -732,7 +732,6 @@ definirUsuario(usuario);
         addItem('#/pessoal', 'PESSOAL', svgPes);
       }
       if (window.ehEncMaterial && window.ehEncMaterial()) {
-        addItem('#/hoje', 'CONFERÊNCIA', svgConf);
         addItem('#/material', 'MATERIAL', svgMaterial);
       }
       addItem('#/perfil', 'MEU PERFIL', svgPerfil);
@@ -1126,8 +1125,13 @@ function rotear() {
   // (o servidor já aceita a função nos dados do grupo; mesmo escopo do gerente)
   // fix 09/10: gestorPessoal() cobre o designado puro (sem papel-conf exigido).
   if (h === '#/relatorios' && papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal())) { chamarView('ViewSemModulo'); return; }
-  // Fix P0: a onda apagou os cases de #/hoje e #/mensagens do router — gerente e
-  // operador caíam no fallback (app em branco). Re-ligados (ViewMensagens aceita sub-aba).
+  // Onda 10/10 — portão do módulo Conferência (#/hoje e #/conferencia):
+  // liberado para gerente, operador, chefe_setor e encarregado de pessoal;
+  // admin, encarregado de material puro e conta sem função são barrados.
+  if (h === '#/hoje' || h === '#/conferencia') {
+    const podeConf = ['gerente', 'operador', 'chefe_setor'].includes(papel) || !!(window.ehEncPessoal && window.ehEncPessoal());
+    if (!podeConf) { chamarView('ViewSemModulo'); return; }
+  }
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
   if (h === '#/mensagens') { chamarView('ViewMensagens'); return; }
   if (h === '#/despachos') { chamarView('ViewMensagens', 'despachos'); return; }

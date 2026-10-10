@@ -1,5 +1,15 @@
 # SCI — Changelog Oficial
 
+## [v1.5.3] — 2026-10-10
+
+### 🔐 Onda 10/10 — Frente A (Gap 1): designação pelo encarregado de pessoal
+- **Backend (`/api/grupo/funcoes/membros`):** o encarregado de pessoal agora designa/remove membros **apenas na cadeira `enc_material`** do próprio grupo (titular/auxiliar); a própria cadeira `enc_pessoal` e demais funções continuam restritas ao gerente/admin (403). Operador sem a função segue bloqueado (regressão coberta em `onda_1010_gap1_test.go`, 6 casos).
+- **GET devolve `chave`:** o enunciado de funções agora inclui o campo `chave` (revisão CEO — a trava visual do front dependia do nome da função, frágil com white-label).
+- **Frontend:** portão do módulo Conferência (`#/hoje`, `#/conferencia`) liberado para gerente, operador, chefe de setor e encarregado de pessoal; encarregado de material puro e conta sem função são barrados (menu sem CONFERÊNCIA para `enc_material`). A aba FUNÇÕES do Pessoal espelha a trava do servidor: controles desabilitados fora da cadeira `enc_material` para não-gerentes.
+- **Cache-bust v370** (4 refs `index.html` + `CACHEBUST`).
+
+---
+
 ## [v1.5.2] — 2026-10-10
 
 ### 🔀 Onda de consolidação — merge total das frentes em `main`
