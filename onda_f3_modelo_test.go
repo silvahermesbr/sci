@@ -185,7 +185,10 @@ func TestF3EncMaterialAcessaMaterialENaoPessoal(t *testing.T) {
 	}
 }
 
-// TestF3EncarregadoNaoDesignaMembros testa que encarregados não conseguem designar membros (403).
+// TestF3EncarregadoNaoDesignaMembros testa que o encarregado não consegue designar
+// membros fora da cadeira enc_material. Onda 10/10: a doutrina mudou — o encarregado
+// de pessoal PASSA a designar só em enc_material; em função sem chave (não-fixa) o
+// POST morre na validação "só cadeiras fixas" (400) e o DELETE na trava de alvo (403).
 func TestF3EncarregadoNaoDesignaMembros(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
@@ -215,14 +218,15 @@ func TestF3EncarregadoNaoDesignaMembros(t *testing.T) {
 
 	ck := loginAs(t, app, "f3enc_user", "senha-enc")
 
-	// Tentativa de POST designação -> 403
+	// Tentativa de POST designação em função NÃO-fixa → barrado (onda 10/10:
+	// 400 "só cadeiras fixas"; 403 aceito caso a guarda de papel volte à frente)
 	rr, _ := doJSONReq(app, "POST", "/api/grupo/funcoes/membros", map[string]any{
 		"funcao_id":    fOutra,
 		"usuario_id":   uidAlvo,
 		"titularidade": "titular",
 	}, ck)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("encarregado não pode designar membros (403), veio %d", rr.Code)
+	if rr.Code != http.StatusBadRequest && rr.Code != http.StatusForbidden {
+		t.Fatalf("encarregado não pode designar membros fora de enc_material (400/403), veio %d", rr.Code)
 	}
 
 	// Criar uma designação pelo banco para tentar excluir

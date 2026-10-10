@@ -38,7 +38,7 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if u.Papel == "admin" && escopo == 0 {
 		rows, err = a.st.db.Query(`
-			SELECT f.id, f.nome,
+			SELECT f.id, f.nome, f.chave,
 			       COALESCE(tm.id, 0), COALESCE(tm.usuario_id, 0),
 			       COALESCE(tm.titularidade, ''),
 			       COALESCE(mu.login, ''), COALESCE(mu.nome_guerra, ''), COALESCE(mu.nome_completo, '')
@@ -56,7 +56,7 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 			args = append(args, id)
 		}
 		rows, err = a.st.db.Query(`
-			SELECT f.id, f.nome,
+			SELECT f.id, f.nome, f.chave,
 			       COALESCE(tm.id, 0), COALESCE(tm.usuario_id, 0),
 			       COALESCE(tm.titularidade, ''),
 			       COALESCE(mu.login, ''), COALESCE(mu.nome_guerra, ''), COALESCE(mu.nome_completo, '')
@@ -74,13 +74,14 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 	out := []map[string]any{}
 	for rows.Next() {
 		var fid, tmID, uid int64
-		var nome, tit, login, guerra, completo string
-		if err := rows.Scan(&fid, &nome, &tmID, &uid, &tit, &login, &guerra, &completo); err != nil {
+		var nome, chave, tit, login, guerra, completo string
+		if err := rows.Scan(&fid, &nome, &chave, &tmID, &uid, &tit, &login, &guerra, &completo); err != nil {
 			continue
 		}
 		out = append(out, map[string]any{
 			"funcao_id":     fid,
 			"funcao_nome":   nome,
+			"chave":         chave,
 			"membro_id":     tmID,
 			"usuario_id":    uid,
 			"titularidade":  tit,
@@ -94,10 +95,12 @@ func (a *App) hFuncaoMembrosGet(w http.ResponseWriter, r *http.Request) {
 
 // hFuncaoMembrosSet: POST /api/grupo/funcoes/membros
 // {funcao_id, usuario_id, titularidade: titular|auxiliar}
-// Designação exclusiva de gerente e admin (encarregado/auxiliar → 403).
+// Designação por gerente, admin ou encarregado de pessoal (no próprio grupo, apenas cadeira enc_material).
 func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+	isGerOuAdmin := u != nil && (u.Papel == "gerente" || u.Papel == "admin")
+	isEncPessoal := u != nil && a.ehEncarregadoDePessoal(u) && escopoDoUsuario(u) > 0
+	if !isGerOuAdmin && !isEncPessoal {
 		jsonErro(w, http.StatusForbidden, "designação de membros de função é restrita a gerente e administrador")
 		return
 	}
@@ -124,7 +127,7 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 
 	var grupoAlvo int64
 	var loginMembro string
-	if u.Papel == "gerente" {
+	if u.Papel != "admin" {
 		grupoAlvo = escopo
 		if err := a.st.db.QueryRow(`SELECT COALESCE(login,'') FROM usuarios WHERE id = ? AND grupo_id = ? AND ativo = 1`, req.UsuarioID, escopo).Scan(&loginMembro); err != nil {
 			jsonErro(w, http.StatusBadRequest, "usuário não pertence ao seu grupo")
@@ -152,6 +155,16 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Trava de alvo para encarregado de pessoal: só pode tocar f.chave = 'enc_material'
+	if !isGerOuAdmin {
+		var chaveAlvo sql.NullString
+		_ = a.st.db.QueryRow(`SELECT chave FROM funcoes WHERE id = ?`, req.FuncaoID).Scan(&chaveAlvo)
+		if chaveAlvo.String == "enc_pessoal" || chaveAlvo.String != "enc_material" {
+			jsonErro(w, http.StatusForbidden, "encarregado de pessoal não altera a própria cadeira")
+			return
+		}
+	}
+
 	res, err := a.st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,?)`,
 		req.FuncaoID, grupoAlvo, req.UsuarioID, tit)
 	if err != nil {
@@ -177,10 +190,12 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 }
 
 // hFuncaoMembrosDel: DELETE /api/grupo/funcoes/membros/{id}
-// Designação exclusiva de gerente e admin (encarregado/auxiliar → 403).
+// Designação por gerente, admin ou encarregado de pessoal (no próprio grupo, apenas cadeira enc_material).
 func (a *App) hFuncaoMembrosDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u == nil || (u.Papel != "gerente" && u.Papel != "admin") {
+	isGerOuAdmin := u != nil && (u.Papel == "gerente" || u.Papel == "admin")
+	isEncPessoal := u != nil && a.ehEncarregadoDePessoal(u) && escopoDoUsuario(u) > 0
+	if !isGerOuAdmin && !isEncPessoal {
 		jsonErro(w, http.StatusForbidden, "designação de membros de função é restrita a gerente e administrador")
 		return
 	}
@@ -196,13 +211,21 @@ func (a *App) hFuncaoMembrosDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// v367 (R3): dados da designação ANTES do DELETE — o cleanup do display
-	// precisa de quem e qual função estavam na linha removida.
+	// v367 (R3) + Onda 10/10: dados da designação ANTES do DELETE com f.chave via JOIN funcoes
 	var uidAlvo, fidAlvo, gidAlvo sql.NullInt64
+	var chaveAlvo sql.NullString
 	if u.Papel == "admin" {
-		_ = a.st.db.QueryRow(`SELECT usuario_id, funcao_id, grupo_id FROM funcao_membros WHERE id = ?`, id).Scan(&uidAlvo, &fidAlvo, &gidAlvo)
+		_ = a.st.db.QueryRow(`SELECT fm.usuario_id, fm.funcao_id, fm.grupo_id, f.chave FROM funcao_membros fm LEFT JOIN funcoes f ON f.id = fm.funcao_id WHERE fm.id = ?`, id).Scan(&uidAlvo, &fidAlvo, &gidAlvo, &chaveAlvo)
 	} else {
-		_ = a.st.db.QueryRow(`SELECT usuario_id, funcao_id, grupo_id FROM funcao_membros WHERE id = ? AND grupo_id = ?`, id, escopo).Scan(&uidAlvo, &fidAlvo, &gidAlvo)
+		_ = a.st.db.QueryRow(`SELECT fm.usuario_id, fm.funcao_id, fm.grupo_id, f.chave FROM funcao_membros fm LEFT JOIN funcoes f ON f.id = fm.funcao_id WHERE fm.id = ? AND fm.grupo_id = ?`, id, escopo).Scan(&uidAlvo, &fidAlvo, &gidAlvo, &chaveAlvo)
+	}
+
+	// Trava de alvo para encarregado de pessoal: não pode alterar a própria cadeira
+	if !isGerOuAdmin && uidAlvo.Valid {
+		if chaveAlvo.String == "enc_pessoal" || chaveAlvo.String != "enc_material" {
+			jsonErro(w, http.StatusForbidden, "encarregado de pessoal não altera a própria cadeira")
+			return
+		}
 	}
 
 	var res sql.Result
