@@ -221,7 +221,19 @@ func (a *App) hTrocarSenha(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	a.st.Auditoria(&u.ID, "trocar_senha", "usuarios", &u.ID, "", ipDe(r))
+	// v1.5.4-E1 (R-16a): a troca de senha invalida TODAS as sessões da conta —
+	// quem segura a senha antiga (outra sessão, cookie vazado) cai na hora.
+	// DECISÃO: a sessão CORRENTE é preservada — a troca é pela própria conta
+	// autenticada; derrubar quem acabou de trocar só destrói o fluxo em uso,
+	// sem ganho de segurança (o segredo novo já está com o legítimo dono).
+	// Redefinição por OUTREM (hUsuarioSenha) não preserva sessão nenhuma.
+	// Documentado no ARQUITETURA §3.C.
+	sessaoCorrente := ""
+	if c, errC := r.Cookie(cookieSessao); errC == nil {
+		sessaoCorrente = c.Value
+	}
+	a.invalidarSessoesDeSenha(u.ID, &sessaoCorrente)
+	a.st.Auditoria(&u.ID, "trocar_senha", "usuarios", &u.ID, "sessões anteriores invalidadas (corrente preservada)", ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})
 }
 
@@ -277,7 +289,11 @@ func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "usuário inexistente")
 		return
 	}
-	a.st.Auditoria(&solicitante.ID, "redefinir_senha", "usuarios", &id, "", ipDe(r))
+	// v1.5.4-E1 (R-16a): redefinição por OUTREM (gerente/admin) derruba TODAS
+	// as sessões da conta afetada — quem tinha a senha antiga perde acesso já
+	// (o oposto da troca pela própria conta, que preserva a corrente).
+	a.invalidarSessoesDeSenha(id, nil)
+	a.st.Auditoria(&solicitante.ID, "redefinir_senha", "usuarios", &id, "sessões da conta invalidadas", ipDe(r))
 	jsonOK(w, map[string]bool{"ok": true})
 }
 

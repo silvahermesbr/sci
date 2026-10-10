@@ -98,23 +98,39 @@ couber:
   dentro do próprio grupo; o comando real (concluir/reabrir/marcar) já está estancado.
 - Designação de cadeira **não re-chaveia sessão**: `hFuncaoMembrosSet` só sincroniza
   `usuario_papeis.funcao_id` (display). O poder novo vale a partir do próximo `/api/me`.
-- `hMudarContexto` troca papel/setor ativos da sessão **e reescreve `usuarios.setor_id` global**
-  (mensagens.go:67) — afeta outras sessões do mesmo usuário.
+- **`hMudarContexto` (v1.5.4-E1, R-9 CORRIGIDO):** troca papel/setor ativos DA SESSÃO
+  (`sessoes.papel_ativo_id`/`setor_ativo_id`). O setor passado precisa pertencer ao GRUPO do papel
+  ativo; `chefe_setor` só assume setor que AINDA comanda (`chefe_setores`, `chefeComandaSetorNoGrupo`
+  em onda_v154_e1.go — contexto órfão não entra); admin é global. O antigo
+  `UPDATE usuarios SET setor_id` foi REMOVIDO (afetava outras sessões do mesmo usuário) — ver D-5.
 - Existe ainda uma 4ª tabela de "responsáveis": `grupo_setor_responsaveis` (encarregado de MATERIAL
   por grupo/setor — módulo Material, server_material.go:37/117). Não confundir com chefia de setor.
 
-### 3.B Papel base × papel ativo × funções
+### 3.B Papel base × papel ativo × funções · doutrina de contexto
 `usuarios.papel` é o papel base; o contexto ativo vive em `sessoes.papel_ativo_id` → `usuario_papeis`
 (com `setor_ativo_id`). `UsuarioDaSessao` (store.go:1105) sobrescreve Papel/GrupoID/FuncaoID pelo
 ativo; NULL (designado puro) cai no `usuarios.*`. Conta **sem grupo** = escopo `-1`. O front espelha
 via `/api/me` (`ME`, `funcoes_grupo[].chave`, `papeis[]`) — o dropdown de contexto grava
-`POST /api/sessao/contexto`.
+`POST /api/sessao/contexto` (guarda R-9: setor dentro do grupo do papel ativo; chefe só setor
+comandado; admin livre).
+**PROPOSTA D-5 (efeito já aplicado na v1.5.4-E1, decisão final pendente de comando):** o CONTEXTO
+da sessão é `sessoes.setor_ativo_id` (sobrepõe o cadastro em `UsuarioDaSessao`); `usuarios.setor_id`
+é CADASTRO/exibição — não é mais reescrito pela troca de contexto, e continuam lendo-o como
+fallback de cadastro: `hMe`/`hLogin` (setor resolvido p/ o front), setor do OPERADOR em
+`guardaSetorNaMarcar`/`setorDoUsuario` e os resíduos já anotados no D-5 (designação de escala do
+chefe, `hSetorPreFechamento`). O COMANDO de chefia segue exclusivamente em `chefe_setores` (D-2).
 
 ### 3.C Sessões, senhas, CSRF
 Cookie `sci_sessao` HttpOnly + SameSite=Strict, TTL 12h; token de 256 bits guardado como **SHA-256**
 no banco (store.go:1027). Rate-limit de login: 5 falhas/15min por login+IP, 20 por IP (auth.go:141).
-Escrita exige header `X-SCI:1` + Origin contendo o Host. **Lacunas:** sessões não morrem na troca de
-senha; admin/admin de fábrica sem troca obrigatória; sem `Secure` (HTTP puro na LAN).
+Escrita exige header `X-SCI:1` + Origin contendo o Host. **v1.5.4-E1 (R-16):** troca de senha
+(própria, `POST /api/senha`) invalida TODAS as sessões da conta EXCETO a corrente — decisão: quem
+autenticou e trocou a própria senha não cai do fluxo em uso; redefinição por OUTREM
+(`POST /api/usuarios/{id}/senha`, gerente/admin) derruba TODAS (`invalidarSessoesDeSenha`,
+onda_v154_e1.go). Admin semeado no 1º boot com a senha PADRÃO `admin` nasce `precisa_setup=1` —
+o gate central do middleware auth já recusa toda operação fora de `/api/setup`, `/api/me` e
+`/api/logout` até a troca; seed com `SCI_ADMIN_SENHA` própria não nasce bloqueado. **Lacunas
+remanescentes:** sem `Secure` no cookie (HTTP puro na LAN).
 
 ### 3.D Ciclo de vida de dados de missão
 - **Conferência fechada é imutável** (fechar/marcar/PDF/arquivar/descartar todos guardam status);
@@ -167,7 +183,7 @@ Verdade **do servidor** (o front segue isso no menu/rotear, mas é cosmético). 
 | **Grupos/gerenciar** `#/grupos` | ✗ (área admin separada) | ✓ (próprio grupo) | ✗ | ✗ | ✗ | ✗ | ⚠ lista grupos (R-1) |
 | **Admin/config** `#/admin` `#/configuracoes` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **Relatórios** `#/relatorios` | ✓ global | ✓ árvore | ⚠ API sem guarda de papel | ✗ (front) | ✓ | ✗ | ⚠ **vaza tudo** (R-1) |
-| **Mensagens** `#/mensagens` | ✓ (caixa própria) | ✓ | ⚠ front esconde; API ok (restrito a grupo) | ✓ | ✓ | ✓ | ✓ (envia p/ qualquer um! R-14) |
+| **Mensagens** `#/mensagens` | ✓ (caixa própria) | ✓ | ⚠ front esconde; API ok (escopo R-14) | ✓ | ✓ | ✓ | ✗ não envia (R-14 corrigido) |
 | **Drive** `#/drive` | ✗ (doutrina) | ✓ | ⚠ front esconde; API por ACL | ✓ | ✓ | ✓ | por ACL |
 | **Mural** `#/avisos` | ✓ publica global | ✓ publica | lê + ciência + comentário | idem | idem | idem | lê se tiver grupo |
 | **Escalas/Calendário/Consciência** | dormentes (rotas front bloqueadas; APIs vivas — ver §10) | | | | | | |
@@ -242,7 +258,8 @@ Guardas: `guardaGestaoPessoal` = admin+gerente sempre; enc/auxiliar de pessoal (
 `chave='enc_pessoal'`, **qualquer papel** — v367) restrito ao próprio grupo. `podeGestaoPessoal` =
 mesma regra em função. Contas: admin cria qualquer (default **sem grupo**); gerente cria chefe_setor;
 chefe promove operador do seu setor; enc cria operador/chefe do grupo. Senha "sci"/vazia → `precisa_setup=1`
-(bloqueia tudo exceto setup/me/logout).
+(bloqueia tudo exceto setup/me/logout). **v1.5.4-E1:** admin semeado com a senha PADRÃO `admin`
+no 1º boot também nasce `precisa_setup=1` (troca obrigatória; seed com senha própria não bloqueia).
 
 | Método | Rota | Handler (server_pessoal.go:linha) | Guarda | Papéis | Escopo | W | R | Notas |
 |---|---|---|---|---|---|---|---|---|
@@ -250,9 +267,9 @@ chefe promove operador do seu setor; enc cria operador/chefe do grupo. Senha "sc
 | POST | /api/setup | hAuthSetup :70 | auth+precisa_setup | conta em setup | — | usuarios | — | troca login+senha |
 | GET | /api/me | hMe :110 | auth(false) | qualquer | — | — | várias | contrato do front (ME, funcoes_grupo) |
 | POST | /api/logout | hLogout :139 | auth(false) | — | — | sessoes | — | |
-| POST | /api/senha | hTrocarSenha :147 | auth(false) | própria | — | usuarios | — | ⚠ não invalida sessões (R-16) |
-| POST | /api/sessao/contexto | mensagens.go:17 | papel próprio | qualquer | — | sessoes, usuarios | — | ⚠ setor de qualquer grupo + reescreve usuarios.setor_id (R-9) |
-| POST/DELETE | /api/usuarios/{id}/papeis[/{pid}] | mensagens.go:84/:256 | ver notas | admin;ger(árvore);**⚠ chefe passa no Del** | 0/N | usuario_papeis, sessoes, chefe_setores | — | Del fail-open (R-10); re-chaveia sessões; **D-1/R-12**: Add de chefe_setor+setor_id MATERIALIZA o comando (UPSERT 1:1 — chefe anterior perde a linha); Del do papel apaga os comandos do grupo |
+| POST | /api/senha | hTrocarSenha :147 | auth(false) | própria | — | usuarios, sessoes | — | **R-16 CORRIGIDO (E1):** invalida as demais sessões da conta; a CORRENTE é preservada (troca pela própria conta — decisão §3.C) |
+| POST | /api/sessao/contexto | mensagens.go:17 | papel próprio | qualquer | — | sessoes | — | **R-9 CORRIGIDO (E1):** setor precisa pertencer ao grupo do papel ativo; chefe_setor só setor COMANDADO (`chefeComandaSetorNoGrupo`); admin livre; `usuarios.setor_id` NÃO é mais reescrito (contexto = sessoes.setor_ativo_id, D-5) |
+| POST/DELETE | /api/usuarios/{id}/papeis[/{pid}] | mensagens.go:84/:256 | allowlist `podeGerirPapelAlvo` (E1) | admin (global); ger (operador/chefe na própria árvore); enc/aux de pessoal (operador/chefe do próprio grupo); **fail-closed** p/ o resto | 0/N | usuario_papeis, sessoes, chefe_setores | — | **R-10 CORRIGIDO (E1):** fim do fail-open do Del (chefe/sem-papel barrados; alvo resolvido ANTES da decisão; re-chaveio de sessões do alvo só pós-autorização); trava do único papel mantida; **D-1/R-12**: Add de chefe_setor+setor_id MATERIALIZA o comando (UPSERT 1:1); Del do papel apaga os comandos do grupo |
 | GET | /api/pessoas/{id}/ficha | hPessoaFicha :391 | auth(false) | qualquer | ⚠-1 vaza (R-1) | — | pessoas… | PII |
 | GET | /api/pessoas | hPessoasList :587 | auth(false) | qualquer | ⚠-1 vê tudo (R-1) | — | pessoas, auditoria | GROUP BY auditoria full-scan |
 | GET | /api/pessoas/apresentacao | onda_presenca_banco.go:21 | auth(false) | qualquer | ⚠-1 (R-1) | (ensure) | lazy table | |
@@ -264,7 +281,7 @@ chefe promove operador do seu setor; enc cria operador/chefe do grupo. Senha "sc
 | POST | /api/usuarios | hUsuariosAdd :1134 | interna | ver regras | 0/N | usuarios, papeis | — | default sem grupo |
 | PATCH | /api/usuarios/{id} | hUsuarioEdit :239 | guarda | adm/ger/enc | 0/N | usuarios, pessoas | — | espelha pessoa |
 | DELETE | /api/usuarios/{id} | hUsuarioExcluir :1279 | interna | adm;ger | 0/N | usuarios | — | FK→desativa; ⚠ órfãs sessões/papéis (R-17) |
-| POST | /api/usuarios/{id}/senha | hUsuarioSenha :183 | interna | adm;ger | 0/N | usuarios | — | enc 403 |
+| POST | /api/usuarios/{id}/senha | hUsuarioSenha :183 | interna | adm;ger | 0/N | usuarios, sessoes | — | enc 403; **R-16 (E1):** invalida TODAS as sessões da conta afetada |
 | GET | /api/usuarios/{id}/foto | hUsuarioFotoGet :1015 | auth(false) | qualquer | ⚠ **sem escopo** (R-5) | — | usuarios | cache public 3600 |
 | GET/PATCH | /api/perfil | :954/:978 | auth(false) | própria | — | usuarios, pessoas | — | ⚠ foto_base64 sem validação (R-3) |
 | PATCH | /api/usuarios/{id}/mover | hMoverConta :1049 | interna | adm;ger(árvore) | 0/N | usuarios | — | ⚠ não move usuario_papeis/sessões (R-18) |
@@ -275,7 +292,7 @@ chefe promove operador do seu setor; enc cria operador/chefe do grupo. Senha "sc
 leem as mesmas cadeiras); conferência (`hPessoaComentarios` roteada lá); grupos (trocar-gerente,
 NUKE); mensagens (destinatários por papel; caixa da função); escalas/material (designações); tests
 onda_0610_pessoal, onda_1010_gap1, fix_encarregado(±v367), onda_f2/f3, onda_r1/r2/r3,
-multi_papel_e_mensagens, guardas_auth, perfil_e_grupos.
+multi_papel_e_mensagens, guardas_auth, perfil_e_grupos, **onda_v154_e1 (R-9/R-10/R-16)**.
 
 ---
 
@@ -323,14 +340,22 @@ Todos `a.auth(false)` + checagens internas. Arquivos: `mensagens.go` (também ab
 `onda_0510_drive.go`, `onda_0510_funcao.go`, rotas do mural em server_admin.go:436-443.
 
 **MENSAGENS/DESPACHOS** — destinatário = **linha por papel** (`mensagem_destinatarios.destinatario_papel_id`);
-trocar contexto troca a caixa. Hierarquia de envio: **só operador com grupo é restrito** (grupo+gerente+
-admin+pai); gerente/chefe/admin/**e operador sem grupo** enviam a qualquer papel de qualquer grupo
-(R-14). Caixa da Função: mensagens carimbadas com a função titular do remetente aparecem para quem
+trocar contexto troca a caixa. **Hierarquia de envio (v1.5.4-E1, R-14 CORRIGIDO) — matriz de
+quem → quem** (`hMensagensEnviar`, mensagens.go:677+):
+| Remetente (papel ativo) | Pode enviar para |
+|---|---|
+| admin | qualquer papel (global — infraestrutura, matriz §4) |
+| gerente / chefe_setor / operador / enc_pessoal **com grupo** | papéis do PRÓPRIO grupo + de grupos SUBORDINADOS ativos (`gruposSubordinadosAtivos`, vínculo bilateral) + caixa **admin** (destino global de infraestrutura) |
+| resposta a despacho (`pai_id`) | + o REMETENTE da mensagem pai (fora da árvore também — a thread é participativa) |
+| conta SEM grupo (qualquer papel ≠ admin) | **ninguém — 403** (antes: operador sem grupo e gerente/chefe enviavam a qualquer grupo) |
+
+Caixa da Função: mensagens carimbadas com a função titular do remetente aparecem para quem
 exerce a função (`da_funcao=1`, não arquivável) — ⚠ mas a **thread** dá 403 para o exercente
 (mensagens.go:1068-1072, R-19). Despacho = `tipo='despacho'` + `exige_resposta`; finalizar só pelo
 destinatário (1×). Rotas: inbox/enviadas/enviar/ler/excluir/arquivar/desarquivar/pastas
 (GET/POST/DEL/mover)/thread/responder/finalizar/contador/destinatários (server_pessoal.go:1547-1562).
-⚠ `hMensagensEnviar` sem tx (R-13); `/api/mensagens/destinatarios` lista global.
+⚠ `hMensagensEnviar` sem tx (R-13); `/api/mensagens/destinatarios` lista global (o picker mostra
+nomes fora do escopo; o SERVIDOR recusa o envio fora da matriz acima).
 
 **DRIVE** — admin barrado (doutrina). ACL por item (`checarAcessoPasta/Arquivo` drive.go:32-205):
 autor → gerente (árvore) → grant direto (`drive_compartilhamentos` alvo usuário/papel/grupo) →
@@ -354,7 +379,7 @@ drive, escalas); `anexos_drive.go` + seletor do core.js (anexos de mensagens/avi
 `server_admin.go` hNotificacoesHub (queries duplicadas do contador/mural); contrato papel_ativo
 (UsuarioDaSessao); fronts views_mensagens/drive/avisos + CACHEBUST; tests multi_papel_e_mensagens,
 ordem_diretor_email_interno/0710_avisos, onda_0510_funcao/drive/itens79, v1_2_fase2/3,
-admin_restricao.
+admin_restricao, **onda_v154_e1 (R-14 — matriz de envio)**.
 
 ---
 
@@ -524,14 +549,14 @@ Prioridade de correção e plano: ver [`ROADMAP.md`](ROADMAP.md) v1.5.4/v1.5.5. 
 | R-6 | **NUKE/setor-excluir/excluirArquivada × FKs NO ACTION** (chefe_setores, funcao_membros, avisos, material_conferencias, escala_modelos, setor_sugestoes, CE órfãs…) | server_grupos.go:144-186; ordem_0610_setores.go; server_conferencia.go:799 | P1 |
 | R-7 | Antiguidade: ordenação ignora fontes u2/up2 e o relatório na tela não ordena por antiguidade; militar sem tag some em silêncio | server_conferencia.go:985; onda_0910:201 | P1 (bug de campo) |
 | R-8 | Arquivar/descartar: doc diz gerente, código aceita operador/enc | server_conferencia.go:741/:882 | P1 |
-| R-9 | hMudarContexto aceita setor de qualquer grupo e reescreve usuarios.setor_id global | mensagens.go:44-67 | P1 |
-| R-10 | hUsuarioPapelDel fail-open (chefe remove papéis de qualquer um + re-chaveia sessões) | mensagens.go:246-278 | P1 |
+| R-9 | ~~hMudarContexto aceita setor de qualquer grupo e reescreve usuarios.setor_id global~~ **CORRIGIDO na v1.5.4-E1**: o setor precisa pertencer ao GRUPO do papel ativo; `chefe_setor` só assume setor que AINDA comanda (`chefeComandaSetorNoGrupo` — fonte única `chefe_setores`, D-2); admin é global; o `UPDATE usuarios SET setor_id` global foi REMOVIDO — o contexto vive em `sessoes.setor_ativo_id` (sobrescrito em `UsuarioDaSessao`) e `usuarios.setor_id` fica como cadastro (proposta D-5, decisão pendente) | mensagens.go (hMudarContexto); onda_v154_e1.go; onda_v154_e1_test.go | ✅ |
+| R-10 | ~~hUsuarioPapelDel fail-open (chefe remove papéis de qualquer um + re-chaveia sessões)~~ **CORRIGIDO na v1.5.4-E1**: allowlist de solicitantes fail-closed (`podeGerirPapelAlvo` — admin global; gerente operador/chefe_setor no próprio grupo/árvore; enc/aux de pessoal no próprio grupo, doutrina hUsuariosAdd/v367) aplicada no Del E no Add (o Add também deixava passar papel-base não reconhecido com poder de admin); alvo resolvido ANTES de qualquer decisão e re-chaveio de sessões do alvo só pós-autorização; trava "não remover o único papel" mantida | mensagens.go (hUsuarioPapelAdd/Del); onda_v154_e1.go; onda_v154_e1_test.go | ✅ |
 | R-11 | Drive serve HTML inline (MIME do cliente) + Content-Disposition sem escapar | drive.go:701/:764-774 | P1 |
 | R-12 | ~~**Chefe-zumbi**: chefeComandaSetor fallbacks + usuarios.setor_id nunca limpo; hSetoresAgregado usa fonte divergente~~ **CORRIGIDO na onda v1.5.4-D1 (decisão D-2)**: `chefe_setores` vira FONTE ÚNICA — fallbacks `usuarios.setor_id`/`pessoas.setor_id` removidos do `chefeComandaSetor`; novo `setorAtivoComandado` condiciona o CONTEXTO da sessão ao comando vigente (concluir/reabrir/marcar e leitura do `/hoje` — contexto órfão de chefia anterior não autoriza nada); `hUsuarioPapelAdd` (chefe_setor+setor_id) MATERIALIZA o comando (UPSERT 1:1 por setor — chefe anterior perde a linha) e `hUsuarioPapelDel` revoga os comandos do grupo; migração **v44** materializa os legados pendentes (fontes `usuarios.setor_id` → `pessoas.setor_id`, INSERT OR IGNORE — UNIQUE(setor_id) preserva o vigente) e subiu o `versaoSchemaBinario` (44); `hSetoresAgregado` lê `chefe_setores` (igual ao catálogo). Resíduo p/ D-5: designação de escala do chefe e pre_fechamento ainda leem o contexto de cadastro | onda_v154_d1.go (migrarV44 + setorAtivoComandado); onda_0510_conf_escopo.go:139/:179; server_conferencia.go:196/:689/:751; mensagens.go:84/:256; onda_0510_itens79.go:173; onda_v154_d1_test.go | ✅ |
 | R-13 | Escritas multi-statement sem tx (hMensagensEnviar, criarConferenciaBase, hAvisosAdd, hGrupoDestituirChefe…) | mensagens.go:691-718 etc. | P1 |
-| R-14 | Mensagens: operador sem grupo (e gerente/chefe) enviam a qualquer papel de qualquer grupo | mensagens.go:640-678 | P1 |
+| R-14 | ~~Mensagens: operador sem grupo (e gerente/chefe) enviam a qualquer papel de qualquer grupo~~ **CORRIGIDO na v1.5.4-E1**: ninguém envia fora do escopo do papel ativo (próprio grupo + subordinados ativos — `gruposSubordinadosAtivos`, vínculo bilateral); conta sem grupo não envia a ninguém (403); admin global; caixa admin continua destino alcançável e a resposta (`pai_id`) alcança o remetente da mensagem pai — matriz completa no §8 | mensagens.go (hMensagensEnviar); onda_v154_e1_test.go | ✅ |
 | R-15 | excluirArquivada deixa conferencia_escalas órfã (FK sem cascade) | server_conferencia.go:799-803 | P2 |
-| R-16 | Troca de senha não invalida sessões; admin/admin sem expiração forçada | server_pessoal.go:147/:183; main.go:49 | P1 |
+| R-16 | ~~Troca de senha não invalida sessões; admin/admin sem expiração forçada~~ **CORRIGIDO na v1.5.4-E1**: troca própria (`/api/senha`) invalida as demais sessões e PRESERVA a corrente (decisão: quem trocou não cai do fluxo em uso — §3.C); redefinição por outrem (`/api/usuarios/{id}/senha`) derruba TODAS (`invalidarSessoesDeSenha`); admin semeado no 1º boot com a senha PADRÃO `admin` nasce `precisa_setup=1` — gate central do middleware auth recusa tudo fora de `/api/setup|/api/me|/api/logout` até a troca (seed com `SCI_ADMIN_SENHA` própria não bloqueia) | server_pessoal.go (hTrocarSenha/hUsuarioSenha); store.go (SeedIfEmpty); onda_v154_e1.go; onda_v154_e1_test.go | ✅ |
 | R-17 | hUsuarioExcluir não limpa sessoes/papeis/chefe_setores (delete físico deixa órfãs) | server_pessoal.go:1342 | P2 |
 | R-18 | hMoverConta não move usuario_papeis/sessões (rebaixamento cosmético) | server_pessoal.go:1049-1132 | P2 |
 | R-19 | Caixa da Função: exercente vê a mensagem mas leva 403 na thread | mensagens.go:1068-1072 | P2 |

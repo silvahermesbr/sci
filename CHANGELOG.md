@@ -2,6 +2,31 @@
 
 ## [v1.5.4] — Não lançada
 
+### 🛡️ Onda v1.5.4 — E1: guardas de autenticação (R-9/R-10/R-14/R-16)
+- **R-9 — contexto de sessão (`POST /api/sessao/contexto`):** o setor passado precisa pertencer ao
+  GRUPO do papel ativo; chefe_setor só assume setor que AINDA comanda (`chefe_setores` — fonte única
+  desde a D1); admin segue global. O `UPDATE usuarios SET setor_id` global foi REMOVIDO: o contexto
+  vive em `sessoes.setor_ativo_id` (`UsuarioDaSessao` o sobrepõe); `usuarios.setor_id` vira cadastro
+  (proposta D-5, decisão pendente). Regressão: `onda_v154_e1_test.go` (outro grupo 403, setor não
+  comandado 403, comandado 200 sem reescrita do cadastro, admin livre).
+- **R-10 — gestão de papéis (`POST|DELETE /api/usuarios/{id}/papeis[/{pid}]`):** fim do fail-open do
+  Del — allowlist de solicitantes fail-closed (`podeGerirPapelAlvo`): admin global; gerente
+  operador/chefe_setor no próprio grupo/árvore; enc/aux de pessoal (o cargo manda, v367) no próprio
+  grupo; alvo resolvido ANTES de qualquer decisão, e o re-chaveio de sessões do alvo só ocorre com
+  remoção legítima. Trava "não remover o único papel" mantida.
+- **R-14 — hierarquia de envio (`POST /api/mensagens`):** ninguém envia para fora do escopo do papel
+  ativo (próprio grupo + subordinados ativos — `gruposSubordinadosAtivos`); conta sem grupo não envia
+  a ninguém (403); admin segue global; caixa admin continua destino alcançável e a resposta a
+  despacho (`pai_id`) alcança o remetente da mensagem pai. Matriz de envio documentada no
+  ARQUITETURA §8.
+- **R-16 — senha/sessões:** troca de senha (própria ou por gerente/admin) invalida as sessões da
+  conta — na troca pela própria conta a sessão CORRENTE é preservada (quem trocou não cai; decisão
+  no ARQUITETURA §3.C); redefinição por outrem derruba todas. Admin semeado no 1º boot com a senha
+  PADRÃO `admin` nasce com troca obrigatória (`precisa_setup=1` — gate central do middleware auth,
+  doutrina reusada); deploy com `SCI_ADMIN_SENHA` própria não nasce bloqueado.
+- Regressão completa em `onda_v154_e1_test.go` (7 testes, persona positivo/negativo); testes de
+  mensageria anteriores às guardas atualizados à nova doutrina (vínculos de árvore explícitos).
+
 ### 🧟 Onda v1.5.4 — D1: mata o "chefe-zumbi" (R-12) — chefe_setores vira fonte única
 - **Causa:** A nomeado chefe do setor S conservava poderes invisíveis depois de substituído por B
   (ou destituído): o COMANDO (linha em `chefe_setores`) saía, mas o CONTEXTO (`usuarios.setor_id`,

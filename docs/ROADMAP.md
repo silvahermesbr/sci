@@ -118,9 +118,16 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   teste de aviso de excluídos.
 
 ### E. Correções de guarda remanescentes (P1 de segurança — IDs R-x do `ARQUITETURA.md` §14)
-- `hUsuarioPapelDel/Add`: allowlist de solicitantes + escopo do alvo (R-10; mensagens.go:112-138, 246-278).
-- `hMudarContexto`: setor precisa pertencer ao grupo do papel ativo; parar de reescrever
-  `usuarios.setor_id` global (R-9; mensagens.go:44-67).
+- ~~`hUsuarioPapelDel/Add`: allowlist de solicitantes + escopo do alvo (R-10; mensagens.go:112-138, 246-278).~~
+  **✅ CONCLUÍDO (v1.5.4-E1):** `podeGerirPapelAlvo` (onda_v154_e1.go) — admin global; gerente
+  operador/chefe_setor no próprio grupo/árvore; enc/aux de pessoal no próprio grupo (doutrina
+  hUsuariosAdd/v367); fail-closed para qualquer outro solicitante; alvo resolvido ANTES da decisão e
+  re-chaveio de sessões só pós-autorização; trava do único papel mantida.
+- ~~`hMudarContexto`: setor precisa pertencer ao grupo do papel ativo; parar de reescrever
+  `usuarios.setor_id` global (R-9; mensagens.go:44-67).~~
+  **✅ CONCLUÍDO (v1.5.4-E1):** setor pertence ao grupo do PAPEL ATIVO; chefe_setor só o que AINDA
+  comanda (`chefe_setores`, fonte única D1); admin livre; `UPDATE usuarios SET setor_id` removido —
+  contexto vive em `sessoes.setor_ativo_id`; `usuarios.setor_id` = cadastro (proposta D-5).
 - `GET /api/usuarios/{id}/foto`: checagem de escopo (R-5; server_pessoal.go:1015).
 - Drive: allowlist de MIME p/ `inline` (ou `attachment`+nosniff sempre) e Content-Disposition
   sanitizado (R-11; drive.go:701-707, 764-774).
@@ -130,11 +137,17 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   "rico" (server_grupos.go:144-186).
 - Mural/calendário: leituras por id sem checar grupo do objeto — `hAvisosDetalhes/Ciente`,
   `GET /api/calendarios/{id}/compartilhamentos` (R-21).
-- Mensagens: hierarquia de envio — operador SEM grupo (hoje envia a qualquer papel de qualquer
-  grupo) e revisão geral de quem pode enviar para quem (R-14; mensagens.go:640-678).
+- ~~Mensagens: hierarquia de envio — operador SEM grupo (hoje envia a qualquer papel de qualquer
+  grupo) e revisão geral de quem pode enviar para quem (R-14; mensagens.go:640-678).~~
+  **✅ CONCLUÍDO (v1.5.4-E1):** ninguém envia fora do escopo do papel ativo (próprio grupo +
+  subordinados ativos, `gruposSubordinadosAtivos`); conta sem grupo 403; admin global; matriz
+  documentada no ARQUITETURA §8.
 - Arquivar/descartar conferência: alinhar código à doutrina (só gerente/enc; hoje operador passa)
   (R-8; server_conferencia.go:741/:882).
-- Troca de senha invalida sessões + admin/admin com troca obrigatória no 1º boot (R-16).
+- ~~Troca de senha invalida sessões + admin/admin com troca obrigatória no 1º boot (R-16).~~
+  **✅ CONCLUÍDO (v1.5.4-E1):** troca/redefinição de senha invalida as sessões da conta (a corrente
+  é preservada na troca pela própria conta — decisão no mapa §3.C); admin semeado com a senha
+  PADRÃO `admin` nasce `precisa_setup=1` (gate central reusado); senha própria no seed não bloqueia.
 
 ### F. CI passa a gatear de verdade
 - ci.sh: `go vet` + `go test -count=1 ./...` (190s) obrigatórios; `-race` no host Linux.
@@ -250,4 +263,4 @@ desbloqueadas no `rotear()` e no menu; (3) e2e da máquina persona re-executado;
 | D-2 | Fallbacks de `chefeComandaSetor`: remover puros ou materializar legados | v1.5.4-D1 |
 | D-3 | `escalas/minhas` e PDFs de escala: quem acessa quando o módulo volta | M5 |
 | D-4 | Anexos de material: disco (doutrina Drive) vs base64 no banco | M3 |
-| D-5 | `usuarios.setor_id`: coluna de cadastro ou fonte de autorização? (hoje: os dois, o que causa o bug D1) | M2 |
+| D-5 | `usuarios.setor_id`: coluna de cadastro ou fonte de autorização? (**v1.5.4-E1 já aplicou o lado do contexto:** troca de contexto NÃO reescreve mais a coluna — contexto vive em `sessoes.setor_ativo_id`; resta decidir os resíduos de CADASTRO que ainda a leem: designação de escala do chefe e `hSetorPreFechamento`) | M2 |

@@ -49,6 +49,10 @@ func TestFinalizarDespachoViraMensagemComum(t *testing.T) {
 
 	ckGer := loginAsPapel(t, app, st, "gerd", "gerente")
 	ckOp := loginAsPapel(t, app, st, "opd", "operador")
+	// v1.5.4-E1 (R-14): conta sem grupo não envia — personas ganham grupo.
+	gidMail := e1CriaGrupo(t, st, "Grp Mail D1")
+	e1VinculaConta(t, st, "gerd", gidMail)
+	e1VinculaConta(t, st, "opd", gidMail)
 
 	msgID := enviarDespachoTeste(t, app, st, ckGer, "opd")
 
@@ -106,6 +110,10 @@ func TestArquivarDespachoEmAbertoBloqueado(t *testing.T) {
 
 	ckGer := loginAsPapel(t, app, st, "gerd2", "gerente")
 	ckOp := loginAsPapel(t, app, st, "opd2", "operador")
+	// v1.5.4-E1 (R-14): conta sem grupo não envia — personas ganham grupo.
+	gidMail2 := e1CriaGrupo(t, st, "Grp Mail D2")
+	e1VinculaConta(t, st, "gerd2", gidMail2)
+	e1VinculaConta(t, st, "opd2", gidMail2)
 	msgID := enviarDespachoTeste(t, app, st, ckGer, "opd2")
 
 	rr, res := doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/arquivar", msgID), nil, ckOp)
@@ -122,6 +130,11 @@ func TestFinalizarGuardas(t *testing.T) {
 	ckGer := loginAsPapel(t, app, st, "gerg", "gerente")
 	ckOp := loginAsPapel(t, app, st, "opg", "operador")
 	ckOutro := loginAsPapel(t, app, st, "fora", "operador", "senha-outro")
+	// v1.5.4-E1 (R-14): conta sem grupo não envia — remetente/destino ganham
+	// grupo; "fora" segue sem grupo (só lê 403, não envia).
+	gidMailG := e1CriaGrupo(t, st, "Grp Mail DG")
+	e1VinculaConta(t, st, "gerg", gidMailG)
+	e1VinculaConta(t, st, "opg", gidMailG)
 
 	// mensagem COMUM não finaliza
 	var papelGerID, papelOpID int64
@@ -163,6 +176,10 @@ func TestFinalizarDuplicadoBloqueado(t *testing.T) {
 
 	ckGer := loginAsPapel(t, app, st, "gerfd", "gerente")
 	ckOp := loginAsPapel(t, app, st, "opfd", "operador")
+	// v1.5.4-E1 (R-14): conta sem grupo não envia — personas ganham grupo.
+	gidMailFD := e1CriaGrupo(t, st, "Grp Mail DFD")
+	e1VinculaConta(t, st, "gerfd", gidMailFD)
+	e1VinculaConta(t, st, "opfd", gidMailFD)
 	msgID := enviarDespachoTeste(t, app, st, ckGer, "opfd")
 
 	rr1, res1 := doJSONReq(app, "POST", fmt.Sprintf("/api/mensagens/%d/finalizar", msgID), nil, ckOp)
@@ -189,6 +206,10 @@ func TestResponderSemFinalizarMantemPendencia(t *testing.T) {
 
 	ckGer := loginAsPapel(t, app, st, "gerrf", "gerente")
 	ckOp := loginAsPapel(t, app, st, "oprf", "operador")
+	// v1.5.4-E1 (R-14): conta sem grupo não envia — personas ganham grupo.
+	gidMailRF := e1CriaGrupo(t, st, "Grp Mail DRF")
+	e1VinculaConta(t, st, "gerrf", gidMailRF)
+	e1VinculaConta(t, st, "oprf", gidMailRF)
 	msgID := enviarDespachoTeste(t, app, st, ckGer, "oprf")
 
 	// responde SEM finalizar
@@ -242,6 +263,10 @@ func TestEnviadasAbasDespacho(t *testing.T) {
 
 	ckGer := loginAsPapel(t, app, st, "gerenv", "gerente")
 	_ = loginAsPapel(t, app, st, "openv", "operador")
+	// v1.5.4-E1 (R-14): conta sem grupo não envia — personas ganham grupo.
+	gidMailEV := e1CriaGrupo(t, st, "Grp Mail DEV")
+	e1VinculaConta(t, st, "gerenv", gidMailEV)
+	e1VinculaConta(t, st, "openv", gidMailEV)
 	var papelOpID int64
 	if err := st.db.QueryRow(`SELECT up.id FROM usuario_papeis up JOIN usuarios u ON u.id = up.usuario_id WHERE u.login='openv'`).Scan(&papelOpID); err != nil {
 		t.Fatalf("papel operador: %v", err)
@@ -284,6 +309,10 @@ func TestAssuntoSemTags(t *testing.T) {
 
 	ckGer := loginAsPapel(t, app, st, "geras", "gerente")
 	_ = loginAsPapel(t, app, st, "opas", "operador")
+	// v1.5.4-E1 (R-14): conta sem grupo não envia — personas ganham grupo.
+	gidMailAS := e1CriaGrupo(t, st, "Grp Mail DAS")
+	e1VinculaConta(t, st, "geras", gidMailAS)
+	e1VinculaConta(t, st, "opas", gidMailAS)
 	var papelOpID int64
 	if err := st.db.QueryRow(`SELECT up.id FROM usuario_papeis up JOIN usuarios u ON u.id = up.usuario_id WHERE u.login='opas'`).Scan(&papelOpID); err != nil {
 		t.Fatalf("papel operador: %v", err)
