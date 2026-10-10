@@ -1619,11 +1619,15 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 	// garantindo que TODO usuário do grupo receba a notificação.
 	var destinatarios int
 	var papelIDs []int64
+	// v1.6.0 Fase 3: as cadeiras enc_pessoal/enc_material MATERIALIZARAM linha em
+	// usuario_papeis (v45/sync da designação) — o enc puro entra na lista de
+	// destinatários pelo próprio contexto (antes ficava fora do IN e não recebia
+	// notificação de aviso). 'sem_funcao' NÃO entra: valor não existe ainda (Fase 5).
 	rowsN, errN := a.st.db.Query(`
 		SELECT DISTINCT up.id
 		FROM usuario_papeis up
 		JOIN usuarios us ON us.id = up.usuario_id AND us.ativo = 1
-		WHERE up.grupo_id = ? AND up.id != ? AND up.papel IN ('admin','gerente','operador','chefe_setor')`,
+		WHERE up.grupo_id = ? AND up.id != ? AND up.papel IN ('admin','gerente','operador','chefe_setor','enc_pessoal','enc_material')`,
 		*grupoID, *u.PapelAtivoID)
 	if errN != nil {
 		log.Printf("sci aviso %d notificação: %v", id, errN)
@@ -1642,7 +1646,7 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 			SELECT us.id, us.papel, us.funcao_id
 			FROM usuarios us
 			WHERE us.grupo_id = ? AND us.ativo = 1 AND us.id != ?
-			  AND us.papel IN ('admin','gerente','operador','chefe_setor')
+			  AND us.papel IN ('admin','gerente','operador','chefe_setor','enc_pessoal','enc_material')
 			  AND NOT EXISTS (SELECT 1 FROM usuario_papeis up2 WHERE up2.usuario_id = us.id AND up2.grupo_id = ?)`,
 			*grupoID, u.ID, *grupoID)
 		if errF == nil {

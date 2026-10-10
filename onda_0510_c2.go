@@ -158,10 +158,15 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trava de alvo para encarregado de pessoal: só pode tocar f.chave = 'enc_material'
+	// Chave da cadeira ALVO — resolvida para TODOS os solicitantes (v1.6.0
+	// Fase 3: a designação materializa a linha de papel da cadeira também no
+	// ramo gerente/admin; antes só o ramo do encarregado lia a chave, para a
+	// trava). Detecção por chave imutável, NUNCA por nome (anti-escalação).
+	var chaveAlvo sql.NullString
+	_ = a.st.db.QueryRow(`SELECT chave FROM funcoes WHERE id = ?`, req.FuncaoID).Scan(&chaveAlvo)
+	// Trava de alvo para encarregado de pessoal (NO CONTEXTO enc_pessoal —
+	// v1.6.0 Fase 2): só pode tocar f.chave = 'enc_material'
 	if !isGerOuAdmin {
-		var chaveAlvo sql.NullString
-		_ = a.st.db.QueryRow(`SELECT chave FROM funcoes WHERE id = ?`, req.FuncaoID).Scan(&chaveAlvo)
 		if chaveAlvo.String == "enc_pessoal" || chaveAlvo.String != "enc_material" {
 			jsonErro(w, http.StatusForbidden, "encarregado de pessoal não altera a própria cadeira")
 			return
@@ -184,11 +189,29 @@ func (a *App) hFuncaoMembrosSet(w http.ResponseWriter, r *http.Request) {
 	// Sincroniza o DISPLAY da sessão (funcao_nome do papel ativo) — v367, R3
 	// ida-e-volta: a linha do designado NAQUELE grupo recebe a função designada
 	// INCONDICIONALMENTE (um funcao_id STALE mostrava cadeira errada no dropdown
-	// de contexto — pior que sobrescrever). NUNCA cria linha em usuario_papeis
-	// (bug 09/10: o sync antigo fabricava papel='operador' e o CHECK/INSERT
-	// virava a SESSÃO do designado no próximo login). Designado puro sem linha
-	// tem o display vindo de funcao_membros (FuncoesGrupoDoUsuario → /api/me).
-	_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = ? WHERE usuario_id = ? AND grupo_id = ?`, req.FuncaoID, req.UsuarioID, grupoAlvo)
+	// de contexto — pior que sobrescrever). NUNCA cria linha de SISTEMA em
+	// usuario_papeis (bug 09/10: o sync antigo fabricava papel='operador' e o
+	// CHECK/INSERT virava a SESSÃO do designado no próximo login).
+	// v1.6.0 Fase 3: linhas enc_* ficam FORA do display-sync — cada linha da
+	// cadeira mostra a PRÓPRIA identidade (funcao_id da própria cadeira, cravado
+	// na materialização abaixo); o blanket UPDATE antigo carimbava a última
+	// cadeira designada nas DUAS linhas de quem tem as duas.
+	_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = ? WHERE usuario_id = ? AND grupo_id = ? AND papel NOT IN ('enc_pessoal','enc_material')`, req.FuncaoID, req.UsuarioID, grupoAlvo)
+
+	// v1.6.0 Fase 3 — a designação MATERIALIZA a linha de papel da cadeira
+	// (espelho do hGrupoNomearChefe na chefia): funcao_membros é a DESIGNAÇÃO,
+	// a linha em usuario_papeis é o ACESSO/CONTEXTO — o dropdown só lê
+	// usuario_papeis e os PODERES seguem o contexto ativo (Fase 2). OR IGNORE
+	// deduplica pela UNIQUE(usuario_id,grupo_id,papel): titular/auxiliar da
+	// MESMA cadeira não colidem (re-designação reusa a linha; funcao_id nasce
+	// com a própria cadeira — é a identidade do item no dropdown).
+	if chaveAlvo.String == "enc_pessoal" || chaveAlvo.String == "enc_material" {
+		if _, err := a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
+			req.UsuarioID, grupoAlvo, chaveAlvo.String, req.FuncaoID); err != nil {
+			jsonErro(w, http.StatusInternalServerError, "falha ao materializar o contexto da cadeira: "+err.Error())
+			return
+		}
+	}
 	jsonOK(w, map[string]any{"ok": true, "id": id})
 }
 
@@ -255,11 +278,44 @@ func (a *App) hFuncaoMembrosDel(w http.ResponseWriter, r *http.Request) {
 	// NAQUELE grupo apontava para a função removida, volta a NULL. (Era o outro
 	// lado do stale: removida a designação, o dropdown continuava mostrando a
 	// cadeira antiga.) Sem linha em usuario_papeis → nada a fazer (não inventa).
+	// v1.6.0 Fase 3: linhas enc_* ficam FORA do display-sync (identidade própria).
 	if uidAlvo.Valid && fidAlvo.Valid && fidAlvo.Int64 > 0 {
 		if u.Papel == "admin" {
-			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND COALESCE(grupo_id,-1) = ? AND funcao_id = ?`, uidAlvo.Int64, gidAlvo.Int64, fidAlvo.Int64)
+			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND COALESCE(grupo_id,-1) = ? AND funcao_id = ? AND papel NOT IN ('enc_pessoal','enc_material')`, uidAlvo.Int64, gidAlvo.Int64, fidAlvo.Int64)
 		} else {
-			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND grupo_id = ? AND funcao_id = ?`, uidAlvo.Int64, escopo, fidAlvo.Int64)
+			_, _ = a.st.db.Exec(`UPDATE usuario_papeis SET funcao_id = NULL WHERE usuario_id = ? AND grupo_id = ? AND funcao_id = ? AND papel NOT IN ('enc_pessoal','enc_material')`, uidAlvo.Int64, escopo, fidAlvo.Int64)
+		}
+	}
+
+	// v1.6.0 Fase 3 — a REMOÇÃO desmaterializa: sem nenhuma designação remanescente
+	// na CADEIRA (funcao_membros × funcoes pela chave) naquele grupo, a linha de
+	// papel espelho sai de usuario_papeis e as sessões presas nela são RE-CHAVEADAS
+	// (padrão hUsuarioPapelDel, mensagens.go: aponta para outra linha do usuário;
+	// se era a única, volta a NULL — o designado puro volta a sem-contexto).
+	// Doutrina D1: funcao_membros é a designação, usuario_papeis é o acesso — a
+	// linha órfã reconcederia o contexto sem cadeira (chefe-zumbi de cadeira).
+	if uidAlvo.Valid && gidAlvo.Valid && gidAlvo.Int64 > 0 && chaveAlvo.Valid &&
+		(chaveAlvo.String == "enc_pessoal" || chaveAlvo.String == "enc_material") {
+		var restam int
+		_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM funcao_membros fm JOIN funcoes f ON f.id = fm.funcao_id
+			WHERE fm.usuario_id = ? AND fm.grupo_id = ? AND f.chave = ?`,
+			uidAlvo.Int64, gidAlvo.Int64, chaveAlvo.String).Scan(&restam)
+		if restam == 0 {
+			var linhaID int64
+			if e := a.st.db.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = ?`,
+				uidAlvo.Int64, gidAlvo.Int64, chaveAlvo.String).Scan(&linhaID); e == nil && linhaID > 0 {
+				if _, err := a.st.db.Exec(`DELETE FROM usuario_papeis WHERE id = ? AND usuario_id = ?`, linhaID, uidAlvo.Int64); err != nil {
+					jsonErro(w, http.StatusInternalServerError, "falha ao remover o contexto da cadeira: "+err.Error())
+					return
+				}
+				var outroPapelID int64
+				_ = a.st.db.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND id != ? LIMIT 1`, uidAlvo.Int64, linhaID).Scan(&outroPapelID)
+				if outroPapelID > 0 {
+					_, _ = a.st.db.Exec(`UPDATE sessoes SET papel_ativo_id = ? WHERE papel_ativo_id = ?`, outroPapelID, linhaID)
+				} else {
+					_, _ = a.st.db.Exec(`UPDATE sessoes SET papel_ativo_id = NULL WHERE papel_ativo_id = ?`, linhaID)
+				}
+			}
 		}
 	}
 	jsonOK(w, map[string]any{"ok": true})

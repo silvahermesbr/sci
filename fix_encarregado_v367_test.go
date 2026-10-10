@@ -43,12 +43,23 @@ func TestV367DisplaySyncIdaVolta(t *testing.T) {
 	}
 	designarViaAPI(t, app, ckGer, fMat, idComum, "titular")
 
+	// v1.6.0 Fase 3: a designação materializa a linha enc_material E o
+	// display-sync (que agora EXCLUI linhas enc) atualiza a linha de SISTEMA.
 	var fid int64
-	if err := st.db.QueryRow(`SELECT funcao_id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, idComum, gid).Scan(&fid); err != nil {
+	if err := st.db.QueryRow(`SELECT funcao_id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'operador'`, idComum, gid).Scan(&fid); err != nil {
 		t.Fatalf("ler funcao_id pós-designação: %v", err)
 	}
 	if fid != fMat {
 		t.Fatalf("R3 ida: funcao_id deve virar %d (enc_material), segue %d — stale nunca atualiza", fMat, fid)
+	}
+	// e a linha da cadeira materializada carrega a PRÓPRIA identidade (não é
+	// varrida pelo display-sync — cada linha do dropdown mostra a sua cadeira)
+	var fidEnc int64
+	if err := st.db.QueryRow(`SELECT COALESCE(funcao_id,0) FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'enc_material'`, idComum, gid).Scan(&fidEnc); err != nil {
+		t.Fatalf("Fase 3: designação devia materializar a linha enc_material: %v", err)
+	}
+	if fidEnc != fMat {
+		t.Fatalf("Fase 3: linha materializada devia carregar funcao_id=%d, veio %d", fMat, fidEnc)
 	}
 
 	// dropdown de contexto: funcao_nome do papel reflete a CADEIRA CERTA
@@ -77,7 +88,8 @@ func TestV367DisplaySyncIdaVolta(t *testing.T) {
 		t.Fatalf("R4: dropdown mostraria %q; esperado %q", fnome, nomeEsperado)
 	}
 
-	// volta: remover a designação → funcao_id da linha volta a NULL
+	// volta: remover a designação → funcao_id da linha de SISTEMA volta a NULL
+	// e a linha da cadeira (materializada na Fase 3) sai da conta
 	var memID int64
 	if err := st.db.QueryRow(`SELECT id FROM funcao_membros WHERE funcao_id = ? AND grupo_id = ? AND usuario_id = ?`, fMat, gid, idComum).Scan(&memID); err != nil {
 		t.Fatalf("designação não encontrada: %v", err)
@@ -86,16 +98,18 @@ func TestV367DisplaySyncIdaVolta(t *testing.T) {
 		t.Fatalf("remover designação: deve 200, veio %d", rr.Code)
 	}
 	var fidNull sql.NullInt64
-	if err := st.db.QueryRow(`SELECT funcao_id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, idComum, gid).Scan(&fidNull); err != nil {
+	if err := st.db.QueryRow(`SELECT funcao_id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'operador'`, idComum, gid).Scan(&fidNull); err != nil {
 		t.Fatalf("ler funcao_id pós-remoção: %v", err)
 	}
 	if fidNull.Valid {
 		t.Fatalf("R3 volta: funcao_id deveria ser NULL após remover a designação, segue %d", fidNull.Int64)
 	}
+	if n := f3ContaLinhas(t, st, `SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ? AND papel = 'enc_material'`, idComum); n != 0 {
+		t.Fatalf("Fase 3: remover a designação devia desmaterializar a linha enc_material (n=%d)", n)
+	}
 
-	// designado PURO (sem linha em usuario_papeis): a designação pela UI não
-	// inventa linha de SISTEMA (conta 'd2' sem nenhuma linha prévia) — a linha
-	// que surge é a da CADEIRA, materializada pela v45 (o estado legado)
+	// designado PURO (conta 'd2' sem nenhuma linha prévia): a designação pela
+	// UI MATERIALIZA a linha da CADEIRA (Fase 3) — nunca uma linha de SISTEMA
 	criaUsuarioTeste(t, st, "enc_puro_d1", "senha-p", "")
 	var idPuro int64
 	_ = st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'enc_puro_d1'`).Scan(&idPuro)
@@ -103,12 +117,11 @@ func TestV367DisplaySyncIdaVolta(t *testing.T) {
 	designarViaAPI(t, app, ckGer, fPess, idPuro, "titular")
 	var nLinhas int
 	_ = st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ?`, idPuro).Scan(&nLinhas)
-	if nLinhas != 0 {
-		t.Fatalf("R3: designado puro ganhou linha em usuario_papeis (n=%d) — sync inventou", nLinhas)
+	if nLinhas != 1 {
+		t.Fatalf("Fase 3: designado puro devia ganhar EXATAMENTE a linha da cadeira (n=%d)", nLinhas)
 	}
-	// e o poder do cargo vale para o designado puro QUANDO o contexto existe:
-	// a v45 materializa a cadeira e o login resolve a linha (contexto enc)
-	v45Reexecuta(t, st)
+	// e o poder do cargo vale para o designado puro: o login resolve a linha
+	// materializada (contexto enc)
 	ckPuro := loginAs(t, app, "enc_puro_d1", "senha-p")
 	if p := f2MePapel(t, app, ckPuro); p != "enc_pessoal" {
 		t.Fatalf("designado puro devia logar no CONTEXTO enc_pessoal, veio %q", p)

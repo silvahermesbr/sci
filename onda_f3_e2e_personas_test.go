@@ -143,9 +143,9 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 	if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
 		t.Fatalf("Gerente deve conseguir designar membro (200/201), veio %d", rr.Code)
 	}
-	// v1.6.0 Fase 2: a designação NOVA materializa no handler (Fase 3) — aqui a
-	// materialização é re-executada para o operador ganhar a linha de contexto;
-	// a troca é feita pelo dropdown (mesmo cookie).
+	// v1.6.0 Fase 3: a designação via API MATERIALIZA a linha de contexto no
+	// handler; a re-execução da v45 é cinto-e-suspensório idempotente. A troca
+	// para o contexto é a da UI (mesmo cookie).
 	v45Reexecuta(t, st)
 	var linhaEncOp int64
 	if err := st.db.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND papel = 'enc_pessoal'`, idOperador).Scan(&linhaEncOp); err != nil {
