@@ -9,16 +9,19 @@ package main
 // o login seguinte adotava essa linha como papel ATIVO da sessão e o portão
 // anti-escalação (papel do sistema trava) negava tudo ao designado.
 //
-// Cobertura:
-//   T1  Matriz completa de poder por designação (titular/auxiliar, pessoal/
-//       material, leitura/escrita, R4 remoção → 403 na mesma sessão).
+// Cobertura (atualizada na v1.6.0 Fase 2 — o PODER segue o CONTEXTO ATIVO,
+// linha materializada em usuario_papeis que a v45 criou):
+//   T1  Matriz completa de poder por designação MATERIALIZADA (titular/
+//       auxiliar, pessoal/material, leitura/escrita; R4: revogada a linha →
+//       403 na MESMA sessão e re-materializar não traz o poder de volta).
 //   T2  Cadeira de grupo legada SEM chave + designação → migrarV42 crava a
-//       chave e o poder passa a conceder (R3 sem SQL manual).
-//   T3  Papel de sistema trava (R5): operador designado segue 403; v42 NÃO
-//       destrava conta com operador real em usuarios.papel.
-//   T4  v42 destrava o estrangulado: linha-fantasia apagada, sessão presa
-//       solta (papel_ativo_id NULL), poder concedido na MESMA sessão;
-//       idempotente; sync novo não fabrica mais linha.
+//       chave, a v45 materializa e a MESMA sessão resolve o contexto.
+//   T3  Operador designado NO CONTEXTO operador é operador; a troca para a
+//       linha da cadeira abre o poder do cargo (sem vazar para a outra
+//       cadeira); v42 NÃO apaga papel REAL de operador.
+//   T4  Linha-fantasia 'operador' + sessão presa: com a fantasia ativa o
+//       designado é operador (403); v42 apaga a fantasia e a v45 devolve o
+//       CONTEXTO da cadeira à MESMA sessão; designação materializa 1 linha.
 
 import (
 	"encoding/json"
@@ -64,10 +67,48 @@ func designarViaAPI(t *testing.T, app *App, ckGer *http.Cookie, funcaoID, usuari
 	}
 }
 
+// revogaLinhaMaterializada: apaga a linha de papel ESPELHO da cadeira e
+// RE-CHAVEIA as sessões presas nela (para outra linha do usuário; se não há,
+// para NULL) — exatamente o que o hFuncaoMembrosDel passa a fazer na Fase 3,
+// no padrão do hUsuarioPapelDel. Idempotente: sem linha, no-op.
+// v1.6.0 Fase 2: prova que o PODER é do CONTEXTO (a linha), não da designação.
+func revogaLinhaMaterializada(t *testing.T, st *Store, usuarioID int64, papel string) {
+	t.Helper()
+	var linhas []int64
+	rows, err := st.db.Query(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND papel = ?`, usuarioID, papel)
+	if err != nil {
+		t.Fatalf("ler linhas %s do usuário %d: %v", papel, usuarioID, err)
+	}
+	for rows.Next() {
+		var id int64
+		if rows.Scan(&id) == nil {
+			linhas = append(linhas, id)
+		}
+	}
+	rows.Close()
+	for _, id := range linhas {
+		if _, err := st.db.Exec(`DELETE FROM usuario_papeis WHERE id = ? AND usuario_id = ?`, id, usuarioID); err != nil {
+			t.Fatalf("revogar linha %d: %v", id, err)
+		}
+		var outro int64
+		_ = st.db.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND id != ? LIMIT 1`, usuarioID, id).Scan(&outro)
+		if outro > 0 {
+			if _, err := st.db.Exec(`UPDATE sessoes SET papel_ativo_id = ? WHERE papel_ativo_id = ?`, outro, id); err != nil {
+				t.Fatalf("re-chavear sessões da linha %d: %v", id, err)
+			}
+		} else if _, err := st.db.Exec(`UPDATE sessoes SET papel_ativo_id = NULL WHERE papel_ativo_id = ?`, id); err != nil {
+			t.Fatalf("soltar sessões da linha %d: %v", id, err)
+		}
+	}
+}
+
 // TestEncMatrizPoderPorDesignacao (T1): matriz completa — sem designação 403;
 // titular e auxiliar de pessoal com leitura+escrita de pessoal (e NÃO material);
 // titular e auxiliar de material com leitura+escrita de material (e NÃO
-// pessoal); designação removida → 403 de novo na MESMA sessão (R4).
+// pessoal); designação revogada → 403 de novo na MESMA sessão (R4).
+// v1.6.0 Fase 2: o PODER segue o CONTEXTO ATIVO — a designação vale quando a
+// linha materializada existe (v45 materializa; Fase 3 sincroniza o handler) e
+// a sessão resolve o papel enc (re-key da migração ou troca no dropdown).
 func TestEncMatrizPoderPorDesignacao(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
@@ -85,8 +126,13 @@ func TestEncMatrizPoderPorDesignacao(t *testing.T) {
 		t.Fatalf("sem designação: POST /api/material/itens deve 403, veio %d", rr.Code)
 	}
 
-	// --- titular de PESSOAL designado pela UI: pessoal ok, material negado
+	// --- titular de PESSOAL: designação + MATERIALIZAÇÃO — a MESMA sessão
+	// (designado puro, papel_ativo_id NULL) é re-keyada pela v45 para o contexto
 	designarViaAPI(t, app, ckGer, fPess, idComum, "titular")
+	v45Reexecuta(t, st)
+	if p := f2MePapel(t, app, ck); p != "enc_pessoal" {
+		t.Fatalf("designado titular devia resolver o CONTEXTO enc_pessoal na mesma sessão, veio %q", p)
+	}
 	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "TITPESS", "nome_completo": "Titular Pessoal", "status": "ativo"}, ck); rr.Code != http.StatusOK {
 		t.Fatalf("enc pessoal titular: POST /api/pessoas deve 200, veio %d (%v)", rr.Code, res)
 	}
@@ -135,12 +181,16 @@ func TestEncMatrizPoderPorDesignacao(t *testing.T) {
 	_ = st.db.QueryRow(`SELECT id FROM usuarios WHERE login='enc_aux_m1'`).Scan(&idAux)
 	_, _ = st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, gid, idAux)
 	designarViaAPI(t, app, ckGer, fPess, idAux, "auxiliar")
+	v45Reexecuta(t, st)
 	ckAux := loginAs(t, app, "enc_aux_m1", "senha-y")
 	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "AUXPESS", "nome_completo": "Auxiliar Pessoal", "status": "ativo"}, ckAux); rr.Code != http.StatusOK {
 		t.Fatalf("enc pessoal auxiliar: POST /api/pessoas deve 200, veio %d", rr.Code)
 	}
 
-	// --- designação REMOVIDA → poder some na mesma sessão (R4)
+	// --- designação REMOVIDA → o PODER some na MESMA sessão (R4). A revogação
+	// real é do espelho: apagar a linha materializada (o que o del-sync da Fase 3
+	// faz) derruba o contexto — e re-materializar NÃO traz o poder de volta,
+	// porque a designação não existe mais.
 	var memID int64
 	if err := st.db.QueryRow(`SELECT id FROM funcao_membros WHERE funcao_id=? AND grupo_id=? AND usuario_id=?`, fPess, gid, idComum).Scan(&memID); err != nil {
 		t.Fatalf("designação do titular não encontrada: %v", err)
@@ -148,15 +198,24 @@ func TestEncMatrizPoderPorDesignacao(t *testing.T) {
 	if rr, _ := doJSONReq(app, "DELETE", "/api/grupo/funcoes/membros/"+idi(memID), nil, ckGer); rr.Code != http.StatusOK {
 		t.Fatalf("remover designação: deve 200, veio %d", rr.Code)
 	}
+	revogaLinhaMaterializada(t, st, idComum, "enc_pessoal")
 	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "PODERFOI", "nome_completo": "Poder Foi"}, ck); rr.Code != http.StatusForbidden {
-		t.Fatalf("R4: designação removida → POST /api/pessoas deve 403 na mesma sessão, veio %d", rr.Code)
+		t.Fatalf("R4: designação revogada → POST /api/pessoas deve 403 na mesma sessão, veio %d", rr.Code)
 	}
 	if rr, _ := doJSONReq(app, "GET", "/api/material/itens", nil, ck); rr.Code != http.StatusForbidden {
-		t.Fatalf("R4: designação removida → material segue 403, veio %d", rr.Code)
+		t.Fatalf("R4: designação revogada → material segue 403, veio %d", rr.Code)
+	}
+	v45Reexecuta(t, st)
+	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "PODERFOI2", "nome_completo": "Poder Nao Volta"}, ck); rr.Code != http.StatusForbidden {
+		t.Fatalf("R4: sem designação não há linha a materializar — segue 403, veio %d", rr.Code)
 	}
 
 	// --- titular e auxiliar de MATERIAL: leitura+escrita de material, pessoal negado
 	designarViaAPI(t, app, ckGer, fMat, idComum, "titular")
+	v45Reexecuta(t, st)
+	if p := f2MePapel(t, app, ck); p != "enc_material" {
+		t.Fatalf("designado em material devia resolver o CONTEXTO enc_material, veio %q", p)
+	}
 	if rr, res := doJSONReq(app, "POST", "/api/material/itens", map[string]any{"nome": "Item do Enc Mat", "status": "disponivel", "sensibilidade": "convencional"}, ck); rr.Code != http.StatusOK {
 		t.Fatalf("enc material titular: POST /api/material/itens deve 200, veio %d (%v)", rr.Code, res)
 	}
@@ -169,8 +228,11 @@ func TestEncMatrizPoderPorDesignacao(t *testing.T) {
 	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "MATNAOPESS", "nome_completo": "Mat Não Pessoal"}, ck); rr.Code != http.StatusForbidden {
 		t.Fatalf("enc material: pessoal deve 403, veio %d", rr.Code)
 	}
-	// auxiliar de material: mesmo poder
+	// auxiliar de material: mesmo poder — no CONTEXTO da cadeira (a sessão do
+	// aux estava no contexto enc_pessoal; a troca é a da UI, mesmo cookie)
 	designarViaAPI(t, app, ckGer, fMat, idAux, "auxiliar")
+	v45Reexecuta(t, st)
+	f2TrocaContexto(t, app, ckAux, f2LinhaPapel(t, st, idAux, "enc_material"))
 	if rr, _ := doJSONReq(app, "POST", "/api/material/itens", map[string]any{"nome": "Item do Aux Mat", "status": "disponivel", "sensibilidade": "convencional"}, ckAux); rr.Code != http.StatusOK {
 		t.Fatalf("enc material auxiliar: POST /api/material/itens deve 200, veio %d", rr.Code)
 	}
@@ -210,7 +272,13 @@ func TestEncFuncaoSemChaveGanhaPoderAposV42(t *testing.T) {
 		t.Fatalf("migrarV42: %v", err)
 	}
 
-	// DEPOIS: poder concedido na MESMA sessão (UsuarioDaSessao relê a cada request)
+	// DEPOIS: a v42 crava a chave e REAPONTA a designação; a v45 MATERIALIZA a
+	// cadeira e re-chaveia a MESMA sessão (designado puro, papel_ativo_id NULL
+	// → 1ª linha enc) — o poder concede sem re-login (UsuarioDaSessao relê).
+	v45Reexecuta(t, st)
+	if p := f2MePapel(t, app, ck); p != "enc_pessoal" {
+		t.Fatalf("pós-v42+v45: designado devia resolver o CONTEXTO enc_pessoal na mesma sessão, veio %q", p)
+	}
 	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "DEPOIS42", "nome_completo": "Depois 42", "status": "ativo"}, ck); rr.Code != http.StatusOK {
 		t.Fatalf("depois da v42: POST /api/pessoas deve 200, veio %d (%v)", rr.Code, res)
 	}
@@ -237,11 +305,12 @@ func TestEncFuncaoSemChaveGanhaPoderAposV42(t *testing.T) {
 	}
 }
 
-// TestEncPapelSistemaDesignadoTemPoder (T3, v367): doutrina NOVA — o CARGO manda:
-// operador designado na cadeira exerce o poder (revoga o trava da v366, paliativo
-// do bug-fantasia morto na fonte); operador SEM designação segue sem poder;
-// designação em UMA cadeira não vaza para a outra; v42 NÃO apaga papel REAL de
-// operador (a linha em usuario_papeis é a cadeira do sistema, não fantasia).
+// TestEncPapelSistemaDesignadoTemPoder (T3, v367): o CARGO concede quando o
+// CONTEXTO dele está ativo (v1.6.0 Fase 2): operador designado NO CONTEXTO
+// operador é operador (sem poder do cargo); trocando para a linha da cadeira o
+// poder abre — e a designação em UMA cadeira não vaza para a outra. Operador
+// SEM designação segue sem poder; v42 NÃO apaga papel REAL de operador (a linha
+// em usuario_papeis é a cadeira do sistema, não fantasia).
 func TestEncPapelSistemaDesignadoTemPoder(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
@@ -261,22 +330,41 @@ func TestEncPapelSistemaDesignadoTemPoder(t *testing.T) {
 		t.Fatalf("operador sem designação: rota de cargo do material deve 403, veio %d", rr.Code)
 	}
 
-	// designado em enc_pessoal: poder do cargo na MESMA sessão (papel segue 'operador')
+	// designado em enc_pessoal: a linha materializa DEPOIS da do sistema
+	// (ORDER BY id) → o login default CONTINUA 'operador' e, nele, operador é
+	// operador — o poder do cargo NÃO vaza para o contexto errado.
 	designarViaAPI(t, app, ckGerM3, fPess, idOp, "titular")
+	v45Reexecuta(t, st)
+	if p := f2MePapel(t, app, ck); p != "operador" {
+		t.Fatalf("contexto default devia continuar 'operador' (linha de sistema nasceu antes), veio %q", p)
+	}
+	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "OPCTXOP", "nome_completo": "Operador No Contexto Operador"}, ck); rr.Code != http.StatusForbidden {
+		t.Fatalf("Fase 2: no CONTEXTO operador, POST /api/pessoas deve 403, veio %d", rr.Code)
+	}
+
+	// troca de contexto para a cadeira (dropdown) → o poder do cargo abre
+	f2TrocaContexto(t, app, ck, f2LinhaPapel(t, st, idOp, "enc_pessoal"))
 	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "OPCARGO", "nome_completo": "Operador Com Cargo", "status": "ativo"}, ck); rr.Code != http.StatusOK {
-		t.Fatalf("v367: operador designado enc_pessoal deve 200, veio %d (%v)", rr.Code, res)
+		t.Fatalf("contexto enc_pessoal: operador designado deve 200 em pessoal, veio %d (%v)", rr.Code, res)
 	}
 	if rr, _ := doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": gid, "setor_id": 0, "encarregado_id": 0, "auxiliar_encarregado_id": 0}, ck); rr.Code != http.StatusForbidden {
 		t.Fatalf("designado SÓ em enc_pessoal: rota de cargo do material deve 403, veio %d", rr.Code)
 	}
 
-	// designado TAMBÉM em enc_material (auxiliar): rota de cargo do material passa
+	// designado TAMBÉM em enc_material (auxiliar): no CONTEXTO enc_material a
+	// rota de cargo do material passa — e a pessoal fecha de novo
 	designarViaAPI(t, app, ckGerM3, fMat, idOp, "auxiliar")
+	v45Reexecuta(t, st)
+	f2TrocaContexto(t, app, ck, f2LinhaPapel(t, st, idOp, "enc_material"))
 	if rr, res := doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": gid, "setor_id": 0, "encarregado_id": 0, "auxiliar_encarregado_id": 0}, ck); rr.Code != http.StatusOK {
-		t.Fatalf("v367: operador designado enc_material deve 200 na rota de cargo, veio %d (%v)", rr.Code, res)
+		t.Fatalf("contexto enc_material: rota de cargo deve 200, veio %d (%v)", rr.Code, res)
+	}
+	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "MATNAOPESS3", "nome_completo": "Mat Não Pessoal 3"}, ck); rr.Code != http.StatusForbidden {
+		t.Fatalf("contexto enc_material: pessoal deve 403, veio %d", rr.Code)
 	}
 
-	// a v42 não apaga papel REAL de operador (não é fantasia)
+	// a v42 não apaga papel REAL de operador (não é fantasia) — e o login
+	// seguinte nasce NO CONTEXTO operador; a cadeira segue disponível no dropdown
 	if _, err := st.db.Exec(`DELETE FROM schema_migrations WHERE versao = 42`); err != nil {
 		t.Fatalf("resetar marcador v42: %v", err)
 	}
@@ -289,63 +377,69 @@ func TestEncPapelSistemaDesignadoTemPoder(t *testing.T) {
 		t.Fatalf("v42 apagou papel REAL de operador (n=%d) — regressão", n)
 	}
 	ck2 := loginAs(t, app, "enc_op_m3", "senha-op")
+	if p := f2MePapel(t, app, ck2); p != "operador" {
+		t.Fatalf("pós-v42: login devia nascer no CONTEXTO operador, veio %q", p)
+	}
+	f2TrocaContexto(t, app, ck2, f2LinhaPapel(t, st, idOp, "enc_pessoal"))
 	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "OPCARGO2", "nome_completo": "Operador Com Cargo 2", "status": "ativo"}, ck2); rr.Code != http.StatusOK {
-		t.Fatalf("v367: após v42 operador designado segue com o poder do cargo, veio %d", rr.Code)
+		t.Fatalf("pós-v42: o contexto enc_pessoal segue concedendo o poder do cargo, veio %d", rr.Code)
 	}
 }
 
-// TestEncV42DestravaFantasiaESoltaSessao (T4): o estado exato que o bug de
-// produção deixava no banco — designado sem papel + linha-fantasia
-// usuario_papeis('operador') + sessão presa nela — migra para o estado são:
-// fantasia apagada, sessão com papel_ativo_id NULL, poder concedido na mesma
-// sessão. E o sync NOVO não fabrica mais linha.
+// TestEncV42DestravaFantasiaESoltaSessao (T4): o estado que o bug de produção
+// deixava no banco — designado sem papel + linha-fantasia usuario_papeis
+// ('operador') + sessão presa nela. v1.6.0 Fase 2: com a fantasia ativa o
+// designado É operador — a cadeira não está ativa e o poder NÃO vale (a
+// segregação por contexto é exatamente essa); a v42 apaga a fantasia, solta a
+// sessão e a v45 devolve o CONTEXTO da cadeira À MESMA sessão.
 func TestEncV42DestravaFantasiaESoltaSessao(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
 	gid, fPess, _, _, idComum, ckGer := encSetupBase(t, app, st, "m4")
 
-	// designação pela UI NOVA (sync não fabrica mais linha em usuario_papeis)
-	designarViaAPI(t, app, ckGer, fPess, idComum, "titular")
-	var nLinha int
-	_ = st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ?`, idComum).Scan(&nLinha)
-	if nLinha != 0 {
-		t.Fatalf("sync novo fabricou linha em usuario_papeis (n=%d) — regressão do bug", nLinha)
-	}
-
-	// reconstrói o estrago legado: fantasia 'operador' + sessão presa nela
+	// fantasia ANTES de tudo: a linha menor é a que o login resolve (ORDER BY id)
 	var fantasiaID int64
 	if err := st.db.QueryRow(`INSERT INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?, ?, 'operador', ?) RETURNING id`, idComum, gid, fPess).Scan(&fantasiaID); err != nil {
 		t.Fatalf("semear fantasia: %v", err)
 	}
-	ck := loginAs(t, app, "enc_comum_m4", "senha-x") // sessão pega a fantasia (única linha)
-	// v367: MESMO com a fantasia ativa (papel 'operador' na sessão), o designado
-	// EXERCE o poder — a v366 travava aqui (403); o cargo manda sobre o papel.
-	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "PRESO", "nome_completo": "Designado Preso", "status": "ativo"}, ck); rr.Code != http.StatusOK {
-		t.Fatalf("v367: designado com fantasia ativa deve exercer o poder (200), veio %d (%v)", rr.Code, res)
+
+	// designação pela UI + materialização da cadeira (v45 materializa o legado;
+	// a Fase 3 sincroniza o handler — em ambos os estados resta EXATAMENTE 1
+	// linha enc além da fantasia)
+	designarViaAPI(t, app, ckGer, fPess, idComum, "titular")
+	v45Reexecuta(t, st)
+	var nEnc int
+	_ = st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ? AND papel = 'enc_pessoal'`, idComum).Scan(&nEnc)
+	if nEnc != 1 {
+		t.Fatalf("designação devia materializar EXATAMENTE 1 linha enc_pessoal (n=%d)", nEnc)
 	}
 
-	// upgrade: v42 destrava
+	// sessão pega a FANTASIA (linha de id menor — a mesma prioridade do login
+	// real): no contexto 'operador' o designado é operador, sem poder do cargo
+	ck := loginAs(t, app, "enc_comum_m4", "senha-x")
+	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "PRESO", "nome_completo": "Designado Preso"}, ck); rr.Code != http.StatusForbidden {
+		t.Fatalf("Fase 2: com a fantasia 'operador' ativa o cargo NÃO vale (403), veio %d", rr.Code)
+	}
+
+	// upgrade: v42 destrava (apaga a fantasia, solta a sessão)…
 	if _, err := st.db.Exec(`DELETE FROM schema_migrations WHERE versao = 42`); err != nil {
 		t.Fatalf("resetar marcador v42: %v", err)
 	}
 	if err := st.migrarV42(); err != nil {
 		t.Fatalf("migrarV42: %v", err)
 	}
+	var nLinha int
 	_ = st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE id = ?`, fantasiaID).Scan(&nLinha)
 	if nLinha != 0 {
 		t.Fatalf("v42 não apagou a linha-fantasia (n=%d)", nLinha)
 	}
-	// mesma sessão: solta (papel_ativo_id NULL) + poder concedido
+	// …e a v45 devolve o CONTEXTO da cadeira À MESMA sessão (re-key NULL→enc)
+	v45Reexecuta(t, st)
+	if p := f2MePapel(t, app, ck); p != "enc_pessoal" {
+		t.Fatalf("pós-v42+v45: a mesma sessão devia resolver 'enc_pessoal', veio %q", p)
+	}
 	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "SOLTO", "nome_completo": "Designado Solto", "status": "ativo"}, ck); rr.Code != http.StatusOK {
 		t.Fatalf("pós-v42: designado destravado deve 200, veio %d (%v)", rr.Code, res)
-	}
-	_, resMe := doJSONReq(app, "GET", "/api/me", nil, ck)
-	uMap, _ := resMe["usuario"].(map[string]any)
-	if uMap == nil {
-		t.Fatalf("/api/me sem usuario pós-v42: %v", resMe)
-	}
-	if p, _ := uMap["papel"].(string); p != "" {
-		t.Fatalf("pós-v42: papel da sessão do designado deve ser vazio, veio %q", p)
 	}
 	// gerente (linha usuario_papeis 'gerente' legítima) NÃO é tocado
 	var nGer int

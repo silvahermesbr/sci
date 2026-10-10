@@ -267,6 +267,9 @@ func TestConcorrenciaFecharDuploSessoesDistintas(t *testing.T) {
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fEnc, gidDe(t, st), uidC); err != nil {
 		t.Fatalf("designar ger_conc_c: %v", err)
 	}
+	// v1.6.0 Fase 2: fechar é do CONTEXTO gerente/enc_pessoal — a designação
+	// semeda é MATERIALIZADA pela v45 e a sessão B nasce no contexto enc.
+	v45Reexecuta(t, st)
 	tokB := vinculaGrupoDoLogin(t, app, st, "ger_conc_c", gidDe(t, st))
 
 	var confID int64

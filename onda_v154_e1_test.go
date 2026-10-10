@@ -295,6 +295,10 @@ func TestE1R10PapelAddFailClosed(t *testing.T) {
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fid, gidA, uidEnc); err != nil {
 		t.Fatalf("designar enc: %v", err)
 	}
+	// v1.6.0 Fase 2: o enc gere papéis pelo CONTEXTO 'enc_pessoal' — a
+	// designação semeda é MATERIALIZADA pela v45; com a única linha da conta
+	// sendo a da cadeira, o login do enc_add resolve o contexto enc.
+	v45Reexecuta(t, st)
 	ckEnc := loginAs(t, app, "enc_add", "senha-gerente")
 
 	criaUsuarioTeste(t, st, "alvo_add", "senha-gerente", "operador")

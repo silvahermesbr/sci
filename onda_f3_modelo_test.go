@@ -100,6 +100,9 @@ func TestF3AuxiliarEncPessoalTemPoderGestaoPessoal(t *testing.T) {
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?, ?, ?, 'auxiliar')`, fEnc, gid, uid); err != nil {
 		t.Fatalf("designar auxiliar: %v", err)
 	}
+	// v1.6.0 Fase 2: o PODER segue o CONTEXTO — designação semeda é
+	// MATERIALIZADA pela v45 e o login resolve a linha (papel='enc_pessoal').
+	v45Reexecuta(t, st)
 
 	ck := loginAs(t, app, "f3aux_pess", "senha-aux")
 
@@ -148,6 +151,9 @@ func TestF3EncMaterialAcessaMaterialENaoPessoal(t *testing.T) {
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?, ?, ?, 'auxiliar')`, fMat, gid, uidAux); err != nil {
 		t.Fatalf("designar auxiliar material: %v", err)
 	}
+	// v1.6.0 Fase 2: material é CONTEXTO — designações semedas MATERIALIZADAS
+	// pela v45; os logins resolvem papel='enc_material'.
+	v45Reexecuta(t, st)
 
 	ckTit := loginAs(t, app, "f3tit_mat", "senha-mat")
 	ckAux := loginAs(t, app, "f3aux_mat", "senha-mat-aux")

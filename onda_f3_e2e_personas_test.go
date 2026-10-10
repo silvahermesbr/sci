@@ -71,6 +71,11 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 		t.Fatalf("designar aux mat: %v", err)
 	}
 
+	// v1.6.0 Fase 2: os PODERES seguem o CONTEXTO ATIVO — as designações semedas
+	// são MATERIALIZADAS pela v45 e os logins dos designados resolvem a linha
+	// (enc_pessoal/enc_material). Operador/chefe mantêm o contexto do papel.
+	v45Reexecuta(t, st)
+
 	// Login das personas
 	ckAdmin := loginAs(t, app, "e2e_admin", "senha")
 	ckGerente := loginAs(t, app, "e2e_gerente", "senha")
@@ -137,6 +142,18 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 	rr, _ = doJSONReq(app, "POST", "/api/grupo/funcoes/membros", map[string]any{"funcao_id": fPess, "usuario_id": idOperador, "titularidade": "auxiliar"}, ckGerente)
 	if rr.Code != http.StatusOK && rr.Code != http.StatusCreated {
 		t.Fatalf("Gerente deve conseguir designar membro (200/201), veio %d", rr.Code)
+	}
+	// v1.6.0 Fase 2: a designação NOVA materializa no handler (Fase 3) — aqui a
+	// materialização é re-executada para o operador ganhar a linha de contexto;
+	// a troca é feita pelo dropdown (mesmo cookie).
+	v45Reexecuta(t, st)
+	var linhaEncOp int64
+	if err := st.db.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? AND papel = 'enc_pessoal'`, idOperador).Scan(&linhaEncOp); err != nil {
+		t.Fatalf("linha enc_pessoal do operador materializada: %v", err)
+	}
+	f2TrocaContexto(t, app, ckOperador, linhaEncOp)
+	if p := f2MePapel(t, app, ckOperador); p != "enc_pessoal" {
+		t.Fatalf("operador pós-troca devia estar no CONTEXTO enc_pessoal, veio %q", p)
 	}
 
 	// ==========================================
@@ -211,11 +228,11 @@ func TestF3E2EPersonasEMatrizPermissoes(t *testing.T) {
 	}
 
 	// ==========================================
-	// PERSONA 6: Operador & Chefe de Setor (doutrina v367)
-	// O Operador FOI designado AUXILIAR de Enc. Pessoal no setup (linha do
-	// ckGerente) — v367: designação manda em qualquer papel, então ele TEM
-	// gestão de pessoal. O Chefe de Setor NÃO tem designação → segue 403
-	// (fail-closed preservado).
+	// PERSONA 6: Operador & Chefe de Setor (v1.6.0 Fase 2)
+	// O Operador FOI designado AUXILIAR de Enc. Pessoal pelo gerente e TROCOU
+	// para o CONTEXTO enc_pessoal (dropdown) — no contexto enc ele TEM gestão
+	// de pessoal; no contexto operador seria operador do setor. O Chefe de
+	// Setor NÃO tem designação → segue 403 (fail-closed preservado).
 	// ==========================================
 	// Operador (aux de enc_pessoal designado): conferência 200...
 	rr, _ = doJSONReq(app, "GET", "/api/conferencias/hoje", nil, ckOperador)

@@ -48,6 +48,9 @@ func TestR3DesignacaoEncarregado(t *testing.T) {
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fEnc, gid, uid); err != nil {
 		t.Fatalf("designar encarregado: %v", err)
 	}
+	// v1.6.0 Fase 2: o poder é do CONTEXTO — a designação semeda é MATERIALIZADA
+	// pela v45 e o login resolve a linha (papel='enc_pessoal').
+	v45Reexecuta(t, st)
 
 	ck := loginAs(t, app, "r3enc01", "senha-r3")
 
@@ -117,6 +120,8 @@ func TestR3DesignacaoAuxiliar(t *testing.T) {
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'auxiliar')`, fAux, gid, uid); err != nil {
 		t.Fatalf("designar auxiliar: %v", err)
 	}
+	// v1.6.0 Fase 2: materialização da designação (mesma doutrina do (a)).
+	v45Reexecuta(t, st)
 
 	ck := loginAs(t, app, "r3aux01", "senha-r3")
 

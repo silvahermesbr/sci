@@ -69,6 +69,10 @@ func TestGap1_DesignacaoPeloEncarregado(t *testing.T) {
 	if err := st.db.QueryRow(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?, ?, ?, 'titular') RETURNING id`, fPess, gid, idEnc).Scan(&idDesigEncPess); err != nil {
 		t.Fatalf("designar encarregado: %v", err)
 	}
+	// v1.6.0 Fase 2: o poder de designar é do CONTEXTO 'enc_pessoal' ativo — a
+	// designação semeda é MATERIALIZADA pela v45 e o login do gap1_enc resolve
+	// a linha (solicitante no CONTEXTO enc_pessoal, não no papel vazio).
+	v45Reexecuta(t, st)
 
 	// 6. Logins (ÚLTIMO passo de cada persona)
 	ckEnc := loginAs(t, app, "gap1_enc", "senha-enc")

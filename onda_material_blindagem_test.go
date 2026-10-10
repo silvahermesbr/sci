@@ -39,6 +39,10 @@ func setupPersonasMaterial(t *testing.T, app *App, st *Store) (
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?, ?, ?, 'titular')`, fMat, gidA, uidEnc); err != nil {
 		t.Fatalf("designar enc_mat_a: %v", err)
 	}
+	// v1.6.0 Fase 2: enc_mat agora é CONTEXTO — a designação semeda é
+	// MATERIALIZADA pela v45 e o login resolve a linha (papel='enc_material';
+	// poderes do material iguais, pessoais/conferência seguem fechados).
+	v45Reexecuta(t, st)
 	encACk = loginAs(t, app, "enc_mat_a", "senha123")
 
 	// Criar operador do Grupo A

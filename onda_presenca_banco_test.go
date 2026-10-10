@@ -50,6 +50,10 @@ func ondaPresencaBancoSetup(t *testing.T, app *App, st *Store) (gid, gidFora, p1
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'auxiliar')`, fEnc, gid, auxP_ID); err != nil {
 		t.Fatalf("designar aux01_p: %v", err)
 	}
+	// v1.6.0 Fase 2: o PODER segue o CONTEXTO ATIVO — a designação semeda é
+	// MATERIALIZADA pela v45 e os logins de enc01_p/aux01_p resolvem a linha
+	// (contexto enc_pessoal).
+	v45Reexecuta(t, st)
 	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login IN ('ger01_p','chefe01_p','op01_p')`, gid); err != nil {
 		t.Fatalf("vincular usuarios gid: %v", err)
 	}

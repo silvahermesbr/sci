@@ -51,36 +51,61 @@ function funcaoNomeContem(u, agulha) {
   return u.funcao_nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(agulha);
 }
 
+// v1.6.0 Fase 2 (poderes seguem o CONTEXTO ATIVO): os gestores derivam do
+// PAPEL ATIVO da sessão (ME.papel — a linha materializada em usuario_papeis
+// que a migração v45 criou para o legado e a designação sincroniza). O
+// fallback heurístico por funcoes_grupo/nome fica APENAS para papel vazio
+// (sessão legada pré-v45): com papel ativo, cargo NÃO acrescenta mais — quem
+// tem os dois contextos troca no dropdown (POST /api/sessao/contexto).
+
+// cadeiraLegadoDePapel: deriva o CONTEXTO ('enc_pessoal'/'enc_material') para
+// sessão de papel vazio. Pela chave imutável quando há catálogo; com as duas
+// cadeiras, enc_pessoal vence (conferência > material); sem catálogo (pré-key),
+// o nome da função decide — 'material' antes do genérico 'encarregado'.
+function cadeiraLegadoDePapel(u) {
+  if (!u) return '';
+  const ch = Array.isArray(u.funcoes_grupo) ? u.funcoes_grupo : null;
+  const temChave = k => !!ch && ch.some(f => f && f.chave === k);
+  if (temChave('enc_pessoal')) return 'enc_pessoal';
+  if (temChave('enc_material')) return 'enc_material';
+  if (ch) return ''; // com catálogo de cadeiras, chave ausente = não é enc
+  if (funcaoNomeContem(u, 'material')) return 'enc_material';
+  if (funcaoNomeContem(u, 'encarregado') || funcaoNomeContem(u, 'pessoal') || funcaoNomeContem(u, 'auxiliar')) return 'enc_pessoal';
+  return '';
+}
+
 function ehEncPessoalUsuario(u) {
   if (!u) return false;
-  if (Array.isArray(u.funcoes_grupo)) {
-    return u.funcoes_grupo.some(f => f && f.chave === 'enc_pessoal');
-  }
-  return funcaoNomeContem(u, 'pessoal') || funcaoNomeContem(u, 'encarregado') || funcaoNomeContem(u, 'auxiliar');
+  if (u.papel === 'enc_pessoal') return true;
+  if (u.papel) return false; // contexto ativo manda — cargo não acrescenta
+  return cadeiraLegadoDePapel(u) === 'enc_pessoal';
 }
 
 function ehEncMaterialUsuario(u) {
   if (!u) return false;
-  if (Array.isArray(u.funcoes_grupo)) {
-    return u.funcoes_grupo.some(f => f && f.chave === 'enc_material');
-  }
-  return funcaoNomeContem(u, 'material');
+  if (u.papel === 'enc_material') return true;
+  if (u.papel) return false; // contexto ativo manda — cargo não acrescenta
+  return cadeiraLegadoDePapel(u) === 'enc_material';
 }
 
-// v367: papel de sistema NÃO é mais apagado pelo cargo — conta 'operador' com
-// cadeira enc_* mantém papel 'operador' (rótulo OPERADOR); a sidebar ACRESCENTA
-// os módulos do cargo e os gestores derivam de funcoes_grupo, não do papel.
-// A derivação papel-conf 'encarregado' resta só para conta SEM papel do sistema.
+// v367: papel de sistema NÃO é mais apagado pelo cargo. v1.6.0 Fase 2: a
+// derivação legada de papel vazio NÃO produz mais o genérico 'encarregado' —
+// produz o CONTEXTO da cadeira ('enc_pessoal' vence quando as duas existem),
+// que tem ramos próprios na sidebar (montarShell) e nos portões do rotear.
 function definirUsuario(u) {
-  if (u && !u.papel && (ehEncPessoalUsuario(u) || ehEncMaterialUsuario(u))) {
-    u.papel = 'encarregado';
+  if (u && !u.papel) {
+    const legado = cadeiraLegadoDePapel(u);
+    if (legado) u.papel = legado;
   }
   ME = u; window.SCI_ME = u; window.ME = u;
   window.ehEncPessoal = () => ehEncPessoalUsuario(ME);
   window.ehEncMaterial = () => ehEncMaterialUsuario(ME);
   window.gestorPessoal = () => !!(ME && (ME.papel === 'gerente' || (window.ehEncPessoal && window.ehEncPessoal())));
   window.gestorMaterial = () => !!(ME && (ME.papel === 'gerente' || (window.ehEncMaterial && window.ehEncMaterial())));
-  window.ehEncarregado = () => !!(ME && (ME.papel === 'encarregado' || (window.ehEncPessoal && window.ehEncPessoal()) || (window.ehEncMaterial && window.ehEncMaterial())));
+  // v1.6.0 Fase 2: ehEncarregado NÃO mistura mais enc_material — é só o
+  // contexto 'enc_pessoal' (o string legado 'encarregado' ainda passa para
+  // sessões antigas em memória). O módulo do material é do contexto enc_material.
+  window.ehEncarregado = () => !!(ME && (ME.papel === 'encarregado' || ME.papel === 'enc_pessoal'));
 }
 window.definirUsuario = definirUsuario;
 
@@ -682,43 +707,41 @@ definirUsuario(usuario);
     const svgMaterial = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
     const svgPerfil = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
     if (papel === 'operador') {
-      // v367: o papel de sistema dá a BASE e o CARGO (funcoes_grupo) ACRESCENTA
-      // módulos — encarregado designado não perde os itens do operador, ganha
-      // os do enc_pessoal/enc_material. Sem designação, sidebar igual à de antes.
+      // v1.6.0 Fase 2: o papel de sistema dá a BASE e pronto — o CARGO (cadeira
+      // enc_*) virou CONTEXTO separado no dropdown; quem tem os dois contextos
+      // troca e a sidebar remonta pelo papel ativo (sem acréscimo por cargo).
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
         ['#/hoje', 'CONFERÊNCIA', svgConf]
       ];
-      const mapaOp = new Map();
-      const addItemOp = (rota, rotulo, svg, extra) => {
-        if (!mapaOp.has(rota)) mapaOp.set(rota, [rota, rotulo, svg, extra]);
-      };
-      if (window.ehEncPessoal && window.ehEncPessoal()) {
-        addItemOp('#/pessoal', 'PESSOAL', svgPes);
-      }
-      if (window.ehEncMaterial && window.ehEncMaterial()) {
-        addItemOp('#/material', 'MATERIAL', svgMaterial);
-      }
-      if (mapaOp.size > 0) itens = itens.concat(Array.from(mapaOp.values()));
     } else if (papel === 'chefe_setor') {
-      // v367: mesma composição base+cargo do operador.
+      // v1.6.0 Fase 2: mesma doutrina do operador — chefia sem acréscimo por cargo.
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
         ['#/mensagens', 'EMAIL INTERNO', svgMsg, true]
       ];
-      const mapaCs = new Map();
-      const addItemCs = (rota, rotulo, svg, extra) => {
-        if (!mapaCs.has(rota)) mapaCs.set(rota, [rota, rotulo, svg, extra]);
-      };
-      if (window.ehEncPessoal && window.ehEncPessoal()) {
-        addItemCs('#/pessoal', 'PESSOAL', svgPes);
-      }
-      if (window.ehEncMaterial && window.ehEncMaterial()) {
-        addItemCs('#/material', 'MATERIAL', svgMaterial);
-      }
-      if (mapaCs.size > 0) itens = itens.concat(Array.from(mapaCs.values()));
+    } else if (papel === 'enc_pessoal') {
+      // v1.6.0 Fase 2: contexto PRÓPRIO do encarregado de pessoal (linha
+      // materializada ativa) — CONFERÊNCIA (régua de gerente) + PESSOAL.
+      // Encarregado NUNCA vê GERENCIAR GRUPO (#/grupos); material é do
+      // contexto enc_material (troca no dropdown).
+      itens = [
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
+        ['#/hoje', 'CONFERÊNCIA', svgConf],
+        ['#/pessoal', 'PESSOAL', svgPes],
+        ['#/relatorios', 'RELATÓRIOS', svgRel],
+        ['#/perfil', 'MEU PERFIL', svgPerfil]
+      ];
+    } else if (papel === 'enc_material') {
+      // v1.6.0 Fase 2: contexto PRÓPRIO do encarregado de material — SÓ o
+      // módulo MATERIAL (sem conferência, nem pessoal; fase 6 endurece o servidor).
+      itens = [
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
+        ['#/material', 'MATERIAL', svgMaterial],
+        ['#/perfil', 'MEU PERFIL', svgPerfil]
+      ];
     } else if (papel === 'gerente') {
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
@@ -731,7 +754,10 @@ definirUsuario(usuario);
         ['#/relatorios', 'RELATÓRIOS', svgRel]
       ];
     } else if (window.ehEncarregado && window.ehEncarregado()) {
-      // f3: lógica composável para encarregados (pessoal e/ou material).
+      // LEGADO (v1.6.0 Fase 2): ramo composto só alcança sessão com o string
+      // antigo 'encarregado' em ME.papel — a derivação nova converte papel
+      // vazio nos contextos enc_pessoal/enc_material (ramos acima). Mantido
+      // apenas para não engolir sessão legada em memória.
       // Encarregado NUNCA vê GERENCIAR GRUPO (#/grupos).
       // Correção Diretor: TODOS têm leitura do MURAL DE AVISOS (no topo).
       const mapa = new Map();
@@ -1136,15 +1162,16 @@ function rotear() {
   // chefe de setor não tem relatórios.
   if (h === '#/drive' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
   if (h === '#/mensagens' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
-  // ordem 06/10 (P4): relatórios liberados ao encarregado/auxiliar de pessoal
-  // (o servidor já aceita a função nos dados do grupo; mesmo escopo do gerente)
-  // fix 09/10: gestorPessoal() cobre o designado puro (sem papel-conf exigido).
+  // ordem 06/10 (P4) · v1.6.0 Fase 2: relatórios = gerente OU CONTEXTO
+  // 'enc_pessoal' ativo (gestorPessoal agora deriva do papel ativo — o cargo
+  // sozinho não abre mais; quem tem a cadeira troca no dropdown).
   if (h === '#/relatorios' && papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal())) { chamarView('ViewSemModulo'); return; }
-  // Onda 10/10 — portão do módulo Conferência (#/hoje e #/conferencia):
-  // liberado para gerente, operador, chefe_setor e encarregado de pessoal;
-  // admin, encarregado de material puro e conta sem função são barrados.
+  // Onda 10/10 · v1.6.0 Fase 2 — portão do módulo Conferência (#/hoje e
+  // #/conferencia): liberado para gerente, operador, chefe_setor e contexto
+  // 'enc_pessoal' ATIVO; admin, contexto 'enc_material' e conta sem função
+  // são barrados (fase 6 endurece o servidor na leitura).
   if (h === '#/hoje' || h === '#/conferencia') {
-    const podeConf = ['gerente', 'operador', 'chefe_setor'].includes(papel) || !!(window.ehEncPessoal && window.ehEncPessoal());
+    const podeConf = ['gerente', 'operador', 'chefe_setor'].includes(papel) || papel === 'enc_pessoal';
     if (!podeConf) { chamarView('ViewSemModulo'); return; }
   }
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
@@ -1156,10 +1183,10 @@ function rotear() {
   if (h === '#/drive') { chamarView('ViewDrive'); return; }
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
   if (h === '#/material') {
-    // fix 09/10 (encarregado de material): gerente OU designado enc_material —
-    // gestorMaterial() espelha o authMaterial do servidor (detecta por chave;
-    // v367: designado COM papel de sistema incluído — funcoes_grupo, não papel).
-    if (papel === 'gerente' || (window.gestorMaterial && window.gestorMaterial())) chamarView('ViewMaterial');
+    // v1.6.0 Fase 2: gerente OU CONTEXTO 'enc_material' ativo — espelha o
+    // authMaterial do servidor (u.Papel == 'enc_material', linha materializada).
+    // No contexto operador/chefe/enc_pessoal o mesmo usuário NÃO passa.
+    if (papel === 'gerente' || papel === 'enc_material') chamarView('ViewMaterial');
     else chamarView('ViewSemModulo');
     return;
   }
@@ -1179,10 +1206,10 @@ function rotear() {
     return;
   }
   if (h === '#/pessoal') {
-    // módulo Pessoal (f2): gerente OU encarregado/auxiliar de pessoal —
-    // fix 09/10: gestorPessoal() cobre o designado puro (funcoes_grupo com
-    // chave enc_pessoal) sem exigir papel-conf; servidor valida de novo.
-    if (papel === 'gerente' || window.gestorPessoal && window.gestorPessoal()) chamarView('ViewPessoal');
+    // módulo Pessoal (f2) · v1.6.0 Fase 2: gerente OU CONTEXTO 'enc_pessoal'
+    // ativo (podeGestaoPessoal do servidor agora é u.Papel == 'enc_pessoal');
+    // servidor valida de novo.
+    if (papel === 'gerente' || papel === 'enc_pessoal') chamarView('ViewPessoal');
     else irPara(rotaInicial());
     return;
   }

@@ -732,6 +732,10 @@ func TestE2ArquivarDescartarSomenteGerenteEnc(t *testing.T) {
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fEnc, g, uidEnc); err != nil {
 		t.Fatalf("designar enc: %v", err)
 	}
+	// v1.6.0 Fase 2: arquivar/descartar é do CONTEXTO — a designação semeda é
+	// MATERIALIZADA pela v45; como a linha 'operador' da conta nasceu antes
+	// (ORDER BY id), o e2r8_enc TROCA para a linha da cadeira no dropdown.
+	v45Reexecuta(t, st)
 
 	ckGer := loginAs(t, app, "e2r8_ger", "senha-g")
 	ckOp := loginAs(t, app, "e2r8_op", "senha-o")
@@ -778,7 +782,9 @@ func TestE2ArquivarDescartarSomenteGerenteEnc(t *testing.T) {
 		t.Fatalf("operador descartou de fato?!")
 	}
 
-	// POSITIVO: encarregado de pessoal arquiva (mesma régua do fechar)
+	// POSITIVO: encarregado de pessoal arquiva (mesma régua do fechar) — no
+	// CONTEXTO da cadeira (a conta é operador+enc; no contexto operador não arquiva)
+	f2TrocaContexto(t, app, ckEnc, f2LinhaPapel(t, st, uidEnc, "enc_pessoal"))
 	if rr, res := doJSONReq(app, "POST", fmt.Sprintf("/api/conferencia/%d/arquivar", idFechada), nil, ckEnc); rr.Code != http.StatusOK {
 		t.Fatalf("encarregado devia arquivar, veio %d (%v)", rr.Code, res)
 	}

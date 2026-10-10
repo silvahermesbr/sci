@@ -64,6 +64,12 @@ func f2PessoalSetup(t *testing.T, app *App, st *Store) (gid, gidFora, setorID, s
 	designa("enc_f2", fEnc, "titular")
 	designa("aux_f2", fEnc, "auxiliar")
 
+	// v1.6.0 Fase 2: o PODER segue o CONTEXTO ATIVO — a designação semeda por
+	// SQL é o estado que a migração v45 MATERIALIZA em usuario_papeis (o login
+	// resolve a linha e a sessão nasce no contexto enc_pessoal). A Fase 3
+	// sincroniza o handler; aqui a re-execução é o caminho da migração.
+	v45Reexecuta(t, st)
+
 	if err := st.db.QueryRow(`INSERT INTO pessoas (nome_guerra, nome_completo, grupo_id, status) VALUES ('ALVOF2', 'Alvo F2', ?, 'ativo') RETURNING id`, gid).Scan(&pAlvo); err != nil {
 		t.Fatalf("criar pessoa alvo: %v", err)
 	}

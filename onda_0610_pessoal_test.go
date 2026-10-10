@@ -89,6 +89,11 @@ func onda0610Setup(t *testing.T, app *App, st *Store) (gid, gidFora, fEnc, fAux,
 		t.Fatalf("designar auxFora: %v", err)
 	}
 
+	// v1.6.0 Fase 2: o PODER segue o CONTEXTO ATIVO — as designações semedas são
+	// MATERIALIZADAS pela v45 e os logins de enc01/aux01 (e dos alheios) resolvem
+	// a linha (contexto enc_pessoal do próprio grupo).
+	v45Reexecuta(t, st)
+
 	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'op01'`).Scan(&op01ID); err != nil {
 		t.Fatalf("id op01: %v", err)
 	}

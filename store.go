@@ -940,6 +940,12 @@ func (s *Store) CriarSessaoComPapel(usuarioID int64, papelID *int64, ttl time.Du
 	expira = time.Now().UTC().Add(ttl)
 
 	if papelID == nil || *papelID <= 0 {
+		// v1.6.0 Fase 2 (contextos): ORDER BY id ASC mantém o PAPEL DE SISTEMA
+		// como contexto default da sessão quando a conta também tem cadeira(s)
+		// enc_*: a linha de sistema nasce na criação da conta/primeiro login,
+		// a linha enc só nasce DEPOIS (migração v45 / sync da designação) —
+		// id de sistema < id de enc. Quem tem os dois contextos troca no
+		// dropdown (POST /api/sessao/contexto); o login não aterrissa no enc.
 		var pid int64
 		errPid := s.db.QueryRow(`SELECT id FROM usuario_papeis WHERE usuario_id = ? ORDER BY id ASC LIMIT 1`, usuarioID).Scan(&pid)
 		if errPid == nil {

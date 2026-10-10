@@ -7,10 +7,22 @@ package main
 //   • chefe_setor E operador passam a ver/lançar SÓ militares do PRÓPRIO setor.
 //   • Todos atuam na MESMA conferência aberta do grupo.
 //
-// Regra de detecção do encarregado: nome da função NORMALIZADO (minúsculas, sem
-// acentos) contém "encarregado". Um único helper no Go (ehEncarregado) e um no
-// front (window.ehEncarregado em core.js) — nada de lógica duplicada.
-// Sem dependências novas: normalização própria (mapa de acentos), zero go get.
+// Regra de detecção do encarregado (v1.6.0 FASE 2 — o PODER segue o CONTEXTO
+// ATIVO da sessão): u.Papel é o papel da linha APONTADA por
+// sessoes.papel_ativo_id (UsuarioDaSessao sobrepõe a cada leitura). A cadeira
+// 'enc_pessoal'/'enc_material' MATERIALIZOU linha em usuario_papeis na migração
+// v45 (legado) e sincroniza no ato da designação (hFuncaoMembrosSet, Fase 3) —
+// a linha materializada É o espelho da designação; a query por request em
+// funcao_membros SAIU. Efeito em cadeia automático pelos wrappers (ehEncarregado
+// e ehAuxiliarDePessoal delegam para ehEncarregadoDePessoal; nada nos chamadores
+// muda): podeVerTodoSetor, authConfCom/confAuth/confMarcarAuth, papelConfAutorizado,
+// guardaSetorNaMarcar, podeGestaoPessoal, confPDFAuth, authMaterial, podeGerirPapelAlvo
+// e a trava do encarregado — todos viram CONTEXT-BOUND: no contexto operador o
+// usuário é operador (setor); no contexto enc_*, é encarregado. Quem tem os dois
+// contextos troca no dropdown (POST /api/sessao/contexto).
+// normSemAcento segue viva para as migrações legadas (store.go) — detecção por
+// NOME não autoriza mais nada.
+// Sem dependências novas: zero go get.
 
 import (
 	"net/http"
@@ -34,40 +46,25 @@ func normSemAcento(s string) string {
 	return repl.Replace(s)
 }
 
-// ehEncarregadoDePessoal: usuário DESIGNADO (funcao_membros) para função com chave='enc_pessoal'
-// no grupo do usuário (titular ou auxiliar — ambos têm o mesmo poder).
-// Detecção por chave imutável, NUNCA por nome (anti-escalação).
+// ehEncarregadoDePessoal: o CONTEXTO ATIVO da sessão é 'enc_pessoal' (titular
+// ou auxiliar — a titularidade é detalhe da designação, o poder é da cadeira).
+// Fonte: linha materializada em usuario_papeis (migração v45 materializou o
+// legado; a designação nova sincroniza a linha no hFuncaoMembrosSet — Fase 3).
+// A linha tem grupo_id → u.GrupoID resolve o escopo; sem contexto enc → false.
 func (a *App) ehEncarregadoDePessoal(u *Usuario) bool {
-	if u == nil {
-		return false
-	}
-	esc := escopoDoUsuario(u)
-	if esc <= 0 {
-		return false
-	}
-	var ok int
-	err := a.st.db.QueryRow(`SELECT 1 FROM funcao_membros fm JOIN funcoes f ON f.id=fm.funcao_id WHERE fm.usuario_id=? AND fm.grupo_id=? AND f.chave='enc_pessoal'`, u.ID, esc).Scan(&ok)
-	return err == nil && ok == 1
+	return u != nil && u.Papel == "enc_pessoal"
 }
 
-// ehEncarregadoDeMaterial: usuário DESIGNADO (funcao_membros) para função com chave='enc_material'
-// no grupo do usuário (titular ou auxiliar — ambos têm o mesmo poder).
-// Detecção por chave imutável, NUNCA por nome (anti-escalação).
+// ehEncarregadoDeMaterial: o CONTEXTO ATIVO da sessão é 'enc_material' (mesma
+// doutrina do ehEncarregadoDePessoal — linha materializada em usuario_papeis
+// pela v45/Fase 3; detection por chave imutável do PAPEL, nunca por nome).
 func (a *App) ehEncarregadoDeMaterial(u *Usuario) bool {
-	if u == nil {
-		return false
-	}
-	esc := escopoDoUsuario(u)
-	if esc <= 0 {
-		return false
-	}
-	var ok int
-	err := a.st.db.QueryRow(`SELECT 1 FROM funcao_membros fm JOIN funcoes f ON f.id=fm.funcao_id WHERE fm.usuario_id=? AND fm.grupo_id=? AND f.chave='enc_material'`, u.ID, esc).Scan(&ok)
-	return err == nil && ok == 1
+	return u != nil && u.Papel == "enc_material"
 }
 
 // ehEncarregado: wrapper de compatibilidade delegando para ehEncarregadoDePessoal.
-// Detecção por chave, nunca por nome (anti-escalação).
+// v1.6.0 Fase 2: com o contexto ativo como fonte, TODOS os chamadores deste
+// wrapper viram context-bound sem mudança nenhuma neles.
 func (a *App) ehEncarregado(u *Usuario) bool {
 	return a.ehEncarregadoDePessoal(u)
 }
@@ -86,14 +83,16 @@ func setorDoUsuario(a *App, u *Usuario) *int64 {
 	return nil
 }
 
-// podeVerTodoSetor: gerente, ENCARREGADO e AUXILIAR de pessoal enxergam/lançam
-// o grupo inteiro.
+// podeVerTodoSetor: gerente ou contexto 'enc_pessoal' ATIVO enxergam/lançam
+// o grupo inteiro (v1.6.0 Fase 2: no contexto operador/chefe, o mesmo usuário
+// com cadeira volta ao corte do próprio setor).
 func podeVerTodoSetor(a *App, u *Usuario) bool {
 	return u != nil && (u.Papel == "gerente" || a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u))
 }
 
 // papelConfAutorizado: conjunto que passa nos middlewares confAuth/confMarcarAuth
-// — papeis do sistema + encarregado de pessoal (sem papel). Admin segue proibido.
+// — papeis do sistema + CONTEXTO 'enc_pessoal' ativo (era "encarregado sem
+// papel"; agora é a linha materializada). Admin segue proibido.
 func (a *App) papelConfAutorizado(u *Usuario) bool {
 	if u == nil {
 		return false
@@ -106,8 +105,10 @@ func (a *App) papelConfAutorizado(u *Usuario) bool {
 	return a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u)
 }
 
-// authConfCom: middleware das áreas de conferência — papeis permitidos + encarregado
-// de pessoal (sempre). Admin segue proibido. Mesma resposta 403 do authPapeis.
+// authConfCom: middleware das áreas de conferência — papeis permitidos +
+// CONTEXTO 'enc_pessoal' ativo (o encarregado de pessoal de verdade só existe
+// no seu contexto; no contexto operador/chefe ele é operador/chefe). Admin
+// segue proibido. Mesma resposta 403 do authPapeis.
 func (a *App) authConfCom(papeis []string, prox http.HandlerFunc) http.Handler {
 	return a.auth(false, func(w http.ResponseWriter, r *http.Request) {
 		u := usuarioDoCtx(r)
