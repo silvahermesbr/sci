@@ -617,8 +617,10 @@
           };
         });
         // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Setor / Chefe atual / Nomear)
-        const tabChTbl = document.querySelector('#pesChefes table');
-        if (tabChTbl) pesOrdenar('pes-chefes', tabChTbl, tb, [{ tipo: 'txt' }, { tipo: 'txt' }]);
+        const tabChTbl = tb ? tb.closest('table') : null;
+        if (tabChTbl) {
+          pesTabelaControles('pes-chefes', tabChTbl, tb, [{ tipo: 'txt' }, { tipo: 'txt' }, null], 20);
+        }
       } catch (e) {
         tb.innerHTML = '<tr><td colspan="3"><span class="vazio">Falha ao carregar chefes.</span></td></tr>';
       }
