@@ -27,5 +27,8 @@ FLAG_BACKUP.txt
 # binários de build (nunca no repo)
 bin/
 
+# metadados de worktree do harness (nunca versionar)
+.claude/
+
 # experimentos de referência (não integram o build)
 web/vendor/

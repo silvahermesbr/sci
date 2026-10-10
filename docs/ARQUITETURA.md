@@ -1,6 +1,8 @@
 # SCI — MAPA DE ARQUITETURA (fonte de verdade operacional)
 
 > **Gerado em 2026-10-10** a partir de auditoria completa do código (`main` @ `608e5ef`, schema v43).
+> **Atualizado no gate de saída da v1.5.4** (schema v44, branch `onda/v1.5.4-estancar`): auditoria de
+> escopos re-executada e divergências mapa×código resolvidas — ver `auditoria-escopos-v154.md`.
 > Este documento é o **mapa a consultar ANTES e DEPOIS de qualquer alteração**: todo endpoint do
 > sistema está listado com sua guarda, escopo, tabelas e efeitos colaterais, e cada módulo tem sua
 > lista de "se você alterar aqui, verifique também".
@@ -64,8 +66,9 @@
   - `authMaterial` — gerente, operador, ou encarregado de material designado; admin **403**; 423 se `MODO_RESERVA=1`.
   - `reservaAuth` — {gerente, operador, chefe_setor}; admin 403; 423 se `MODO_RESERVA=1`.
 - **Escopo** (`escopoDoUsuario`, server_grupos.go:202): **0** = admin (vê tudo) · **N** = grupo da
-  sessão · **-1** = conta sem grupo (**deveria ver nada** — ver defeito R-1: handlers que só testam
-  `esc > 0` deixam o `-1` no ramo sem filtro). O escopo vem do **papel ativo da sessão**
+  sessão · **-1** = conta sem grupo (**não vê nada** — guarda central `exigeEscopo` (helpers.go:125)
+  devolve 403 e `filtroGrupoSQL` (helpers.go:138) injeta ` AND 1 = 0` no fio do SQL; R-1 corrigido
+  na v1.5.4-A — ver `auditoria-escopos-v154.md`). O escopo vem do **papel ativo da sessão**
   (`sessoes.papel_ativo_id` → `usuario_papeis`), não do papel base.
 - Nas tabelas: `W` = tabelas escritas, `R` = lidas. Linhas de arquivo seguem `arquivo:linha`.
 
@@ -152,8 +155,9 @@ SQLite (modernc, puro-Go) — DSN com `busy_timeout(5000)`, `foreign_keys(1)`, W
 1. Nunca `Query/QueryRow/Exec` no pool com `*sql.Rows` aberto (deadlock) — colete IDs, feche, consulte.
 2. Dentro de transação, TODO acesso pela tx (`executorSQL`, server.go:416) — nunca pelo pool.
 3. Multi-escrita que precise ser atômica → `Begin/defer Rollback/Commit` (há pontos fora disso — R-13).
-4. Migrações: cadeia v2…v43 chamada à mão em `AbrirStore` (store.go:56-175) — **`ReabrirComArquivo`
-   só executa até v12** (store.go:1372-1402) — defeito R-4; registro único `[]func()` planejado na v1.5.5.
+4. Migrações: cadeia v2…v44 unificada em `executarMigracoes` (store.go:1243), chamada por
+   `AbrirStore` E por `ReabrirComArquivo` (R-4 corrigido na v1.5.4-A/C); registro único `[]func()`
+   planejado na v1.5.5.
 
 ### 3.F Frontend embutido
 `//go:embed web` servido por `hSPA` com `Cache-Control: no-store` (server.go:303-311) — o `?v=NNN`
@@ -191,12 +195,12 @@ Verdade **do servidor** (o front segue isso no menu/rotear, mas é cosmético). 
 
 | Módulo (rotas front) | admin | gerente | operador | chefe_setor | enc_pessoal (designado) | enc_material (designado) | conta sem grupo (-1) |
 |---|---|---|---|---|---|---|---|
-| **Conferência** `#/hoje` `#/conferencia` | ✗ (leitura vazia) | ✓ total | ✓ lançar/iniciar; fechar ✗ | ✓ setor próprio (concluir/reabrir/marcar) | ✓ total **inclui fechar** | ✗ | ⚠ **vaza tudo** (R-1) |
-| **Pessoal** `#/pessoal` | ✗ (só via admin p/ catálogo) | ✓ | ✗ | ✗ | ✓ (efetivo/funções/setores) | ✗ | ✗ (403 nas escritas; ⚠ leituras R-1) |
-| **Material** `#/material` | ✗ | ✓ | ⚠ ✓ API (front esconde) | ✗ | ✗ | ✓ | ⚠ **vaza tudo** (R-1) |
-| **Grupos/gerenciar** `#/grupos` | ✗ (área admin separada) | ✓ (próprio grupo) | ✗ | ✗ | ✗ | ✗ | ⚠ lista grupos (R-1) |
+| **Conferência** `#/hoje` `#/conferencia` | ✗ (leitura vazia) | ✓ total | ✓ lançar/iniciar; fechar ✗ | ✓ setor próprio (concluir/reabrir/marcar) | ✓ total **inclui fechar** | ✗ | ✗ 403 (guarda central, v1.5.4-A) |
+| **Pessoal** `#/pessoal` | ✗ (só via admin p/ catálogo) | ✓ | ✗ | ✗ | ✓ (efetivo/funções/setores) | ✗ | ✗ 403 (leituras e escritas — guarda central, v1.5.4-A) |
+| **Material** `#/material` | ✗ | ✓ | ⚠ ✓ API (front esconde) | ✗ | ✗ | ✓ | ✗ 403 (guarda central, v1.5.4-A) |
+| **Grupos/gerenciar** `#/grupos` | ✗ (área admin separada) | ✓ (próprio grupo) | ✗ | ✗ | ✗ | ✗ | ✗ 403 (guarda central, v1.5.4-A) |
 | **Admin/config** `#/admin` `#/configuracoes` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **Relatórios** `#/relatorios` | ✓ global | ✓ árvore | ⚠ API sem guarda de papel | ✗ (front) | ✓ | ✗ | ⚠ **vaza tudo** (R-1) |
+| **Relatórios** `#/relatorios` | ✓ global | ✓ árvore | ⚠ API sem guarda de papel | ✗ (front) | ✓ | ✗ | ✗ 403 (`escopoRelatorio`, v1.5.4-A) |
 | **Mensagens** `#/mensagens` | ✓ (caixa própria) | ✓ | ⚠ front esconde; API ok (escopo R-14) | ✓ | ✓ | ✓ | ✗ não envia (R-14 corrigido) |
 | **Drive** `#/drive` | ✗ (doutrina) | ✓ | ⚠ front esconde; API por ACL | ✓ | ✓ | ✓ | por ACL |
 | **Mural** `#/avisos` | ✓ publica global | ✓ publica | lê + ciência + comentário | idem | idem | idem | lê se tiver grupo |
@@ -204,8 +208,8 @@ Verdade **do servidor** (o front segue isso no menu/rotear, mas é cosmético). 
 
 **Princípios da matriz:** (1) admin é papel de infraestrutura — **bloqueado** de dados operacionais
 de grupo (exceções: relatórios globais, excluir arquivadas, NUKE); (2) escopo N vê próprio grupo e,
-onde indicado, subordinados ativos (vínculo bilateral); (3) contas sem grupo (-1) não deveriam ver
-nada — hoje vazam (R-1).
+onde indicado, subordinados ativos (vínculo bilateral); (3) contas sem grupo (-1) NÃO veem nada —
+guarda central `exigeEscopo` 403 / `filtroGrupoSQL` `AND 1=0` (v1.5.4-A; R-1 corrigido).
 
 ---
 
@@ -235,34 +239,34 @@ descartava a linha NULL; v1.5.4-D3).
 
 | Método | Rota | Handler (arq:linha) | Guarda | Papéis | Escopo 0/-1/N | W | R | Notas |
 |---|---|---|---|---|---|---|---|---|
-| GET | /api/conferencia/hoje | server_conferencia.go:16 | auth(false) | qualquer | 0+admin: vazio; ⚠-1: escalados de todos; N: conf aberta | DDL lazy CD | conferencias, presencas, CD, CF, CS, escalas | modo+funcoes_filtro; pessoas na escada de antiguidade unificada (v1.5.4-D3/R-7); corte por setor ativo/despachos — chefe só lê o setor que AINDA comanda (setorAtivoComandado, v1.5.4-D1/R-12; contexto órfão → pessoas vazias) |
-| GET | /api/conferencia/estado | onda_0610_conf_estado.go:23 | auth(false) | qualquer | 0/-1: hash vazio; N: por setor | — | idem | SHA-1/setor; base do tick 2s |
+| GET | /api/conferencia/hoje | server_conferencia.go:16 | auth(false) | qualquer | admin: vazio; -1: 403 (v1.5.4-A); N: conf aberta | DDL lazy CD | conferencias, presencas, CD, CF, CS, escalas | modo+funcoes_filtro; pessoas na escada de antiguidade unificada (v1.5.4-D3/R-7); corte por setor ativo/despachos — chefe só lê o setor que AINDA comanda (setorAtivoComandado, v1.5.4-D1/R-12; contexto órfão → pessoas vazias) |
+| GET | /api/conferencia/estado | onda_0610_conf_estado.go:23 | auth(false) | qualquer | admin: hash vazio; -1: 403 (v1.5.4-A); N: por setor | — | idem | SHA-1/setor; base do tick 2s |
 | POST | /api/conferencia/iniciar | server_conferencia.go:434 | confMarcarAuth + internas :454-484 | ger/op*/chefe*/enc* | sem grupo 403 | conferencias, presencas(carry+escalas), CS, CF, CD | pessoas, escalas | valida funcao_ids do grupo ANTES (:498); auditoria; chefe só inicia setor que comanda (chefeComandaSetor — fonte única chefe_setores, D-1); modo antiguidade responde `sem_tag:[nomes]` (v1.5.4-D3/R-7) |
 | POST | /api/conferencia/despachar | onda_despacho.go:160 | confAuth (+operador 403 interno) | ger/enc | sem grupo 403 | +CD | idem | exige ≥1 setor; modo antiguidade responde `sem_tag` com recorte aos setores despachados (v1.5.4-D3/R-7) |
-| POST | /api/conferencia/fechar | server_conferencia.go:522 | confAuth + :524 | **só gerente/enc_pessoal** | ⚠-1 fecha de OUTRO grupo (R-1) | presencas upsert, conferencias, CS (tx) | conferencias | sem ✅→nao_verificado; **backupAssíncrono** + broadcast SSE |
+| POST | /api/conferencia/fechar | server_conferencia.go:522 | confAuth + :524 | **só gerente/enc_pessoal** | -1: 403 (v1.5.4-A) | presencas upsert, conferencias, CS (tx) | conferencias | sem ✅→nao_verificado; **backupAssíncrono** + broadcast SSE |
 | POST | /api/conferencia/marcar | server_conferencia.go:306 | confMarcarAuth + guardaSetorNaMarcar | ger/enc: grupo; chefe/op: setor próprio | -1: 409 | presencas, CS | pessoas | só justificada tem destino; troca reset obs; SSE; ramo chefe exige comando VIGENTE (setorAtivoComandado, v1.5.4-D1/R-12) |
-| GET | /api/conferencia/lista · /api/conferencias | server_conferencia.go:818 (:1584/:1599) | auth(false) | qualquer | ⚠-1: **todas** (R-1) | — | conferencias | ?arq=1 arquivo; senão 7 dias |
-| GET | /api/conferencia/{id} | server_conferencia.go:933 | auth(false) | qualquer | 0: qualquer; ⚠-1: qualquer (R-1); N: própria+subordinados | — | tudo | relatório na tela; modo antiguidade ordena pela escada (antiguidade unificada das 3 fontes, v1.5.4-D3/R-7); modo setores mantém situacao/nome |
-| DELETE | /api/conferencia/{id} | server_conferencia.go:932 | confAuth + portão R-8 interno | **só gerente/enc_pessoal** (op 403 — R-8 corrigido v1.5.4-E2) | ⚠-1 (R-1) | comentarios, presencas, CE, conferencias | — | só ABERTA; sem backup |
-| POST | /api/conferencia/{id}/setor/{sid}/concluir | server_conferencia.go:631 | confMarcarAuth | chefe: setor ativo COMANDADO (setorAtivoComandado, v1.5.4-D1/R-12); ger/op/enc | ⚠-1 (R-1) | CS | — | exige aberta |
-| POST | /api/conferencia/{id}/setor/{sid}/reabrir | server_conferencia.go:689 | idem | idem | ⚠-1 (R-1) | CS | — | |
-| GET | …/setor/{sid}/pre_fechamento | onda_0910:138 | confMarcarAuth | idem | ⚠-1 (R-1) | — | pessoas+CF | ordena pela antiguidade UNIFICADA das 3 fontes da tag (v1.5.4-D3/R-7); não-marcados saem como nao_verificado (COALESCE situacao — antes a linha NULL era descartada no Scan); ramo chefe ainda lê o CONTEXTO sem conferir comando (resíduo D-5) |
-| GET | /api/conferencia/funcoes-antiguidade | onda_0910:296 | auth(false) | qualquer | ≤0: vazio+aviso | — | funcoes | picker; tags DO grupo |
+| GET | /api/conferencia/lista · /api/conferencias | server_conferencia.go:818 (:1584/:1599) | auth(false) | qualquer | -1: 403 (v1.5.4-A) | — | conferencias | ?arq=1 arquivo; senão 7 dias |
+| GET | /api/conferencia/{id} | server_conferencia.go:933 | auth(false) | qualquer | 0: qualquer; -1: 403 (v1.5.4-A); N: própria+subordinados | — | tudo | relatório na tela; modo antiguidade ordena pela escada (antiguidade unificada das 3 fontes, v1.5.4-D3/R-7); modo setores mantém situacao/nome |
+| DELETE | /api/conferencia/{id} | server_conferencia.go:932 | confAuth + portão R-8 interno | **só gerente/enc_pessoal** (op 403 — R-8 corrigido v1.5.4-E2) | -1: 403 (v1.5.4-A) | comentarios, presencas, CE, conferencias | — | só ABERTA; sem backup |
+| POST | /api/conferencia/{id}/setor/{sid}/concluir | server_conferencia.go:631 | confMarcarAuth | chefe: setor ativo COMANDADO (setorAtivoComandado, v1.5.4-D1/R-12); ger/op/enc | -1: 403 (v1.5.4-A) | CS | — | exige aberta |
+| POST | /api/conferencia/{id}/setor/{sid}/reabrir | server_conferencia.go:689 | idem | idem | -1: 403 (v1.5.4-A) | CS | — | |
+| GET | …/setor/{sid}/pre_fechamento | onda_0910:138 | confMarcarAuth | idem | -1: 403 (v1.5.4-A) | — | pessoas+CF | ordena pela antiguidade UNIFICADA das 3 fontes da tag (v1.5.4-D3/R-7); não-marcados saem como nao_verificado (COALESCE situacao — antes a linha NULL era descartada no Scan); ramo chefe ainda lê o CONTEXTO sem conferir comando (resíduo D-5) |
+| GET | /api/conferencia/funcoes-antiguidade | onda_0910:296 | auth(false) | qualquer | admin: vazio+aviso; -1: 403 (v1.5.4-A) | — | funcoes | picker; tags DO grupo |
 | GET | /api/conferencia/{id}/relatorio.pdf | server_conferencia.go:1141 | confPDFAuth + escopo interno :1181 | ger/op/enc/aux; **chefe só c/ setor envolvido COMANDADO** (conferenciaEnvolveSetorComandado); admin 403 (v1.5.4-D2/R-2) | -1: 403; N: própria+subordinados | — | tudo | só FECHADA; filtros; assinatura; modo antiguidade sai na escada (mesma ordem do relatório em tela, v1.5.4-D3/R-7) |
-| POST | /api/conferencia/{id}/arquivar | server_conferencia.go:772 | confAuth + portão R-8 interno | **só gerente/enc_pessoal** (op 403 — R-8 corrigido v1.5.4-E2) | ⚠-1 (R-1) | conferencias | — | só FECHADA; backup |
+| POST | /api/conferencia/{id}/arquivar | server_conferencia.go:772 | confAuth + portão R-8 interno | **só gerente/enc_pessoal** (op 403 — R-8 corrigido v1.5.4-E2) | -1: 403 (v1.5.4-A) | conferencias | — | só FECHADA; backup |
 | DELETE | /api/conferencia/arquivada/{id} | server_conferencia.go:819 | **auth(true)** | admin | — | comentarios, presencas, CE, conferencias | — | R-15 corrigido v1.5.4-E2 (sai em tx) |
 | POST | /api/conferencia/{id}/escala | onda_0510_escalas.go:88 | auth(false)+guardaEscala | ger(chefe/op do grupo); chefe(só op do setor) | gid==esc | CE | usuarios | escala de guarda da conferência |
 | DELETE | …/escala/{usuario_id} | onda_0510_escalas.go:140 | idem | idem | idem | CE | — | |
-| GET | /api/conferencia/{id}/stream | server_realtime.go:68 | auth(false) | qualquer | ⚠-1 (R-1) | — (hub mem) | conferencias | SSE; sem consumidor front |
-| POST | /api/comentarios | server_conferencia.go:1422 | confAuth | ger/op/enc | ⚠-1 (R-1) | comentarios | tags | tag validada grupo+superiores |
-| GET | /api/comentarios/{id} · /api/pessoas/{id}/comentarios | :1481 · server_pessoal.go:424 | confAuth | idem | ⚠-1 (R-1) | — | comentarios | histórico |
+| GET | /api/conferencia/{id}/stream | server_realtime.go:68 | auth(false) | qualquer | -1: 403 (v1.5.4-A) | — (hub mem) | conferencias | SSE; sem consumidor front |
+| POST | /api/comentarios | server_conferencia.go:1422 | confAuth | ger/op/enc | -1: 403 (v1.5.4-A) | comentarios | tags | tag validada grupo+superiores |
+| GET | /api/comentarios/{id} · /api/pessoas/{id}/comentarios | :1481 · server_pessoal.go:424 | confAuth | idem | -1: 403 (v1.5.4-A) | — | comentarios | histórico |
 
 **Se você alterar este módulo, verifique também:** enum de situações (muda % presença em TODOS os
 relatórios/PDFs — `montarBundle` server_conferencia.go:1203 + server_relatorios.go); `predicadoAntiguidade`
 replicado em hoje/estado/pre_fechamento + `pessoasAtivasOpt` (contrato do **hash** do /estado consumido
 pelo tick 2s e pelo `ops/carga_conferencia.py`); escalas (badges/pré-fill do iniciar); catálogos
 (funções/destinos auto 'Serviço de Escala'/tags); carry-over (colunas de presencas); grupo_vinculos
-(herança {id}GET/PDF); SSE+backupAssíncrono (concorrencia_test); migrações v40/v43 e a tabela lazy CD.
+(herança {id}GET/PDF); SSE+backupAssíncrono (concorrencia_test); migrações v40/v43/v44 e a tabela lazy CD.
 
 **Testes:** conferencia_realtime_test, setores_conferencia_test, v1_5_conferencia_setor_test,
 onda_despacho_test, onda_0910_conf_antiguidade_test(+_grupo), onda_v154_d3_test, onda_0510_conf_escopo_test,
@@ -294,20 +298,20 @@ no 1º boot também nasce `precisa_setup=1` (troca obrigatória; seed com senha 
 | POST | /api/senha | hTrocarSenha :147 | auth(false) | própria | — | usuarios, sessoes | — | **R-16 CORRIGIDO (E1):** invalida as demais sessões da conta; a CORRENTE é preservada (troca pela própria conta — decisão §3.C) |
 | POST | /api/sessao/contexto | mensagens.go:17 | papel próprio | qualquer | — | sessoes | — | **R-9 CORRIGIDO (E1):** setor precisa pertencer ao grupo do papel ativo; chefe_setor só setor COMANDADO (`chefeComandaSetorNoGrupo`); admin livre; `usuarios.setor_id` NÃO é mais reescrito (contexto = sessoes.setor_ativo_id, D-5) |
 | POST/DELETE | /api/usuarios/{id}/papeis[/{pid}] | mensagens.go:84/:256 | allowlist `podeGerirPapelAlvo` (E1) | admin (global); ger (operador/chefe na própria árvore); enc/aux de pessoal (operador/chefe do próprio grupo); **fail-closed** p/ o resto | 0/N | usuario_papeis, sessoes, chefe_setores | — | **R-10 CORRIGIDO (E1):** fim do fail-open do Del (chefe/sem-papel barrados; alvo resolvido ANTES da decisão; re-chaveio de sessões do alvo só pós-autorização); trava do único papel mantida; **D-1/R-12**: Add de chefe_setor+setor_id MATERIALIZA o comando (UPSERT 1:1); Del do papel apaga os comandos do grupo |
-| GET | /api/pessoas/{id}/ficha | hPessoaFicha :391 | auth(false) | qualquer | ⚠-1 vaza (R-1) | — | pessoas… | PII |
-| GET | /api/pessoas | hPessoasList :587 | auth(false) | qualquer | ⚠-1 vê tudo (R-1) | — | pessoas, auditoria | GROUP BY auditoria full-scan |
-| GET | /api/pessoas/apresentacao | onda_presenca_banco.go:21 | auth(false) | qualquer | ⚠-1 (R-1) | (ensure) | lazy table | |
+| GET | /api/pessoas/{id}/ficha | hPessoaFicha :391 | auth(false) | qualquer | -1: 403 (v1.5.4-A) | — | pessoas… | PII |
+| GET | /api/pessoas | hPessoasList :587 | auth(false) | qualquer | -1: 403 (v1.5.4-A) | — | pessoas, auditoria | GROUP BY auditoria full-scan |
+| GET | /api/pessoas/apresentacao | onda_presenca_banco.go:21 | auth(false) | qualquer | -1: 403 (v1.5.4-A) | (ensure) | lazy table | |
 | POST/PATCH/DELETE | /api/pessoas[/{id}] | :685/:759/:642 | guardaGestaoPessoal | adm/ger/enc | 0/N | pessoas | funcoes | grupo forçado; c/ presenças→inativo |
 | POST | /api/pessoas/{id}/apresentacao | onda_presenca_banco.go:68 | guarda | idem | 0/N | lazy | | upsert |
 | GET | /api/pessoas/{id}/modificacoes | onda_presenca_banco.go:145 | auth(false) | qualquer | -1 403 (ok) | — | auditoria | últimos 30 |
-| GET | /api/pessoas/{id}/qr · /pdf | :1350 · :468 | auth(false) | qualquer | ⚠-1 vaza (R-1) | — | tudo | ficha PII completa |
+| GET | /api/pessoas/{id}/qr · /pdf | :1350 · :468 | auth(false) | qualquer | -1: 403 (v1.5.4-A) | — | tudo | ficha PII completa |
 | GET | /api/usuarios | hUsuariosList :877 | auth(false) | c/ grupo | 0/N(+subord ger); -1 403 | — | usuarios… | col. `senhas` adm/ger/chefe |
 | POST | /api/usuarios | hUsuariosAdd :1134 | interna | ver regras | 0/N | usuarios, papeis | — | default sem grupo |
 | PATCH | /api/usuarios/{id} | hUsuarioEdit :239 | guarda | adm/ger/enc | 0/N | usuarios, pessoas | — | espelha pessoa |
 | DELETE | /api/usuarios/{id} | hUsuarioExcluir :1279 | interna | adm;ger | 0/N | usuarios | — | FK→desativa; ⚠ órfãs sessões/papéis (R-17) |
 | POST | /api/usuarios/{id}/senha | hUsuarioSenha :183 | interna | adm;ger | 0/N | usuarios, sessoes | — | enc 403; **R-16 (E1):** invalida TODAS as sessões da conta afetada |
 | GET | /api/usuarios/{id}/foto | hUsuarioFotoGet :1089 | auth(false) | própria sempre (avatar); admin global; grupo vê grupo | R-5 corrigido v1.5.4-E2 (403 fora) | — | usuarios | cache public 3600 |
-| GET/PATCH | /api/perfil | :954/:978 | auth(false) | própria | — | usuarios, pessoas | — | ⚠ foto_base64 sem validação (R-3) |
+| GET/PATCH | /api/perfil | :954/:978 | auth(false) | própria | — | usuarios, pessoas | — | foto_base64 validada na escrita (`validarFotoBase64` — R-3 corrigido v1.5.4-A/B) |
 | PATCH | /api/usuarios/{id}/mover | hMoverConta :1049 | interna | adm;ger(árvore) | 0/N | usuarios | — | ⚠ não move usuario_papeis/sessões (R-18) |
 | GET/POST/DELETE | /api/grupo/funcoes/membros[/{id}] | onda_0510_c2.go:29/99/194 | interna | GET: c/ grupo; SET/DEL: ger/adm; enc**só cadeira enc_material** | 0/N | funcao_membros | funcoes | onda 10/10; devolve `chave` |
 
@@ -335,18 +339,18 @@ UNIQUE(grupo, patrimônio); devolução parcial splita linha; **1 conferência a
 
 | Método | Rota | Handler (sm:linha) | Guarda | Escopo | W | Notas |
 |---|---|---|---|---|---|---|
-| GET/POST/DELETE | /api/material/categorias[/{id}] | :967/:994/:1045 | authMaterial | leitura ok; escrita ⚠-1 vaza (R-1); global só admin | material_categorias | em uso→desativa |
-| GET/POST/DELETE | /api/material/itens[/{id}] | :1085/:1213/:1399 | authMaterial | ⚠-1 vaza (R-1) | itens, viaturas | ?status/?categoria/?garagem; exclusão atômica tx |
-| GET | /api/material/itens/{id}/qr | :2035 | authMaterial | ⚠-1 | — | `sci://m:{id}:{pat}` |
-| GET | /api/material/etiquetas-lote.pdf | :2074 | authMaterial | ⚠-1 | — | 10/folha A4 |
+| GET/POST/DELETE | /api/material/categorias[/{id}] | :967/:994/:1045 | authMaterial | leitura ok; escrita -1: 403 (v1.5.4-A); global só admin | material_categorias | em uso→desativa |
+| GET/POST/DELETE | /api/material/itens[/{id}] | :1085/:1213/:1399 | authMaterial | -1: 403 (v1.5.4-A) | itens, viaturas | ?status/?categoria/?garagem; exclusão atômica tx |
+| GET | /api/material/itens/{id}/qr | :2035 | authMaterial | -1: 403 (v1.5.4-A) | — | `sci://m:{id}:{pat}` |
+| GET | /api/material/etiquetas-lote.pdf | :2074 | authMaterial | -1: 403 (v1.5.4-A) | — | 10/folha A4 |
 | GET | /api/material/inventario/pdf | :892 | **authMaterial** (v1.5.4-D2/R-2) | exigeEscopo; -1: 403 | — | reservaAtivo→423 |
-| POST | /api/material/cautelar · devolver | :1484 · :1623 | authMaterial | ⚠-1 (R-1) | cautelas, itens | tx; saldo; parcial split |
-| GET | /api/material/cautelas | :1732 | authMaterial | ⚠-1 (R-1) | — | LIMIT 200 |
+| POST | /api/material/cautelar · devolver | :1484 · :1623 | authMaterial | -1: 403 (v1.5.4-A) | cautelas, itens | tx; saldo; parcial split |
+| GET | /api/material/cautelas | :1732 | authMaterial | -1: 403 (v1.5.4-A) | — | LIMIT 200 |
 | GET | /api/material/cautelas/{id}/recibo.pdf | :828 | **authMaterial** (v1.5.4-D2/R-2) | exigeEscopo + cautela no escopo; -1: 403 | — | 2 vias; auditoria |
-| POST/GET | …/cautelas/{id}/anexos · /api/material/anexos/{id} (GET/DEL) | :1819/:1902/:1946/:2004 | authMaterial+cautelaNoEscopo | ⚠-1 (R-1) | cautela_anexos | allowlist MIME |
-| GET/POST | /api/material/responsaveis | :30/:73 | authMaterial (+papel p/ POST) | POST: ⚠ gerente sem grupo define em qualquer grupo (R-1) | grupo_setor_responsaveis | enc material por setor |
-| GET/POST | /api/material/itens/{id}/anexos · item-anexos/{aid} (GET/DEL) · itens/{id}/comentarios (GET/POST) | :133/:178/:244/:281/:313/:360 | authMaterial | ⚠-1 (R-1) | item_anexos/comentários | |
-| GET/POST | /api/material/conferencias · /iniciar · /{id} · /bipar · /fechar | :400/:438/:540/:634/:702 | authMaterial | ⚠-1 (R-1) | mat_conf(+itens) | POST /conferencias é rota morta (lista) |
+| POST/GET | …/cautelas/{id}/anexos · /api/material/anexos/{id} (GET/DEL) | :1819/:1902/:1946/:2004 | authMaterial+cautelaNoEscopo | -1: 403 (v1.5.4-A) | cautela_anexos | allowlist MIME |
+| GET/POST | /api/material/responsaveis | :30/:73 | authMaterial (+papel p/ POST) | POST: sem grupo 403 (exigeEscopo, v1.5.4-A) | grupo_setor_responsaveis | enc material por setor |
+| GET/POST | /api/material/itens/{id}/anexos · item-anexos/{aid} (GET/DEL) · itens/{id}/comentarios (GET/POST) | :133/:178/:244/:281/:313/:360 | authMaterial | -1: 403 (v1.5.4-A) | item_anexos/comentários | |
+| GET/POST | /api/material/conferencias · /iniciar · /{id} · /bipar · /fechar | :400/:438/:540/:634/:702 | authMaterial | -1: 403 (v1.5.4-A) | mat_conf(+itens) | POST /conferencias é rota morta (lista) |
 | GET | /api/material/conferencias/{id}/pronto.pdf | :731 | **authMaterial** (v1.5.4-D2/R-2 — antes auth(false) sem guard) | exigeEscopo + conf. do próprio grupo; -1: 403 | — | reservaAtivo→423 |
 
 **Se você alterar, verifique também:** os 4 geradores de PDF (relatorio.go:861/1095/1231/1709);
@@ -424,7 +428,8 @@ aviso_origem_id/grupo_origem_id), escala_modelos+postos+aptos (antes do escala_t
 material_conferencias+itens, chefe_setores, funcao_membros, grupo_setor_responsaveis,
 setor_sugestoes, usuario_papeis do grupo e funcao_id/setor_id de cadastro (R-6 corrigido);
 comentário promete backup automático que não existe (R-24). `/api/grupos` e
-`/api/vinculos` auth(false) — ⚠ -1 lista todos (R-1).
+`/api/vinculos` auth(false) — -1: 403 na `/api/grupos` (`exigeEscopo`, v1.5.4-A) e JSON vazio na
+`/api/vinculos` (R-1 corrigido).
 
 **ADMIN** (server_admin.go): backup `VACUUM INTO`+sha256+MANIFEST (mutex; dispara boot/fechamentos/
 manual/CLI `sci backup`); **import com 3 bugs verificados** (R-4: sem rename `.novo`→`sci.db`;
@@ -450,8 +455,8 @@ allowlist de efeito revalidada na aplicação (tx, TOCTOU guard) — o padrão-o
 `hCatalogoList` (regressão cravada em `fix_catalogo_envelope_test.go`).
 
 **RELATÓRIOS & EXPORT** (server_relatorios.go :414-424 + relatorio.go): todos auth(false); recorte
-por `escopoRelatorio` (?grupo= com 403 fora da árvore); ⚠ família inteira trata `-1` como global
-(R-1; exceção `hEfetivoAtual`). Rotas: registros, tags, efetivo_atual, presenca/periodo, relatorio
+por `escopoRelatorio` (server_relatorios.go:212 — `exigeEscopo` 403 p/ -1; ?grupo= com 403 fora da
+árvore; v1.5.4-A fechou o R-1 da família inteira). Rotas: registros, tags, efetivo_atual, presenca/periodo, relatorio
 (JSON/PDF/detalhado.pdf), export CSV (`/api/export/{t}`), export SQLite/JSON (`/api/export`).
 PDFs gerados (relatorio.go): relatório geral :305 · detalhado :2166/:2128 · conferência :547 ·
 ficha pessoal :677 · recibo cautela :861 · escalas :1029 · escala do dia :1846 · inventário :1095 ·
@@ -483,8 +488,9 @@ texto do PDF).
 Fases `aberto→preenchido→aprovado→publicado` (**sem máquina de estados** — qualquer→qualquer, em
 massa por grupo+data); delegação inter-grupos (subordinados transitivos); modelos
 (escala_modelos/postos/aptos com faixa de posto/graduação); InfoDescanso (conflito bloqueante,
-folga <24h crítico…). ⚠ classe -1 em ~8 rotas (pior: `limpar-dia` sem grupo_id **apaga TODOS os
-grupos**, server_escalas.go:1109-1112 — R-1). **Integração com conferência (reativação muda
+folga <24h crítico…). Classe -1 FECHADA: TODOS os handlers exigem `exigeEscopo` (v1.5.4-A — R-1
+corrigido) e as rotas `reservaAuth` (D2) — `limpar-dia` não roda com escopo 0 (admin é 403).
+**Integração com conferência (reativação muda
 comportamento!)**: `criarConferenciaBase` pré-preenche "justificada/Serviço de Escala" para escalados
 na data; `escaladosNaData` alimenta badges do hoje (⚠ `escalados_ontem` entregue e nunca renderizado).
 
@@ -531,8 +537,9 @@ tabelas de verdade no core.js que mudam JUNTAS em qualquer doutrina de papel: co
 
 ## 12. Mapa de dados
 
-~48 tabelas + views, 69 índices, schema **v43** (const `versaoSchemaBinario`, main.go:21).
-Migrações: cadeia manual v2…v43 em `AbrirStore`; 2 tabelas **lazy** fora do versionamento
+~48 tabelas + views, 69 índices, schema **v44** (const `versaoSchemaBinario`, main.go:23 — v44 da
+v1.5.4-D1 materializa chefias legadas). Migrações: cadeia v2…v44 em `executarMigracoes`
+(store.go:1243), usada por `AbrirStore` e `ReabrirComArquivo`; 2 tabelas **lazy** fora do versionamento
 (`conferencia_despachos`, `pessoas_apresentacao` — `sync.Once` sem retry). Pragmas: §3.E.
 
 | Domínio | Tabelas | Observações |
@@ -581,10 +588,10 @@ Prioridade de correção e plano: ver [`ROADMAP.md`](ROADMAP.md) v1.5.4/v1.5.5. 
 
 | # | Defeito | Onde (arq:linha) | Classe |
 |---|---|---|---|
-| R-1 | **Escopo -1 (sem grupo) cai no ramo sem filtro** — ~35 handlers (conferência lista/fechar/arquivar/{id}/pdf/comentários/stream; pessoas ficha/pdf/qr/lista; material quase tudo; relatórios/export inteiros; /api/grupos; escalas limpar-dia apaga TODOS) | padrão `if esc > 0` — ver coluna Escopo das tabelas | P0 |
+| R-1 | ~~**Escopo -1 (sem grupo) cai no ramo sem filtro** — ~35 handlers (conferência lista/fechar/arquivar/{id}/pdf/comentários/stream; pessoas ficha/pdf/qr/lista; material quase tudo; relatórios/export inteiros; /api/grupos; escalas limpar-dia apaga TODOS)~~ **CORRIGIDO na v1.5.4-A**: guarda central `exigeEscopo` (helpers.go:125 — conta sem grupo 403; admin 0) + `filtroGrupoSQL` (helpers.go:138 — ` AND 1 = 0` fail-closed no fio) aplicados nos handlers de todos os módulos (conferência, pessoal, material, escalas, relatórios/export, grupos, mural); `/api/vinculos` devolve JSON vazio p/ -1. Auditoria pós-onda (`auditoria-escopos-v154.md`) verificou handler a handler — nenhuma rota de dados deixa o -1 no ramo sem filtro | helpers.go; r1_test.go (matriz de 21 rotas 403) | ✅ |
 | R-2 | ~~Rotas de dados `a.auth(false)` sem guarda de papel/escopo (escalas pdf/minhas/relatorio-dia; material pronto.pdf **sem escopo algum**)~~ **CORRIGIDO na v1.5.4-D2**: as 4 rotas de escalas (`/api/escalas/pdf`, `/api/escalas/relatorio-dia.pdf` + duplicata `/relatorio-dia/pdf`, `/api/escalas/minhas`) exigem `reservaAuth` (`minhas` também barra -1 via `exigeEscopo` — abertura ampla pende da D-3/M5); os 3 PDFs de material (`inventario/pdf`, `cautelas/{id}/recibo.pdf`, `conferencias/{id}/pronto.pdf`) exigem `authMaterial`; `/api/conferencia/{id}/relatorio.pdf` exige `confPDFAuth` (papéis do módulo; chefe_setor só com setor envolvido COMANDADO — `conferenciaEnvolveSetorComandado`; admin 403). Doutrina nova: **nenhuma rota de dados sem guard declarado na tabela** (§3.I). Regressão: `onda_v154_d2_test.go` (matriz por persona: gerente/operador do próprio grupo 200; sem-grupo 403 em todas; admin 403; chefe só com setor comandado; operador de outro grupo 403 nos objetos alheios e PDF do próprio grupo sem vazamento) | server_escalas.go:1796-1816; server_material.go:2316-2346; server_conferencia.go:1635-1673 (confPDFAuth + rota :1706) | ✅ |
-| R-3 | **XSS armazenado via foto_base64** (gravação sem validação + sinks sem esc + CSP unsafe-inline) | server_pessoal.go:343/:994; core.js:580; views_gestao.js:548/2535 | P0 |
-| R-4 | **Import de backup quebrado** (sem rename .novo→sci.db; reopen só migra até v12; rollback reabre o import) | server_admin.go:259-274; store.go:1372-1402 | P0 |
+| R-3 | ~~**XSS armazenado via foto_base64** (gravação sem validação + sinks sem esc + CSP unsafe-inline)~~ **CORRIGIDO na v1.5.4-A/B**: `validarFotoBase64` (server_pessoal.go:17 — allowlist `data:image/(png|jpeg|webp);base64,` + magic bytes + teto ~512 KB) aplicada nas duas escritas (`hUsuarioEdit` :406, `hPerfilSet` :1079); sinks do front com `fotoValida()` + `esc()` (core.js:585, views_gestao.js:548) | server_pessoal.go; r1_test.go (`TestR1_FotoBase64_Validation`) | ✅ |
+| R-4 | ~~**Import de backup quebrado** (sem rename .novo→sci.db; reopen só migra até v12; rollback reabre o import)~~ **CORRIGIDO na v1.5.4-A/C**: swap com rename real para `sci.db` canônico (server_admin.go:261-300); `ReabrirComArquivo` (store.go:1378) executa a CADEIA COMPLETA via `executarMigracoes` (store.go:1243 — a mesma de `AbrirStore`, v2…v44); rollback reabre o caminho canônico; `.novo` removido | server_admin.go; store.go; r1_test.go (`TestR1_BackupRestore_AtomicAndRollback`) | ✅ |
 | R-5 | ~~Foto de usuário sem escopo (LGPD)~~ **CORRIGIDO na v1.5.4-E2**: a foto própria segue 200 (avatar do perfil); admin (escopo 0) vê tudo; conta de grupo só foto de conta do MESMO grupo; fora disso 403 (conta sem grupo incluída). Regressão: `TestE2FotoUsuarioComEscopo` | server_pessoal.go hUsuarioFotoGet | ✅ |
 | R-6 | ~~**NUKE/setor-excluir/excluirArquivada × FKs NO ACTION** (chefe_setores, funcao_membros, avisos, material_conferencias, escala_modelos, setor_sugestoes, CE órfãs…)~~ **CORRIGIDO na v1.5.4-E2**: NUKE com rol completo em tx (conferencia_escalas por conferência/usuario/designante; mural com NULLing de origens e cientes cruzados; escala_modelos+postos+aptos antes do escala_tipos; material_conferencias+itens; chefe_setores; funcao_membros; grupo_setor_responsaveis; setor_sugestoes; usuario_papeis do grupo; funcao_id/setor_id de cadastro NULLados) — teste do grupo "rico" sem erro e sem órfãos; `hSetorExcluir` revoga o comando do setor (chefe_setores + purga do papel chefe_setor sem último comando, re-chave de sessão), limpa grupo_setor_responsaveis e remaneja o material do setor — teste do setor "rico" (`TestE2NukeGrupoRicoSemOrfaos`, `TestE2ExclusaoSetorRicoSemOrfaos`) | server_grupos.go hGrupoExcluir; ordem_0610_setores.go hSetorExcluir | ✅ |
 | R-7 | ~~Antiguidade: ordenação ignora fontes u2/up2 e o relatório na tela não ordena por antiguidade; militar sem tag some em silêncio~~ **CORRIGIDO na v1.5.4-D3**: fonte única das expressões SQL em `onda_0910_conf_antiguidade.go` — `filtroAntiguidadeTresFontes` (o predicado do filtro) e `exprAntiguidadeTresFontes` = `COALESCE(fu.antiguidade, fu_u.antiguidade, fu_up.antiguidade, 999)` (precedência pessoa → conta → papel; sem tag = 999, por último), aplicada via `ordemAntiguidadeTresFontes` na listagem do `/hoje` (`pessoasAtivasOpt` com filtro), no pré-fechamento, no relatório em tela `/{id}` e no PDF (`montarLancamentosPDFConferencia`), condicionada ao modo antiguidade (`conferenciaEmModoAntiguidade` — modo setores mantém as ordens legadas); `iniciar`/`despachar` respondem `sem_tag:[nomes]` (`militaresSemTagAntiguidade` — ativos do universo, recorte = setores despachados, fora do filtro por não terem a tag em NENHUMA fonte; `NOT COALESCE(predicado,0)` p/ não perder o sem-tag na lógica tri-estados); bônus da mesma consulta: pré-fechamento voltou a listar os NÃO-marcados (`COALESCE(pr.situacao,'')` — o Scan descartava a linha NULL e o checklist nascia vazio); herança de catálogo segue SEM herança entre grupos (by design 09/10; D-1 pendente). Front do `sem_tag` ainda não consome (pendente) | onda_0910_conf_antiguidade.go; helpers.go (pessoasAtivasOpt); server_conferencia.go (hConferenciaGet/montarLancamentosPDFConferencia/hConferenciaIniciar); onda_despacho.go; onda_v154_d3_test.go | ✅ |

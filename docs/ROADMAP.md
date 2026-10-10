@@ -44,6 +44,11 @@ HTTP-level por persona; documentação disciplinada.
 
 ## v1.5.4 — Estancar (P0 + bugs de campo) — prioridade ALTA, esforço ~2-3 dias
 
+> **ESTADO:** **ONDA CONCLUÍDA** — itens A (fd96c90), B/C (idem), F (7751f70), D1 (7d6a2a9),
+> D2 (6d69a16), D3 (f8a67df), E1 (03fa62a) e E2 (f2fc223) integrados em
+> `onda/v1.5.4-estancar` (HEAD ddb6aa3) com os 25 testes de onda verdes; pendente apenas
+> merge/push para `main` (decisão do comando). Gate de saída: `docs/auditoria-escopos-v154.md`.
+
 Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção é pequena; o que falta
 é a disciplina de tocar todos os pontos listados no `ARQUITETURA.md`.
 

@@ -71,6 +71,9 @@
   `usuarios.setor_id` deixa de ser fonte de autorização e vira contexto/cadastro exibido;
   designação de escala do chefe e pre_fechamento ainda leem o contexto (sem poder de conferência).
 
+### 🚪 Onda v1.5.4 — Gate de saída: cache-bust v371, auditoria de escopo, higiene
+- **Cache-bust v371** (4 refs `index.html` + `CACHEBUST` do `lazy.js` — `web/core.js`, `web/ui_helpers.js` e `web/views_gestao.js` mudaram no `fd96c90`); **auditoria de escopos pós-onda criada** (`docs/auditoria-escopos-v154.md` — 8 módulos × classes provadas; divergências mapa×código R-1/R-3/R-4 e schema v44 corrigidas no `ARQUITETURA.md`); higiene: `.claude/` no `.gitignore`.
+
 ---
 
 ## [v1.5.3] — 2026-10-10
