@@ -158,7 +158,12 @@ func (a *App) hSetorPreFechamento(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "conferencia ja esta fechada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && confGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "conferencia fora do seu escopo")
 		return
 	}
@@ -192,7 +197,7 @@ func (a *App) hSetorPreFechamento(w http.ResponseWriter, r *http.Request) {
 	      LEFT JOIN presencas pr ON pr.conferencia_id = ? AND pr.pessoa_id = p.id
 	      WHERE p.setor_id = ? AND p.status = 'ativo'`
 	queryArgs := []any{cid, sid}
-	if esc := escopoDoUsuario(u); esc > 0 {
+	if esc > 0 {
 		q += ` AND p.grupo_id = ?`
 		queryArgs = append(queryArgs, esc)
 	}
@@ -295,7 +300,11 @@ func (a *App) funcoesAntiguidadeDoGrupo(grupoID int64, soAtivas bool) []FuncaoAn
 // flag de aviso — nunca a lista global.
 func (a *App) hConferenciaFuncoesAntiguidade(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if escopo <= 0 {
 		jsonOK(w, map[string]any{
 			"funcoes":  []map[string]any{},

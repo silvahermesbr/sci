@@ -42,7 +42,11 @@ func (a *App) hSetorExcluir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "gestão de setores é do gerente ou do encarregado/auxiliar de pessoal")
 		return
 	}
-	esc := escopoDoUsuario(u)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if esc <= 0 {
 		jsonErro(w, http.StatusForbidden, "sem escopo de grupo para excluir setor")
 		return

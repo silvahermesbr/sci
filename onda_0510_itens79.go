@@ -133,12 +133,10 @@ func (a *App) hDriveArquivoGrupo(w http.ResponseWriter, r *http.Request) {
 // hSetoresAgregado: GET /api/setores/agregado
 func (a *App) hSetoresAgregado(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
-	if escopo <= 0 {
-		if u.Papel != "admin" {
-			jsonErro(w, http.StatusForbidden, "sem escopo para visão agregada de setores")
-			return
-		}
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
 	}
 	var ids []int64
 	if escopo > 0 {

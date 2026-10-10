@@ -53,124 +53,7 @@ func AbrirStore(dataDir string) (*Store, error) {
 		return nil, err
 	}
 	s := &Store{db: db, dataDir: dataDir, arquivo: filepath.Join(dataDir, "sci.db"), dsn: dsn}
-	if err := s.migrar(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV4(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV5(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV7(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV8(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV9(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV10(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV11(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV12(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV13(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV14(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV15(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV16(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV17(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV18(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV19(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV20(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV21(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV22(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV23(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV24(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV25(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV26(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV27(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV28(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV29(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV30(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV31(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV32(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV33(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV34(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV35(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV36(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV37(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV38(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV39(); err != nil {
-		return nil, err
-	}
-	if err := s.migrarV40(); err != nil { // conferencia_funcoes + seed antiguidade (onda 09/10)
-		return nil, err
-	}
-	if err := s.migrarV41(); err != nil { // índice único de conferências abertas de material
-		return nil, err
-	}
-	if err := s.migrarV42(); err != nil { // destrava designado estrangulado + crava chave em cadeira sem chave (encarregados)
-		return nil, err
-	}
-	if err := s.migrarV43(); err != nil { // antiguidade do GRUPO: limpa seed global se órfã (correção 09/10; renumerada v42->v43 na integração — colisão com migração dos encarregados)
+	if err := s.executarMigracoes(); err != nil {
 		return nil, err
 	}
 	return s, nil
@@ -1345,34 +1228,13 @@ func tabelaDeCatalogo(tab string) (string, error) {
 	return "", fmt.Errorf("catálogo inválido: %s", tab)
 }
 
-// ReabrirComArquivo: fecha o pool atual e reabre o banco sobre outro arquivo
-// (swap atômico do IMPORTAR backup). Migrações v2/v4/v5/v6 rodam na reabertura.
-func (s *Store) ReabrirComArquivo(novoArquivo string) error {
-	if err := s.db.Close(); err != nil {
-		return fmt.Errorf("fechar pool: %w", err)
-	}
-	s.arquivo = novoArquivo
-	dsn := "file:" + novoArquivo +
-		"?_pragma=busy_timeout(5000)" +
-		"&_pragma=foreign_keys(1)" +
-		"&_pragma=journal_mode(WAL)" +
-		"&_pragma=synchronous(FULL)" +
-		"&_txlock=immediate"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return err
-	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
-	if err := db.Ping(); err != nil {
-		return err
-	}
-	s.db = db
-	s.dsn = dsn
-	if err := s.migrarV2(); err != nil {
-		return err
-	}
+// executarMigracoes: unifica toda a cadeia de migrações v2 até v43 para
+// ser executada tanto na inicialização (AbrirStore) quanto na restauração (ReabrirComArquivo).
+func (s *Store) executarMigracoes() error {
 	if err := s.migrar(); err != nil {
+		return err
+	}
+	if err := s.migrarV2(); err != nil {
 		return err
 	}
 	if err := s.migrarV4(); err != nil {
@@ -1399,7 +1261,131 @@ func (s *Store) ReabrirComArquivo(novoArquivo string) error {
 	if err := s.migrarV11(); err != nil {
 		return err
 	}
-	return s.migrarV12()
+	if err := s.migrarV12(); err != nil {
+		return err
+	}
+	if err := s.migrarV13(); err != nil {
+		return err
+	}
+	if err := s.migrarV14(); err != nil {
+		return err
+	}
+	if err := s.migrarV15(); err != nil {
+		return err
+	}
+	if err := s.migrarV16(); err != nil {
+		return err
+	}
+	if err := s.migrarV17(); err != nil {
+		return err
+	}
+	if err := s.migrarV18(); err != nil {
+		return err
+	}
+	if err := s.migrarV19(); err != nil {
+		return err
+	}
+	if err := s.migrarV20(); err != nil {
+		return err
+	}
+	if err := s.migrarV21(); err != nil {
+		return err
+	}
+	if err := s.migrarV22(); err != nil {
+		return err
+	}
+	if err := s.migrarV23(); err != nil {
+		return err
+	}
+	if err := s.migrarV24(); err != nil {
+		return err
+	}
+	if err := s.migrarV25(); err != nil {
+		return err
+	}
+	if err := s.migrarV26(); err != nil {
+		return err
+	}
+	if err := s.migrarV27(); err != nil {
+		return err
+	}
+	if err := s.migrarV28(); err != nil {
+		return err
+	}
+	if err := s.migrarV29(); err != nil {
+		return err
+	}
+	if err := s.migrarV30(); err != nil {
+		return err
+	}
+	if err := s.migrarV31(); err != nil {
+		return err
+	}
+	if err := s.migrarV32(); err != nil {
+		return err
+	}
+	if err := s.migrarV33(); err != nil {
+		return err
+	}
+	if err := s.migrarV34(); err != nil {
+		return err
+	}
+	if err := s.migrarV35(); err != nil {
+		return err
+	}
+	if err := s.migrarV36(); err != nil {
+		return err
+	}
+	if err := s.migrarV37(); err != nil {
+		return err
+	}
+	if err := s.migrarV38(); err != nil {
+		return err
+	}
+	if err := s.migrarV39(); err != nil {
+		return err
+	}
+	if err := s.migrarV40(); err != nil {
+		return err
+	}
+	if err := s.migrarV41(); err != nil {
+		return err
+	}
+	if err := s.migrarV42(); err != nil {
+		return err
+	}
+	if err := s.migrarV43(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReabrirComArquivo: fecha o pool atual e reabre o banco sobre outro arquivo
+// (swap atômico do IMPORTAR backup). Executa toda a cadeia de migrações unificada.
+func (s *Store) ReabrirComArquivo(novoArquivo string) error {
+	if s.db != nil {
+		_ = s.db.Close()
+	}
+	s.arquivo = novoArquivo
+	dsn := "file:" + novoArquivo +
+		"?_pragma=busy_timeout(5000)" +
+		"&_pragma=foreign_keys(1)" +
+		"&_pragma=journal_mode(WAL)" +
+		"&_pragma=synchronous(FULL)" +
+		"&_txlock=immediate"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return err
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return err
+	}
+	s.db = db
+	s.dsn = dsn
+	return s.executarMigracoes()
 }
 
 // migrarV6: papéis limpos — 'usuario' passa a se chamar 'operador' (v9.3).

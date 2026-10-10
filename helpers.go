@@ -5,6 +5,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -109,11 +110,36 @@ func (a *App) pessoasAtivasOpt(escopo int64, funcoes []int64) []map[string]any {
 
 func round1(v float64) float64 { return float64(int(v*10+0.5)) / 10 }
 
+var (
+	ErrContaSemGrupo  = errors.New("conta sem grupo definido")
+	ErrNaoAutenticado = errors.New("não autenticado")
+)
+
+func (a *App) exigeEscopo(u *Usuario) (int64, error) {
+	if u == nil {
+		return -1, ErrNaoAutenticado
+	}
+	if u.Papel == "admin" {
+		return 0, nil
+	}
+	if u.GrupoID == nil {
+		return -1, ErrContaSemGrupo
+	}
+	return *u.GrupoID, nil
+}
+
 func filtroGrupoSQL(escopo int64, alias string) string {
-	if escopo <= 0 {
+	if escopo < 0 {
+		return " AND 1 = 0"
+	}
+	if escopo == 0 {
 		return ""
 	}
-	return ` AND ` + alias + `.grupo_id = ?`
+	prefix := ""
+	if alias != "" {
+		prefix = alias + "."
+	}
+	return ` AND ` + prefix + `grupo_id = ?`
 }
 
 func filtroGrupoArgs(escopo int64) []any {
@@ -165,9 +191,11 @@ func (a *App) pessoasTodas(escopo int64) []map[string]any {
 	if escopo > 0 {
 		rows, err = a.st.db.Query(q+` WHERE p.grupo_id = ?
 			ORDER BY p.status, COALESCE(s.nome,''), p.nome_guerra`, escopo)
-	} else {
+	} else if escopo == 0 {
 		rows, err = a.st.db.Query(q + `
 			ORDER BY p.status, COALESCE(s.nome,''), p.nome_guerra`)
+	} else {
+		return []map[string]any{}
 	}
 	if err != nil {
 		return []map[string]any{}

@@ -14,7 +14,11 @@ import (
 
 func (a *App) hEfetivoAtual(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	q := `
 		SELECT p.id, p.nome_guerra, COALESCE(s.nome,''), COALESCE(fu.nome,''),
 		       COALESCE((SELECT g.nome FROM grupos g WHERE g.id = p.grupo_id),'—'),
@@ -69,7 +73,11 @@ func (a *App) hEfetivoAtual(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hRegistrosBusca(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	de, ate := a.periodoPadrao(r)
 	filtrosJSON := r.URL.Query().Get("filtros")
 	pessoaQ := r.URL.Query().Get("pessoa")
@@ -202,20 +210,20 @@ func (a *App) hRegistrosBusca(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) escopoRelatorio(r *http.Request, u *Usuario) (int64, bool) {
-	esc := escopoDoUsuario(u)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		return -1, false
+	}
 	q := r.URL.Query().Get("grupo")
-	if esc <= 0 {
+	if esc == 0 {
 		if q == "" {
-			return esc, true
+			return 0, true
 		}
 		gid, err := strconv.ParseInt(q, 10, 64)
 		if err != nil {
-			return esc, true
+			return 0, true
 		}
-		if esc == 0 { // admin: recorte livre
-			return gid, true
-		}
-		return esc, true
+		return gid, true
 	}
 	if q == "" {
 		return esc, true
@@ -233,6 +241,10 @@ func (a *App) escopoRelatorio(r *http.Request, u *Usuario) (int64, bool) {
 func (a *App) hPresencaPeriodo(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
+	if _, err := a.exigeEscopo(u); err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	esc, ok := a.escopoRelatorio(r, u)
 	if !ok {
 		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
@@ -247,6 +259,10 @@ func (a *App) hPresencaPeriodo(w http.ResponseWriter, r *http.Request) {
 func (a *App) hRelatorioJSON(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
+	if _, err := a.exigeEscopo(u); err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	esc, ok := a.escopoRelatorio(r, u)
 	if !ok {
 		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
@@ -258,6 +274,10 @@ func (a *App) hRelatorioJSON(w http.ResponseWriter, r *http.Request) {
 func (a *App) hRelatorioPDF(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
+	if _, err := a.exigeEscopo(u); err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	esc, ok := a.escopoRelatorio(r, u)
 	if !ok {
 		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
@@ -286,12 +306,16 @@ func (a *App) hRelatorioDetalhadoPDF(w http.ResponseWriter, r *http.Request) {
 	}
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
+	if _, err := a.exigeEscopo(u); err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	esc, ok := a.escopoRelatorio(r, u)
 	if !ok {
 		jsonErro(w, http.StatusForbidden, "grupo fora do seu escopo")
 		return
 	}
-	if esc <= 0 {
+	if esc == 0 {
 		// Admin (escopo global): TODAS as grupos, uma folha cada
 		// (modelo do Diretor: folha por grupo). Monta a lista aqui e segue.
 		rows, qerr := a.st.db.Query(`SELECT id FROM grupos ORDER BY id`)
@@ -341,7 +365,12 @@ func (a *App) hRelatorioDetalhadoPDF(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hExportCSV(w http.ResponseWriter, r *http.Request) {
 	t := r.PathValue("t")
-	escopo := escopoDoUsuario(usuarioDoCtx(r))
+	u := usuarioDoCtx(r)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=sci_"+t+".csv")
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF}) // BOM p/ Excel

@@ -3,14 +3,59 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
+
+func validarFotoBase64(s string) (mime string, data []byte, err error) {
+	const maxFotoBase64 = 512 * 1024 // 512 KB
+	if len(s) > maxFotoBase64 {
+		return "", nil, errors.New("foto excede o limite de 512 KB")
+	}
+	var prefix string
+	if strings.HasPrefix(s, "data:image/png;base64,") {
+		mime = "image/png"
+		prefix = "data:image/png;base64,"
+	} else if strings.HasPrefix(s, "data:image/jpeg;base64,") {
+		mime = "image/jpeg"
+		prefix = "data:image/jpeg;base64,"
+	} else if strings.HasPrefix(s, "data:image/webp;base64,") {
+		mime = "image/webp"
+		prefix = "data:image/webp;base64,"
+	} else {
+		return "", nil, errors.New("formato de imagem inválido; prefixo deve ser data:image/(png|jpeg|webp);base64,")
+	}
+
+	payload := s[len(prefix):]
+	b, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return "", nil, fmt.Errorf("decodificação base64 inválida: %w", err)
+	}
+
+	switch mime {
+	case "image/png":
+		if len(b) < 8 || !bytes.Equal(b[:8], []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+			return "", nil, errors.New("conteúdo não corresponde a uma imagem PNG válida")
+		}
+	case "image/jpeg":
+		if len(b) < 3 || !bytes.Equal(b[:3], []byte{0xFF, 0xD8, 0xFF}) {
+			return "", nil, errors.New("conteúdo não corresponde a uma imagem JPEG válida")
+		}
+	case "image/webp":
+		if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WEBP" {
+			return "", nil, errors.New("conteúdo não corresponde a uma imagem WebP válida")
+		}
+	}
+
+	return mime, b, nil
+}
 
 func (a *App) hLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -340,7 +385,14 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 		_, _ = a.st.db.Exec(`UPDATE usuarios SET endereco = ? WHERE id = ?`, strings.TrimSpace(*req.Endereco), id)
 	}
 	if req.FotoBase64 != nil {
-		_, _ = a.st.db.Exec(`UPDATE usuarios SET foto_base64 = ? WHERE id = ?`, strings.TrimSpace(*req.FotoBase64), id)
+		foto := strings.TrimSpace(*req.FotoBase64)
+		if foto != "" {
+			if _, _, err := validarFotoBase64(foto); err != nil {
+				jsonErro(w, http.StatusBadRequest, "foto_base64 inválida: "+err.Error())
+				return
+			}
+		}
+		_, _ = a.st.db.Exec(`UPDATE usuarios SET foto_base64 = ? WHERE id = ?`, foto, id)
 	}
 	if req.GrupoID != nil {
 		gid := *req.GrupoID
@@ -390,7 +442,11 @@ func (a *App) tipoPadraoID() (int64, string, error) {
 
 func (a *App) hPessoaFicha(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -423,7 +479,11 @@ func (a *App) hPessoaFicha(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hPessoaComentarios(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -472,7 +532,11 @@ func (a *App) hPessoaPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	var f FichaPessoalPDF
 	f.ID = id
@@ -586,7 +650,12 @@ func (a *App) hPessoaPDF(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hPessoasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	pessoas := a.pessoasTodas(escopoDoUsuario(u))
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	pessoas := a.pessoasTodas(escopo)
 	if len(pessoas) == 0 {
 		jsonOK(w, map[string]any{"pessoas": pessoas})
 		return
@@ -651,11 +720,12 @@ func (a *App) hPessoaExcluir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "pessoa inexistente")
 		return
 	}
-	if esc := escopoDoUsuario(u); u.Papel != "admin" {
-		if esc <= 0 {
-			jsonErro(w, http.StatusForbidden, "sem grupo definido no cadastro")
-			return
-		}
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if u.Papel != "admin" {
 		// ordem 06/10: gerente/encarregado/auxiliar excluem SÓ do próprio grupo
 		if grupoID == nil || *grupoID != esc {
 			jsonErro(w, http.StatusForbidden, "pessoa de outro grupo")
@@ -712,13 +782,13 @@ func (a *App) hPessoasAdd(w http.ResponseWriter, r *http.Request) {
 		grupoID = req.GrupoID // admin escolhe o grupo (ou NULL = sem grupo)
 	case u.Papel == "gerente":
 		if u.GrupoID == nil {
-			jsonErro(w, http.StatusForbidden, "gerente sem grupo definido")
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 			return
 		}
 		grupoID = u.GrupoID
 	case a.podeGestaoPessoal(u): // encarregado OU auxiliar de pessoal
 		if u.GrupoID == nil {
-			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar sem grupo definido")
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 			return
 		}
 		grupoID = u.GrupoID
@@ -788,9 +858,9 @@ func (a *App) hPessoasEdit(w http.ResponseWriter, r *http.Request) {
 	// guardaGestaoPessoal (conta sem papel do sistema).
 	var gidEscopo *int64 // grupo da pessoa (nil = sem grupo)
 	if u.Papel != "admin" {
-		esc := escopoDoUsuario(u)
-		if esc <= 0 {
-			jsonErro(w, http.StatusForbidden, "sem grupo definido no cadastro")
+		esc, err := a.exigeEscopo(u)
+		if err != nil {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 			return
 		}
 		var gid *int64
@@ -876,12 +946,9 @@ func (a *App) funcaoValidaParaPessoa(funcaoID int64, gidPessoa *int64) bool {
 
 func (a *App) hUsuariosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
-	// ordem 06/10: leitura para TODOS os papeis do sistema (telas de designação),
-	// mas conta SEM papel do sistema e SEM grupo não lê a lista de contas —
-	// era escalação (via -1 via "mostrar tudo" + hash de senhas).
-	if escopo <= 0 && u.Papel != "admin" {
-		jsonErro(w, http.StatusForbidden, "sua conta não tem grupo definido — solicite ao gerente")
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
 	// ordem 04/10 (Grupos): gerente vê o PRÓPRIO grupo + GRUPOS SUBORDINADOS
@@ -991,6 +1058,13 @@ func (a *App) hPerfilSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
+	foto := strings.TrimSpace(req.FotoBase64)
+	if foto != "" {
+		if _, _, err := validarFotoBase64(foto); err != nil {
+			jsonErro(w, http.StatusBadRequest, "foto_base64 inválida: "+err.Error())
+			return
+		}
+	}
 	if _, err := a.st.db.Exec(`UPDATE usuarios SET
 		nome_guerra = ?, nome_completo = ?,
 		data_nascimento = ?, tipo_sanguineo = ?,
@@ -1000,7 +1074,7 @@ func (a *App) hPerfilSet(w http.ResponseWriter, r *http.Request) {
 		strings.TrimSpace(req.NomeGuerra), strings.TrimSpace(req.NomeCompleto),
 		strings.TrimSpace(req.DataNascimento), strings.TrimSpace(req.TipoSanguineo),
 		strings.TrimSpace(req.Telefone), strings.TrimSpace(req.Email), strings.TrimSpace(req.Endereco),
-		strings.TrimSpace(req.FotoBase64), u.ID); err != nil {
+		foto, u.ID); err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1349,6 +1423,11 @@ func (a *App) hUsuarioExcluir(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hPessoaQRCode(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
 		jsonErro(w, http.StatusBadRequest, "ID de militar inválido")
@@ -1361,7 +1440,7 @@ func (a *App) hPessoaQRCode(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "Militar não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && (gid == nil || *gid != esc) {
+	if esc > 0 && (gid == nil || *gid != esc) {
 		jsonErro(w, http.StatusForbidden, "Acesso restrito ao grupo")
 		return
 	}
@@ -1388,7 +1467,11 @@ func (a *App) hPessoaQRCode(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hConscienciaResumo(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	// Buscar dados do próprio grupo e subordinados imediatos/recursivos
 	var grupoPrincipalNome string

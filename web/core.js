@@ -35,7 +35,12 @@ function esc(s) {
   return String(s === null || s === undefined ? '' : s)
     .replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+function fotoValida(s) {
+  if (!s || typeof s !== 'string') return false;
+  return /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=\s]+$/.test(s.trim());
+}
 window.esc = esc;
+window.fotoValida = fotoValida;
 window.formatarTamanhoBytes = formatarTamanhoBytes;
 
 /* ---------- usuário da sessão ---------- */
@@ -577,7 +582,7 @@ definirUsuario(usuario);
     <div class="sidebar-usuario-card">
       <div class="sidebar-usuario-topo">
         <div class="sidebar-avatar" id="sbAvatarWrapper">
-          ${usuario && usuario.foto_base64 ? `<img src="${usuario.foto_base64}" class="sidebar-avatar-img" alt="Foto">` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`}
+          ${usuario && usuario.foto_base64 && fotoValida(usuario.foto_base64) ? `<img src="${esc(usuario.foto_base64)}" class="sidebar-avatar-img" alt="Foto">` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`}
         </div>
         <div class="sidebar-usuario-info">
           <div class="sidebar-usuario-nome">${esc(usuario ? (usuario.nome_guerra || usuario.nome_completo || '—') : '')}</div>

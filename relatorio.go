@@ -1374,7 +1374,11 @@ func fmtDataBR(iso string) string {
 // Permite extração granular por Ano, Período (De..Ate), Tabela, Pessoa ou Item.
 func (a *App) hExportarDados(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	tipo := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("tipo")))
 	if tipo == "" {

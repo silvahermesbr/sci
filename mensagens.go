@@ -1387,11 +1387,11 @@ func (a *App) hAvisosList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	// Onda C2 (05/10): mural em TODOS os papéis com grupo + leitura global do
 	// admin (escopo 0 → sem filtro). Sem grupo e sem ser admin → 403.
-	if !podeVerMural(u) {
-		jsonErro(w, http.StatusForbidden, "sem grupo ativo na sessão")
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
-	escopo := escopoDoUsuario(u)
 
 	var filtroGrupo string
 	var args []any

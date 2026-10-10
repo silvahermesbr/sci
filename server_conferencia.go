@@ -16,7 +16,11 @@ import (
 func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 	a.ensureTabelaDespachos()
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var f struct {
 		ID       int64
 		Status   string
@@ -37,7 +41,6 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	var err error
 	// v9.14.2: ?id=N abre conferência específica (várias simultâneas); senão a mais recente
 	idQ := r.URL.Query().Get("id")
 	qHoje := `SELECT id, status, data, criado_em FROM conferencias
@@ -112,7 +115,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		       COUNT(DISTINCT p.id) AS total_efetivo,
 		       COUNT(DISTINCT CASE WHEN pr.verificado = 1 THEN p.id ELSE NULL END) AS total_verificados
 		FROM setores s
-		JOIN pessoas p ON p.setor_id = s.id AND p.status = 'ativo' AND (? <= 0 OR p.grupo_id = ?)`
+		JOIN pessoas p ON p.setor_id = s.id AND p.status = 'ativo' AND (? = 0 OR p.grupo_id = ?)`
 		if temFiltroFuncoes {
 			qSetores += predFuncoes
 		}
@@ -120,7 +123,7 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN conferencia_setores cs ON cs.setor_id = s.id AND cs.conferencia_id = ?
 		LEFT JOIN usuarios u ON u.id = cs.concluido_por
 		LEFT JOIN presencas pr ON pr.conferencia_id = ? AND pr.pessoa_id = p.id
-		WHERE s.ativo = 1 AND (? <= 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
+		WHERE s.ativo = 1 AND (? = 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
 		GROUP BY s.id, s.nome, s.sigla, cs.status, cs.concluido_por, u.nome_guerra, u.login, cs.concluido_em
 		ORDER BY s.nome ASC`
 		qArgs := []any{escopo, escopo}
@@ -305,7 +308,11 @@ func (a *App) hConferenciaHoje(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		PessoaID   int64   `json:"pessoa_id"`
 		Situacao   string  `json:"situacao"`
@@ -329,7 +336,7 @@ func (a *App) hConferenciaMarcar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	qMark += ` ORDER BY id DESC LIMIT 1`
-	err := a.st.db.QueryRow(qMark, argsMark...).Scan(&confID, &status)
+	err = a.st.db.QueryRow(qMark, argsMark...).Scan(&confID, &status)
 	if err != nil {
 		jsonErro(w, http.StatusConflict, "nenhuma conferência aberta")
 		return
@@ -521,6 +528,11 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if u.Papel != "gerente" && !a.ehEncarregado(u) {
 		jsonErro(w, http.StatusForbidden, "fechar a conferência é ato do gerente ou do encarregado de pessoal")
 		return
@@ -550,7 +562,7 @@ func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// REGRA (28/09): só quem pertence ao grupo da conferência a fecha
-	if esc := escopoDoUsuario(u); esc > 0 {
+	if esc > 0 {
 		var gid *int64
 		qerr := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, req.ID).Scan(&gid)
 		if qerr != nil {
@@ -651,7 +663,12 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusBadRequest, "conferência já está fechada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && confGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -709,7 +726,12 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "conferência já está fechada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && confGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -751,7 +773,12 @@ func (a *App) hConferenciaArquivar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "conferência inexistente")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		if gid == nil || *gid != esc {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
 			return
@@ -817,7 +844,11 @@ func (a *App) hConferenciaExcluirArquivada(w http.ResponseWriter, r *http.Reques
 
 func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	q := `
 		SELECT c.id, c.data, COALESCE(c.hora,''), COALESCE(c.local,''), c.status,
 		       COALESCE(NULLIF(u.nome_guerra,''), NULLIF(u.nome_completo,''), '—'), c.criado_em, c.fechada_em,
@@ -830,7 +861,6 @@ func (a *App) hConferenciaList(w http.ResponseWriter, r *http.Request) {
 		FROM conferencias c
 		LEFT JOIN usuarios u ON u.id = c.criado_por`
 	var rows *sql.Rows
-	var err error
 	// ordem Tenente 30/09: aba CONFERÊNCIAS tem filtro de período (padrão: últimos 7 dias);
 	// arquivadas vêm SÓ na aba ARQUIVO (?arq=1, sem limite de período)
 	if r.URL.Query().Get("arq") == "1" {
@@ -892,14 +922,16 @@ func (a *App) hConferenciaDescartar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "conferência inexistente")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		if gid == nil || *gid != esc {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
 			return
 		}
-	} else if u.Papel != "admin" {
-		jsonErro(w, http.StatusForbidden, "sem acesso")
-		return
 	}
 	if status != "aberta" {
 		jsonErro(w, http.StatusConflict, "conferência fechada é histórico — não pode ser descartada")
@@ -958,7 +990,12 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 	// IDOR + HERANÇA (ordem Tenente 28/09 noite): grupo acessa a PRÓPRIA conferência;
 	// superior acessa TAMBÉM as de subordinados com vínculo ativo (relatório fechado).
 	uCtx := usuarioDoCtx(r)
-	if esc := escopoDoUsuario(uCtx); esc > 0 {
+	esc, err := a.exigeEscopo(uCtx)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		var gid int64
 		qerr := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM conferencias WHERE id = ?`, id).Scan(&gid)
 		if qerr != nil || (gid != esc && !int64Contem(a.gruposSubordinadosAtivos(esc), gid)) {
@@ -1093,6 +1130,12 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 }
 
 func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
+	uCtx := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(uCtx)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
@@ -1126,8 +1169,7 @@ func (a *App) hConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// IDOR + HERANÇA (28/09 noite): superior gera o relatório FECHADO do subordinado.
-	uCtx := usuarioDoCtx(r)
-	if esc := escopoDoUsuario(uCtx); esc > 0 {
+	if esc > 0 {
 		var gid int64
 		qerr := a.st.db.QueryRow(`SELECT COALESCE(grupo_id,0) FROM conferencias WHERE id = ?`, id).Scan(&gid)
 		if qerr != nil || (gid != esc && !int64Contem(a.gruposSubordinadosAtivos(esc), gid)) {
@@ -1420,6 +1462,12 @@ func (a *App) montarBundle(de, ate string, escopo int64) Bundle {
 }
 
 func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
+	u := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		ConferenciaID int64  `json:"conferencia_id"`
 		PessoaID      int64  `json:"pessoa_id"`
@@ -1431,9 +1479,8 @@ func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "conferencia_id, pessoa_id e comentario obrigatórios")
 		return
 	}
-	u := usuarioDoCtx(r)
 	// IDOR (revisão TAKEDA/SHORYU): comentário só na conferência DO PRÓPRIO grupo
-	if esc := escopoDoUsuario(u); esc > 0 {
+	if esc > 0 {
 		var gid *int64
 		if err := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, req.ConferenciaID).Scan(&gid); err != nil || gid == nil || *gid != esc {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
@@ -1449,7 +1496,7 @@ func (a *App) hComentariosAdd(w http.ResponseWriter, r *http.Request) {
 		var n int
 		var q2 string
 		args2 := []any{*req.TagID}
-		if esc := escopoDoUsuario(u); esc > 0 {
+		if esc > 0 {
 			ids := append([]int64{esc}, a.gruposSuperioresAtivos(esc)...)
 			marks := strings.TrimRight(strings.Repeat("?,", len(ids)), ",")
 			q2 = `SELECT COUNT(*) FROM tags WHERE id = ? AND ativo = 1 AND (grupo_id IS NULL OR grupo_id IN (` + marks + `))`
@@ -1486,7 +1533,12 @@ func (a *App) hComentariosList(w http.ResponseWriter, r *http.Request) {
 	}
 	// IDOR: grupo só lista comentários da própria conferência
 	u := usuarioDoCtx(r)
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		var gid *int64
 		if qerr := a.st.db.QueryRow(`SELECT grupo_id FROM conferencias WHERE id = ?`, id).Scan(&gid); qerr != nil || gid == nil || *gid != esc {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
@@ -1520,6 +1572,9 @@ func (a *App) hComentariosList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) escaladosNaData(grupoID int64, data string) []map[string]any {
+	if grupoID < 0 {
+		return []map[string]any{}
+	}
 	q := `SELECT ep.pessoa_id, et.id, et.tipo_id, COALESCE(etp.nome, ''), COALESCE(ep.funcao_escala, ''), et.data_inicio, et.data_fim,
 	             p.nome_guerra, p.nome_completo, COALESCE(s.nome, ''), COALESCE(f.nome, '')
 	      FROM escala_pessoas ep
@@ -1528,7 +1583,7 @@ func (a *App) escaladosNaData(grupoID int64, data string) []map[string]any {
 	      JOIN pessoas p ON p.id = ep.pessoa_id
 	      LEFT JOIN setores s ON s.id = p.setor_id
 	      LEFT JOIN funcoes f ON f.id = p.funcao_id
-	      WHERE (? <= 0 OR et.grupo_id = ?)
+	      WHERE (? = 0 OR et.grupo_id = ?)
 	        AND substr(et.data_inicio, 1, 10) <= ? AND substr(COALESCE(NULLIF(et.data_fim, ''), et.data_inicio), 1, 10) >= ?
 	      ORDER BY et.id, p.nome_guerra`
 	rows, err := a.st.db.Query(q, grupoID, grupoID, data, data)

@@ -385,12 +385,17 @@ type InfoDescanso struct {
 // responde 403 (fora do escopo) ou 404 (inexistente) e devolve false.
 // Pool apenas — nada de tx aqui (lição bd6a7af).
 func (a *App) cautelaNoEscopo(u *Usuario, w http.ResponseWriter, cautelaID int64) bool {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return false
+	}
 	itemGrupo, err := escopoCautelaID(a.st.db, cautelaID)
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "Cautela não encontrada")
 		return false
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+	if esc > 0 && itemGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
 		return false
 	}

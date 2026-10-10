@@ -29,7 +29,11 @@ func strVal(s *string) string {
 // -----------------------------------------------------------------
 func (a *App) hMaterialResponsaveisList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	q := `SELECT gsr.grupo_id, g.nome, gsr.setor_id, COALESCE(s.nome, 'Carga Geral'),
 	             gsr.encarregado_id, COALESCE(pe.nome_guerra, ''), COALESCE(pe.nome_completo, ''),
@@ -76,6 +80,11 @@ func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusForbidden, "somente gerente ou encarregado de material define responsáveis")
 		return
 	}
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		GrupoID               int64 `json:"grupo_id"`
 		SetorID               int64 `json:"setor_id"`
@@ -86,7 +95,6 @@ func (a *App) hMaterialResponsaveisSave(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
 	}
-	esc := escopoDoUsuario(u)
 	if a.ehEncarregadoDeMaterial(u) && u.Papel != "admin" {
 		if u.GrupoID != nil && *u.GrupoID > 0 {
 			req.GrupoID = *u.GrupoID
@@ -142,7 +150,12 @@ func (a *App) hMaterialItemAnexosList(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && itemGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -187,7 +200,12 @@ func (a *App) hMaterialItemAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && itemGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -264,7 +282,12 @@ func (a *App) hMaterialItemAnexoGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && itemGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -295,7 +318,12 @@ func (a *App) hMaterialItemAnexoDel(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && itemGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -322,7 +350,12 @@ func (a *App) hMaterialItemComentariosList(w http.ResponseWriter, r *http.Reques
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && itemGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -369,7 +402,12 @@ func (a *App) hMaterialItemComentarioAdd(w http.ResponseWriter, r *http.Request)
 		jsonErro(w, http.StatusNotFound, "item não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && itemGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 		return
 	}
@@ -399,7 +437,11 @@ func (a *App) hMaterialItemComentarioAdd(w http.ResponseWriter, r *http.Request)
 // -----------------------------------------------------------------
 func (a *App) hMaterialConferenciasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	q := `SELECT mc.id, mc.grupo_id, g.nome, COALESCE(mc.setor_id, 0), COALESCE(s.nome, 'Geral'),
 	             mc.data, mc.status, mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''),
 	             mc.aberta_em, mc.fechada_em
@@ -446,7 +488,11 @@ func (a *App) hMaterialConferenciaIniciar(w http.ResponseWriter, r *http.Request
 		jsonErro(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
 		return
 	}
-	esc := escopoDoUsuario(u)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if req.GrupoID > 0 {
 		if esc > 0 && req.GrupoID != esc {
 			jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
@@ -560,7 +606,12 @@ func (a *App) hMaterialConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && gid != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && gid != esc {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -643,7 +694,12 @@ func (a *App) hMaterialConferenciaBipar(w http.ResponseWriter, r *http.Request) 
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && confGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -711,7 +767,12 @@ func (a *App) hMaterialConferenciaFechar(w http.ResponseWriter, r *http.Request)
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && confGrupoID != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && confGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
@@ -742,13 +803,14 @@ func (a *App) hMaterialConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 
 	var p ProntoMaterialPDF
 	p.ID = confID
+	var confGrupoID int64
 	var sid *int64
 	var apID int64
 	var fpID *int64
 	var gNome, sNome, st, data, apNome, fpNome, abertaEm, fechadaEm, obs string
 
 	err = a.st.db.QueryRow(`
-		SELECT mc.id, COALESCE(g.nome, '1ª Cia (Geral)'), mc.setor_id, COALESCE(s.nome, 'Carga Geral'),
+		SELECT mc.id, mc.grupo_id, COALESCE(g.nome, '1ª Cia (Geral)'), mc.setor_id, COALESCE(s.nome, 'Carga Geral'),
 		       mc.data, mc.status, mc.aberta_por, COALESCE(ua.nome_guerra, ua.login, ''),
 		       mc.aberta_em, mc.fechada_por, COALESCE(uf.nome_guerra, uf.login, ''),
 		       COALESCE(mc.fechada_em, ''), COALESCE(mc.observacao, '')
@@ -758,12 +820,21 @@ func (a *App) hMaterialConferenciaPDF(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN usuarios ua ON ua.id = mc.aberta_por
 		LEFT JOIN usuarios uf ON uf.id = mc.fechada_por
 		WHERE mc.id = ?`, confID).Scan(
-		&p.ID, &gNome, &sid, &sNome,
+		&p.ID, &confGrupoID, &gNome, &sid, &sNome,
 		&data, &st, &apID, &apNome,
 		&abertaEm, &fpID, &fpNome,
 		&fechadaEm, &obs)
 	if err != nil {
 		jsonErro(w, http.StatusNotFound, "conferência não encontrada")
+		return
+	}
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && confGrupoID != esc {
+		jsonErro(w, http.StatusForbidden, "conferência fora do seu escopo")
 		return
 	}
 	p.GrupoNome = gNome
@@ -836,7 +907,11 @@ func (a *App) hMaterialCautelaReciboPDF(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	var rec ReciboCautelaPDF
 	rec.ID = id
@@ -895,7 +970,11 @@ func (a *App) hMaterialInventarioPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	var inv InventarioRelatorioPDF
 	inv.Totais = map[string]int{"total": 0, "disponivel": 0, "acautelado": 0, "manutencao": 0, "baixado": 0}
@@ -966,7 +1045,11 @@ func (a *App) hMaterialInventarioPDF(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialCategoriasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	rows, err := a.st.db.Query(
 		`SELECT id, COALESCE(grupo_id, 0), nome, ativo
 		 FROM material_categorias
@@ -993,6 +1076,11 @@ func (a *App) hMaterialCategoriasList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	var req struct {
 		ID    int64  `json:"id"`
 		Nome  string `json:"nome"`
@@ -1019,7 +1107,6 @@ func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			esc := escopoDoUsuario(u)
 			if esc > 0 && catGrupoID.Int64 != esc {
 				jsonErro(w, http.StatusForbidden, "categoria fora do seu escopo")
 				return
@@ -1044,6 +1131,11 @@ func (a *App) hMaterialCategoriasAdd(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	idStr := r.PathValue("id")
 	id, _ := strconv.ParseInt(idStr, 10, 64)
 	if id <= 0 {
@@ -1061,7 +1153,6 @@ func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		esc := escopoDoUsuario(u)
 		if esc > 0 && catGrupoID.Int64 != esc {
 			jsonErro(w, http.StatusForbidden, "categoria fora do seu escopo")
 			return
@@ -1074,7 +1165,7 @@ func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]any{"ok": true, "desativado": true})
 		return
 	}
-	_, err := a.st.db.Exec(`DELETE FROM material_categorias WHERE id = ?`, id)
+	_, err = a.st.db.Exec(`DELETE FROM material_categorias WHERE id = ?`, id)
 	if err != nil {
 		jsonErro(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1084,7 +1175,11 @@ func (a *App) hMaterialCategoriasDel(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	statusQ := r.URL.Query().Get("status")
 	catQ := r.URL.Query().Get("categoria_id")
 	garagemQ := r.URL.Query().Get("garagem")
@@ -1112,7 +1207,7 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN material_cautelas caut ON caut.item_id = mi.id AND caut.status = 'ativa'
 		LEFT JOIN pessoas p ON p.id = caut.pessoa_id
 		LEFT JOIN usuarios ue ON ue.id = caut.responsavel_entrega_id
-		WHERE (? <= 0 OR mi.grupo_id = ?)`
+		WHERE (? = 0 OR mi.grupo_id = ?)`
 	args := []any{escopo, escopo}
 
 	if statusQ != "" {
@@ -1212,8 +1307,9 @@ func (a *App) hMaterialItensList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	if u.Papel != "admin" && u.GrupoID == nil {
-		jsonErro(w, http.StatusForbidden, "Conta sem grupo")
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
 	}
 	var req struct {
@@ -1359,8 +1455,8 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 		resIt, err := a.st.db.Exec(`
 			UPDATE material_itens
 			SET setor_id = ?, categoria_id = ?, nome = ?, codigo_patrimonio = ?, numero_serie = ?, status = ?, observacao = ?, nivel_sensibilidade = ?, sensibilidade = ?, quantidade = ?
-			WHERE id = ? AND (? <= 0 OR grupo_id = ?)`,
-			setorVal, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.Sensibilidade, req.Quantidade, req.ID, escopoDoUsuario(u), grupoID)
+			WHERE id = ? AND (? = 0 OR grupo_id = ?)`,
+			setorVal, req.CategoriaID, req.Nome, req.CodigoPatrimonio, req.NumeroSerie, req.Status, req.Observacao, req.NivelSensibilidade, req.Sensibilidade, req.Quantidade, req.ID, esc, grupoID)
 		if err != nil {
 			jsonErro(w, http.StatusInternalServerError, err.Error())
 			return
@@ -1414,7 +1510,11 @@ func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	esc := escopoDoUsuario(u)
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if esc > 0 && itemGrupoID > 0 && itemGrupoID != esc {
 		jsonErro(w, http.StatusForbidden, "Você não tem permissão para alterar itens de outro grupo")
 		return
@@ -1563,7 +1663,12 @@ func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 
 	// Fix P1-1: cautelar exige item do PRÓPRIO escopo (o id do corpo era aceito cru).
 	// USA tx: o handler já segura a conexão única — query no pool aqui = deadlock.
-	if esc := escopoDoUsuario(u); esc > 0 {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 {
 		var itemGrupo int64
 		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, req.ItemID).Scan(&itemGrupo); err != nil || itemGrupo != esc {
 			jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
@@ -1669,9 +1774,14 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 	// do próprio item, e o item do escopo do usuário. USA tx (conexão já presa:
 	// query no pool aqui = deadlock, pego pela suíte).
 	{
+		esc, err := a.exigeEscopo(u)
+		if err != nil {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+			return
+		}
 		var itemGrupo int64
 		if err := tx.QueryRow(`SELECT COALESCE(grupo_id,0) FROM material_itens WHERE id = ?`, itemID).Scan(&itemGrupo); err == nil {
-			if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+			if esc > 0 && itemGrupo != esc {
 				jsonErro(w, http.StatusForbidden, "item fora do seu escopo")
 				return
 			}
@@ -1731,7 +1841,11 @@ func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	statusQ := r.URL.Query().Get("status")
 	pessoaQ := r.URL.Query().Get("pessoa_id")
 	itemQ := r.URL.Query().Get("item_id")
@@ -1749,7 +1863,7 @@ func (a *App) hMaterialCautelasList(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN pessoas p ON p.id = mc.pessoa_id
 		LEFT JOIN usuarios ue ON ue.id = mc.responsavel_entrega_id
 		LEFT JOIN usuarios ur ON ur.id = mc.responsavel_recebimento_id
-		WHERE (? <= 0 OR mi.grupo_id = ?)`
+		WHERE (? = 0 OR mi.grupo_id = ?)`
 	args := []any{escopo, escopo}
 
 	if statusQ != "" {
@@ -1842,7 +1956,12 @@ func (a *App) hMaterialAnexoAdd(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "Cautela não encontrada")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && itemGrupo != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && itemGrupo != esc {
 		jsonErro(w, http.StatusForbidden, "cautela fora do seu escopo")
 		return
 	}
@@ -2046,7 +2165,12 @@ func (a *App) hMaterialItemQRCode(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusNotFound, "Material não encontrado")
 		return
 	}
-	if esc := escopoDoUsuario(u); esc > 0 && gid != esc {
+	esc, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
+	if esc > 0 && gid != esc {
 		jsonErro(w, http.StatusForbidden, "Acesso restrito ao grupo")
 		return
 	}
@@ -2077,7 +2201,11 @@ func (a *App) hMaterialEtiquetasLotePDF(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 
 	idsParam := r.URL.Query().Get("ids")
 	var idList []int64

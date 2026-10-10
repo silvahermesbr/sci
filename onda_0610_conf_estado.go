@@ -22,7 +22,11 @@ import (
 // como "estado sumiu" e recarrega a view, igual ao pooling de hoje).
 func (a *App) hConferenciaEstado(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
-	escopo := escopoDoUsuario(u)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	setoresVazio := []map[string]string{}
 	if escopo == 0 && u.Papel == "admin" {
 		jsonOK(w, map[string]any{"hash_geral": "", "setores": setoresVazio})
@@ -67,15 +71,15 @@ func (a *App) hConferenciaEstado(w http.ResponseWriter, r *http.Request) {
 		         AS tok
 		      FROM pessoas p
 		      WHERE p.setor_id = s.id AND p.status = 'ativo'
-		        AND (? <= 0 OR p.grupo_id = ?)` + predFiltro + `
+		        AND (? = 0 OR p.grupo_id = ?)` + predFiltro + `
 		      ORDER BY p.id) x),
 		       (SELECT COUNT(*) FROM pessoas p3
-		         WHERE p3.setor_id = s.id AND p3.status = 'ativo' AND (? <= 0 OR p3.grupo_id = ?)` + predFiltro + `),
+		         WHERE p3.setor_id = s.id AND p3.status = 'ativo' AND (? = 0 OR p3.grupo_id = ?)` + predFiltro + `),
 		       (SELECT COUNT(*) FROM pessoas p4
 		         JOIN presencas pr2 ON pr2.conferencia_id = ? AND pr2.pessoa_id = p4.id AND pr2.verificado = 1
-		         WHERE p4.setor_id = s.id AND p4.status = 'ativo' AND (? <= 0 OR p4.grupo_id = ?)` + predFiltro + `)
+		         WHERE p4.setor_id = s.id AND p4.status = 'ativo' AND (? = 0 OR p4.grupo_id = ?)` + predFiltro + `)
 		FROM setores s
-		WHERE s.ativo = 1 AND (? <= 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
+		WHERE s.ativo = 1 AND (? = 0 OR s.grupo_id = ? OR s.grupo_id IS NULL)
 		ORDER BY s.id
 	`, cid, cid, escopo, escopo, argsFiltro, escopo, escopo, argsFiltro, cid, escopo, escopo, argsFiltro, escopo, escopo)
 	if err != nil {

@@ -4,6 +4,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -217,7 +218,16 @@ func podeAdministrar(u *Usuario) bool {
 }
 
 func (a *App) hGruposList(w http.ResponseWriter, r *http.Request) {
-	escopo := escopoDoUsuario(usuarioDoCtx(r))
+	u := usuarioDoCtx(r)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		if errors.Is(err, ErrContaSemGrupo) {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+			return
+		}
+		jsonErro(w, http.StatusUnauthorized, "não autenticado")
+		return
+	}
 	jsonOK(w, a.gruposComCodigo(escopo))
 }
 
@@ -351,6 +361,9 @@ func (a *App) hVinculoList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) gruposComCodigo(escopo int64) []map[string]any {
+	if escopo < 0 {
+		return []map[string]any{}
+	}
 	rows, err := a.st.db.Query(`
 		SELECT g.id, g.nome, COALESCE(g.codigo,''), g.criado_em,
 		       (SELECT COUNT(*) FROM usuarios u WHERE u.grupo_id = g.id) AS contas,
@@ -396,6 +409,15 @@ func (a *App) gruposComCodigo(escopo int64) []map[string]any {
 
 func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	escopo, err := a.exigeEscopo(u)
+	if err != nil {
+		if errors.Is(err, ErrContaSemGrupo) {
+			jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+			return
+		}
+		jsonErro(w, http.StatusUnauthorized, "não autenticado")
+		return
+	}
 	rows, err := a.st.db.Query(`
 		SELECT g.id, g.nome, COALESCE(g.codigo,''),
 		       (SELECT COUNT(*) FROM pessoas p WHERE p.grupo_id = g.id AND p.status = 'ativo'),
@@ -468,9 +490,9 @@ func (a *App) hArvoreGrupos(w http.ResponseWriter, r *http.Request) {
 			raizes = append(raizes, id)
 		}
 	}
-	if u != nil && u.Papel != "admin" && u.GrupoID != nil {
+	if escopo > 0 {
 		// gerente/operador: árvore enraizada no PRÓPRIO grupo
-		if raiz := montar(*u.GrupoID, 0); raiz != nil {
+		if raiz := montar(escopo, 0); raiz != nil {
 			jsonOK(w, []*GrupoN{raiz})
 			return
 		}
