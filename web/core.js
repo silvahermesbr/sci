@@ -132,6 +132,9 @@ function rotaInicial() {
   // v1.6.0 F1: contexto enc_* materializado — cada cadeira aterrissa no seu módulo
   if (p === 'enc_pessoal') return '#/hoje';
   if (p === 'enc_material') return '#/material';
+  // v1.6.0 Fase 5 — conta SEM FUNÇÃO (e papel vazio sem cadeira legada
+  // derivável): aterrissa na página de bloqueio dedicada (não no genérico).
+  if (p === 'sem_funcao' || !p) return '#/bloqueio';
   return '#/sem-modulo';
 }
 
@@ -706,7 +709,13 @@ definirUsuario(usuario);
     const svgPes = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="16" y1="3" x2="22" y2="9"/><line x1="22" y1="3" x2="16" y2="9"/></svg>';
     const svgMaterial = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
     const svgPerfil = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-    if (papel === 'operador') {
+    // v1.6.0 Fase 5: conta SEM FUNÇÃO — sidebar MÍNIMA: sem itens de módulo
+    // (perfil/senha/sair são fixos no rodapé; o dropdown de contexto mostra
+    // "Nenhuma outra função disponível" com papeis[] vazio). O rotear leva
+    // qualquer hash a #/bloqueio.
+    if (papel === 'sem_funcao' || !papel) {
+      itens = [];
+    } else if (papel === 'operador') {
       // v1.6.0 Fase 2: o papel de sistema dá a BASE e pronto — o CARGO (cadeira
       // enc_*) virou CONTEXTO separado no dropdown; quem tem os dois contextos
       // troca e a sidebar remonta pelo papel ativo (sem acréscimo por cargo).
@@ -1131,6 +1140,12 @@ function rotear() {
   if (!ME) { viewLogin(); return; }
   montarShell(ME);
   const papel = ME.papel;
+
+  // v1.6.0 Fase 5 — conta SEM FUNÇÃO: página de bloqueio dedicada. Qualquer
+  // OUTRA hash com papel 'sem_funcao' (ou vazio, sem cadeira legada) cai nela;
+  // ViewSemModulo continua para papel VÁLIDO com módulo bloqueado.
+  if (h === '#/bloqueio') { chamarView('ViewBloqueioSemFuncao'); return; }
+  if (papel === 'sem_funcao' || !papel) { irPara('#/bloqueio'); return; }
 
   if (h === '' || h === '#' || h === '#/' || h === '#/login') { irPara(rotaInicial()); return; }
   if (h === '#/conferencias') { irPara('#/hoje'); return; }             // listas moram na Conferência
@@ -1755,4 +1770,31 @@ window.ViewSemModulo = function () {
       <h2 style="margin:0 0 8px">Módulo não disponível</h2>
       <p style="color:var(--tx2);font-size:13.5px;margin:0">Sua conta ainda não possui funções no sistema. Procure o encarregado de pessoal do seu grupo para receber uma função.</p>
     </div>`;
+};
+
+/* ---------- v1.6.0 Fase 5: conta SEM FUNÇÃO — página de bloqueio ----------
+   Destino de login/rotear de toda conta com papel 'sem_funcao' (e papel vazio
+   sem cadeira legada): sem módulo algum — o servidor barra os dados com a
+   guarda central de escopo (-1 → 403). Sai do bloqueio por SAIR (logout) ou
+   quando o gerente/encarregado designar uma cadeira (o próximo login resolve
+   o contexto pela linha materializada — Fase 3). */
+window.ViewBloqueioSemFuncao = function () {
+  const app = document.getElementById('app');
+  if (!app) return;
+  if (window.navAtiva) navAtiva('');
+  app.innerHTML = `
+    <div class="cartao" style="max-width:560px;margin:60px auto;text-align:center;padding:38px 28px">
+      <div style="font-size:44px;margin-bottom:12px">🚫</div>
+      <h2 style="margin:0 0 8px">Você não tem função neste grupo</h2>
+      <p style="color:var(--tx2);font-size:13.5px;margin:0 0 20px">Procure o gerente/encarregado para receber uma designação. Quando ela for feita, faça login novamente para entrar.</p>
+      <button type="button" class="primario" id="btBloqueioSair" style="padding:9px 26px">SAIR</button>
+    </div>`;
+  const bt = document.getElementById('btBloqueioSair');
+  if (bt) {
+    bt.onclick = async () => {
+      try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (e) {}
+      definirUsuario(null);
+      irPara('#/login');
+    };
+  }
 };

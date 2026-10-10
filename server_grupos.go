@@ -245,6 +245,12 @@ func escopoDoUsuario(u *Usuario) int64 {
 	if u == nil {
 		return -1
 	}
+	// v1.6.0 Fase 5 (conta SEM FUNÇÃO): papel fora da lista única
+	// (papelTemEscopoDeDados) — 'sem_funcao', vazio, desconhecido — NÃO tem
+	// escopo, mesmo com grupo no cadastro.
+	if !papelTemEscopoDeDados(u.Papel) {
+		return -1
+	}
 	if u.Papel == "admin" {
 		return 0
 	}

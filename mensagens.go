@@ -124,6 +124,12 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	papel := strings.ToLower(strings.TrimSpace(req.Papel))
 	switch papel {
 	case "admin", "gerente", "operador", "chefe_setor":
+	case "sem_funcao":
+		// v1.6.0 Fase 5: 'sem_funcao' é AUSÊNCIA de contexto — não é papel de
+		// linha (fica fora do CHECK de usuario_papeis por design). A conta nasce
+		// assim pelo hUsuariosAdd; aqui é sempre 400.
+		jsonErro(w, http.StatusBadRequest, "sem_funcao não é papel de linha — crie a conta com esse papel em POST /api/usuarios")
+		return
 	default:
 		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador | chefe_setor)")
 		return
@@ -661,6 +667,13 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 Fase 5 (conta SEM FUNÇÃO): comunicação é POR PAPEL — conta fora da
+	// lista de escopo ('sem_funcao'/vazio) não tem caixa de envio (403, matriz
+	// da onda), nem com grupo no cadastro.
+	if !papelTemEscopoDeDados(u.Papel) {
+		jsonErro(w, http.StatusForbidden, "conta sem função no sistema — procure o gerente/encarregado para receber uma designação")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo na sessão")
 		return

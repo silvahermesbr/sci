@@ -19,8 +19,14 @@ import (
 // podeVerMural: admin (visão global) ou qualquer papel com grupo na sessão.
 // Ordem "mural em todos os papéis" não alcança conta sem grupo: o mural é
 // estruturado por grupo (avisos.grupo_id) — sem grupo não há o que ler.
+// v1.6.0 Fase 5 (conta SEM FUNÇÃO): exige papel da lista única de escopo —
+// 'sem_funcao'/vazio não lê mural nem COM grupo (a comunicação por papel
+// pressupõe ter papel).
 func podeVerMural(u *Usuario) bool {
-	return u != nil && (u.Papel == "admin" || u.GrupoID != nil)
+	if u == nil || !papelTemEscopoDeDados(u.Papel) {
+		return false
+	}
+	return u.Papel == "admin" || u.GrupoID != nil
 }
 
 // hFuncaoMembrosGet: GET /api/grupo/funcoes/membros
