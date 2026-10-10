@@ -113,26 +113,88 @@ func (a *App) funcoesFiltroDaConferencia(cid int64) []int64 {
 	return out
 }
 
+// ---------- v1.5.4-D3 (R-7): fonte ÚNICA das expressões SQL de antiguidade ----------
+// O filtro da conferência por antiguidade casa o militar em 3 fontes (tag na
+// PESSOA, na CONTA ou num PAPEL da conta). Filtro, ORDENAÇÃO e aviso de
+// excluídos têm que sair da mesma doutrina — por isso o texto SQL vive AQUI e
+// os pontos de consulta (hoje/pessoasAtivasOpt, pré-fechamento, relatório em
+// tela e PDF) só o referenciam, sem replicar SQL.
+
+// filtroAntiguidadeTresFontes: corpo da condição (sem o "AND " inicial) que
+// casa o militar com as tags da conferência (conferencia_funcoes) nas 3
+// fontes. Requer o alias p (pessoas). Placeholders: 3× conferencia_id, nesta
+// ordem.
+const filtroAntiguidadeTresFontes = `(p.funcao_id IN (SELECT funcao_id FROM conferencia_funcoes WHERE conferencia_id = ?)
+OR EXISTS (SELECT 1 FROM usuarios u2 WHERE u2.pessoa_id = p.id AND u2.funcao_id IN (SELECT funcao_id FROM conferencia_funcoes WHERE conferencia_id = ?))
+OR EXISTS (SELECT 1 FROM usuario_papeis up2 JOIN usuarios u3 ON u3.id = up2.usuario_id WHERE u3.pessoa_id = p.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL) AND up2.funcao_id IN (SELECT funcao_id FROM conferencia_funcoes WHERE conferencia_id = ?)))`
+
+// exprAntiguidadeTresFontes: antiguidade UNIFICADA do militar — a tag vale na
+// primeira fonte que a tiver, na mesma precedência do filtro e do nome de
+// função exibido: PESSOA (fu) → CONTA (fu_u) → PAPEL (fu_up). Sem tag em
+// nenhuma fonte → 999 (por último). Requer os aliases fu/fu_u/fu_up (os mesmos
+// JOINs que as consultas do modo antiguidade já fazem).
+const exprAntiguidadeTresFontes = `COALESCE(fu.antiguidade, fu_u.antiguidade, fu_up.antiguidade, 999)`
+
+// ordemAntiguidadeTresFontes: sufixo ORDER BY do modo antiguidade — antiguidade
+// unificada, depois nome, depois id (estável e determinística mesmo com nomes
+// de guerra repetidos). colNome é a coluna de nome da consulta.
+func ordemAntiguidadeTresFontes(colNome string) string {
+	return exprAntiguidadeTresFontes + ", " + colNome + ", p.id"
+}
+
+// conferenciaEmModoAntiguidade: true se a conferência tem filtro de tags
+// (linhas em conferencia_funcoes) — o modo "por antiguidade".
+func (a *App) conferenciaEmModoAntiguidade(cid int64) bool {
+	var n int
+	_ = a.st.db.QueryRow(`SELECT COUNT(*) FROM conferencia_funcoes WHERE conferencia_id = ?`, cid).Scan(&n)
+	return n > 0
+}
+
+// militaresSemTagAntiguidade (R-7): nomes (em ordem alfabética) dos militares
+// ATIVOS do universo da conferência — grupo da conferência, recortado aos
+// setores despachados quando houver — que ficaram FORA do filtro por não
+// terem a tag em NENHUMA das 3 fontes. Alimenta `sem_tag` na resposta do
+// iniciar/despachar para o front avisar, em vez de o militar sumir em silêncio.
+// Chamar APÓS criar a conferência (lê as tags já semeadas em CF).
+func (a *App) militaresSemTagAntiguidade(grupoID, cid int64, setores []int64) []string {
+	out := []string{}
+	q := `SELECT p.nome_guerra FROM pessoas p WHERE p.status = 'ativo' AND p.grupo_id = ?`
+	args := []any{grupoID}
+	if len(setores) > 0 {
+		ph := strings.TrimSuffix(strings.Repeat("?,", len(setores)), ",")
+		q += ` AND p.setor_id IN (` + ph + `)`
+		for _, sid := range setores {
+			args = append(args, sid)
+		}
+	}
+	// COALESCE(...,0): lógica tri-estados — pessoa com funcao_id NULL (nem
+	// conta/papel) deixa o predicado em NULL, e NOT NULL não é TRUE; sem o
+	// COALESCE o militar sem tag nenhuma é justamente quem some do aviso.
+	q += ` AND NOT COALESCE(` + filtroAntiguidadeTresFontes + `, 0) ORDER BY p.nome_guerra`
+	args = append(args, cid, cid, cid)
+	rows, err := a.st.db.Query(q, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ng string
+		if rows.Scan(&ng) == nil {
+			out = append(out, ng)
+		}
+	}
+	return out
+}
+
 // predicadoAntiguidade devolve clausula SQL + args para filtrar pessoas que
 // tenham funcao na conferencia_funcoes (p.funcao_id, u2.funcao_id ou up2.funcao_id).
 // Se nao ha filtro, devolve vazio.
 func (a *App) predicadoAntiguidade(cid int64) (string, []any) {
-	rows, err := a.st.db.Query(`SELECT COUNT(*) FROM conferencia_funcoes WHERE conferencia_id = ?`, cid)
-	if err != nil {
-		return "", nil
-	}
-	defer rows.Close()
 	var n int
-	if rows.Next() {
-		_ = rows.Scan(&n)
-	}
-	if n == 0 {
+	if err := a.st.db.QueryRow(`SELECT COUNT(*) FROM conferencia_funcoes WHERE conferencia_id = ?`, cid).Scan(&n); err != nil || n == 0 {
 		return "", nil
 	}
-	clause := ` AND (p.funcao_id IN (SELECT funcao_id FROM conferencia_funcoes WHERE conferencia_id = ?)
-OR EXISTS (SELECT 1 FROM usuarios u2 WHERE u2.pessoa_id = p.id AND u2.funcao_id IN (SELECT funcao_id FROM conferencia_funcoes WHERE conferencia_id = ?))
-OR EXISTS (SELECT 1 FROM usuario_papeis up2 JOIN usuarios u3 ON u3.id = up2.usuario_id WHERE u3.pessoa_id = p.id AND (up2.grupo_id = p.grupo_id OR up2.grupo_id IS NULL) AND up2.funcao_id IN (SELECT funcao_id FROM conferencia_funcoes WHERE conferencia_id = ?)))`
-	return clause, []any{cid, cid, cid}
+	return " AND " + filtroAntiguidadeTresFontes, []any{cid, cid, cid}
 }
 
 func (a *App) hSetorPreFechamento(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +249,7 @@ func (a *App) hSetorPreFechamento(w http.ResponseWriter, r *http.Request) {
 
 	q := `SELECT p.id, p.nome_guerra,
 	             COALESCE(NULLIF(fu.nome,''), COALESCE(NULLIF(fu_u.nome,''), COALESCE(NULLIF(fu_up.nome,''), ''))) AS funcao_nome,
-	             pr.situacao, pr.verificado, COALESCE(pr.observacao, '')
+	             COALESCE(pr.situacao, '') AS situacao, pr.verificado, COALESCE(pr.observacao, '')
 	      FROM pessoas p
 	      LEFT JOIN funcoes fu ON fu.id = p.funcao_id
 	      LEFT JOIN usuarios u2 ON u2.pessoa_id = p.id
@@ -203,7 +265,9 @@ func (a *App) hSetorPreFechamento(w http.ResponseWriter, r *http.Request) {
 	}
 	q += pred
 	queryArgs = append(queryArgs, argsPred...)
-	q += ` ORDER BY COALESCE(fu.antiguidade, 999), p.nome_guerra`
+	// v1.5.4-D3 (R-7): ordem pela antiguidade UNIFICADA das 3 fontes da tag —
+	// antes usava só p.funcao_id e quem só tem tag na conta/papel caía pro fim.
+	q += ` ORDER BY ` + ordemAntiguidadeTresFontes("p.nome_guerra")
 
 	rows, errQ := a.st.db.Query(q, queryArgs...)
 	if errQ != nil {

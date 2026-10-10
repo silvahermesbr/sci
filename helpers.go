@@ -75,12 +75,19 @@ func (a *App) pessoasAtivasOpt(escopo int64, funcoes []int64) []map[string]any {
 	}
 	var rows *sql.Rows
 	var err error
+	// v1.5.4-D3 (R-7): no modo antiguidade (filtro de funções ativo) a listagem
+	// segue a antiguidade UNIFICADA das 3 fontes da tag — antes ordenava por
+	// setor/nome e a escada quebrava para quem só tem tag na conta ou no papel.
+	ordem := `ORDER BY COALESCE(s.nome,''), p.nome_guerra, p.id`
+	if len(funcoes) > 0 {
+		ordem = `ORDER BY ` + ordemAntiguidadeTresFontes("p.nome_guerra")
+	}
 	if escopo > 0 {
 		rows, err = a.st.db.Query(q+` AND p.grupo_id = ?
-			ORDER BY COALESCE(s.nome,''), p.nome_guerra`, append(funcoesArgs, escopo)...)
+			`+ordem, append(funcoesArgs, escopo)...)
 	} else if escopo == 0 {
-		rows, err = a.st.db.Query(q + `
-			ORDER BY COALESCE(s.nome,''), p.nome_guerra`, funcoesArgs...)
+		rows, err = a.st.db.Query(q+`
+			`+ordem, funcoesArgs...)
 	} else {
 		return []map[string]any{}
 	}

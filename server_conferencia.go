@@ -529,7 +529,14 @@ func (a *App) hConferenciaIniciar(w http.ResponseWriter, r *http.Request) {
 
 	data := time.Now().In(a.horaLocal).Format("2006-01-02")
 	a.st.Auditoria(&u.ID, "iniciar", "conferencias", &id, "data="+data+" (carry over e escalas aplicados)", ipDe(r))
-	jsonOK(w, map[string]any{"id": id, "data": data, "conferencia_id": id})
+	resp := map[string]any{"id": id, "data": data, "conferencia_id": id}
+	// v1.5.4-D3 (R-7): no modo antiguidade a resposta carrega quem ficou FORA do
+	// filtro por não ter a tag em NENHUMA das 3 fontes — o front avisa, em vez
+	// de o militar sumir em silêncio da listagem.
+	if len(req.FuncaoIDs) > 0 {
+		resp["sem_tag"] = a.militaresSemTagAntiguidade(*u.GrupoID, id, setoresUnicos)
+	}
+	jsonOK(w, resp)
 }
 
 func (a *App) hConferenciaFechar(w http.ResponseWriter, r *http.Request) {
@@ -1012,6 +1019,13 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// v1.5.4-D3 (R-7): no modo antiguidade o relatório em tela segue a escada —
+	// antiguidade unificada das 3 fontes da tag — e não mais situacao/nome
+	// (a conferência por antiguidade saía fora de ordem na tela).
+	ordem := ` ORDER BY pr.situacao, p.nome_guerra, p.id`
+	if a.conferenciaEmModoAntiguidade(id) {
+		ordem = ` ORDER BY ` + ordemAntiguidadeTresFontes("p.nome_guerra")
+	}
 	rows, e := a.st.db.Query(`
 		SELECT p.nome_guerra, COALESCE(s.nome,'INDEFINIDO'), pr.situacao,
 		       COALESCE(d.nome,''), COALESCE(pr.observacao,''), COALESCE(u.login,''), COALESCE(pr.marcado_em,''),
@@ -1027,8 +1041,7 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN destinos d ON d.id = pr.destino_id
 		LEFT JOIN usuarios u ON u.id = pr.marcado_por
-		WHERE pr.conferencia_id = ?
-		ORDER BY pr.situacao, p.nome_guerra`, id)
+		WHERE pr.conferencia_id = ?`+ordem, id)
 	if e != nil {
 		jsonErro(w, http.StatusInternalServerError, e.Error())
 		return
@@ -1068,6 +1081,13 @@ func (a *App) hConferenciaGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[string]any, map[string]int, error) {
+	// v1.5.4-D3 (R-7): PDF de conferência POR ANTIGUIDADE sai na escada
+	// (antiguidade unificada das 3 fontes da tag), na mesma ordem do relatório
+	// em tela; conferência por setores mantém a ordem por caminho de função.
+	ordem := ` ORDER BY COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor'), p.nome_guerra COLLATE NOCASE`
+	if a.conferenciaEmModoAntiguidade(id) {
+		ordem = ` ORDER BY ` + ordemAntiguidadeTresFontes("p.nome_guerra")
+	}
 	rows, e := a.st.db.Query(`
 		WITH RECURSIVE cam_setor(id, caminho) AS (
 		  SELECT id, nome FROM setores WHERE pai_id IS NULL
@@ -1095,8 +1115,7 @@ func (a *App) montarLancamentosPDFConferencia(id int64, filtro string) ([]map[st
 		LEFT JOIN funcoes fu_up ON fu_up.id = up2.funcao_id
 		LEFT JOIN destinos d ON d.id = pr.destino_id
 		JOIN usuarios u ON u.id = pr.marcado_por
-		WHERE pr.conferencia_id = ?
-		ORDER BY COALESCE(cf2.caminho,'~sem função'), COALESCE(cs2.caminho,'~sem setor'), p.nome_guerra COLLATE NOCASE`, id)
+		WHERE pr.conferencia_id = ?` + ordem, id)
 	if e != nil {
 		return nil, nil, e
 	}
