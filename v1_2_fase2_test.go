@@ -58,6 +58,19 @@ func TestFase2DespachosEAvisos(t *testing.T) {
 		t.Fatalf("falha ao criar grupo Bravo: %v", res)
 	}
 
+	// v1.5.4-E1 (R-14): o envio segue a árvore (próprio grupo + subordinados) —
+	// Alfa comanda Bravo para o despacho descer.
+	var gidAlfa, gidBravo int64
+	if err := app.st.db.QueryRow(`SELECT id FROM grupos WHERE nome = 'Companhia Alfa'`).Scan(&gidAlfa); err != nil {
+		t.Fatalf("grupo Alfa não encontrado: %v", err)
+	}
+	if err := app.st.db.QueryRow(`SELECT id FROM grupos WHERE nome = 'Companhia Bravo'`).Scan(&gidBravo); err != nil {
+		t.Fatalf("grupo Bravo não encontrado: %v", err)
+	}
+	if _, err := app.st.db.Exec(`INSERT INTO grupo_vinculos (superior_id, subordinado_id, criado_por_superior, criado_por_subordinado) VALUES (?, ?, 1, 1)`, gidAlfa, gidBravo); err != nil {
+		t.Fatalf("vínculo Alfa→Bravo: %v", err)
+	}
+
 	// Login como gerente Alfa e Bravo
 	alfaCookie := loginAs(t, app, "gerente_alfa", "senha12345")
 	bravoCookie := loginAs(t, app, "gerente_bravo", "senha12345")
@@ -197,6 +210,18 @@ func TestFase2ThreadDespachoEExclusividadeResposta(t *testing.T) {
 	}, adminCookie)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("falha ao criar grupo Ops: %v", res)
+	}
+
+	// v1.5.4-E1 (R-14): despacho segue a árvore — Financeiro comanda Operacional.
+	var gidFin, gidOps int64
+	if err := app.st.db.QueryRow(`SELECT id FROM grupos WHERE nome = 'Setor Financeiro'`).Scan(&gidFin); err != nil {
+		t.Fatalf("grupo Financeiro não encontrado: %v", err)
+	}
+	if err := app.st.db.QueryRow(`SELECT id FROM grupos WHERE nome = 'Setor Operacional'`).Scan(&gidOps); err != nil {
+		t.Fatalf("grupo Operacional não encontrado: %v", err)
+	}
+	if _, err := app.st.db.Exec(`INSERT INTO grupo_vinculos (superior_id, subordinado_id, criado_por_superior, criado_por_subordinado) VALUES (?, ?, 1, 1)`, gidFin, gidOps); err != nil {
+		t.Fatalf("vínculo Financeiro→Operacional: %v", err)
 	}
 
 	finCookie := loginAs(t, app, "gerente_fin", "senha12345")

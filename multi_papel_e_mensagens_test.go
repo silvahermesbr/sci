@@ -147,6 +147,19 @@ func TestMensageriaInternaPorFuncao(t *testing.T) {
 
 	cmtCookie := loginAs(t, app, "gerente_cmt", "senha12345")
 
+	// v1.5.4-E1 (R-14): envio segue a árvore (próprio grupo + subordinados) —
+	// o Comando precisa da subordinação do Pelotão Alfa para despachar a ele.
+	var grupoCmtID, grupoAlfaID int64
+	if err := app.st.db.QueryRow(`SELECT id FROM grupos WHERE nome = 'Comando da Companhia'`).Scan(&grupoCmtID); err != nil {
+		t.Fatalf("grupo comando não encontrado: %v", err)
+	}
+	if err := app.st.db.QueryRow(`SELECT id FROM grupos WHERE nome = 'Pelotão Alfa'`).Scan(&grupoAlfaID); err != nil {
+		t.Fatalf("grupo alfa não encontrado: %v", err)
+	}
+	if _, err := app.st.db.Exec(`INSERT INTO grupo_vinculos (superior_id, subordinado_id, criado_por_superior, criado_por_subordinado) VALUES (?, ?, 1, 1)`, grupoCmtID, grupoAlfaID); err != nil {
+		t.Fatalf("vínculo comando→alfa: %v", err)
+	}
+
 	// Obter papel_id do gerente_alfa
 	alfaCookie := loginAs(t, app, "gerente_alfa", "senha12345")
 	rr, res = doJSONReq(app, "GET", "/api/me", nil, alfaCookie)

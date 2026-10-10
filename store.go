@@ -872,8 +872,18 @@ func (s *Store) SeedIfEmpty(senhaAdmin string) error {
 	if err != nil {
 		return err
 	}
+	// v1.5.4-E1 (R-16b): admin/admin do 1º boot nasce com TROCA OBRIGATÓRIA
+	// (precisa_setup=1) — o gate central do middleware auth já recusa toda
+	// operação fora de /api/setup, /api/me e /api/logout até a troca (doutrina
+	// reusada, sem gate novo). A marca só vale quando a senha semeada é a
+	// PADRÃO 'admin' (SCI_ADMIN_SENHA ausente): deploy que define senha própria
+	// no 1º boot não deve nascer bloqueado (e a suíte semeia com senha própria).
+	precisaSetup := 0
+	if senhaAdmin == "admin" {
+		precisaSetup = 1
+	}
 	if _, err := s.db.Exec(
-		`INSERT INTO usuarios (login, senha_hash, papel, precisa_setup) VALUES ('admin', ?, 'admin', 0)`, hash); err != nil {
+		`INSERT INTO usuarios (login, senha_hash, papel, precisa_setup) VALUES ('admin', ?, 'admin', ?)`, hash, precisaSetup); err != nil {
 		return err
 	}
 	var adminID int64
