@@ -404,9 +404,17 @@ func TestF7MaterialOperadorRecortePorSetor(t *testing.T) {
 			t.Errorf("op sem setor %s %s: mensagem única ausente: %s", r.metodo, r.path, rr.Body.String())
 		}
 	}
-	// escopo de grupo mantido onde a onda não recortou (responsáveis: leitura)
-	if rr, _ = doJSONReq(app, "GET", "/api/material/responsaveis", nil, c.ckOpSem); rr.Code != http.StatusOK {
-		t.Fatalf("op sem setor GET responsaveis (escopo grupo mantido): esperado 200, veio %d", rr.Code)
+	// Integração F4×F7: a guarda de MIDDLEWARE (exigeSetorOperador no
+	// authMaterial, onda B) vence para operador sem setor — TODA rota do
+	// módulo 403, inclusive responsáveis (o "escopo grupo" do dado vale no
+	// recorte, não no acesso; acesso sem setor é bloqueio, doutrina do comando).
+	rr, res = doJSONReq(app, "GET", "/api/material/responsaveis", nil, c.ckOpSem)
+	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "conta sem setor atribuído") {
+		t.Fatalf("op sem setor GET responsaveis: esperado 403 com mensagem da guarda, veio %d (%v)", rr.Code, res)
+	}
+	// Operador COM setor mantém a leitura (recorte de grupo da designação).
+	if rr, _ = doJSONReq(app, "GET", "/api/material/responsaveis", nil, c.ckOp); rr.Code != http.StatusOK {
+		t.Fatalf("op com setor GET responsaveis: esperado 200, veio %d", rr.Code)
 	}
 }
 

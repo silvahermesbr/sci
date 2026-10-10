@@ -78,20 +78,7 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	gpA, gpB := gidA, gidB
 	gerAID := criaConta("d2_ger", "gerente", &gpA)
 	criaConta("d2_op", "operador", &gpA)
-	// v1.6.0 F4: operador é de setor (extinção do operador de grupo) — a
-	// persona operador do grupo A atua nos módulos com setor próprio (Livre).
-	if _, err := st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE login = 'd2_op'`, s2); err != nil {
-		t.Fatalf("setor do d2_op: %v", err)
-	}
 	criaConta("d2_opB", "operador", &gpB)
-	// v1.6.0 F4: todo operador é de setor — a persona do grupo B também
-	var sB int64
-	if err := st.db.QueryRow(`INSERT INTO setores (grupo_id, nome, sigla, ativo) VALUES (?, 'D2 Setor Fora', 'D2F', 1) RETURNING id`, gidB).Scan(&sB); err != nil {
-		t.Fatalf("criar setor do grupo B: %v", err)
-	}
-	if _, err := st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE login = 'd2_opB'`, sB); err != nil {
-		t.Fatalf("setor do d2_opB: %v", err)
-	}
 	criaConta("d2_semgrupo", "operador", nil)
 	chefeAID := criaConta("d2_chefe", "chefe_setor", &gpA)
 
