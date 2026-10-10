@@ -316,8 +316,8 @@
        Operadores: idem (trivial — mesma chamada). Demais abas plugam o helper
        nos próprios loaders (funcoes/chefes/agregado/setores). Relatórios NÃO. */
     const tabPTbl = document.querySelector('#pesEfetivo table');
-    if (tabPTbl && typeof window.tblOrdenar === 'function' && typeof window.tblPaginar === 'function') {
-      window.tabelaControles('pes-efetivo', tabPTbl, $('#tabP'), [
+    if (tabPTbl) {
+      pesTabelaControles('pes-efetivo', tabPTbl, $('#tabP'), [
         null, { tipo: 'num' }, { tipo: 'txt' }, { tipo: 'txt' },
         { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, null
       ], 20);
@@ -615,8 +615,8 @@
         });
         // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Setor / Chefe atual / Nomear)
         const tabChTbl = tb ? tb.closest('table') : null;
-        if (tabChTbl && typeof window.tblOrdenar === 'function' && typeof window.tblPaginar === 'function') {
-          window.tabelaControles('pes-chefes', tabChTbl, tb, [{ tipo: 'txt' }, { tipo: 'txt' }, null], 20);
+        if (tabChTbl) {
+          pesTabelaControles('pes-chefes', tabChTbl, tb, [{ tipo: 'txt' }, { tipo: 'txt' }, null], 20);
         }
       } catch (e) {
         tb.innerHTML = '<tr><td colspan="3"><span class="vazio">Falha ao carregar chefes.</span></td></tr>';
