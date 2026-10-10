@@ -39,7 +39,8 @@
    pool de 1 conexão ([§3.E](#3e-banco-e-concorrência)); nova coluna em tabela lida por PDFs do
    `relatorio.go` exige revisão dos geradores correspondentes.
 4. Se a alteração adiciona/remove rota → o registro `m.Handle(...)` precisa de guarda declarada
-   (nenhuma rota de dados com `a.auth(false)` "pelado" — ver defeito #R-2).
+   (nenhuma rota de dados com `a.auth(false)` "pelado" — doutrina §3.I; classe do R-2 fechada na
+   v1.5.4-D2).
 
 **Depois de escrever código:**
 5. Atualize a linha da rota e as seções de impacto deste mapa.
@@ -55,6 +56,10 @@
   - `auth(true)` — somente admin.
   - `confAuth` = papéis {gerente, operador} + encarregado/auxiliar de pessoal; admin **403**.
   - `confMarcarAuth` = confAuth + chefe_setor.
+  - `confPDFAuth` (server_conferencia.go, v1.5.4-D2) = papéis da conferência {gerente, operador,
+    enc_pessoal/auxiliar}; `chefe_setor` SÓ se a conferência envolve setor que AINDA comanda
+    (`conferenciaEnvolveSetorComandado`: `conferencia_setores` × `chefe_setores` — fonte única
+    D-1); admin **403**. O recorte de escopo (exigeEscopo + grupo/subordinados) segue no handler.
   - `guardaGestaoPessoal` — admin, gerente, ou encarregado/auxiliar de pessoal designado.
   - `authMaterial` — gerente, operador, ou encarregado de material designado; admin **403**; 423 se `MODO_RESERVA=1`.
   - `reservaAuth` — {gerente, operador, chefe_setor}; admin 403; 423 se `MODO_RESERVA=1`.
@@ -152,6 +157,15 @@ ul/ol/li + text-align); o front renderiza cru — a defesa é unilateral. `esc()
 há 3 cópias divergentes (a de views_avisos.js não escapa apóstrofo). CSP global com
 `script-src 'unsafe-inline'` (main.go:111-117) — não protege contra injeção em atributo (R-3/R-11).
 
+### 3.I Nenhuma rota de dados sem guarda declarada (v1.5.4-D2, R-2)
+Toda rota de dados/PDF tem, na tabela do seu módulo neste mapa, a **guarda declarada** — o registro
+`m.Handle(...)` jamais fica com `a.auth(false)` "pelado" sem uma guarda de papel/escopo
+(`reservaAuth`, `authMaterial`, `confPDFAuth`, `authPapeis`, …) e/ou prólogo de escopo
+(`exigeEscopo` + teste do objeto no escopo) no handler. Os portões do `rotear()` no front são
+cosméticos por design: **o servidor é a guarda real** — um PDF que existe deve declarar quem o lê.
+Nova rota sem guarda na tabela = regressão da doutrina (fechou a classe do R-2; o resíduo conhecido
+está em R-27/§10 calendário, avaliado na reativação do módulo).
+
 ---
 
 ## 4. Matriz de autorização
@@ -208,7 +222,7 @@ seed global); **sem herança de grupo superior**. ⚠ Ordenação: só o pré-fe
 | POST | /api/conferencia/{id}/setor/{sid}/reabrir | server_conferencia.go:689 | idem | idem | ⚠-1 (R-1) | CS | — | |
 | GET | …/setor/{sid}/pre_fechamento | onda_0910:138 | confMarcarAuth | idem | ⚠-1 (R-1) | — | pessoas+CF | ordena por antiguidade (só p.funcao_id ⚠); ramo chefe ainda lê o CONTEXTO sem conferir comando (resíduo D-5) |
 | GET | /api/conferencia/funcoes-antiguidade | onda_0910:296 | auth(false) | qualquer | ≤0: vazio+aviso | — | funcoes | picker; tags DO grupo |
-| GET | /api/conferencia/{id}/relatorio.pdf | server_conferencia.go:1095 | auth(false) | qualquer | ⚠-1 (R-1) | — | tudo | só FECHADA; filtros; assinatura |
+| GET | /api/conferencia/{id}/relatorio.pdf | server_conferencia.go:1141 | confPDFAuth + escopo interno :1181 | ger/op/enc/aux; **chefe só c/ setor envolvido COMANDADO** (conferenciaEnvolveSetorComandado); admin 403 (v1.5.4-D2/R-2) | -1: 403; N: própria+subordinados | — | tudo | só FECHADA; filtros; assinatura |
 | POST | /api/conferencia/{id}/arquivar | server_conferencia.go:741 | confAuth | ⚠ doc diz gerente; op/enc passam (R-8) | ⚠-1 (R-1) | conferencias | — | só FECHADA; backup |
 | DELETE | /api/conferencia/arquivada/{id} | server_conferencia.go:776 | **auth(true)** | admin | — | comentarios, presencas, conferencias | — | ⚠ CE fica órfã (R-15) |
 | POST | /api/conferencia/{id}/escala | onda_0510_escalas.go:88 | auth(false)+guardaEscala | ger(chefe/op do grupo); chefe(só op do setor) | gid==esc | CE | usuarios | escala de guarda da conferência |
@@ -228,7 +242,7 @@ pelo tick 2s e pelo `ops/carga_conferencia.py`); escalas (badges/pré-fill do in
 onda_despacho_test, onda_0910_conf_antiguidade_test(+_grupo), onda_0510_conf_escopo_test,
 onda_0510_escalas_test, contexto_govema_conferencia_test, onda_multichefe_test, multi_setor_chefe_test,
 regressao_conferencia_destino_test, concorrencia_test, ordem_diretor_conferencia/0410/pdf_v2, v1_test,
-onda_0610_pessoal_test, onda_f3_e2e_personas_test, sci_ordem_0610_frented_test.
+onda_0610_pessoal_test, onda_f3_e2e_personas_test, sci_ordem_0610_frented_test, onda_v154_d2_test.
 
 ---
 
@@ -298,21 +312,21 @@ UNIQUE(grupo, patrimônio); devolução parcial splita linha; **1 conferência a
 | GET/POST/DELETE | /api/material/itens[/{id}] | :1085/:1213/:1399 | authMaterial | ⚠-1 vaza (R-1) | itens, viaturas | ?status/?categoria/?garagem; exclusão atômica tx |
 | GET | /api/material/itens/{id}/qr | :2035 | authMaterial | ⚠-1 | — | `sci://m:{id}:{pat}` |
 | GET | /api/material/etiquetas-lote.pdf | :2074 | authMaterial | ⚠-1 | — | 10/folha A4 |
-| GET | /api/material/inventario/pdf | :892 | **auth(false)** | ⚠-1 (R-1) | — | reservaAtivo→423 |
+| GET | /api/material/inventario/pdf | :892 | **authMaterial** (v1.5.4-D2/R-2) | exigeEscopo; -1: 403 | — | reservaAtivo→423 |
 | POST | /api/material/cautelar · devolver | :1484 · :1623 | authMaterial | ⚠-1 (R-1) | cautelas, itens | tx; saldo; parcial split |
 | GET | /api/material/cautelas | :1732 | authMaterial | ⚠-1 (R-1) | — | LIMIT 200 |
-| GET | /api/material/cautelas/{id}/recibo.pdf | :828 | **auth(false)** | ⚠-1 (R-1) | — | 2 vias |
+| GET | /api/material/cautelas/{id}/recibo.pdf | :828 | **authMaterial** (v1.5.4-D2/R-2) | exigeEscopo + cautela no escopo; -1: 403 | — | 2 vias; auditoria |
 | POST/GET | …/cautelas/{id}/anexos · /api/material/anexos/{id} (GET/DEL) | :1819/:1902/:1946/:2004 | authMaterial+cautelaNoEscopo | ⚠-1 (R-1) | cautela_anexos | allowlist MIME |
 | GET/POST | /api/material/responsaveis | :30/:73 | authMaterial (+papel p/ POST) | POST: ⚠ gerente sem grupo define em qualquer grupo (R-1) | grupo_setor_responsaveis | enc material por setor |
 | GET/POST | /api/material/itens/{id}/anexos · item-anexos/{aid} (GET/DEL) · itens/{id}/comentarios (GET/POST) | :133/:178/:244/:281/:313/:360 | authMaterial | ⚠-1 (R-1) | item_anexos/comentários | |
 | GET/POST | /api/material/conferencias · /iniciar · /{id} · /bipar · /fechar | :400/:438/:540/:634/:702 | authMaterial | ⚠-1 (R-1) | mat_conf(+itens) | POST /conferencias é rota morta (lista) |
-| GET | /api/material/conferencias/{id}/pronto.pdf | :731 | **auth(false)** | ⚠ **sem escopo algum** (R-2) | — | |
+| GET | /api/material/conferencias/{id}/pronto.pdf | :731 | **authMaterial** (v1.5.4-D2/R-2 — antes auth(false) sem guard) | exigeEscopo + conf. do próprio grupo; -1: 403 | — | reservaAtivo→423 |
 
 **Se você alterar, verifique também:** os 4 geradores de PDF (relatorio.go:861/1095/1231/1709);
 watchdog+sino (`server_catalogo.go:560`, `server_admin.go:350`); ficha pessoal (cautelas ativas,
 server_pessoal.go:527); NUKE (⚠ não apaga material_conferencias → FK aborta, R-6); etiquetas
 (material_tipos/classes); front views_material.js + gates core.js:1147; tests onda_material_*,
-v1_5_material_*, v15_cia_fixes, fix_encarregado(±v367), regressao_escalas_material.
+v1_5_material_*, v15_cia_fixes, fix_encarregado(±v367), regressao_escalas_material, onda_v154_d2_test.
 
 ---
 
@@ -413,9 +427,14 @@ subordinacao_e_setores, ordem_diretor_hierarquia, api_backup, admin_restricao, v
 Backend 100% registrado; rotas front bloqueadas em core.js:1106 (`ViewModuloEmDesenvolvimento`).
 `web/views_escalas.js` (1453 ln) e `views_calendario.js` (900 ln) embutidos e inalcançáveis.
 
-**ESCALAS** — `reservaAuth` (17/21 rotas): {ger/op/chefe}, admin 403, 423 se MODO_RESERVA.
-⚠ 4 rotas `a.auth(false)` SEM reserva nem papel: `/api/escalas/pdf` (tem reserva interno),
-`/api/escalas/relatorio-dia.pdf` **+** `/pdf` (duplicata), `/api/escalas/minhas` (R-2).
+**ESCALAS** — `reservaAuth` nas 21 rotas (v1.5.4-D2/R-2: `/api/escalas/pdf`,
+`/api/escalas/relatorio-dia.pdf` **+** `/pdf` e `/api/escalas/minhas` saíram do `a.auth(false)`
+pelado e hoje exigem o MESMO guard do módulo): {ger/op/chefe}, admin 403, 423 se MODO_RESERVA.
+`escalas/minhas` também barra conta sem grupo (prólogo `exigeEscopo`); a ABERTURA de `minhas` a
+todos os papéis quando o módulo reativar segue **PENDENTE de decisão (D-3)** — não decidida nesta
+onda. As rotas de PDF de escalas NÃO aceitam parâmetro de grupo: o recorte é sempre o escopo da
+SESSÃO (outro papel com grupo lê o PDF do PRÓPRIO grupo — o teste D2 prova a não-vazamento pelo
+texto do PDF).
 Fases `aberto→preenchido→aprovado→publicado` (**sem máquina de estados** — qualquer→qualquer, em
 massa por grupo+data); delegação inter-grupos (subordinados transitivos); modelos
 (escala_modelos/postos/aptos com faixa de posto/graduação); InfoDescanso (conflito bloqueante,
@@ -517,7 +536,7 @@ Prioridade de correção e plano: ver [`ROADMAP.md`](ROADMAP.md) v1.5.4/v1.5.5. 
 | # | Defeito | Onde (arq:linha) | Classe |
 |---|---|---|---|
 | R-1 | **Escopo -1 (sem grupo) cai no ramo sem filtro** — ~35 handlers (conferência lista/fechar/arquivar/{id}/pdf/comentários/stream; pessoas ficha/pdf/qr/lista; material quase tudo; relatórios/export inteiros; /api/grupos; escalas limpar-dia apaga TODOS) | padrão `if esc > 0` — ver coluna Escopo das tabelas | P0 |
-| R-2 | Rotas de dados `a.auth(false)` sem guarda de papel/escopo (escalas pdf/minhas/relatorio-dia; material pronto.pdf **sem escopo algum**) | server_escalas.go:1703,1716-1718; server_material.go:2209 | P0/P1 |
+| R-2 | ~~Rotas de dados `a.auth(false)` sem guarda de papel/escopo (escalas pdf/minhas/relatorio-dia; material pronto.pdf **sem escopo algum**)~~ **CORRIGIDO na v1.5.4-D2**: as 4 rotas de escalas (`/api/escalas/pdf`, `/api/escalas/relatorio-dia.pdf` + duplicata `/relatorio-dia/pdf`, `/api/escalas/minhas`) exigem `reservaAuth` (`minhas` também barra -1 via `exigeEscopo` — abertura ampla pende da D-3/M5); os 3 PDFs de material (`inventario/pdf`, `cautelas/{id}/recibo.pdf`, `conferencias/{id}/pronto.pdf`) exigem `authMaterial`; `/api/conferencia/{id}/relatorio.pdf` exige `confPDFAuth` (papéis do módulo; chefe_setor só com setor envolvido COMANDADO — `conferenciaEnvolveSetorComandado`; admin 403). Doutrina nova: **nenhuma rota de dados sem guard declarado na tabela** (§3.I). Regressão: `onda_v154_d2_test.go` (matriz por persona: gerente/operador do próprio grupo 200; sem-grupo 403 em todas; admin 403; chefe só com setor comandado; operador de outro grupo 403 nos objetos alheios e PDF do próprio grupo sem vazamento) | server_escalas.go:1796-1816; server_material.go:2316-2346; server_conferencia.go:1635-1673 (confPDFAuth + rota :1706) | ✅ |
 | R-3 | **XSS armazenado via foto_base64** (gravação sem validação + sinks sem esc + CSP unsafe-inline) | server_pessoal.go:343/:994; core.js:580; views_gestao.js:548/2535 | P0 |
 | R-4 | **Import de backup quebrado** (sem rename .novo→sci.db; reopen só migra até v12; rollback reabre o import) | server_admin.go:259-274; store.go:1372-1402 | P0 |
 | R-5 | Foto de usuário sem escopo (LGPD) | server_pessoal.go:1015 | P1 |

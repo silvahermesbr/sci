@@ -1623,6 +1623,53 @@ func (a *App) escaladosNaData(grupoID int64, data string) []map[string]any {
 	return res
 }
 
+// confPDFAuth (v1.5.4-D2, R-2): guarda do relatório PDF da conferência — os
+// MESMOS papéis do módulo (gerente, operador, encarregado/auxiliar de pessoal;
+// admin segue PROIBIDO, doutrina da matriz §4) e o chefe_setor só para
+// conferência que envolve setor que AINDA comanda (chefe_setores é a fonte
+// única do comando — decisão D-2/v1.5.4-D1; comando revogado não lê relatório).
+// O recorte de escopo (exigeEscopo + conferência do próprio grupo/subordinados)
+// permanece dentro do handler, que é quem conhece o status e o grupo da
+// conferência. Autorização pulverizada (103 prólogos) é débito da v1.5.5;
+// aqui a guarda fica ao lado das rotas, como confAuth/confMarcarAuth.
+func (a *App) confPDFAuth(next http.HandlerFunc) http.Handler {
+	return a.auth(false, func(w http.ResponseWriter, r *http.Request) {
+		u := usuarioDoCtx(r)
+		permitido := false
+		switch u.Papel {
+		case "gerente", "operador":
+			permitido = true
+		case "chefe_setor":
+			permitido = a.conferenciaEnvolveSetorComandado(u, r)
+		}
+		if !permitido && u.Papel != "admin" {
+			// ordem 06/10: encarregado E auxiliar de pessoal espelham os papéis
+			permitido = a.ehEncarregado(u) || a.ehAuxiliarDePessoal(u)
+		}
+		if !permitido {
+			http.Error(w, `{"erro":"papel sem acesso a esta área"}`, http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	})
+}
+
+// conferenciaEnvolveSetorComandado: a conferência {id} tem em
+// conferencia_setores algum setor com linha VIGENTE em chefe_setores para o
+// usuário (multi-chefia 06/10). Consulta única e sem rows aberto (pool = 1).
+func (a *App) conferenciaEnvolveSetorComandado(u *Usuario, r *http.Request) bool {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return false
+	}
+	var envolvidos int
+	_ = a.st.db.QueryRow(`
+		SELECT COUNT(*) FROM conferencia_setores cs
+		JOIN chefe_setores ch ON ch.setor_id = cs.setor_id AND ch.usuario_id = ?
+		WHERE cs.conferencia_id = ?`, u.ID, id).Scan(&envolvidos)
+	return envolvidos > 0
+}
+
 // ---------- rotas rotasConferencia ----------
 func (a *App) rotasConferencia() {
 	m := a.mux
@@ -1654,7 +1701,9 @@ func (a *App) rotasConferencia() {
 	m.Handle("GET /api/conferencia/{id}/setor/{setor_id}/pre_fechamento", confMarcarAuth(a.hSetorPreFechamento))
 	// correção 09/10: escada de antiguidade DO GRUPO p/ o picker do modal (sem seed global)
 	m.Handle("GET /api/conferencia/funcoes-antiguidade", a.auth(false, a.hConferenciaFuncoesAntiguidade))
-	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.auth(false, a.hConferenciaPDF))
+	// v1.5.4-D2 (R-2): relatório PDF com guarda do módulo (papel + comando de
+	// setor p/ chefe) além do recorte de escopo interno do handler.
+	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.confPDFAuth(a.hConferenciaPDF))
 
 	// Escala de guarda (onda 05/10): gerente designa chefe/operador; chefe
 	// designa operador do próprio setor; admin → 403 no handler (regra escopada).

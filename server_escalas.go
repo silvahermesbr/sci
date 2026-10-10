@@ -1657,6 +1657,14 @@ func (a *App) hEscalasRelatorioDiaPDF(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hEscalasMinhas(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.5.4-D2 (R-2): conta sem grupo (-1) não lê nada do módulo — mesmo
+	// prólogo das rotas irmãs (hEscalasPDF/hEscalasRelatorioDiaPDF). A leitura
+	// em si já é confinada à pessoa da sessão; a guarda barra o -1 pela doutrina
+	// "sem grupo = nada" e a abertura ampla segue PENDENTE p/ M5 (decisão D-3).
+	if _, err := a.exigeEscopo(u); err != nil {
+		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
+		return
+	}
 	if u.PessoaID == nil {
 		jsonOK(w, map[string]any{
 			"escalas_aptas":   []any{},
@@ -1783,7 +1791,9 @@ func (a *App) rotasEscalas() {
 	m.Handle("GET /api/escalas/turnos", a.reservaAuth(a.hEscalasTurnosList))
 	m.Handle("POST /api/escalas/turnos", a.reservaAuth(a.hEscalasTurnosSave))
 	m.Handle("GET /api/escalas/hoje", a.reservaAuth(a.hEscalasHoje))
-	m.Handle("GET /api/escalas/pdf", a.auth(false, a.hEscalasPDF))
+	// v1.5.4-D2 (R-2): rota de PDF deixa de ser auth(false) pelada e recebe o
+	// MESMO guard do módulo (reservaAuth). Quem acessa escalas, vê PDF de escala.
+	m.Handle("GET /api/escalas/pdf", a.reservaAuth(a.hEscalasPDF))
 
 	// Escalas 2.0 (v1.5) — Modelos, Fases, Delegação e Minhas Escalas
 	m.Handle("GET /api/escalas/modelos", a.reservaAuth(a.hEscalasModelosList))
@@ -1796,9 +1806,14 @@ func (a *App) rotasEscalas() {
 	m.Handle("POST /api/escalas/turnos/{id}/delegar", a.reservaAuth(a.hEscalasTurnoDelegar))
 	m.Handle("GET /api/escalas/turnos/{id}/candidatos", a.reservaAuth(a.hEscalasTurnoCandidatos))
 	m.Handle("PATCH /api/escalas/fase", a.reservaAuth(a.hEscalasAlterarFase))
-	m.Handle("GET /api/escalas/relatorio-dia.pdf", a.auth(false, a.hEscalasRelatorioDiaPDF))
-	m.Handle("GET /api/escalas/relatorio-dia/pdf", a.auth(false, a.hEscalasRelatorioDiaPDF))
-	m.Handle("GET /api/escalas/minhas", a.auth(false, a.hEscalasMinhas))
+	// v1.5.4-D2 (R-2): mesmas guardas do módulo nas rotas de PDF/dados que
+	// estavam auth(false) sem guarda de papel (duplicata relatorio-dia incluída).
+	// PENDÊNCIA D-3 (decisão de comando, não desta onda): reabrir `minhas` a
+	// todos os papéis quando o módulo for reativado (M5) — hoje exige
+	// reservaAuth (gerente/operador/chefe_setor) + conta COM grupo.
+	m.Handle("GET /api/escalas/relatorio-dia.pdf", a.reservaAuth(a.hEscalasRelatorioDiaPDF))
+	m.Handle("GET /api/escalas/relatorio-dia/pdf", a.reservaAuth(a.hEscalasRelatorioDiaPDF))
+	m.Handle("GET /api/escalas/minhas", a.reservaAuth(a.hEscalasMinhas))
 }
 
 func (a *App) reservaAuth(next http.HandlerFunc) http.Handler {

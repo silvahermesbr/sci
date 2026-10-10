@@ -91,7 +91,7 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   Regressão: `onda_v154_d1_test.go` (substituição 1:1, papel add/del, migração v44, contexto
   órfão). Resíduo documentado p/ D-5: escala do chefe e pre_fechamento ainda leem o contexto.
 
-**D2 — "Acesso a módulos fora da esfera via URL":**
+**D2 — "Acesso a módulos fora da esfera via URL":** — ✅ CONCLUÍDO (v1.5.4-D2):
 - **Causa-raiz:** gates do `rotear()` são cosméticos (ok, por design); o buraco real é servidor:
   (i) classe `-1` (item A); (ii) rotas de PDF/dados com `a.auth(false)` e sem checagem interna de
   papel/escopo — `/api/escalas/pdf`, `/api/escalas/relatorio-dia.pdf`, `/api/escalas/minhas`
@@ -101,6 +101,20 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   escopo p/ material; escopo estrito p/ conferência). Regra nova no mapa: **nenhuma rota de dados
   sem guard declarado na tabela**.
 - **Aceite:** teste por persona: operador/sem-grupo recebe 403 em todos os PDFs de outro escopo.
+- **Executado (v1.5.4-D2):** escalas — `/api/escalas/pdf`, `/api/escalas/relatorio-dia.pdf` (+ a
+  duplicata `/relatorio-dia/pdf`) e `/api/escalas/minhas` exigem `reservaAuth` (minhas também barra
+  conta sem grupo via `exigeEscopo`; a abertura ampla de `minhas` segue PENDENTE p/ M5, decisão
+  D-3); material — `/api/material/inventario/pdf`, `/api/material/cautelas/{id}/recibo.pdf` e
+  `/api/material/conferencias/{id}/pronto.pdf` exigem `authMaterial` (escopo do objeto segue no
+  handler); conferência — `/api/conferencia/{id}/relatorio.pdf` exige `confPDFAuth`: papéis do
+  módulo (gerente/operador/enc_pessoal/auxiliar; admin proibido) e chefe_setor somente se a
+  conferência envolve setor que AINDA comanda (`conferenciaEnvolveSetorComandado` — fonte única
+  `chefe_setores`, D-1). Doutrina §3.I registrada no `ARQUITETURA.md` (nenhuma rota de dados sem
+  guard declarado na tabela). Regressão: `onda_v154_d2_test.go` — matriz por persona: gerente e
+  operador do próprio grupo 200; conta sem grupo 403 em todas as rotas tocadas; admin 403
+  (doutrina de cada módulo); chefe 200 na conferência do setor comandado e 403 na demais; operador
+  de outro grupo 403 nos objetos alheios e, nas rotas confinadas ao escopo da sessão, PDF do
+  PRÓPRIO grupo com prova de não-vazamento pelo texto extraído do PDF.
 
 **D3 — "Antiguidade desconsidera as tags do grupo":**
 - **Causa-raiz (3 partes):** (i) o filtro casa a pessoa por 3 fontes (`p.funcao_id` OU

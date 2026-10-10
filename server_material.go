@@ -2309,11 +2309,17 @@ func (a *App) rotasMaterial() {
 	m.Handle("DELETE /api/material/itens/{id}", a.authMaterial(a.hMaterialItensDel))
 	m.Handle("GET /api/material/itens/{id}/qr", a.authMaterial(a.hMaterialItemQRCode))
 	m.Handle("GET /api/material/etiquetas-lote.pdf", a.authMaterial(a.hMaterialEtiquetasLotePDF))
-	m.Handle("GET /api/material/inventario/pdf", a.auth(false, a.hMaterialInventarioPDF))
+	// v1.5.4-D2 (R-2): os 3 PDFs do módulo que estavam auth(false) (com checagem
+	// parcial interna) passam pelo MESMO guard das rotas de dados — authMaterial
+	// (gerente/operador/enc_material; admin 403; 423 em reserva). O recorte de
+	// escopo segue dentro de cada handler (exigeEscopo + objeto no escopo).
+	m.Handle("GET /api/material/inventario/pdf", a.authMaterial(a.hMaterialInventarioPDF))
 	m.Handle("POST /api/material/cautelar", a.authMaterial(a.hMaterialCautelar))
 	m.Handle("POST /api/material/devolver", a.authMaterial(a.hMaterialDevolver))
 	m.Handle("GET /api/material/cautelas", a.authMaterial(a.hMaterialCautelasList))
-	m.Handle("GET /api/material/cautelas/{id}/recibo.pdf", a.auth(false, a.hMaterialCautelaReciboPDF))
+	// v1.5.4-D2 (R-2): recibo de cautela sai do auth(false) pelado — mesmo
+	// guard do módulo (o handler já exige cautela no escopo do solicitante).
+	m.Handle("GET /api/material/cautelas/{id}/recibo.pdf", a.authMaterial(a.hMaterialCautelaReciboPDF))
 	m.Handle("POST /api/material/cautelas/{id}/anexos", a.authMaterial(a.hMaterialAnexoAdd))
 	m.Handle("GET /api/material/cautelas/{id}/anexos", a.authMaterial(a.hMaterialAnexoList))
 	m.Handle("GET /api/material/anexos/{id}", a.authMaterial(a.hMaterialAnexoGet))
@@ -2334,5 +2340,8 @@ func (a *App) rotasMaterial() {
 	m.Handle("GET /api/material/conferencias/{id}", a.authMaterial(a.hMaterialConferenciaGet))
 	m.Handle("POST /api/material/conferencias/{id}/bipar", a.authMaterial(a.hMaterialConferenciaBipar))
 	m.Handle("POST /api/material/conferencias/{id}/fechar", a.authMaterial(a.hMaterialConferenciaFechar))
-	m.Handle("GET /api/material/conferencias/{id}/pronto.pdf", a.auth(false, a.hMaterialConferenciaPDF))
+	// v1.5.4-D2 (R-2): o "pronto.pdf" era a pior lacuna (auth(false) sem guard
+	// de papel) — agora pede o guard do módulo; escopo da conferência segue
+	// cobrado dentro do handler (grupo do solicitante).
+	m.Handle("GET /api/material/conferencias/{id}/pronto.pdf", a.authMaterial(a.hMaterialConferenciaPDF))
 }

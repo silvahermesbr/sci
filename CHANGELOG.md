@@ -2,6 +2,23 @@
 
 ## [v1.5.4] — Não lançada
 
+### 🔒 Onda v1.5.4 — D2: rotas de PDF/dados com o mesmo guard do módulo (R-2)
+- **Causa:** rotas de dados/PDF registradas com `a.auth(false)` sem guarda de papel/escopo — os
+  portões do `rotear()` no front são cosméticos por design e o servidor era a parte furada:
+  `/api/escalas/pdf`, `/api/escalas/relatorio-dia.pdf` (+ duplicata `/relatorio-dia/pdf`) e
+  `/api/escalas/minhas`; os PDFs de material `inventario/pdf`, `cautelas/{id}/recibo.pdf` e
+  `conferencias/{id}/pronto.pdf`; e `/api/conferencia/{id}/relatorio.pdf` (sem guarda de papel).
+- **Correção:** escalas exigem `reservaAuth` (gerente/operador/chefe_setor; admin 403; `minhas`
+  também barra conta sem grupo — a abertura ampla segue PENDENTE p/ M5, decisão D-3); material
+  exige `authMaterial` (gerente/operador/enc_material; escopo do objeto segue no handler);
+  conferência exige a nova guarda `confPDFAuth` — papéis do módulo (gerente/operador/enc_pessoal/
+  auxiliar; admin proibido) e chefe_setor somente quando a conferência envolve setor que AINDA
+  comanda (`conferenciaEnvolveSetorComandado`, fonte única `chefe_setores` — D-1). Doutrina nova
+  registrada no `ARQUITETURA.md` §3.I: **nenhuma rota de dados sem guard declarado na tabela**.
+- **Regressão:** `onda_v154_d2_test.go` (matriz por persona — gerente/operador do próprio grupo
+  200; conta sem grupo 403 em todas; admin 403; chefe só com setor comandado; operador de outro
+  grupo 403 nos objetos alheios e PDF do próprio grupo sem vazamento, provado pelo texto do PDF).
+
 ### 🧟 Onda v1.5.4 — D1: mata o "chefe-zumbi" (R-12) — chefe_setores vira fonte única
 - **Causa:** A nomeado chefe do setor S conservava poderes invisíveis depois de substituído por B
   (ou destituído): o COMANDO (linha em `chefe_setores`) saía, mas o CONTEXTO (`usuarios.setor_id`,
