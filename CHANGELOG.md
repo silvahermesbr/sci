@@ -1,5 +1,41 @@
 # SCI — Changelog Oficial
 
+## [v1.6.0] — Não lançada
+
+### 🎭 Onda v1.6.0-contextos — cadeiras viram CONTEXTO, operador é de setor (F1–F7)
+- **F1 — fundação (`5184b4a`):** migração **v45** (`migrarV45`, `onda_v160_contextos.go`) — REBUILD
+  de `usuario_papeis` com o CHECK estendido (`+enc_pessoal`/`+enc_material`, ids preservados),
+  MATERIALIZAÇÃO das designações de cadeira em linhas de papel (INSERT OR IGNORE pela UNIQUE) e
+  RE-KEY das sessões de designado puro; `versaoSchemaBinario` → **45**; dropdown de contexto resolve
+  os contextos novos (`rotuloPapel` com rótulo próprio).
+- **F2 — poder segue o contexto ativo (`515dd1b`):** `ehEncarregadoDePessoal/Material` passam a ler
+  `u.Papel` (linha materializada) — o PODER vem do CONTEXTO ATIVO da sessão, não da designação
+  implícita; cargo sem acréscimo de poder; menu/portões do front por contexto (`enc_pessoal` →
+  conferência+pessoal+relatórios, `enc_material` → só material).
+- **F3 — designação sincroniza com o papel (`66f7fe5`):** `hFuncaoMembrosSet` materializa a linha de
+  papel da cadeira e `hFuncaoMembrosDel` desmaterializa quando não resta designação, ambos com
+  RE-KEY das sessões presas (fim do "chefe-zumbi de cadeira"); fan-out de notificação de aviso
+  inclui os contextos enc.
+- **F4 — extinção do operador de grupo (`b2afdee`):** OPERADOR nasce OBRIGATORIAMENTE com setor do
+  grupo (`hUsuariosAdd`/`hUsuarioPapelAdd` — herda o do chefe criador ou setor explícito) e a guarda
+  central `exigeSetorOperador` bloqueia contas legadas sem setor nos portões `authConfCom`,
+  `authMaterial`, `reservaAuth` e nos handlers de dados de relatórios (403 claro, sem
+  auto-adivinhação); `usuarios.setor_id` = cadastro do operador e fonte do recorte (D-5).
+- **F5 — contas SEM FUNÇÃO (`14e5c75`):** papel `sem_funcao` (fora do CHECK de `usuario_papeis` — é
+  ausência de contexto, não papel de linha) com escopo central NEGADO
+  (`papelTemEscopoDeDados` em `escopoDoUsuario`/`exigeEscopo`/`podeVerMural`); login aterrissa na
+  página de bloqueio dedicada `#/bloqueio` (`ViewBloqueioSemFuncao` — só perfil/senha/sair).
+- **F6 — leitura de conferência com guarda (`edad628`):** nova porta de papel `confLeituraAuth` nas
+  leituras do módulo (hoje/estado/lista/conferencias/{id}/funcoes-antiguidade/stream) — contexto
+  `enc_material` **403 nem leitura**; admin mantém leitura vazia.
+- **F7 — material setor-bound + furos de conferência (`765f9c6`, merge-fix `79ad356`):**
+  `setorEscopoMaterial` recorta o módulo Material ao PRÓPRIO setor do operador (leituras, escritas,
+  PDFs, conferências de material — iniciar força o setor, Carga Geral fica fora; categorias:
+  escrita só gerente/enc_material) e os furos de conferência fechados: operador só conclui/reabre/lê
+  pré-fechamento do próprio setor de cadastro.
+
+---
+
 ## [v1.5.4] — Não lançada
 
 ### 🔒 Onda v1.5.4 — D2: rotas de PDF/dados com o mesmo guard do módulo (R-2)
