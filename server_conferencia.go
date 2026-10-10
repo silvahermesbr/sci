@@ -796,6 +796,14 @@ func (a *App) hConferenciaArquivar(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "sem acesso")
 		return
 	}
+	// v1.5.4-E2 (R-8): arquivar é ato de comando do grupo — gerente ou
+	// encarregado de pessoal (mesma régua do fechar); o operador lança, não
+	// arquiva. O confAuth deixa o operador entrar; este portão o barra.
+	// (esc <= 0 aqui é só o admin, esc 0 — gerente sem grupo já levou 403.)
+	if u.Papel != "gerente" && !a.ehEncarregado(u) {
+		jsonErro(w, http.StatusForbidden, "arquivar conferência é ato do gerente ou do encarregado de pessoal")
+		return
+	}
 	if status != "fechada" {
 		jsonErro(w, http.StatusConflict, "só conferência FECHADA pode ser arquivada")
 		return
@@ -835,6 +843,10 @@ func (a *App) hConferenciaExcluirArquivada(w http.ResponseWriter, r *http.Reques
 	for _, q := range []string{
 		`DELETE FROM comentarios WHERE conferencia_id = ?`,
 		`DELETE FROM presencas WHERE conferencia_id = ?`,
+		// v1.5.4-E2 (R-15): a escala de guarda da conferência NÃO tem CASCADE na
+		// FK — sem este DELETE, a exclusão morria (FK NO ACTION) ou deixava a
+		// linha órfã apontando para conferência inexistente.
+		`DELETE FROM conferencia_escalas WHERE conferencia_id = ?`,
 		`DELETE FROM conferencias WHERE id = ?`,
 	} {
 		if _, e := tx.Exec(q, id); e != nil {
@@ -941,6 +953,12 @@ func (a *App) hConferenciaDescartar(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusForbidden, "conferência de outro grupo")
 			return
 		}
+	}
+	// v1.5.4-E2 (R-8): descartar destrói a conferência — ato do gerente ou do
+	// encarregado de pessoal (mesma régua do fechar/arquivar); operador 403.
+	if u.Papel != "gerente" && !a.ehEncarregado(u) {
+		jsonErro(w, http.StatusForbidden, "descartar conferência é ato do gerente ou do encarregado de pessoal")
+		return
 	}
 	if status != "aberta" {
 		jsonErro(w, http.StatusConflict, "conferência fechada é histórico — não pode ser descartada")

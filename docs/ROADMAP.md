@@ -121,19 +121,28 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
 - `hUsuarioPapelDel/Add`: allowlist de solicitantes + escopo do alvo (R-10; mensagens.go:112-138, 246-278).
 - `hMudarContexto`: setor precisa pertencer ao grupo do papel ativo; parar de reescrever
   `usuarios.setor_id` global (R-9; mensagens.go:44-67).
-- `GET /api/usuarios/{id}/foto`: checagem de escopo (R-5; server_pessoal.go:1015).
+- `GET /api/usuarios/{id}/foto`: checagem de escopo (R-5) — ✅ **v1.5.4-E2**: foto própria (avatar)
+  200; admin global; grupo vê grupo; 403 fora (`TestE2FotoUsuarioComEscopo`).
 - Drive: allowlist de MIME p/ `inline` (ou `attachment`+nosniff sempre) e Content-Disposition
-  sanitizado (R-11; drive.go:701-707, 764-774).
+  sanitizado (R-11) — ✅ **v1.5.4-E2**: `mimeDriveInlinavel` (PDF/PNG/JPEG/WEBP, régea dos anexos de
+  material), resto attachment+octet-stream+nosniff e filename saneado no SERVE
+  (`TestE2DriveMIMEInlineSeguro`).
 - NUKE/hSetorExcluir/excluirArquivada: completar DELETEs — `chefe_setores`, `funcao_membros`,
   `avisos`+`aviso_cientes/comentarios`, `material_conferencias`+itens, `escala_modelos`+postos+aptos,
   `setor_sugestoes`, `grupo_setor_responsaveis`, `conferencia_escalas` (R-6, R-15) + teste com grupo
-  "rico" (server_grupos.go:144-186).
+  "rico" — ✅ **v1.5.4-E2**: rol completo em tx nos 3 fluxos (NUKE inclui NULLing de origens de
+  repost e remanejamento de setor/material); setor rico revoga comando+papel (doutrina D1) e
+  remaneja o material (`TestE2NukeGrupoRicoSemOrfaos`, `TestE2ExclusaoSetorRicoSemOrfaos`,
+  `TestE2ExcluirArquivadaApagaEscala`).
 - Mural/calendário: leituras por id sem checar grupo do objeto — `hAvisosDetalhes/Ciente`,
-  `GET /api/calendarios/{id}/compartilhamentos` (R-21).
+  `GET /api/calendarios/{id}/compartilhamentos` (R-21) — ✅ **v1.5.4-E2**: `avisoNoEscopo` (403 fora,
+  404 inexistente) e régua do compartilhar/revogar no calendário; resíduo documentado:
+  `hAvisosComentar` segue sem a checagem (`TestE2MuralAvisoForaDoEscopo`,
+  `TestE2CalendarioCompartilhamentosEscopo`).
 - Mensagens: hierarquia de envio — operador SEM grupo (hoje envia a qualquer papel de qualquer
   grupo) e revisão geral de quem pode enviar para quem (R-14; mensagens.go:640-678).
 - Arquivar/descartar conferência: alinhar código à doutrina (só gerente/enc; hoje operador passa)
-  (R-8; server_conferencia.go:741/:882).
+  (R-8) — ✅ **v1.5.4-E2**: portão gerente/enc_pessoal nos dois handlers (`TestE2ArquivarDescartarSomenteGerenteEnc`).
 - Troca de senha invalida sessões + admin/admin com troca obrigatória no 1º boot (R-16).
 
 ### F. CI passa a gatear de verdade

@@ -1092,6 +1092,26 @@ func (a *App) hUsuarioFotoGet(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusBadRequest, "id inválido")
 		return
 	}
+	// v1.5.4-E2 (R-5, LGPD): a foto é dado pessoal — a rota não tinha escopo
+	// algum (qualquer sessão puxava a foto de qualquer conta por id). Régua:
+	// a PRÓPRIA foto sempre (avatar do perfil); admin (escopo 0) vê tudo;
+	// conta de grupo vê foto de conta do MESMO grupo; fora disso 403 (conta
+	// sem grupo incluída).
+	u := usuarioDoCtx(r)
+	esc, errE := a.exigeEscopo(u)
+	if errE != nil && u.ID != id {
+		jsonErro(w, http.StatusForbidden, "sem escopo para ler fotos")
+		return
+	}
+	var grupoAlvo int64
+	if e := a.st.db.QueryRow(`SELECT COALESCE(grupo_id, 0) FROM usuarios WHERE id = ?`, id).Scan(&grupoAlvo); e != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if u.ID != id && esc > 0 && grupoAlvo != esc {
+		jsonErro(w, http.StatusForbidden, "foto de conta fora do seu grupo")
+		return
+	}
 	var foto string
 	err = a.st.db.QueryRow(`SELECT COALESCE(foto_base64,'') FROM usuarios WHERE id = ?`, id).Scan(&foto)
 	if err != nil || foto == "" {

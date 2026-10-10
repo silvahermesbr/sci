@@ -1049,6 +1049,25 @@ func (a *App) hCalendariosCompartilhamentosList(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// v1.5.4-E2 (R-21): a listagem não checava a POSSE do calendário — qualquer
+	// sessão lia os compartilhamentos (alvos, nomes, grupo) de calendário
+	// alheio por id. Régua do hCalendariosCompartilhar/hCalendarioCompartilhamentosDel:
+	// autor do calendário, ou gerente do grupo-dono.
+	var autorID int64
+	var calGrupo *int64
+	if e := a.st.db.QueryRow(`SELECT autor_usuario_id, grupo_id FROM calendarios WHERE id = ?`, calID).Scan(&autorID, &calGrupo); e != nil {
+		jsonErro(w, http.StatusNotFound, "calendário não encontrado")
+		return
+	}
+	podeGerenciar := u.ID == autorID
+	if !podeGerenciar && u.Papel == "gerente" && calGrupo != nil && u.GrupoID != nil && *calGrupo == *u.GrupoID {
+		podeGerenciar = true
+	}
+	if !podeGerenciar {
+		jsonErro(w, http.StatusForbidden, "apenas o autor ou o gerente do grupo-dono pode ver os compartilhamentos deste calendário")
+		return
+	}
+
 	type CompItemCal struct {
 		ID               int64  `json:"id"`
 		AlvoTipo         string `json:"alvo_tipo"`

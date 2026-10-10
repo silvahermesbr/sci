@@ -203,14 +203,14 @@ seed global); **sem herança de grupo superior**. ⚠ Ordenação: só o pré-fe
 | POST | /api/conferencia/marcar | server_conferencia.go:306 | confMarcarAuth + guardaSetorNaMarcar | ger/enc: grupo; chefe/op: setor próprio | -1: 409 | presencas, CS | pessoas | só justificada tem destino; troca reset obs; SSE; ramo chefe exige comando VIGENTE (setorAtivoComandado, v1.5.4-D1/R-12) |
 | GET | /api/conferencia/lista · /api/conferencias | server_conferencia.go:818 (:1584/:1599) | auth(false) | qualquer | ⚠-1: **todas** (R-1) | — | conferencias | ?arq=1 arquivo; senão 7 dias |
 | GET | /api/conferencia/{id} | server_conferencia.go:933 | auth(false) | qualquer | 0: qualquer; ⚠-1: qualquer (R-1); N: própria+subordinados | — | tudo | relatório na tela; ordena situacao/nome ⚠ (R-7) |
-| DELETE | /api/conferencia/{id} | server_conferencia.go:882 | confAuth | ger/op/enc | ⚠-1 (R-1) | comentarios, presencas, CE, conferencias | — | só ABERTA; sem backup |
+| DELETE | /api/conferencia/{id} | server_conferencia.go:932 | confAuth + portão R-8 interno | **só gerente/enc_pessoal** (op 403 — R-8 corrigido v1.5.4-E2) | ⚠-1 (R-1) | comentarios, presencas, CE, conferencias | — | só ABERTA; sem backup |
 | POST | /api/conferencia/{id}/setor/{sid}/concluir | server_conferencia.go:631 | confMarcarAuth | chefe: setor ativo COMANDADO (setorAtivoComandado, v1.5.4-D1/R-12); ger/op/enc | ⚠-1 (R-1) | CS | — | exige aberta |
 | POST | /api/conferencia/{id}/setor/{sid}/reabrir | server_conferencia.go:689 | idem | idem | ⚠-1 (R-1) | CS | — | |
 | GET | …/setor/{sid}/pre_fechamento | onda_0910:138 | confMarcarAuth | idem | ⚠-1 (R-1) | — | pessoas+CF | ordena por antiguidade (só p.funcao_id ⚠); ramo chefe ainda lê o CONTEXTO sem conferir comando (resíduo D-5) |
 | GET | /api/conferencia/funcoes-antiguidade | onda_0910:296 | auth(false) | qualquer | ≤0: vazio+aviso | — | funcoes | picker; tags DO grupo |
 | GET | /api/conferencia/{id}/relatorio.pdf | server_conferencia.go:1095 | auth(false) | qualquer | ⚠-1 (R-1) | — | tudo | só FECHADA; filtros; assinatura |
-| POST | /api/conferencia/{id}/arquivar | server_conferencia.go:741 | confAuth | ⚠ doc diz gerente; op/enc passam (R-8) | ⚠-1 (R-1) | conferencias | — | só FECHADA; backup |
-| DELETE | /api/conferencia/arquivada/{id} | server_conferencia.go:776 | **auth(true)** | admin | — | comentarios, presencas, conferencias | — | ⚠ CE fica órfã (R-15) |
+| POST | /api/conferencia/{id}/arquivar | server_conferencia.go:772 | confAuth + portão R-8 interno | **só gerente/enc_pessoal** (op 403 — R-8 corrigido v1.5.4-E2) | ⚠-1 (R-1) | conferencias | — | só FECHADA; backup |
+| DELETE | /api/conferencia/arquivada/{id} | server_conferencia.go:819 | **auth(true)** | admin | — | comentarios, presencas, CE, conferencias | — | R-15 corrigido v1.5.4-E2 (sai em tx) |
 | POST | /api/conferencia/{id}/escala | onda_0510_escalas.go:88 | auth(false)+guardaEscala | ger(chefe/op do grupo); chefe(só op do setor) | gid==esc | CE | usuarios | escala de guarda da conferência |
 | DELETE | …/escala/{usuario_id} | onda_0510_escalas.go:140 | idem | idem | idem | CE | — | |
 | GET | /api/conferencia/{id}/stream | server_realtime.go:68 | auth(false) | qualquer | ⚠-1 (R-1) | — (hub mem) | conferencias | SSE; sem consumidor front |
@@ -265,7 +265,7 @@ chefe promove operador do seu setor; enc cria operador/chefe do grupo. Senha "sc
 | PATCH | /api/usuarios/{id} | hUsuarioEdit :239 | guarda | adm/ger/enc | 0/N | usuarios, pessoas | — | espelha pessoa |
 | DELETE | /api/usuarios/{id} | hUsuarioExcluir :1279 | interna | adm;ger | 0/N | usuarios | — | FK→desativa; ⚠ órfãs sessões/papéis (R-17) |
 | POST | /api/usuarios/{id}/senha | hUsuarioSenha :183 | interna | adm;ger | 0/N | usuarios | — | enc 403 |
-| GET | /api/usuarios/{id}/foto | hUsuarioFotoGet :1015 | auth(false) | qualquer | ⚠ **sem escopo** (R-5) | — | usuarios | cache public 3600 |
+| GET | /api/usuarios/{id}/foto | hUsuarioFotoGet :1089 | auth(false) | própria sempre (avatar); admin global; grupo vê grupo | R-5 corrigido v1.5.4-E2 (403 fora) | — | usuarios | cache public 3600 |
 | GET/PATCH | /api/perfil | :954/:978 | auth(false) | própria | — | usuarios, pessoas | — | ⚠ foto_base64 sem validação (R-3) |
 | PATCH | /api/usuarios/{id}/mover | hMoverConta :1049 | interna | adm;ger(árvore) | 0/N | usuarios | — | ⚠ não move usuario_papeis/sessões (R-18) |
 | GET/POST/DELETE | /api/grupo/funcoes/membros[/{id}] | onda_0510_c2.go:29/99/194 | interna | GET: c/ grupo; SET/DEL: ger/adm; enc**só cadeira enc_material** | 0/N | funcao_membros | funcoes | onda 10/10; devolve `chave` |
@@ -337,13 +337,16 @@ autor → gerente (árvore) → grant direto (`drive_compartilhamentos` alvo usu
 herança da pasta → braço da função (só leitura). Arquivo solto sem grant não é lido por membro do
 grupo. Storage em disco `dados/drive/` (`nome_armazenado` UNIQUE; upload multipart ≤128MB; **sem
 cota, sem lixeira — DELETE remove o físico**; backup cobre só o banco ⚠ R-20). 17 rotas
-(drive.go:1075-1091): itens/da_funcao/seletor(⚠ morto)/pastas CRUD/upload/download(+`inline` ⚠
-R-11)/mover/copiar/propriedades/arquivo PATCH/DEL/compartilhar CRUD/arquivo_grupo(gerente).
+(drive.go:1075-1091): itens/da_funcao/seletor(⚠ morto)/pastas CRUD/upload/download(`inline` só
+para a allowlist PDF/PNG/JPEG/WEBP — `mimeDriveInlinavel`, resto attachment+nosniff e filename
+sanitizado; R-11 corrigido v1.5.4-E2)/mover/copiar/propriedades/arquivo PATCH/DEL/compartilhar
+CRUD/arquivo_grupo(gerente).
 `/api/drive/seletor` lista sem passar pela ACL e não tem consumidor — remover ou blindar.
 
 **MURAL DE AVISOS** — leitura: admin global ou qualquer papel com grupo (⚠ filtro tautológico
-mensagens.go:1400); escrita: gerente/admin; ciência+comentário: quem vê (⚠ sem checar grupo do aviso
-→ IDOR de leitura/ciência R-21); excluir: autor ou gerente do grupo (admin não-autor 403 — assimetria);
+mensagens.go:1400); escrita: gerente/admin; detalhes+ciência: quem vê, COM a checagem de grupo do
+aviso desde a v1.5.4-E2 (`avisoNoEscopo`, onda_v154_e2.go — R-21 corrigido; ⚠ `hAvisosComentar`
+seguida sem a checagem — resíduo); excluir: autor ou gerente do grupo (admin não-autor 403 — assimetria);
 repostar: só gerente (origem no escopo). **Publicar aviso dispara**: 1 mensagem de notificação POR
 papel do grupo + **síntese de `usuario_papeis` para contas que nunca logaram** (mensagens.go:1570-1630,
 sem tx) — efeito colateral pesado, mexer com cuidado. Rotas: server_admin.go:436-443 (8 rotas) +
@@ -365,9 +368,13 @@ admin_restricao.
 bilateral — assimetria R-22; anti-ciclo só imediato R-23). `escopoDoUsuario` :202. nomear/destituir
 chefe: gerente ou enc_pessoal, `gid==escopo` (admin 403); substituição 1:1 via `setor_id` UNIQUE;
 multi-chefia por usuário. trocar-gerente: admin; rebaixa anterior e **migra grupo_id do alvo**.
-excluir grupo: admin (auth(true)); vazio/`forcar`/`nuke` (senha do admin no corpo) — ⚠ NUKE não cobre
-`chefe_setores/funcao_membros/avisos/material_conferencias/escala_modelos/setor_sugestoes/grupo_setor_responsaveis`
-→ FK aborta (R-6); comentário promete backup automático que não existe (R-24). `/api/grupos` e
+excluir grupo: admin (auth(true)); vazio/`forcar`/`nuke` (senha do admin no corpo) — NUKE cobre
+desde a v1.5.4-E2 o rol completo de FKs NO ACTION: conferencia_escalas (por conferência E por
+usuário), mural (avisos+cientes+comentários, inclusive cruzados, com NULLing de
+aviso_origem_id/grupo_origem_id), escala_modelos+postos+aptos (antes do escala_tipos),
+material_conferencias+itens, chefe_setores, funcao_membros, grupo_setor_responsaveis,
+setor_sugestoes, usuario_papeis do grupo e funcao_id/setor_id de cadastro (R-6 corrigido);
+comentário promete backup automático que não existe (R-24). `/api/grupos` e
 `/api/vinculos` auth(false) — ⚠ -1 lista todos (R-1).
 
 **ADMIN** (server_admin.go): backup `VACUUM INTO`+sha256+MANIFEST (mutex; dispara boot/fechamentos/
@@ -380,8 +387,11 @@ com allowlist (⚠ inclui WEBHOOK_ATRASOS_URL — R-25); POST só admin. Métric
 Leitura auth(false) com herança (próprio+superiores+subordinados); funções só `tipo='antiguidade'`
 (v368; cadeiras tipo='grupo' hardcoded v39). Escrita `guardaGestaoPessoal`; editar/excluir dono ou
 subordinado; reparentar só dono (anti-ciclo completo, prof ≤8). `hSetorExcluir` (ordem_0610_setores.go):
-gerente(árvore)/enc(próprio) — remaneja pessoas/contas p/ SEM SETOR em tx; ⚠ não limpa
-`chefe_setores`/`grupo_setor_responsaveis` (FK, R-6). `hOperadoresDoSetor`: chefe designa operador do
+gerente(árvore)/enc(próprio) — remaneja pessoas/contas p/ SEM SETOR em tx; desde a v1.5.4-E2
+(R-6 corrigido) revoga o COMANDO do setor (chefe_setores + purga do papel chefe_setor que perdeu
+o último comando no grupo, com re-chave de sessão — doutrina D1), limpa
+`grupo_setor_responsaveis` e remaneja o MATERIAL do setor (itens/cautelas/conferências de material
+ficam SEM setor, mesma doutrina do pessoal). `hOperadoresDoSetor`: chefe designa operador do
 seu setor (valida grupo+setor). `setor_sugestoes`: workflow sugere→avalia (ger/chefe/admin) com
 allowlist de efeito revalidada na aplicação (tx, TOCTOU guard) — o padrão-ouro de escrita indireta.
 `hSetoresAgregado` lê chefe/qtd_chefes de `chefe_setores` desde a v1.5.4-D1 (antes inferia por
@@ -427,8 +437,9 @@ na data; `escaladosNaData` alimenta badges do hoje (⚠ `escalados_ontem` entreg
 **CALENDÁRIO** — 11 rotas auth(false) com 403 admin interno; ACL `checarAcessoEvento`
 (autor→gerente→compartilhamento→mesmo grupo). **Duas gerações de API vivas** sobre a mesma tabela
 `calendario_compartilhamentos`: `/api/calendarios*` (coleções, v1.3) e `/api/calendario/*` (mesh,
-v1.2) — unificar ANTES de reativar (R-27). ⚠ `GET /api/calendarios/{id}/compartilhamentos` sem
-checar posse (R-21); `GET /api/calendarios` cria calendário 'Pessoal' no 1º acesso (write-on-GET);
+v1.2) — unificar ANTES de reativar (R-27). `GET /api/calendarios/{id}/compartilhamentos` usa desde
+a v1.5.4-E2 a mesma régua do compartilhar/revogar (autor do calendário ou gerente do grupo-dono —
+R-21 corrigido); `GET /api/calendarios` cria calendário 'Pessoal' no 1º acesso (write-on-GET);
 índices únicos anti-dup só para alvo_usuario/grupo de coleções (não evento/papel). Reativação do
 calendário sem escalas mostra a seção de escalas sempre vazia.
 
@@ -520,23 +531,23 @@ Prioridade de correção e plano: ver [`ROADMAP.md`](ROADMAP.md) v1.5.4/v1.5.5. 
 | R-2 | Rotas de dados `a.auth(false)` sem guarda de papel/escopo (escalas pdf/minhas/relatorio-dia; material pronto.pdf **sem escopo algum**) | server_escalas.go:1703,1716-1718; server_material.go:2209 | P0/P1 |
 | R-3 | **XSS armazenado via foto_base64** (gravação sem validação + sinks sem esc + CSP unsafe-inline) | server_pessoal.go:343/:994; core.js:580; views_gestao.js:548/2535 | P0 |
 | R-4 | **Import de backup quebrado** (sem rename .novo→sci.db; reopen só migra até v12; rollback reabre o import) | server_admin.go:259-274; store.go:1372-1402 | P0 |
-| R-5 | Foto de usuário sem escopo (LGPD) | server_pessoal.go:1015 | P1 |
-| R-6 | **NUKE/setor-excluir/excluirArquivada × FKs NO ACTION** (chefe_setores, funcao_membros, avisos, material_conferencias, escala_modelos, setor_sugestoes, CE órfãs…) | server_grupos.go:144-186; ordem_0610_setores.go; server_conferencia.go:799 | P1 |
+| R-5 | ~~Foto de usuário sem escopo (LGPD)~~ **CORRIGIDO na v1.5.4-E2**: a foto própria segue 200 (avatar do perfil); admin (escopo 0) vê tudo; conta de grupo só foto de conta do MESMO grupo; fora disso 403 (conta sem grupo incluída). Regressão: `TestE2FotoUsuarioComEscopo` | server_pessoal.go hUsuarioFotoGet | ✅ |
+| R-6 | ~~**NUKE/setor-excluir/excluirArquivada × FKs NO ACTION** (chefe_setores, funcao_membros, avisos, material_conferencias, escala_modelos, setor_sugestoes, CE órfãs…)~~ **CORRIGIDO na v1.5.4-E2**: NUKE com rol completo em tx (conferencia_escalas por conferência/usuario/designante; mural com NULLing de origens e cientes cruzados; escala_modelos+postos+aptos antes do escala_tipos; material_conferencias+itens; chefe_setores; funcao_membros; grupo_setor_responsaveis; setor_sugestoes; usuario_papeis do grupo; funcao_id/setor_id de cadastro NULLados) — teste do grupo "rico" sem erro e sem órfãos; `hSetorExcluir` revoga o comando do setor (chefe_setores + purga do papel chefe_setor sem último comando, re-chave de sessão), limpa grupo_setor_responsaveis e remaneja o material do setor — teste do setor "rico" (`TestE2NukeGrupoRicoSemOrfaos`, `TestE2ExclusaoSetorRicoSemOrfaos`) | server_grupos.go hGrupoExcluir; ordem_0610_setores.go hSetorExcluir | ✅ |
 | R-7 | Antiguidade: ordenação ignora fontes u2/up2 e o relatório na tela não ordena por antiguidade; militar sem tag some em silêncio | server_conferencia.go:985; onda_0910:201 | P1 (bug de campo) |
-| R-8 | Arquivar/descartar: doc diz gerente, código aceita operador/enc | server_conferencia.go:741/:882 | P1 |
+| R-8 | ~~Arquivar/descartar: doc diz gerente, código aceita operador/enc~~ **CORRIGIDO na v1.5.4-E2**: arquivar e descartar exigem gerente ou encarregado de pessoal (mesma régua do fechar); operador 403. Regressão: `TestE2ArquivarDescartarSomenteGerenteEnc` | server_conferencia.go hConferenciaArquivar/hConferenciaDescartar | ✅ |
 | R-9 | hMudarContexto aceita setor de qualquer grupo e reescreve usuarios.setor_id global | mensagens.go:44-67 | P1 |
 | R-10 | hUsuarioPapelDel fail-open (chefe remove papéis de qualquer um + re-chaveia sessões) | mensagens.go:246-278 | P1 |
-| R-11 | Drive serve HTML inline (MIME do cliente) + Content-Disposition sem escapar | drive.go:701/:764-774 | P1 |
+| R-11 | ~~Drive serve HTML inline (MIME do cliente) + Content-Disposition sem escapar~~ **CORRIGIDO na v1.5.4-E2**: `inline` só para a allowlist PDF/PNG/JPEG/WEBP (`mimeDriveInlinavel`, mesma lista dos anexos de material); resto attachment + `X-Content-Type-Options: nosniff` SEMPRE + Content-Type octet-stream; filename do Content-Disposition sanitizado (`sanitizarNomeArquivo`). Gate no SERVE (defesa em profundidade p/ tipos hostis legados no banco). Regressão: `TestE2DriveMIMEInlineSeguro` | drive.go hDriveDownload | ✅ |
 | R-12 | ~~**Chefe-zumbi**: chefeComandaSetor fallbacks + usuarios.setor_id nunca limpo; hSetoresAgregado usa fonte divergente~~ **CORRIGIDO na onda v1.5.4-D1 (decisão D-2)**: `chefe_setores` vira FONTE ÚNICA — fallbacks `usuarios.setor_id`/`pessoas.setor_id` removidos do `chefeComandaSetor`; novo `setorAtivoComandado` condiciona o CONTEXTO da sessão ao comando vigente (concluir/reabrir/marcar e leitura do `/hoje` — contexto órfão de chefia anterior não autoriza nada); `hUsuarioPapelAdd` (chefe_setor+setor_id) MATERIALIZA o comando (UPSERT 1:1 por setor — chefe anterior perde a linha) e `hUsuarioPapelDel` revoga os comandos do grupo; migração **v44** materializa os legados pendentes (fontes `usuarios.setor_id` → `pessoas.setor_id`, INSERT OR IGNORE — UNIQUE(setor_id) preserva o vigente) e subiu o `versaoSchemaBinario` (44); `hSetoresAgregado` lê `chefe_setores` (igual ao catálogo). Resíduo p/ D-5: designação de escala do chefe e pre_fechamento ainda leem o contexto de cadastro | onda_v154_d1.go (migrarV44 + setorAtivoComandado); onda_0510_conf_escopo.go:139/:179; server_conferencia.go:196/:689/:751; mensagens.go:84/:256; onda_0510_itens79.go:173; onda_v154_d1_test.go | ✅ |
 | R-13 | Escritas multi-statement sem tx (hMensagensEnviar, criarConferenciaBase, hAvisosAdd, hGrupoDestituirChefe…) | mensagens.go:691-718 etc. | P1 |
 | R-14 | Mensagens: operador sem grupo (e gerente/chefe) enviam a qualquer papel de qualquer grupo | mensagens.go:640-678 | P1 |
-| R-15 | excluirArquivada deixa conferencia_escalas órfã (FK sem cascade) | server_conferencia.go:799-803 | P2 |
+| R-15 | ~~excluirArquivada deixa conferencia_escalas órfã (FK sem cascade)~~ **CORRIGIDO na v1.5.4-E2**: o DELETE da conferência arquivada (e o NUKE do grupo, R-6) apaga `conferencia_escalas` na mesma tx, por conferência e por usuário/designante. Regressão: `TestE2ExcluirArquivadaApagaEscala` | server_conferencia.go hConferenciaExcluirArquivada | ✅ |
 | R-16 | Troca de senha não invalida sessões; admin/admin sem expiração forçada | server_pessoal.go:147/:183; main.go:49 | P1 |
 | R-17 | hUsuarioExcluir não limpa sessoes/papeis/chefe_setores (delete físico deixa órfãs) | server_pessoal.go:1342 | P2 |
 | R-18 | hMoverConta não move usuario_papeis/sessões (rebaixamento cosmético) | server_pessoal.go:1049-1132 | P2 |
 | R-19 | Caixa da Função: exercente vê a mensagem mas leva 403 na thread | mensagens.go:1068-1072 | P2 |
 | R-20 | Drive: sem cota, sem lixeira, físico fora do backup | drive.go (design) | P2 |
-| R-21 | Mural/Calendário: leituras sem checar grupo do objeto (detalhes/ciente/compartilhamentos) | mensagens.go:1674/:1757; calendario.go:1040 | P1 |
+| R-21 | ~~Mural/Calendário: leituras sem checar grupo do objeto (detalhes/ciente/compartilhamentos)~~ **CORRIGIDO na v1.5.4-E2** (parcial): `hAvisosDetalhes`/`hAvisosCiente` passam pelo `avisoNoEscopo` (onda_v154_e2.go — admin global, grupo da sessão; 403 fora, 404 inexistente) e `GET /api/calendarios/{id}/compartilhamentos` usa a régua do compartilhar/revogar (autor ou gerente do grupo-dono). Resíduo FORA do escopo E2: `hAvisosComentar` ainda não checa o grupo do aviso. Regressão: `TestE2MuralAvisoForaDoEscopo`, `TestE2CalendarioCompartilhamentosEscopo` | mensagens.go hAvisosDetalhes/hAvisosCiente; calendario.go hCalendariosCompartilhamentosList | ✅ (resíduo comentários) |
 | R-22 | gruposSuperioresAtivos não exige bilateral (herança sobe por vínculo meio-declarado) | server_grupos.go:45-69 | P2 |
 | R-23 | Anti-ciclo de grupo_vinculos só imediato (A→B→C→A passa) | server_grupos.go:279 | P2 |
 | R-24 | NUKE promete backup automático inexistente | server_grupos.go:142 | P2 |
