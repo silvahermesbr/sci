@@ -531,7 +531,7 @@ Prioridade de correção e plano: ver [`ROADMAP.md`](ROADMAP.md) v1.5.4/v1.5.5. 
 | R-25 | GET /api/configuracoes público expõe WEBHOOK_ATRASOS_URL | server_admin.go:285-291 | P2 |
 | R-26 | ~~Envelope {funcoes,total} do catálogo tratado como array em 2 views~~ **CORRIGIDO no remoto (fb32f18, 09/10)**: envelope exclusivo do catálogo de funções; demais catálogos voltam a devolver array | server_catalogo.go:328+; fix_catalogo_envelope_test.go | ✅ |
 | R-27 | Duplicações de API (calendarios×calendario; relatorio-dia.pdf×/pdf; conferencia/lista×conferencias; POST material/conferencias morto) | ver módulos | P2 |
-| R-28 | Ci.sh não roda go test/vet; e2e CDP fora do repo; dados.tar.gz com banco real na árvore | ci.sh; e2e_f2_pessoal.py:17 | P1 processo |
+| R-28 | ~~Ci.sh não roda go test/vet~~; ~~dados.tar.gz com banco real na árvore~~; e2e CDP fora do repo — **CORRIGIDO na v1.5.4-F**: ci.sh gateia vet+build+test; dados.tar.gz movido para fora da árvore; e2e CDP fora do repo segue pendente para M8 | ci.sh; e2e_f2_pessoal.py:17 | P1 processo (parcial ✅) |
 
 ---
 
