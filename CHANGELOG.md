@@ -2,6 +2,8 @@
 
 ## [v1.5.4] — Não lançada
 
+- **D3 (R-7):** antiguidade com ordenação unificada nas 3 fontes da tag (pessoa → conta → papel, fonte SQL única `exprAntiguidadeTresFontes` em `onda_0910_conf_antiguidade.go`) na listagem do `/hoje`, pré-fechamento, relatório em tela e PDF de conferência; `iniciar`/`despachar` respondem `sem_tag:[nomes]` (quem ficou fora do filtro por não ter a tag em nenhuma fonte, com recorte aos setores despachados); pré-fechamento voltou a listar os não-marcados (`nao_verificado` — linha NULL era descartada no Scan); sem herança de catálogo entre grupos segue by design (decisão D-1 pendente). Regressão: `onda_v154_d3_test.go`; front do `sem_tag` pendente.
+
 ### 🧟 Onda v1.5.4 — D1: mata o "chefe-zumbi" (R-12) — chefe_setores vira fonte única
 - **Causa:** A nomeado chefe do setor S conservava poderes invisíveis depois de substituído por B
   (ou destituído): o COMANDO (linha em `chefe_setores`) saía, mas o CONTEXTO (`usuarios.setor_id`,

@@ -210,9 +210,16 @@ func (a *App) hConferenciaDespachar(w http.ResponseWriter, r *http.Request) {
 
 	a.st.Auditoria(&u.ID, "despachar", "conferencias", &cid, fmt.Sprintf("setores=%v", req.Setores), ipDe(r))
 
-	jsonOK(w, map[string]any{
+	resp := map[string]any{
 		"ok":             true,
 		"conferencia_id": cid,
 		"despachados":    len(setoresUnicos),
-	})
+	}
+	// v1.5.4-D3 (R-7): mesmo aviso do iniciar — quem ficou fora do filtro de
+	// antiguidade por não ter a tag em nenhuma das 3 fontes (recorte = setores
+	// despachados).
+	if len(req.FuncaoIDs) > 0 {
+		resp["sem_tag"] = a.militaresSemTagAntiguidade(*u.GrupoID, cid, setoresUnicos)
+	}
+	jsonOK(w, resp)
 }

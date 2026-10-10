@@ -102,7 +102,7 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   sem guard declarado na tabela**.
 - **Aceite:** teste por persona: operador/sem-grupo recebe 403 em todos os PDFs de outro escopo.
 
-**D3 — "Antiguidade desconsidera as tags do grupo":**
+**D3 — "Antiguidade desconsidera as tags do grupo" — ✅ CONCLUÍDO (v1.5.4-D3):**
 - **Causa-raiz (3 partes):** (i) o filtro casa a pessoa por 3 fontes (`p.funcao_id` OU
   `usuarios.funcao_id` OU `usuario_papeis.funcao_id`, onda_0910_conf_antiguidade.go:132-134), mas a
   ORDENAÇÃO usa só `p.funcao_id` (`ORDER BY COALESCE(fu.antiguidade,999)`) e o relatório na tela
@@ -116,6 +116,22 @@ Nada de feature. Cada item abaixo tem causa-raiz já apontada — a correção �
   política de herança.
 - **Aceite:** teste com militar tagueado só na CONTA (não na pessoa) aparece na ordem correta;
   teste de aviso de excluídos.
+- **Executado:** expressões SQL extraídas para fonte única em `onda_0910_conf_antiguidade.go`
+  (`filtroAntiguidadeTresFontes`, `exprAntiguidadeTresFontes` =
+  `COALESCE(fu.antiguidade, fu_u.antiguidade, fu_up.antiguidade, 999)` — precedência
+  pessoa → conta → papel, sem tag = 999 — e `ordemAntiguidadeTresFontes`: antiguidade, nome, id);
+  ordenação unificada em TODOS os pontos do modo antiguidade: listagem do `/hoje`
+  (`pessoasAtivasOpt` com filtro), pré-fechamento, relatório em tela `/{id}` e PDF de conferência
+  (condicionada ao modo — conferência por setores mantém as ordens legadas); `iniciar`/`despachar`
+  respondem `sem_tag:[nomes]` (`militaresSemTagAntiguidade`: ativos do grupo, recorte = setores
+  despachados, fora do filtro por não terem a tag em NENHUMA fonte; `NOT COALESCE(predicado,0)`
+  contorna a lógica tri-estados do `funcao_id` NULL); bônus na mesma consulta: pré-fechamento
+  voltou a listar os não-marcados como `nao_verificado` (`COALESCE(pr.situacao,'')` — o Scan
+  descartava a linha NULL e o checklist nascia vazio). Herança de catálogo: **documentada como SEM
+  herança entre grupos (by design 09/10)**; D-1 segue decisão pendente de comando (M1/M2).
+  Regressão: `onda_v154_d3_test.go` (ordem nas 2 listagens, sem_tag com recorte de setor,
+  negativo do grupo sem tags, relatório em tela + PDF na escada via `extrairTextoPDF`).
+  Pendência: front ainda não consome `sem_tag`.
 
 ### E. Correções de guarda remanescentes (P1 de segurança — IDs R-x do `ARQUITETURA.md` §14)
 - `hUsuarioPapelDel/Add`: allowlist de solicitantes + escopo do alvo (R-10; mensagens.go:112-138, 246-278).

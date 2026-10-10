@@ -189,26 +189,36 @@ Tabelas: `conferencias`, `presencas`, `comentarios`, `conferencia_setores` (CS),
 
 **Modos:** `setores` (padrão — efetivo por setor) e `antiguidade` (existe linha em CF). No modo
 antiguidade a pessoa entra se `p.funcao_id` OU `usuarios.funcao_id` OU `usuario_papeis.funcao_id` ∈ CF
-(`predicadoAntiguidade`, onda_0910:119-136); tags válidas = `funcoes.grupo_id = grupo` (v43 matou a
-seed global); **sem herança de grupo superior**. ⚠ Ordenação: só o pré-fechamento ordena por
-`fu.antiguidade` e só pela fonte `p.funcao_id`; `hConferenciaGet` ordena por situacao/nome (defeito R-7).
+(`predicadoAntiguidade`, onda_0910); tags válidas = `funcoes.grupo_id = grupo` (v43 matou a
+seed global); **sem herança de catálogo de antiguidade entre grupos — by design 09/10** (decisão
+D-1, herança de grupo superior, segue PENDENTE de comando p/ M1/M2). **Ordenação (v1.5.4-D3, R-7):**
+fonte única SQL em `onda_0910_conf_antiguidade.go` — `filtroAntiguidadeTresFontes` (o próprio
+predicado) e `exprAntiguidadeTresFontes` = `COALESCE(fu.antiguidade, fu_u.antiguidade,
+fu_up.antiguidade, 999)` (precedência do filtro: pessoa → conta → papel; sem tag = 999, por último)
+— consumida via `ordemAntiguidadeTresFontes(colNome)` (antiguidade, nome, id — estável) na listagem
+do `/hoje` (`pessoasAtivasOpt` com filtro), no pré-fechamento, no relatório em tela `/{id}` e no PDF
+(condicionado ao modo: conferência sem CF mantém as ordens legadas). `POST iniciar`/`despachar`
+respondem `sem_tag:[nomes]` — ativos do universo da conferência (grupo; recorte = setores
+despachados) fora do filtro por não terem a tag em NENHUMA fonte (front ainda não consome).
+Pré-fechamento lista os não-marcados como `nao_verificado` (`COALESCE(pr.situacao,'')` — o Scan
+descartava a linha NULL; v1.5.4-D3).
 
 | Método | Rota | Handler (arq:linha) | Guarda | Papéis | Escopo 0/-1/N | W | R | Notas |
 |---|---|---|---|---|---|---|---|---|
-| GET | /api/conferencia/hoje | server_conferencia.go:16 | auth(false) | qualquer | 0+admin: vazio; ⚠-1: escalados de todos; N: conf aberta | DDL lazy CD | conferencias, presencas, CD, CF, CS, escalas | modo+funcoes_filtro; corte por setor ativo/despachos — chefe só lê o setor que AINDA comanda (setorAtivoComandado, v1.5.4-D1/R-12; contexto órfão → pessoas vazias) |
+| GET | /api/conferencia/hoje | server_conferencia.go:16 | auth(false) | qualquer | 0+admin: vazio; ⚠-1: escalados de todos; N: conf aberta | DDL lazy CD | conferencias, presencas, CD, CF, CS, escalas | modo+funcoes_filtro; pessoas na escada de antiguidade unificada (v1.5.4-D3/R-7); corte por setor ativo/despachos — chefe só lê o setor que AINDA comanda (setorAtivoComandado, v1.5.4-D1/R-12; contexto órfão → pessoas vazias) |
 | GET | /api/conferencia/estado | onda_0610_conf_estado.go:23 | auth(false) | qualquer | 0/-1: hash vazio; N: por setor | — | idem | SHA-1/setor; base do tick 2s |
-| POST | /api/conferencia/iniciar | server_conferencia.go:434 | confMarcarAuth + internas :454-484 | ger/op*/chefe*/enc* | sem grupo 403 | conferencias, presencas(carry+escalas), CS, CF, CD | pessoas, escalas | valida funcao_ids do grupo ANTES (:498); auditoria; chefe só inicia setor que comanda (chefeComandaSetor — fonte única chefe_setores, D-1) |
-| POST | /api/conferencia/despachar | onda_despacho.go:160 | confAuth (+operador 403 interno) | ger/enc | sem grupo 403 | +CD | idem | exige ≥1 setor |
+| POST | /api/conferencia/iniciar | server_conferencia.go:434 | confMarcarAuth + internas :454-484 | ger/op*/chefe*/enc* | sem grupo 403 | conferencias, presencas(carry+escalas), CS, CF, CD | pessoas, escalas | valida funcao_ids do grupo ANTES (:498); auditoria; chefe só inicia setor que comanda (chefeComandaSetor — fonte única chefe_setores, D-1); modo antiguidade responde `sem_tag:[nomes]` (v1.5.4-D3/R-7) |
+| POST | /api/conferencia/despachar | onda_despacho.go:160 | confAuth (+operador 403 interno) | ger/enc | sem grupo 403 | +CD | idem | exige ≥1 setor; modo antiguidade responde `sem_tag` com recorte aos setores despachados (v1.5.4-D3/R-7) |
 | POST | /api/conferencia/fechar | server_conferencia.go:522 | confAuth + :524 | **só gerente/enc_pessoal** | ⚠-1 fecha de OUTRO grupo (R-1) | presencas upsert, conferencias, CS (tx) | conferencias | sem ✅→nao_verificado; **backupAssíncrono** + broadcast SSE |
 | POST | /api/conferencia/marcar | server_conferencia.go:306 | confMarcarAuth + guardaSetorNaMarcar | ger/enc: grupo; chefe/op: setor próprio | -1: 409 | presencas, CS | pessoas | só justificada tem destino; troca reset obs; SSE; ramo chefe exige comando VIGENTE (setorAtivoComandado, v1.5.4-D1/R-12) |
 | GET | /api/conferencia/lista · /api/conferencias | server_conferencia.go:818 (:1584/:1599) | auth(false) | qualquer | ⚠-1: **todas** (R-1) | — | conferencias | ?arq=1 arquivo; senão 7 dias |
-| GET | /api/conferencia/{id} | server_conferencia.go:933 | auth(false) | qualquer | 0: qualquer; ⚠-1: qualquer (R-1); N: própria+subordinados | — | tudo | relatório na tela; ordena situacao/nome ⚠ (R-7) |
+| GET | /api/conferencia/{id} | server_conferencia.go:933 | auth(false) | qualquer | 0: qualquer; ⚠-1: qualquer (R-1); N: própria+subordinados | — | tudo | relatório na tela; modo antiguidade ordena pela escada (antiguidade unificada das 3 fontes, v1.5.4-D3/R-7); modo setores mantém situacao/nome |
 | DELETE | /api/conferencia/{id} | server_conferencia.go:882 | confAuth | ger/op/enc | ⚠-1 (R-1) | comentarios, presencas, CE, conferencias | — | só ABERTA; sem backup |
 | POST | /api/conferencia/{id}/setor/{sid}/concluir | server_conferencia.go:631 | confMarcarAuth | chefe: setor ativo COMANDADO (setorAtivoComandado, v1.5.4-D1/R-12); ger/op/enc | ⚠-1 (R-1) | CS | — | exige aberta |
 | POST | /api/conferencia/{id}/setor/{sid}/reabrir | server_conferencia.go:689 | idem | idem | ⚠-1 (R-1) | CS | — | |
-| GET | …/setor/{sid}/pre_fechamento | onda_0910:138 | confMarcarAuth | idem | ⚠-1 (R-1) | — | pessoas+CF | ordena por antiguidade (só p.funcao_id ⚠); ramo chefe ainda lê o CONTEXTO sem conferir comando (resíduo D-5) |
+| GET | …/setor/{sid}/pre_fechamento | onda_0910:138 | confMarcarAuth | idem | ⚠-1 (R-1) | — | pessoas+CF | ordena pela antiguidade UNIFICADA das 3 fontes da tag (v1.5.4-D3/R-7); não-marcados saem como nao_verificado (COALESCE situacao — antes a linha NULL era descartada no Scan); ramo chefe ainda lê o CONTEXTO sem conferir comando (resíduo D-5) |
 | GET | /api/conferencia/funcoes-antiguidade | onda_0910:296 | auth(false) | qualquer | ≤0: vazio+aviso | — | funcoes | picker; tags DO grupo |
-| GET | /api/conferencia/{id}/relatorio.pdf | server_conferencia.go:1095 | auth(false) | qualquer | ⚠-1 (R-1) | — | tudo | só FECHADA; filtros; assinatura |
+| GET | /api/conferencia/{id}/relatorio.pdf | server_conferencia.go:1095 | auth(false) | qualquer | ⚠-1 (R-1) | — | tudo | só FECHADA; filtros; assinatura; modo antiguidade sai na escada (mesma ordem do relatório em tela, v1.5.4-D3/R-7) |
 | POST | /api/conferencia/{id}/arquivar | server_conferencia.go:741 | confAuth | ⚠ doc diz gerente; op/enc passam (R-8) | ⚠-1 (R-1) | conferencias | — | só FECHADA; backup |
 | DELETE | /api/conferencia/arquivada/{id} | server_conferencia.go:776 | **auth(true)** | admin | — | comentarios, presencas, conferencias | — | ⚠ CE fica órfã (R-15) |
 | POST | /api/conferencia/{id}/escala | onda_0510_escalas.go:88 | auth(false)+guardaEscala | ger(chefe/op do grupo); chefe(só op do setor) | gid==esc | CE | usuarios | escala de guarda da conferência |
@@ -225,7 +235,7 @@ pelo tick 2s e pelo `ops/carga_conferencia.py`); escalas (badges/pré-fill do in
 (herança {id}GET/PDF); SSE+backupAssíncrono (concorrencia_test); migrações v40/v43 e a tabela lazy CD.
 
 **Testes:** conferencia_realtime_test, setores_conferencia_test, v1_5_conferencia_setor_test,
-onda_despacho_test, onda_0910_conf_antiguidade_test(+_grupo), onda_0510_conf_escopo_test,
+onda_despacho_test, onda_0910_conf_antiguidade_test(+_grupo), onda_v154_d3_test, onda_0510_conf_escopo_test,
 onda_0510_escalas_test, contexto_govema_conferencia_test, onda_multichefe_test, multi_setor_chefe_test,
 regressao_conferencia_destino_test, concorrencia_test, ordem_diretor_conferencia/0410/pdf_v2, v1_test,
 onda_0610_pessoal_test, onda_f3_e2e_personas_test, sci_ordem_0610_frented_test.
@@ -522,7 +532,7 @@ Prioridade de correção e plano: ver [`ROADMAP.md`](ROADMAP.md) v1.5.4/v1.5.5. 
 | R-4 | **Import de backup quebrado** (sem rename .novo→sci.db; reopen só migra até v12; rollback reabre o import) | server_admin.go:259-274; store.go:1372-1402 | P0 |
 | R-5 | Foto de usuário sem escopo (LGPD) | server_pessoal.go:1015 | P1 |
 | R-6 | **NUKE/setor-excluir/excluirArquivada × FKs NO ACTION** (chefe_setores, funcao_membros, avisos, material_conferencias, escala_modelos, setor_sugestoes, CE órfãs…) | server_grupos.go:144-186; ordem_0610_setores.go; server_conferencia.go:799 | P1 |
-| R-7 | Antiguidade: ordenação ignora fontes u2/up2 e o relatório na tela não ordena por antiguidade; militar sem tag some em silêncio | server_conferencia.go:985; onda_0910:201 | P1 (bug de campo) |
+| R-7 | ~~Antiguidade: ordenação ignora fontes u2/up2 e o relatório na tela não ordena por antiguidade; militar sem tag some em silêncio~~ **CORRIGIDO na v1.5.4-D3**: fonte única das expressões SQL em `onda_0910_conf_antiguidade.go` — `filtroAntiguidadeTresFontes` (o predicado do filtro) e `exprAntiguidadeTresFontes` = `COALESCE(fu.antiguidade, fu_u.antiguidade, fu_up.antiguidade, 999)` (precedência pessoa → conta → papel; sem tag = 999, por último), aplicada via `ordemAntiguidadeTresFontes` na listagem do `/hoje` (`pessoasAtivasOpt` com filtro), no pré-fechamento, no relatório em tela `/{id}` e no PDF (`montarLancamentosPDFConferencia`), condicionada ao modo antiguidade (`conferenciaEmModoAntiguidade` — modo setores mantém as ordens legadas); `iniciar`/`despachar` respondem `sem_tag:[nomes]` (`militaresSemTagAntiguidade` — ativos do universo, recorte = setores despachados, fora do filtro por não terem a tag em NENHUMA fonte; `NOT COALESCE(predicado,0)` p/ não perder o sem-tag na lógica tri-estados); bônus da mesma consulta: pré-fechamento voltou a listar os NÃO-marcados (`COALESCE(pr.situacao,'')` — o Scan descartava a linha NULL e o checklist nascia vazio); herança de catálogo segue SEM herança entre grupos (by design 09/10; D-1 pendente). Front do `sem_tag` ainda não consome (pendente) | onda_0910_conf_antiguidade.go; helpers.go (pessoasAtivasOpt); server_conferencia.go (hConferenciaGet/montarLancamentosPDFConferencia/hConferenciaIniciar); onda_despacho.go; onda_v154_d3_test.go | ✅ |
 | R-8 | Arquivar/descartar: doc diz gerente, código aceita operador/enc | server_conferencia.go:741/:882 | P1 |
 | R-9 | hMudarContexto aceita setor de qualquer grupo e reescreve usuarios.setor_id global | mensagens.go:44-67 | P1 |
 | R-10 | hUsuarioPapelDel fail-open (chefe remove papéis de qualquer um + re-chaveia sessões) | mensagens.go:246-278 | P1 |
