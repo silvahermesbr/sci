@@ -237,6 +237,21 @@ func (a *App) hSetorPreFechamento(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// v1.6.0 Fase 7 (furo): o operador lia o pré-fechamento de QUALQUER setor
+	// do grupo — o confMarcarAuth só cobra papel. Espelha o ramo do chefe com
+	// o recorte do operador (setor de cadastro); sem setor → 403 com a
+	// mensagem única da onda (a mesma do guarda central do material).
+	if u.Papel == "operador" {
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo == nil {
+			jsonErro(w, http.StatusForbidden, "conta sem setor atribuído — solicite ao gerente/encarregado")
+			return
+		}
+		if *sAtivo != sid {
+			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto e outro -- troque a funcao no menu de contexto antes de acessar este setor")
+			return
+		}
+	}
 
 	// Nome do setor
 	var setorNome string

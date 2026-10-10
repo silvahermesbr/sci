@@ -53,6 +53,12 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	if err := st.db.QueryRow(`INSERT INTO setores (grupo_id, nome, sigla, ativo) VALUES (?, 'D2 Setor Livre', 'D2L', 1) RETURNING id`, gidA).Scan(&s2); err != nil {
 		t.Fatalf("criar setor S2: %v", err)
 	}
+	// v1.6.0 F7: o operador tem setor — o recorte de material é por SETOR, e a
+	// fixture de material (item/cautela/conferência) fica no setor DELE (s1).
+	var sB int64
+	if err := st.db.QueryRow(`INSERT INTO setores (grupo_id, nome, sigla, ativo) VALUES (?, 'D2 Setor Fora', 'D2F', 1) RETURNING id`, gidB).Scan(&sB); err != nil {
+		t.Fatalf("criar setor B: %v", err)
+	}
 
 	// ---------- contas (grupo na CONTA ANTES do login — lição v1.5.4-A) ----------
 	criaConta := func(login, papel string, gid *int64) int64 {
@@ -89,6 +95,16 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	criaConta("d2_semgrupo", "operador", nil)
 	chefeAID := criaConta("d2_chefe", "chefe_setor", &gpA)
 
+	// v1.6.0 F7: setores dos operadores — sem setor a conta operador está
+	// BLOQUEADA no módulo (403 "conta sem setor atribuído", guarda da onda);
+	// os 200s desta matriz são de operador COM setor, dono da fixture.
+	if _, err := st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE login = 'd2_op'`, s1); err != nil {
+		t.Fatalf("setor do operador A: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE login = 'd2_opB'`, sB); err != nil {
+		t.Fatalf("setor do operador B: %v", err)
+	}
+
 	ckGer := loginAs(t, app, "d2_ger", "senha-d2")
 	ckOp := loginAs(t, app, "d2_op", "senha-d2")
 	ckOpB := loginAs(t, app, "d2_opB", "senha-d2")
@@ -108,7 +124,9 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	if err := st.db.QueryRow(`INSERT INTO material_categorias (grupo_id, nome, ativo) VALUES (?, 'D2 Categoria', 1) RETURNING id`, gidA).Scan(&catID); err != nil {
 		t.Fatalf("criar categoria: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO material_itens (grupo_id, categoria_id, nome, codigo_patrimonio, status) VALUES (?, ?, 'Fuzil D2', 'D2-0001', 'acautelado') RETURNING id`, gidA, catID).Scan(&itemID); err != nil {
+	// v1.6.0 F7: item no SETOR do operador A (recorte do módulo é por setor;
+	// o recibo/pronto/inventário do operador só cobrem o próprio setor).
+	if err := st.db.QueryRow(`INSERT INTO material_itens (grupo_id, setor_id, categoria_id, nome, codigo_patrimonio, status) VALUES (?, ?, ?, 'Fuzil D2', 'D2-0001', 'acautelado') RETURNING id`, gidA, s1, catID).Scan(&itemID); err != nil {
 		t.Fatalf("criar item: %v", err)
 	}
 	var cautID int64
