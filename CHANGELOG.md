@@ -33,6 +33,19 @@
   PDFs, conferências de material — iniciar força o setor, Carga Geral fica fora; categorias:
   escrita só gerente/enc_material) e os furos de conferência fechados: operador só conclui/reabre/lê
   pré-fechamento do próprio setor de cadastro.
+- **Material por NÍVEL de acesso + termos Cautelar/Descautelar (onda v1.6.0-contextos):** doutrina
+  de nível no módulo Material — gerente/enc_material gerem o grupo inteiro; **chefe de setor**
+  adiciona/cria/atualiza o material do PRÓPRIO setor (leitura recortada; item alheio 404 honesto do
+  P1-2) e NÃO exclui nem dá baixa (403 "exclusão e baixa de material é ato do gerente ou
+  encarregado de material" — cobre também a baixa patrimonial `?modo=baixar`); **operador APENAS
+  cautelar/descautelar** (o 200 que deixava o operador cruando item no próprio setor foi INVERTIDO
+  para 403; cautela/descautela próprias provadas em 200); chefe MANTÉM cautela/descautela do
+  próprio setor (interpretação registrada nos handlers). Rótulos, mensagens e relatórios impressos
+  trocam "Acautelar/Acautelado(s)/Devolver" por "Cautelar/Cautelado(s)/Descautelar" — o ENUM
+  gravado `status='acautelado'` (CHECKs store.go) e os campos `data_devolucao`/`obs_devolucao` são
+  esquema e NÃO mudam. Front: `#/material` já aberto a chefe/operador (menu+portão do checkpoint)
+  e views_material.js esconde os controles fora do nível (operador não vê cadastrar/editar/excluir;
+  chefe não vê excluir/baixar; gerente/enc vêem tudo). R-32 ✅ no §14 da ARQUITETURA.
 
 ---
 

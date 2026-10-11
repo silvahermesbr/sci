@@ -10,6 +10,16 @@
   const alerta = (...args) => window.alerta(...args);
   let abaMat = 'balcao'; // balcao | inventario | historico
 
+  /* v1.6.0 onda contextos — doutrina de NÍVEL de acesso do módulo Material
+     (o servidor autoriza DE NOVO em cada handler; aqui o papel só ESCONDE o
+     controle, para o 403 nunca ser a experiência):
+       gerente / enc_material → grupo inteiro (cadastra, edita, exclui, baixa);
+       chefe_setor            → cadastra/edita o PRÓPRIO setor (sem excluir/baixar);
+       operador               → SÓ cautelar e descautelar.                        */
+  const papelMat = () => (quem() || {}).papel || '';
+  const ehGestaoMaterial = () => ['gerente', 'enc_material', 'encarregado'].includes(papelMat()); // encarregado = string legada
+  const podeGerenciarItens = () => ehGestaoMaterial() || papelMat() === 'chefe_setor';
+
   window.ViewMaterial = async function () {
     const eu = quem();
     if (!eu) { location.hash = '#/login'; return; }
@@ -32,11 +42,11 @@
           <p style="color:var(--tx2); font-size:13px; margin:0">Controle de carga por setor, viaturas, chaves, check diário e relatórios de pronto.</p>
         </div>
         <div style="display:flex; gap:8px; flex-wrap:wrap">
-          <button class="acao-linha" id="btResponsaveisMaterial" title="Definir Encarregado e Auxiliar de Material por Setor">👤 Encarregados</button>
+          ${ehGestaoMaterial() ? `<button class="acao-linha" id="btResponsaveisMaterial" title="Definir Encarregado e Auxiliar de Material por Setor">👤 Encarregados</button>` : ''}
           <button class="acao-linha" id="btImprimirInventario" style="color:var(--verde-claro)">📄 Imprimir Inventário</button>
           <button class="acao-linha" id="btAjudaScanner" title="Guia de uso de leitores de código e câmera">❓ Ajuda</button>
           <button class="acao-linha" id="btScannerMaterial">📷 Escanear QR / Código</button>
-          <button class="acao-linha" id="btNovoItemMaterial">+ Novo Item / Viatura</button>
+          ${podeGerenciarItens() ? `<button class="acao-linha" id="btNovoItemMaterial">+ Novo Item / Viatura</button>` : ''}
           <button class="primario" id="btIniciarCautelaTopo" style="box-shadow: 0 4px 14px rgba(16,185,129,0.35)">
             ⚡ Iniciar Cautela
           </button>
@@ -63,11 +73,13 @@
       };
     });
 
-    $('#btResponsaveisMaterial').onclick = () => modalGerenciarResponsaveis();
+    const btResp = $('#btResponsaveisMaterial');
+    if (btResp) btResp.onclick = () => modalGerenciarResponsaveis();
     $('#btImprimirInventario').onclick = () => window.open('/api/material/inventario/pdf', '_blank');
     $('#btAjudaScanner').onclick = () => modalAjudaScanner();
     $('#btScannerMaterial').onclick = () => modalScannerMaterial();
-    $('#btNovoItemMaterial').onclick = () => modalNovoItem(null, () => window.ViewMaterial());
+    const btNovo = $('#btNovoItemMaterial');
+    if (btNovo) btNovo.onclick = () => modalNovoItem(null, () => window.ViewMaterial());
     $('#btIniciarCautelaTopo').onclick = () => modalIniciarCautelaGeral(() => window.ViewMaterial());
 
     await carregarMetricas();
@@ -93,7 +105,7 @@
       $('#matResumo').innerHTML = `
         <div class="caixa"><b>${total}</b><span>Total no Inventário</span></div>
         <div class="caixa"><b style="color:var(--verde-claro)">${disp}</b><span>Disponíveis na Reserva</span></div>
-        <div class="caixa"><b style="color:var(--ambar-txt)">${acaut}</b><span>Acautelados (Em Uso)</span></div>
+        <div class="caixa"><b style="color:var(--ambar-txt)">${acaut}</b><span>Cautelados (Em Uso)</span></div>
         <div class="caixa"><b style="color:var(--tx3)">${manut}</b><span>Manutenção / Baixados</span></div>
       `;
     } catch (e) {
@@ -110,12 +122,12 @@
     cont.innerHTML = `
       <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(360px, 1fr)); gap:16px">
         
-        <!-- Coluna 1: Acautelados no Momento -->
+        <!-- Coluna 1: Cautelados no Momento -->
         <div class="cartao" style="border-top:3px solid var(--ambar)">
           <h3 style="margin-top:0; color:var(--ambar-txt); display:flex; align-items:center; gap:8px">
-            <span>⚠️</span> <span>Itens Acautelados no Momento (${acautelados.length})</span>
+            <span>⚠️</span> <span>Itens Cautelados no Momento (${acautelados.length})</span>
           </h3>
-          <p style="color:var(--tx2); font-size:12.5px; margin-bottom:12px">Bens em uso. Clique para devolver ou gerenciar documentos anexos.</p>
+          <p style="color:var(--tx2); font-size:12.5px; margin-bottom:12px">Bens em uso. Clique para descautelar ou gerenciar documentos anexos.</p>
           
           <div style="display:flex; flex-direction:column; gap:8px; max-height:480px; overflow-y:auto">
             ${acautelados.length ? acautelados.map(it => {
@@ -149,12 +161,12 @@
                       📄 Recibo
                     </button>
                     <button class="primario" style="flex:1; font-size:13px; padding:6px 0; min-width:80px" data-devolver="${c.id || it.id}" data-itemnome="${esc(it.nome)}" data-qtd="${c.quantidade || it.quantidade || 1}" data-sens="${sens}">
-                      📥 Devolver
+                      📥 Descautelar
                     </button>
                   </div>
                 </div>
               `;
-            }).join('') : '<div class="vazio" style="padding:20px 0">Nenhum item acautelado no momento. Reserva completa!</div>'}
+            }).join('') : '<div class="vazio" style="padding:20px 0">Nenhum item cautelado no momento. Reserva completa!</div>'}
           </div>
         </div>
 
@@ -207,7 +219,7 @@
       };
     });
 
-    // Botões de Devolver
+    // Botões de Descautelar
     cont.querySelectorAll('button[data-devolver]').forEach(b => {
       b.onclick = () => {
         const cid = +b.dataset.devolver;
@@ -274,23 +286,23 @@
     const getAcoesHtml = (it, isChild = false) => {
       if (it.status === 'baixado') {
         return `
-          <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-reativar="${it.id}">♻️ Reativar</button>
-          <button class="acao-linha perigo" style="font-size:12px; padding:4px 8px" data-delitem="${it.id}">🗑️ Excluir Definitivo</button>
+          ${podeGerenciarItens() ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-reativar="${it.id}">♻️ Reativar</button>` : ''}
+          ${ehGestaoMaterial() ? `<button class="acao-linha perigo" style="font-size:12px; padding:4px 8px" data-delitem="${it.id}">🗑️ Excluir Definitivo</button>` : ''}
         `;
       }
       const btAcaoCautela = (it.status === 'disponivel' || (it.quantidade_disponivel !== undefined && it.quantidade_disponivel > 0))
         ? `<button class="primario" style="font-size:12px; padding:4px 8px; margin-right:4px" data-cautelar="${it.id}">⚡ Cautelar</button>`
         : (it.status === 'acautelado' && it.cautela_ativa
-            ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-devolver="${it.cautela_ativa.id}" data-itemnome="${esc(it.nome)}" data-qtd="${it.cautela_ativa.quantidade || it.quantidade || 1}" data-sens="${it.sensibilidade || 'convencional'}">📥 Devolver</button>`
+            ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-devolver="${it.cautela_ativa.id}" data-itemnome="${esc(it.nome)}" data-qtd="${it.cautela_ativa.quantidade || it.quantidade || 1}" data-sens="${it.sensibilidade || 'convencional'}">📥 Descautelar</button>`
             : '');
-      
+
       return `
         ${btAcaoCautela}
-        <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-duplicar="${it.id}" title="Duplicar este item">📋 Duplicar</button>
+        ${podeGerenciarItens() ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-duplicar="${it.id}" title="Duplicar este item">📋 Duplicar</button>` : ''}
         <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-qritem="${it.id}" title="Gerar e imprimir etiqueta com QR Code">🖨️ QR</button>
-        <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-edititem="${it.id}">✏️ Editar</button>
-        <button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-baixaritem="${it.id}" title="Dar baixa no patrimônio">📦 Baixar</button>
-        <button class="acao-linha perigo" style="font-size:12px; padding:4px 8px" data-delitem="${it.id}" title="Excluir item definitivamente">🗑️ Excluir</button>
+        ${podeGerenciarItens() ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-edititem="${it.id}">✏️ Editar</button>` : ''}
+        ${ehGestaoMaterial() ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px; margin-right:4px" data-baixaritem="${it.id}" title="Dar baixa no patrimônio">📦 Baixar</button>` : ''}
+        ${ehGestaoMaterial() ? `<button class="acao-linha perigo" style="font-size:12px; padding:4px 8px" data-delitem="${it.id}" title="Excluir item definitivamente">🗑️ Excluir</button>` : ''}
       `;
     };
 
@@ -330,7 +342,7 @@
           <td><b>${g.itens.length} un.</b></td>
           <td>
             <span style="color:var(--verde-claro); font-weight:700">${dispCount} disp.</span> /
-            <span style="color:var(--ambar-txt); font-weight:700">${acautCount} acaut.</span>
+            <span style="color:var(--ambar-txt); font-weight:700">${acautCount} caut.</span>
           </td>
           <td style="font-size:12px; color:var(--tx2)">Clique no toggle ▶ para expandir os ${g.itens.length} itens individuais</td>
           <td style="text-align:right; white-space:nowrap">
@@ -344,7 +356,7 @@
       // Linhas Filhas (Itens Individuais)
       g.itens.forEach(it => {
         const stColor = it.status === 'disponivel' ? 'var(--verde-claro)' : it.status === 'acautelado' ? 'var(--ambar-txt)' : it.status === 'manutencao' ? '#60a5fa' : 'var(--tx3)';
-        const stNome = it.status === 'disponivel' ? 'Disponível' : it.status === 'acautelado' ? 'Acautelado' : it.status === 'manutencao' ? 'Manutenção' : 'Baixado';
+        const stNome = it.status === 'disponivel' ? 'Disponível' : it.status === 'acautelado' ? 'Cautelado' : it.status === 'manutencao' ? 'Manutenção' : 'Baixado';
         const displayEstilo = isExp ? '' : 'display:none;';
 
         linhas += `
@@ -375,7 +387,7 @@
     // 2. Itens Convencionais
     convencionais.forEach(it => {
       const stColor = it.status === 'disponivel' ? 'var(--verde-claro)' : it.status === 'acautelado' ? 'var(--ambar-txt)' : it.status === 'manutencao' ? '#60a5fa' : 'var(--tx3)';
-      const stNome = it.status === 'disponivel' ? 'Disponível' : it.status === 'acautelado' ? 'Acautelado' : it.status === 'manutencao' ? 'Manutenção' : 'Baixado';
+      const stNome = it.status === 'disponivel' ? 'Disponível' : it.status === 'acautelado' ? 'Cautelado' : it.status === 'manutencao' ? 'Manutenção' : 'Baixado';
       const dispQtd = it.quantidade_disponivel !== undefined ? it.quantidade_disponivel : it.quantidade;
       const acautQtd = it.quantidade_acautelada !== undefined ? it.quantidade_acautelada : 0;
 
@@ -392,7 +404,7 @@
           </td>
           <td>
             <b>${dispQtd} / ${it.quantidade || 1} un.</b>
-            ${acautQtd > 0 ? `<div style="font-size:11px; color:var(--ambar-txt)">(${acautQtd} acauteladas)</div>` : ''}
+            ${acautQtd > 0 ? `<div style="font-size:11px; color:var(--ambar-txt)">(${acautQtd} cauteladas)</div>` : ''}
           </td>
           <td><span style="color:${stColor}; font-weight:700">${stNome}</span></td>
           <td style="font-size:12px; color:var(--tx2)">${esc(it.observacao || '—')}</td>
@@ -428,7 +440,7 @@
                 <option value="ativos">Itens Ativos (Ocultar Baixados)</option>
                 <option value="">Todos os Itens (inclusive baixados)</option>
                 <option value="disponivel">Apenas Disponíveis</option>
-                <option value="acautelado">Apenas Acautelados</option>
+                <option value="acautelado">Apenas Cautelados</option>
                 <option value="manutencao">Apenas Manutenção</option>
                 <option value="baixado">Apenas Baixados</option>
               </select>
@@ -614,7 +626,7 @@
         if (!it) return;
 
         if (it.status === 'acautelado') {
-          alerta('O item "' + it.nome + '" está acautelado no momento. Realize a devolução antes de excluí-lo.');
+          alerta('O item "' + it.nome + '" está cautelado no momento. Realize a descautelação antes de excluí-lo.');
           return;
         }
 
@@ -638,7 +650,7 @@
         if (!it) return;
 
         if (it.status === 'acautelado') {
-          alerta('O item "' + it.nome + '" está acautelado no momento. Realize a devolução antes de dar baixa.');
+          alerta('O item "' + it.nome + '" está cautelado no momento. Realize a descautelação antes de dar baixa.');
           return;
         }
 
@@ -695,7 +707,7 @@
 
       const linhas = cautelas.map(c => {
         const stColor = c.status === 'ativa' ? 'var(--ambar-txt)' : 'var(--verde-claro)';
-        const stTxt = c.status === 'ativa' ? 'EM USO' : 'DEVOLVIDA';
+        const stTxt = c.status === 'ativa' ? 'EM USO' : 'DESCAUTELADA';
         return `
           <tr>
             <td>#${c.id}</td>
@@ -727,7 +739,7 @@
                   <th>Item / Bem</th>
                   <th>Retirado Por</th>
                   <th>Data de Saída</th>
-                  <th>Devolução</th>
+                  <th>Descautela</th>
                   <th>Situação</th>
                   <th>Ações & Documentos</th>
                 </tr>
@@ -780,7 +792,7 @@
 
         <div style="overflow-y:auto; flex:1; padding-right:4px">
           <div class="campo" style="margin-bottom:10px">
-            <label>Item / Bem a ser Acautelado *</label>
+            <label>Item / Bem a ser Cautelado *</label>
             <select id="mItemCautelaSelect">
               <option value="">— Selecione o item disponível —</option>
               ${itensDisponiveis.map(it => `
@@ -792,7 +804,7 @@
           </div>
 
           <div class="campo" id="mCampoQtdCautela" style="display:none; margin-bottom:10px">
-            <label>Quantidade a Acautelar *</label>
+            <label>Quantidade a Cautelar *</label>
             <input type="number" id="mInputQtdCautela" min="1" value="1" style="max-width:140px">
             <div id="mDicaQtdCautela" style="font-size:11.5px; color:var(--tx2); margin-top:2px"></div>
           </div>
@@ -912,7 +924,7 @@
       }
 
       if (!itemId) {
-        toast('Selecione o item a ser acautelado', 'erro');
+        toast('Selecione o item a ser cautelado', 'erro');
         return;
       }
       if (!pid) {
@@ -931,7 +943,7 @@
             anexos: anexosBuffer
           })
         });
-        toast('Material acautelado com sucesso!');
+        toast('Material cautelado com sucesso!');
         m.remove();
         if (onConcluido) onConcluido();
       } catch (e) {}
@@ -1030,20 +1042,20 @@
 
         ${ehConvencionalComQtd ? `
           <div class="campo" style="margin-bottom:12px">
-            <label>Quantidade a Devolver (Saldo nesta Cautela: <b>${cautelaQtd}</b>)</label>
+            <label>Quantidade a Descautelar (Saldo nesta Cautela: <b>${cautelaQtd}</b>)</label>
             <input type="number" id="mQtdDevolucao" min="1" max="${cautelaQtd}" value="${cautelaQtd}">
-            <small style="color:var(--tx3); font-size:11px">Você pode devolver parcialmente (ex.: 2 de 5) ou integralmente.</small>
+            <small style="color:var(--tx3); font-size:11px">Você pode descautelar parcialmente (ex.: 2 de 5) ou integralmente.</small>
           </div>
         ` : ''}
 
         <div class="campo" style="margin-bottom:14px">
-          <label>Condições de Devolução / Observação</label>
-          <input id="mObsDevolucao" placeholder="ex.: Devolvido em perfeito estado e limpo.">
+          <label>Condições da Descautela / Observação</label>
+          <input id="mObsDevolucao" placeholder="ex.: Item descautelado em perfeito estado e limpo.">
         </div>
 
         <div style="display:flex; justify-content:flex-end; gap:8px">
           <button class="acao-linha" onclick="this.closest('.modal-mask').remove()">Cancelar</button>
-          <button class="primario" id="mBtnConfirmarDevolucao">Confirmar Devolução</button>
+          <button class="primario" id="mBtnConfirmarDevolucao">Confirmar Descautela</button>
         </div>
       </div>
     `;
@@ -1063,11 +1075,11 @@
           method: 'POST',
           body: JSON.stringify({ cautela_id: cautelaId, obs_devolucao: obs, quantidade: qtd })
         });
-        toast(qtd < cautelaQtd ? `Devolução parcial (${qtd} itens) registrada com sucesso!` : 'Material devolvido à reserva com sucesso!');
+        toast(qtd < cautelaQtd ? `Descautela parcial (${qtd} itens) registrada com sucesso!` : 'Material descautelado e de volta à reserva!');
         m.closest('.modal-mask').remove();
         if (onConcluido) onConcluido();
       } catch (e) {
-        alerta('Erro ao devolver: ' + (e.message || e));
+        alerta('Erro ao descautelar: ' + (e.message || e));
       }
     };
   }
@@ -1193,7 +1205,7 @@
             <select id="mItemStatus">
               <option value="disponivel" ${base.status === 'disponivel' || !base.status ? 'selected' : ''}>Disponível na Reserva / Garagem</option>
               <option value="manutencao" ${base.status === 'manutencao' ? 'selected' : ''}>Em Manutenção / Oficina</option>
-              <option value="acautelado" ${base.status === 'acautelado' ? 'selected' : ''}>Acautelado / Em Missão</option>
+              <option value="acautelado" ${base.status === 'acautelado' ? 'selected' : ''}>Cautelado / Em Missão</option>
               <option value="baixado" ${base.status === 'baixado' ? 'selected' : ''}>Baixado / Inativo</option>
             </select>
           </div>
@@ -1212,6 +1224,18 @@
     `;
 
     const m = modal(html);
+
+    // v1.6.0 onda contextos: chefe de setor grava SEMPRE no próprio setor — o
+    // servidor força (setor do corpo é ignorado p/ quem tem recorte); o front
+    // só deixa a escolha honesta, travando o select no setor do comando.
+    if (papelMat() === 'chefe_setor' && (quem() || {}).setor_id) {
+      const selSetorChefe = m.querySelector('#mItemSetor');
+      if (selSetorChefe) {
+        selSetorChefe.value = String(quem().setor_id);
+        selSetorChefe.disabled = true;
+      }
+    }
+
     const selSens = m.querySelector('#mItemSensibilidade');
     const cQtd = m.querySelector('#cQtd');
     const lblPatrimonio = m.querySelector('#lblPatrimonio');
@@ -1505,7 +1529,7 @@
               <p style="color:var(--tx2); font-size:12.5px; margin:4px 0 0">Gestão de viaturas operacionais e administrativas, padrinhos e histórico de manutenção.</p>
             </div>
             <div style="display:flex; gap:8px">
-              <button class="primario" id="btNovaViatura">+ Cadastrar Viatura</button>
+              ${podeGerenciarItens() ? `<button class="primario" id="btNovaViatura">+ Cadastrar Viatura</button>` : ''}
             </div>
           </div>
 
@@ -1557,9 +1581,9 @@
                         <button class="primario" style="font-size:12px; padding:4px 10px; margin-right:4px" data-fichaviat="${v.id}">
                           📂 Ficha & Dossiê
                         </button>
-                        <button class="acao-linha" style="font-size:12px; padding:4px 8px" data-edititem="${v.id}">
+                        ${podeGerenciarItens() ? `<button class="acao-linha" style="font-size:12px; padding:4px 8px" data-edititem="${v.id}">
                           ✏️ Editar
-                        </button>
+                        </button>` : ''}
                       </td>
                     </tr>
                   `;
@@ -1570,7 +1594,8 @@
         </div>
       `;
 
-      $('#btNovaViatura').onclick = () => modalNovoItem(null, () => renderGaragem());
+      const btNovaViat = $('#btNovaViatura');
+      if (btNovaViat) btNovaViat.onclick = () => modalNovoItem(null, () => renderGaragem());
 
       cont.querySelectorAll('button[data-fichaviat]').forEach(b => {
         b.onclick = () => {
