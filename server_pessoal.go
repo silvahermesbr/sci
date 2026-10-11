@@ -264,7 +264,9 @@ func (a *App) hUsuarioSenha(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusNotFound, "usuário inexistente")
 			return
 		}
-		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
+		// v1.6.0 Fase 5: a redefinição alcança contas 'sem_funcao' do próprio
+		// grupo (a conta bloqueada nasce com senha padrão — reparo de credencial).
+		if (alvoPapel != "operador" && alvoPapel != "chefe_setor" && alvoPapel != "sem_funcao") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
 			jsonErro(w, http.StatusForbidden, "gerente só redefine senha de membros do próprio grupo")
 			return
 		}
@@ -336,7 +338,9 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusNotFound, "usuário inexistente")
 			return
 		}
-		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
+		// v1.6.0 Fase 5: contas 'sem_funcao' do próprio grupo são editáveis
+		// (reparo — nome/setor até a designação sair).
+		if (alvoPapel != "operador" && alvoPapel != "chefe_setor" && alvoPapel != "sem_funcao") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
 			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar só edita membros do próprio grupo")
 			return
 		}
@@ -357,7 +361,9 @@ func (a *App) hUsuarioEdit(w http.ResponseWriter, r *http.Request) {
 			jsonErro(w, http.StatusNotFound, "usuário inexistente")
 			return
 		}
-		if (alvoPapel != "operador" && alvoPapel != "chefe_setor") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
+		// v1.6.0 Fase 5: contas 'sem_funcao' do próprio grupo são editáveis
+		// (reparo — nome/setor até a designação sair).
+		if (alvoPapel != "operador" && alvoPapel != "chefe_setor" && alvoPapel != "sem_funcao") || solicitante.GrupoID == nil || alvoGrupo != *solicitante.GrupoID {
 			jsonErro(w, http.StatusForbidden, "gerente só edita membros do próprio grupo")
 			return
 		}
@@ -1264,9 +1270,9 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	papel := strings.ToLower(strings.TrimSpace(req.Papel))
 	switch papel {
-	case "admin", "gerente", "operador", "chefe_setor":
+	case "admin", "gerente", "operador", "chefe_setor", "sem_funcao":
 	default:
-		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador | chefe_setor)")
+		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador | chefe_setor | sem_funcao)")
 		return
 	}
 	// Hierarquia de criação (ordem Diretor 04/10 — "Criação de usuários" e
@@ -1285,8 +1291,12 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	// ordem 06/10: ENCARREGADO/AUXILIAR DE PESSOAL criam contas, mas só
 	// operador/chefe_setor do PRÓPRIO grupo — criar gerente/admin é poder de
 	// gerente/admin.
+	// v1.6.0 Fase 5: 'sem_funcao' (conta bloqueada, login+senha) é criada por
+	// admin, gerente e designado no contexto enc_pessoal — NUNCA pelo chefe
+	// (400/403 do ramo de papel); exige grupo de vinculação e NÃO ganha linha
+	// em usuario_papeis (ausência de contexto não é papel de linha).
 	if u.Papel != "admin" && u.Papel != "gerente" && a.podeGestaoPessoal(u) {
-		if papel != "operador" && papel != "chefe_setor" {
+		if papel != "operador" && papel != "chefe_setor" && papel != "sem_funcao" {
 			jsonErro(w, http.StatusForbidden, "encarregado/auxiliar de pessoal só designa operador ou chefe de setor do próprio grupo")
 			return
 		}
@@ -1303,7 +1313,7 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case u.Papel == "gerente":
-			if papel != "chefe_setor" {
+			if papel != "chefe_setor" && papel != "sem_funcao" {
 				jsonErro(w, http.StatusForbidden, "gerente seleciona chefes de setor; operadores são designados pelos chefes")
 				return
 			}
@@ -1341,6 +1351,16 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	if req.SetorID != nil && *req.SetorID <= 0 {
 		req.SetorID = nil
 	}
+	// v1.6.0 Fase 4 (extinção do operador de grupo): OPERADOR nasce vinculado a
+	// um SETOR do grupo — sem setor não existe recorte de atuação (as guardas
+	// dos módulos negam com 403 "conta sem setor atribuído", exigeSetorOperador).
+	// A herança do ramo do chefe acima provê o setor quando quem cria é chefe;
+	// gerente/admin informam o setor explícito. Operadores legados sem setor
+	// ficam bloqueados até atribuição (sem auto-adivinhação).
+	if papel == "operador" && (req.SetorID == nil || req.GrupoID == nil || !a.setorIDValidoNoGrupo(*req.SetorID, *req.GrupoID)) {
+		jsonErro(w, http.StatusBadRequest, "operador deve nascer vinculado a um setor do grupo")
+		return
+	}
 	if req.FuncaoID != nil && *req.FuncaoID <= 0 {
 		req.FuncaoID = nil
 	}
@@ -1358,6 +1378,13 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	if papel == "gerente" && (req.GrupoID == nil || *req.GrupoID <= 0) {
 		jsonErro(w, http.StatusBadRequest, "gerente deve obrigatoriamente estar vinculado a uma unidade")
+		return
+	}
+	// v1.6.0 Fase 5: conta SEM FUNÇÃO exige grupo de vinculação — é a ela que a
+	// designação futura (cadeira) vai se reportar; a página de bloqueio e o
+	// reparo (senha/edición) são escopados pelo grupo.
+	if papel == "sem_funcao" && (req.GrupoID == nil || *req.GrupoID <= 0) {
+		jsonErro(w, http.StatusBadRequest, "conta sem função exige grupo de vinculação")
 		return
 	}
 	hash, err := hashSenha(req.Senha)
@@ -1379,8 +1406,13 @@ func (a *App) hUsuariosAdd(w http.ResponseWriter, r *http.Request) {
 	} else if req.PessoaID != nil {
 		_ = a.st.db.QueryRow(`SELECT funcao_id FROM pessoas WHERE id = ?`, *req.PessoaID).Scan(&funcaoID)
 	}
-	_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
-		id, req.GrupoID, papel, funcaoID)
+	// v1.6.0 Fase 5: 'sem_funcao' NÃO ganha linha em usuario_papeis — o CHECK
+	// da v45 nem o aceita (ausência de contexto não é papel de linha). A sessão
+	// nasce com papel_ativo_id NULL e UsuarioDaSessao cai no usuarios.papel.
+	if papel != "sem_funcao" {
+		_, _ = a.st.db.Exec(`INSERT OR IGNORE INTO usuario_papeis (usuario_id, grupo_id, papel, funcao_id) VALUES (?,?,?,?)`,
+			id, req.GrupoID, papel, funcaoID)
+	}
 
 	a.st.Auditoria(&u.ID, "criar", "usuarios", &id, req.Login+" ("+papel+")", ipDe(r))
 	jsonOK(w, map[string]any{"id": id})

@@ -699,6 +699,22 @@ func (a *App) hConferenciaSetorConcluir(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	// v1.6.0 Fase 7 (furo): o operador conclui QUALQUER setor do grupo — o
+	// confMarcarAuth só cobra papel. Espelha o ramo do chefe com o recorte do
+	// operador (setor de CADASTRO: u.SetorID → fallback pessoa vinculada);
+	// sem setor atribuído → 403 com a mensagem única da onda (a mesma que o
+	// guarda central usa para operador sem setor).
+	if u.Papel == "operador" {
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo == nil {
+			jsonErro(w, http.StatusForbidden, "conta sem setor atribuído — solicite ao gerente/encarregado")
+			return
+		}
+		if *sAtivo != sid {
+			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de concluir este setor")
+			return
+		}
+	}
 
 	concluidoEm := time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 	_, err = a.st.db.Exec(`
@@ -757,6 +773,19 @@ func (a *App) hConferenciaSetorReabrir(w http.ResponseWriter, r *http.Request) {
 		// v1.5.4-D1 (R-12): contexto órfão de chefia anterior não reabre.
 		sAtivo := a.setorAtivoComandado(u)
 		if sAtivo == nil || *sAtivo != sid {
+			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de reabrir este setor")
+			return
+		}
+	}
+	// v1.6.0 Fase 7 (furo): ramo do OPERADOR espelhando o do chefe — só reabre
+	// o setor de cadastro da própria conta; sem setor → 403 (mensagem única).
+	if u.Papel == "operador" {
+		sAtivo := setorDoUsuario(a, u)
+		if sAtivo == nil {
+			jsonErro(w, http.StatusForbidden, "conta sem setor atribuído — solicite ao gerente/encarregado")
+			return
+		}
+		if *sAtivo != sid {
 			jsonErro(w, http.StatusForbidden, "setor ativo no seu contexto é outro — troque a função no menu de contexto antes de reabrir este setor")
 			return
 		}
@@ -1707,6 +1736,27 @@ func (a *App) conferenciaEnvolveSetorComandado(u *Usuario, r *http.Request) bool
 	return envolvidos > 0
 }
 
+// confLeituraAuth (v1.6.0 Fase 6 — furo das LEITURAS): guarda de PAPEL das
+// leituras do módulo de conferência. Até aqui GET hoje/estado/lista//
+// api/conferencias/{id}/funcoes-antiguidade/stream rodavam com a.auth(false)
+// "pelada": no CONTEXTO enc_material o usuário lia o efetivo do grupo inteiro
+// sem ter poder nenhum no módulo (a escrita já o barrava). Doutrina da matriz
+// §4: admin passa — os handlers já devolvem leitura vazia ("leitura vazia" do
+// admin) — e passam os MESMOS papéis das áreas de escrita (papelConfAutorizado:
+// gerente/operador/chefe_setor + CONTEXTO enc_pessoal ativo); enc_material →
+// 403. O recorte de escopo (grupo/setor ativo) continua DENTRO de cada handler,
+// como já era — esta guarda é só a porta de papel.
+func (a *App) confLeituraAuth(next http.HandlerFunc) http.Handler {
+	return a.auth(false, func(w http.ResponseWriter, r *http.Request) {
+		u := usuarioDoCtx(r)
+		if u.Papel != "admin" && !a.papelConfAutorizado(u) {
+			jsonErro(w, http.StatusForbidden, "papel sem acesso ao módulo de conferência")
+			return
+		}
+		next(w, r)
+	})
+}
+
 // ---------- rotas rotasConferencia ----------
 func (a *App) rotasConferencia() {
 	m := a.mux
@@ -1723,21 +1773,24 @@ func (a *App) rotasConferencia() {
 	// FECHADAS × ARQUIVADAS; gerente arquiva, admin-only exclui arquivada.
 	m.Handle("POST /api/conferencia/{id}/arquivar", confAuth(a.hConferenciaArquivar))
 	m.Handle("DELETE /api/conferencia/arquivada/{id}", a.auth(true, a.hConferenciaExcluirArquivada))
-	m.Handle("GET /api/conferencia/hoje", a.auth(false, a.hConferenciaHoje))
-	m.Handle("GET /api/conferencia/estado", a.auth(false, a.hConferenciaEstado))
+	// v1.6.0 Fase 6: as LEITURAS do módulo têm porta de papel (confLeituraAuth)
+	// — enc_material fora (nem leitura); admin passa (leitura vazia); o recorte
+	// de grupo/setor ativo segue dentro de cada handler.
+	m.Handle("GET /api/conferencia/hoje", a.confLeituraAuth(a.hConferenciaHoje))
+	m.Handle("GET /api/conferencia/estado", a.confLeituraAuth(a.hConferenciaEstado))
 	m.Handle("POST /api/conferencia/iniciar", confMarcarAuth(a.hConferenciaIniciar))
 	m.Handle("POST /api/conferencia/despachar", confAuth(a.hConferenciaDespachar))
 	m.Handle("POST /api/conferencia/fechar", confAuth(a.hConferenciaFechar))
 	m.Handle("POST /api/conferencia/marcar", confMarcarAuth(a.hConferenciaMarcar))
-	m.Handle("GET /api/conferencia/lista", a.auth(false, a.hConferenciaList))
-	m.Handle("GET /api/conferencia/{id}", a.auth(false, a.hConferenciaGet))
+	m.Handle("GET /api/conferencia/lista", a.confLeituraAuth(a.hConferenciaList))
+	m.Handle("GET /api/conferencia/{id}", a.confLeituraAuth(a.hConferenciaGet))
 	m.Handle("DELETE /api/conferencia/{id}", confAuth(a.hConferenciaDescartar))
 	m.Handle("POST /api/conferencia/{id}/setor/{setor_id}/concluir", confMarcarAuth(a.hConferenciaSetorConcluir))
 	m.Handle("POST /api/conferencia/{id}/setor/{setor_id}/reabrir", confMarcarAuth(a.hConferenciaSetorReabrir))
 	// onda 09/10: pré-fechamento — lista rápida do setor p/ conferência no modal antes do Despachar
 	m.Handle("GET /api/conferencia/{id}/setor/{setor_id}/pre_fechamento", confMarcarAuth(a.hSetorPreFechamento))
 	// correção 09/10: escada de antiguidade DO GRUPO p/ o picker do modal (sem seed global)
-	m.Handle("GET /api/conferencia/funcoes-antiguidade", a.auth(false, a.hConferenciaFuncoesAntiguidade))
+	m.Handle("GET /api/conferencia/funcoes-antiguidade", a.confLeituraAuth(a.hConferenciaFuncoesAntiguidade))
 	// v1.5.4-D2 (R-2): relatório PDF com guarda do módulo (papel + comando de
 	// setor p/ chefe) além do recorte de escopo interno do handler.
 	m.Handle("GET /api/conferencia/{id}/relatorio.pdf", a.confPDFAuth(a.hConferenciaPDF))
@@ -1746,11 +1799,14 @@ func (a *App) rotasConferencia() {
 	// designa operador do próprio setor; admin → 403 no handler (regra escopada).
 	m.Handle("POST /api/conferencia/{id}/escala", a.auth(false, a.hConferenciaEscalaSet))
 	m.Handle("DELETE /api/conferencia/{id}/escala/{usuario_id}", a.auth(false, a.hConferenciaEscalaDel))
-	m.Handle("GET /api/conferencias", a.auth(false, a.hConferenciaList))
+	m.Handle("GET /api/conferencias", a.confLeituraAuth(a.hConferenciaList))
 	m.Handle("POST /api/comentarios", confAuth(a.hComentariosAdd))
 	m.Handle("GET /api/comentarios/{id}", confAuth(a.hComentariosList))
 	m.Handle("GET /api/pessoas/{id}/comentarios", confAuth(a.hPessoaComentarios))
 
 	// Conferência: stream SSE em tempo real (feat/v1.5-evolucao)
-	m.Handle("GET /api/conferencia/{id}/stream", a.auth(false, a.hConferenciaStream))
+	// v1.6.0 Fase 6: mesma porta de papel das outras leituras — o handler
+	// assina http.HandlerFunc comum, então a guarda na rota serve igual (responde
+	// 403 ANTES de qualquer header SSE).
+	m.Handle("GET /api/conferencia/{id}/stream", a.confLeituraAuth(a.hConferenciaStream))
 }

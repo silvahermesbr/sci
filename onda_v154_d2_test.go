@@ -53,6 +53,12 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	if err := st.db.QueryRow(`INSERT INTO setores (grupo_id, nome, sigla, ativo) VALUES (?, 'D2 Setor Livre', 'D2L', 1) RETURNING id`, gidA).Scan(&s2); err != nil {
 		t.Fatalf("criar setor S2: %v", err)
 	}
+	// v1.6.0 F7: o operador tem setor — o recorte de material é por SETOR, e a
+	// fixture de material (item/cautela/conferência) fica no setor DELE (s1).
+	var sB int64
+	if err := st.db.QueryRow(`INSERT INTO setores (grupo_id, nome, sigla, ativo) VALUES (?, 'D2 Setor Fora', 'D2F', 1) RETURNING id`, gidB).Scan(&sB); err != nil {
+		t.Fatalf("criar setor B: %v", err)
+	}
 
 	// ---------- contas (grupo na CONTA ANTES do login — lição v1.5.4-A) ----------
 	criaConta := func(login, papel string, gid *int64) int64 {
@@ -76,6 +82,16 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	criaConta("d2_semgrupo", "operador", nil)
 	chefeAID := criaConta("d2_chefe", "chefe_setor", &gpA)
 
+	// v1.6.0 F7: setores dos operadores — sem setor a conta operador está
+	// BLOQUEADA no módulo (403 "conta sem setor atribuído", guarda da onda);
+	// os 200s desta matriz são de operador COM setor, dono da fixture.
+	if _, err := st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE login = 'd2_op'`, s1); err != nil {
+		t.Fatalf("setor do operador A: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE login = 'd2_opB'`, sB); err != nil {
+		t.Fatalf("setor do operador B: %v", err)
+	}
+
 	ckGer := loginAs(t, app, "d2_ger", "senha-d2")
 	ckOp := loginAs(t, app, "d2_op", "senha-d2")
 	ckOpB := loginAs(t, app, "d2_opB", "senha-d2")
@@ -95,7 +111,9 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	if err := st.db.QueryRow(`INSERT INTO material_categorias (grupo_id, nome, ativo) VALUES (?, 'D2 Categoria', 1) RETURNING id`, gidA).Scan(&catID); err != nil {
 		t.Fatalf("criar categoria: %v", err)
 	}
-	if err := st.db.QueryRow(`INSERT INTO material_itens (grupo_id, categoria_id, nome, codigo_patrimonio, status) VALUES (?, ?, 'Fuzil D2', 'D2-0001', 'acautelado') RETURNING id`, gidA, catID).Scan(&itemID); err != nil {
+	// v1.6.0 F7: item no SETOR do operador A (recorte do módulo é por setor;
+	// o recibo/pronto/inventário do operador só cobrem o próprio setor).
+	if err := st.db.QueryRow(`INSERT INTO material_itens (grupo_id, setor_id, categoria_id, nome, codigo_patrimonio, status) VALUES (?, ?, ?, 'Fuzil D2', 'D2-0001', 'acautelado') RETURNING id`, gidA, s1, catID).Scan(&itemID); err != nil {
 		t.Fatalf("criar item: %v", err)
 	}
 	var cautID int64
@@ -208,10 +226,13 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	// ---------- setor que AINDA comanda (fonte única chefe_setores)  ----------
 	espera(ckChefe, "/api/conferencia/"+int64ToStr(conf1)+"/relatorio.pdf", http.StatusOK, "chefe conf1 (setor comandado)")
 	espera(ckChefe, "/api/conferencia/"+int64ToStr(conf2)+"/relatorio.pdf", http.StatusForbidden, "chefe conf2 (setor não comandado)")
-	// chefe é papel do módulo escalas, mas NÃO do módulo material
+	// chefe é papel do módulo escalas; v1.6.0-contextos (doutrina de NÍVEL):
+	// chefe_setor ENTROU no módulo material COM recorte de setor — o comando
+	// vigente dele (s1, onde mora a fixture) autoriza os PDFs do módulo (200;
+	// antes 403 no gate). Recorte/regs: onda_v160_f7_test (TestF7MaterialChefeNivel).
 	espera(ckChefe, "/api/escalas/pdf?mes=2026-10", http.StatusOK, "chefe escalas pdf")
-	espera(ckChefe, "/api/material/inventario/pdf", http.StatusForbidden, "chefe material inventario")
-	espera(ckChefe, "/api/material/conferencias/"+int64ToStr(matConfID)+"/pronto.pdf", http.StatusForbidden, "chefe material pronto")
+	espera(ckChefe, "/api/material/inventario/pdf", http.StatusOK, "chefe material inventario (próprio setor)")
+	espera(ckChefe, "/api/material/conferencias/"+int64ToStr(matConfID)+"/pronto.pdf", http.StatusOK, "chefe material pronto (conf do setor comandado)")
 
 	// ---------- OPERADOR de OUTRO grupo: nada do grupo alvo escopa ----------
 	// Rotas que ENDEREÇAM objeto do grupo alvo → 403 (escopo estrito).

@@ -241,6 +241,7 @@ func (a *App) escopoRelatorio(r *http.Request, u *Usuario) (int64, bool) {
 func (a *App) hPresencaPeriodo(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
+	if !a.exigeSetorOperador(w, u) { return } // v1.6.0 F4: operador é de setor
 	if _, err := a.exigeEscopo(u); err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
@@ -259,6 +260,7 @@ func (a *App) hPresencaPeriodo(w http.ResponseWriter, r *http.Request) {
 func (a *App) hRelatorioJSON(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
+	if !a.exigeSetorOperador(w, u) { return } // v1.6.0 F4: operador é de setor
 	if _, err := a.exigeEscopo(u); err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
@@ -274,6 +276,7 @@ func (a *App) hRelatorioJSON(w http.ResponseWriter, r *http.Request) {
 func (a *App) hRelatorioPDF(w http.ResponseWriter, r *http.Request) {
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
+	if !a.exigeSetorOperador(w, u) { return } // v1.6.0 F4: operador é de setor
 	if _, err := a.exigeEscopo(u); err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return
@@ -306,6 +309,7 @@ func (a *App) hRelatorioDetalhadoPDF(w http.ResponseWriter, r *http.Request) {
 	}
 	de, ate := a.periodoPadrao(r)
 	u := usuarioDoCtx(r)
+	if !a.exigeSetorOperador(w, u) { return } // v1.6.0 F4: operador é de setor
 	if _, err := a.exigeEscopo(u); err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
 		return

@@ -89,6 +89,11 @@ func onda0610Setup(t *testing.T, app *App, st *Store) (gid, gidFora, fEnc, fAux,
 		t.Fatalf("designar auxFora: %v", err)
 	}
 
+	// v1.6.0 Fase 2: o PODER segue o CONTEXTO ATIVO — as designações semedas são
+	// MATERIALIZADAS pela v45 e os logins de enc01/aux01 (e dos alheios) resolvem
+	// a linha (contexto enc_pessoal do próprio grupo).
+	v45Reexecuta(t, st)
+
 	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'op01'`).Scan(&op01ID); err != nil {
 		t.Fatalf("id op01: %v", err)
 	}
@@ -122,7 +127,13 @@ func TestOnda0610EncarregadoGestaoProprioGrupo(t *testing.T) {
 		t.Fatalf("E1: encarregado edita pessoa (200), veio %d", rr.Code)
 	}
 	// cria conta operador — grupo forçado
-	if rr, _ := doJSONReq(app, "POST", "/api/usuarios", map[string]any{"login": "op.novo06", "papel": "operador"}, ck); rr.Code != http.StatusOK {
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo) —
+	// o enc envia setor_id do catálogo do grupo
+	var setorOp06 int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('S Op 0610', ?, 1) RETURNING id`, gid).Scan(&setorOp06); err != nil {
+		t.Fatalf("criar setor do operador: %v", err)
+	}
+	if rr, _ := doJSONReq(app, "POST", "/api/usuarios", map[string]any{"login": "op.novo06", "papel": "operador", "setor_id": setorOp06}, ck); rr.Code != http.StatusOK {
 		t.Fatalf("E1: encarregado cria operador (200), veio %d", rr.Code)
 	}
 	var gidConta int64

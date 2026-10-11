@@ -1822,6 +1822,12 @@ func (a *App) reservaAuth(next http.HandlerFunc) http.Handler {
 			jsonErro(w, http.StatusLocked, "módulo em reserva operacional")
 			return
 		}
-		a.authPapeis([]string{"gerente", "operador", "chefe_setor"}, next).ServeHTTP(w, r)
+		// v1.6.0 F4: operador SEM setor (legado) não atua nas escalas.
+		a.authPapeis([]string{"gerente", "operador", "chefe_setor"}, func(w http.ResponseWriter, r *http.Request) {
+			if !a.exigeSetorOperador(w, usuarioDoCtx(r)) {
+				return
+			}
+			next(w, r)
+		}).ServeHTTP(w, r)
 	})
 }

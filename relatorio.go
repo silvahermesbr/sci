@@ -779,13 +779,13 @@ func (a *App) gerarFichaPessoalPDF(f FichaPessoalPDF, operador string) ([]byte, 
 	// Cautelas Ativas
 	pdf.SetFont("Helvetica", "B", 9)
 	pdf.SetTextColor(30, 41, 59)
-	pdf.CellFormat(0, 5, T("3. BENS E MATERIAIS ACAUTELADOS ATIVOS"), "", 1, "L", false, 0, "")
+	pdf.CellFormat(0, 5, T("3. BENS E MATERIAIS CAUTELADOS ATIVOS"), "", 1, "L", false, 0, "")
 	pdf.Ln(1)
 
 	if len(f.CautelasAtivas) == 0 {
 		pdf.SetFont("Helvetica", "I", 7.5)
 		pdf.SetTextColor(100, 116, 139)
-		pdf.CellFormat(182, 6, T("Nenhum material acautelado sob responsabilidade no momento."), "1", 1, "C", false, 0, "")
+		pdf.CellFormat(182, 6, T("Nenhum material cautelado sob responsabilidade no momento."), "1", 1, "C", false, 0, "")
 		pdf.Ln(3)
 	} else {
 		colMat := []string{"Cautela", "Item / Descrição", "Patrimônio", "Data Retirada", "Armeiro Entregador"}
@@ -969,7 +969,7 @@ func (a *App) gerarReciboCautelaPDF(r ReciboCautelaPDF, operador string) ([]byte
 		pdf.CellFormat(170, 4, T(saidaInfo), "", 1, "L", false, 0, "")
 
 		if r.DataDevolucao != "" {
-			devInfo := fmt.Sprintf("Devolvido em: %s   ·   Recebido por: %s", fmtDataBR(r.DataDevolucao), r.ResponsavelDev)
+			devInfo := fmt.Sprintf("Descautelado em: %s   ·   Recebido por: %s", fmtDataBR(r.DataDevolucao), r.ResponsavelDev)
 			if r.ObsDevolucao != "" {
 				devInfo += fmt.Sprintf("   ·   Avarias: %s", r.ObsDevolucao)
 			}
@@ -1105,7 +1105,7 @@ func (a *App) gerarInventarioMaterialPDF(inv InventarioRelatorioPDF, operador st
 	cards := [][2]string{
 		{"TOTAL ITENS", strconv.Itoa(inv.Totais["total"])},
 		{"DISPONÍVEIS", strconv.Itoa(inv.Totais["disponivel"])},
-		{"ACAUTELADOS", strconv.Itoa(inv.Totais["acautelado"])},
+		{"CAUTELADOS", strconv.Itoa(inv.Totais["acautelado"])},
 		{"MANUTENÇÃO", strconv.Itoa(inv.Totais["manutencao"])},
 		{"BAIXADOS", strconv.Itoa(inv.Totais["baixado"])},
 	}
@@ -1151,7 +1151,7 @@ func (a *App) gerarInventarioMaterialPDF(inv InventarioRelatorioPDF, operador st
 			}
 			stRot := map[string]string{
 				"disponivel": "Disponível",
-				"acautelado": "Acautelado",
+				"acautelado": "Cautelado",
 				"manutencao": "Manutenção",
 				"baixado":    "Baixado",
 			}
@@ -1242,7 +1242,7 @@ func (a *App) gerarProntoMaterialPDF(p ProntoMaterialPDF, operador string) ([]by
 	cards := [][2]string{
 		{"TOTAL ITENS", strconv.Itoa(p.Totais["total"])},
 		{"PRESENTES", strconv.Itoa(p.Totais["presente"])},
-		{"ACAUTELADOS", strconv.Itoa(p.Totais["acautelado"])},
+		{"CAUTELADOS", strconv.Itoa(p.Totais["acautelado"])},
 		{"MANUTENÇÃO", strconv.Itoa(p.Totais["manutencao"])},
 		{"NÃO CONFERIDOS", strconv.Itoa(p.Totais["nao_conferido"])},
 	}
@@ -1293,7 +1293,7 @@ func (a *App) gerarProntoMaterialPDF(p ProntoMaterialPDF, operador string) ([]by
 			}
 			stRot := map[string]string{
 				"presente":   "Presente",
-				"acautelado": "Acautelado",
+				"acautelado": "Cautelado",
 				"ausente":    "Ausente / Falta",
 				"manutencao": "Manutenção",
 				"baixado":    "Baixado",

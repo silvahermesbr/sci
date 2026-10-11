@@ -203,6 +203,36 @@ os módulos); `ARQUITETURA.md` atualizado com cada mudança; CHANGELOG v1.5.4.
 
 ---
 
+## v1.6.0-contextos — Contextos de poder — prioridade ALTA, esforço ~1 onda — ✅ ONDA CONCLUÍDA
+
+> **ESTADO:** **ONDA CONCLUÍDA** — as 7 fases integradas em `onda/v1.6.0-contextos`
+> (HEAD `79ad356`): F1 `5184b4a` (migração v45), F2 `515dd1b` (poderes contexto-bound),
+> F3 `66f7fe5` (sync designação↔papel), F4 `b2afdee` (operador de setor),
+> F5 `14e5c75` (sem_funcao + bloqueio), F6 `edad628` (leituras de conferência),
+> F7 `765f9c6` (material setor-bound + furos de conferência), merge-fix `79ad356`.
+> Gate de saída: `ARQUITETURA.md` §3.A/§3.B/§4 reescritos na doutrina dos CONTEXTOS; resíduos
+> novos R-29…R-32 e furos fechados R-33…R-36 registrados no §14; cache-bust v372.
+
+**O que mudou (uma frase por fase):**
+- **F1 — fundação:** `usuario_papeis` REBUILD com CHECK +`enc_pessoal`/`+enc_material`; cadeiras
+  materializadas em linhas de papel; sessões de designado puro re-chaveadas; `versaoSchemaBinario` 45;
+  dropdown resolve os contextos novos.
+- **F2 — poder segue o contexto:** `ehEncarregadoDePessoal/Material` = `u.Papel`; cargo sem
+  acréscimo implícito; menu/portões do front por contexto ativo.
+- **F3 — sync:** `hFuncaoMembrosSet/Del` materializam/desmaterializam a linha (com re-key de
+  sessões); fan-out de avisos inclui os contextos enc.
+- **F4 — operador é de setor:** criação exige setor (`hUsuariosAdd`/`hUsuarioPapelAdd`); guarda
+  central `exigeSetorOperador` em authConfCom/authMaterial/reservaAuth/handlers de relatórios.
+- **F5 — sem_funcao:** conta sem linha de papel e sem escopo (`papelTemEscopoDeDados` em
+  `escopoDoUsuario`/`exigeEscopo`/`podeVerMural`); página de bloqueio `#/bloqueio`
+  (`ViewBloqueioSemFuncao`).
+- **F6 — leitura de conferência:** `confLeituraAuth` nas leituras — enc_material 403, nem leitura.
+- **F7 — material setor-bound:** `setorEscopoMaterial` recorta leituras/escritas/PDFs/conferência de
+  material ao próprio setor do operador (iniciar força o setor; categorias: escrita ger/enc); furos
+  concluir/reabrir/pré-fechamento fechados.
+
+---
+
 ## v1.5.5 — Consolidação estrutural — prioridade MÉDIA-ALTA, esforço ~1 semana
 
 Objetivo: reduzir o custo de CADA onda futura. Sem isso, v1.5.4 volta a apodrecer em 2 semanas.
@@ -304,7 +334,7 @@ desbloqueadas no `rotear()` e no menu; (3) e2e da máquina persona re-executado;
 | # | Decisão | Impacta |
 |---|---|---|
 | D-1 | Herança de catálogo de antiguidade entre grupos (hoje: NÃO herda) | M1/M2 |
-| D-2 | Fallbacks de `chefeComandaSetor`: remover puros ou materializar legados | v1.5.4-D1 |
-| D-3 | `escalas/minhas` e PDFs de escala: quem acessa quando o módulo volta | M5 |
+| D-2 | Fallbacks de `chefeComandaSetor`: remover puros ou materializar legados (**EXECUTADA na v1.5.4-D1** — materializou e removeu) | v1.5.4-D1 |
+| D-3 | `escalas/minhas` e PDFs de escala: quem acessa quando o módulo volta. **v1.6.0 (F4) executou o lado do operador:** o portão `reservaAuth` exige setor (`exigeSetorOperador`), mas o RECorte dos dados mantém-se de GRUPO — módulo dormente; o recorte por SETOR do operador (e a abertura ampla de `minhas`) pende do M5 | M5 |
 | D-4 | Anexos de material: disco (doutrina Drive) vs base64 no banco | M3 |
-| D-5 | `usuarios.setor_id`: coluna de cadastro ou fonte de autorização? (**v1.5.4-E1 já aplicou o lado do contexto:** troca de contexto NÃO reescreve mais a coluna — contexto vive em `sessoes.setor_ativo_id`; resta decidir os resíduos de CADASTRO que ainda a leem: designação de escala do chefe e `hSetorPreFechamento`) | M2 |
+| D-5 | `usuarios.setor_id`: coluna de cadastro ou fonte de autorização? (**v1.5.4-E1 aplicou o lado do contexto:** troca de contexto NÃO reescreve a coluna — contexto vive em `sessoes.setor_ativo_id`; **v1.6.0 (F4/F7) consolidou o lado do OPERADOR:** a coluna é o CADASTRO do operador, agora OBRIGATÓRIO na criação (`hUsuariosAdd`/`hUsuarioPapelAdd`) e a FONTE DO RECORTE de setor (`exigeSetorOperador`, `setorEscopoMaterial`, `guardaSetorNaMarcar`, concluir/reabrir/pré-fechamento). Restam os resíduos de cadastro que ainda a leem fora do operador: designação de escala do chefe e `hSetorPreFechamento`) | M2 |

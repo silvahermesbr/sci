@@ -43,12 +43,23 @@ func TestV367DisplaySyncIdaVolta(t *testing.T) {
 	}
 	designarViaAPI(t, app, ckGer, fMat, idComum, "titular")
 
+	// v1.6.0 Fase 3: a designação materializa a linha enc_material E o
+	// display-sync (que agora EXCLUI linhas enc) atualiza a linha de SISTEMA.
 	var fid int64
-	if err := st.db.QueryRow(`SELECT funcao_id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, idComum, gid).Scan(&fid); err != nil {
+	if err := st.db.QueryRow(`SELECT funcao_id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'operador'`, idComum, gid).Scan(&fid); err != nil {
 		t.Fatalf("ler funcao_id pós-designação: %v", err)
 	}
 	if fid != fMat {
 		t.Fatalf("R3 ida: funcao_id deve virar %d (enc_material), segue %d — stale nunca atualiza", fMat, fid)
+	}
+	// e a linha da cadeira materializada carrega a PRÓPRIA identidade (não é
+	// varrida pelo display-sync — cada linha do dropdown mostra a sua cadeira)
+	var fidEnc int64
+	if err := st.db.QueryRow(`SELECT COALESCE(funcao_id,0) FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'enc_material'`, idComum, gid).Scan(&fidEnc); err != nil {
+		t.Fatalf("Fase 3: designação devia materializar a linha enc_material: %v", err)
+	}
+	if fidEnc != fMat {
+		t.Fatalf("Fase 3: linha materializada devia carregar funcao_id=%d, veio %d", fMat, fidEnc)
 	}
 
 	// dropdown de contexto: funcao_nome do papel reflete a CADEIRA CERTA
@@ -77,7 +88,8 @@ func TestV367DisplaySyncIdaVolta(t *testing.T) {
 		t.Fatalf("R4: dropdown mostraria %q; esperado %q", fnome, nomeEsperado)
 	}
 
-	// volta: remover a designação → funcao_id da linha volta a NULL
+	// volta: remover a designação → funcao_id da linha de SISTEMA volta a NULL
+	// e a linha da cadeira (materializada na Fase 3) sai da conta
 	var memID int64
 	if err := st.db.QueryRow(`SELECT id FROM funcao_membros WHERE funcao_id = ? AND grupo_id = ? AND usuario_id = ?`, fMat, gid, idComum).Scan(&memID); err != nil {
 		t.Fatalf("designação não encontrada: %v", err)
@@ -86,15 +98,18 @@ func TestV367DisplaySyncIdaVolta(t *testing.T) {
 		t.Fatalf("remover designação: deve 200, veio %d", rr.Code)
 	}
 	var fidNull sql.NullInt64
-	if err := st.db.QueryRow(`SELECT funcao_id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ?`, idComum, gid).Scan(&fidNull); err != nil {
+	if err := st.db.QueryRow(`SELECT funcao_id FROM usuario_papeis WHERE usuario_id = ? AND grupo_id = ? AND papel = 'operador'`, idComum, gid).Scan(&fidNull); err != nil {
 		t.Fatalf("ler funcao_id pós-remoção: %v", err)
 	}
 	if fidNull.Valid {
 		t.Fatalf("R3 volta: funcao_id deveria ser NULL após remover a designação, segue %d", fidNull.Int64)
 	}
+	if n := f3ContaLinhas(t, st, `SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ? AND papel = 'enc_material'`, idComum); n != 0 {
+		t.Fatalf("Fase 3: remover a designação devia desmaterializar a linha enc_material (n=%d)", n)
+	}
 
-	// designado PURO (sem linha em usuario_papeis): designar NÃO inventa linha
-	// (conta 'd2' sem nenhuma linha prévia)
+	// designado PURO (conta 'd2' sem nenhuma linha prévia): a designação pela
+	// UI MATERIALIZA a linha da CADEIRA (Fase 3) — nunca uma linha de SISTEMA
 	criaUsuarioTeste(t, st, "enc_puro_d1", "senha-p", "")
 	var idPuro int64
 	_ = st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'enc_puro_d1'`).Scan(&idPuro)
@@ -102,11 +117,15 @@ func TestV367DisplaySyncIdaVolta(t *testing.T) {
 	designarViaAPI(t, app, ckGer, fPess, idPuro, "titular")
 	var nLinhas int
 	_ = st.db.QueryRow(`SELECT COUNT(*) FROM usuario_papeis WHERE usuario_id = ?`, idPuro).Scan(&nLinhas)
-	if nLinhas != 0 {
-		t.Fatalf("R3: designado puro ganhou linha em usuario_papeis (n=%d) — sync inventou", nLinhas)
+	if nLinhas != 1 {
+		t.Fatalf("Fase 3: designado puro devia ganhar EXATAMENTE a linha da cadeira (n=%d)", nLinhas)
 	}
-	// e o poder do cargo vale para o designado puro (regressão v366 mantida)
+	// e o poder do cargo vale para o designado puro: o login resolve a linha
+	// materializada (contexto enc)
 	ckPuro := loginAs(t, app, "enc_puro_d1", "senha-p")
+	if p := f2MePapel(t, app, ckPuro); p != "enc_pessoal" {
+		t.Fatalf("designado puro devia logar no CONTEXTO enc_pessoal, veio %q", p)
+	}
 	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "PURO367", "nome_completo": "Designado Puro", "status": "ativo"}, ckPuro); rr.Code != http.StatusOK {
 		t.Fatalf("designado puro: POST /api/pessoas deve 200, veio %d (%v)", rr.Code, res)
 	}
@@ -124,6 +143,13 @@ func TestV367ChefeSetorDesignado(t *testing.T) {
 	var idCs int64
 	_ = st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'enc_cs_cs1'`).Scan(&idCs)
 	_, _ = st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE id = ?`, gid, idCs)
+	// v1.6.0 F4: operador nasce com setor — o chefe precisa de setor no
+	// cadastro para a herança do ramo do chefe (hUsuariosAdd) funcionar.
+	var setorCs int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor CS1', ?, 1) RETURNING id`, gid).Scan(&setorCs); err != nil {
+		t.Fatalf("criar setor do chefe: %v", err)
+	}
+	_, _ = st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, setorCs, idCs)
 
 	// sem designação: 403 em escrita de pessoal (fail-closed)
 	ckCs := loginAs(t, app, "enc_cs_cs1", "senha-cs")
@@ -131,15 +157,29 @@ func TestV367ChefeSetorDesignado(t *testing.T) {
 		t.Fatalf("chefe_setor sem designação deve 403, veio %d", rr.Code)
 	}
 
-	// designado: poder do cargo na MESMA sessão
+	// designado: a cadeira MATERIALIZA (v45) — mas o contexto default continua
+	// chefe_setor (linha de sistema nasceu antes) e nele a gestão de pessoal
+	// NÃO abre (v1.6.0 Fase 2: no contexto chefe, chefe é chefe)
 	designarViaAPI(t, app, ckGer, fPess, idCs, "titular")
-	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "CSCARGO", "nome_completo": "Chefe Com Cargo", "status": "ativo"}, ckCs); rr.Code != http.StatusOK {
-		t.Fatalf("v367: chefe_setor designado deve 200 em pessoal, veio %d (%v)", rr.Code, res)
+	v45Reexecuta(t, st)
+	if p := f2MePapel(t, app, ckCs); p != "chefe_setor" {
+		t.Fatalf("contexto default devia continuar 'chefe_setor', veio %q", p)
+	}
+	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "CSCTXCH", "nome_completo": "Chefe No Contexto Chefe"}, ckCs); rr.Code != http.StatusForbidden {
+		t.Fatalf("Fase 2: no CONTEXTO chefe, POST /api/pessoas deve 403, veio %d", rr.Code)
 	}
 
-	// poderes de chefe PRESERVADOS: cria operador do próprio grupo
+	// troca para o CONTEXTO enc_pessoal → o poder do cargo abre
+	f2TrocaContexto(t, app, ckCs, f2LinhaPapel(t, st, idCs, "enc_pessoal"))
+	if rr, res := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "CSCARGO", "nome_completo": "Chefe Com Cargo", "status": "ativo"}, ckCs); rr.Code != http.StatusOK {
+		t.Fatalf("contexto enc_pessoal: chefe designado deve 200 em pessoal, veio %d (%v)", rr.Code, res)
+	}
+
+	// poderes de chefe PRESERVADOS: de volta ao contexto chefe, cria operador
+	// do próprio grupo
+	f2TrocaContexto(t, app, ckCs, f2LinhaPapel(t, st, idCs, "chefe_setor"))
 	if rr, res := doJSONReq(app, "POST", "/api/usuarios", map[string]any{"login": "op_do_cs_367", "senha": "senha-opx", "papel": "operador"}, ckCs); rr.Code != http.StatusOK {
-		t.Fatalf("chefe designado mantém criação de operador (200), veio %d (%v)", rr.Code, res)
+		t.Fatalf("chefe no próprio contexto mantém criação de operador (200), veio %d (%v)", rr.Code, res)
 	}
 
 	// hierarquia de criação: NEM chefe nem designado cria GERENTE
@@ -174,11 +214,20 @@ func TestV367SetorRamoRestritoPorDesignacao(t *testing.T) {
 		t.Fatalf("criar setor alheio: %v", err)
 	}
 
-	// designado: exclui setor do PRÓPRIO grupo (ramo restrito por designação)
-	designarViaAPI(t, app, ckGer, fPess, idOp, "titular")
+	// o operador LOGA ANTES da designação (a linha de sistema nasce primeiro —
+	// o contexto default continua 'operador' com a cadeira materializada depois)
 	ckOp := loginAs(t, app, "enc_op_st1", "senha-op")
+
+	// designado: exclui setor do PRÓPRIO grupo (ramo restrito) — no CONTEXTO da
+	// cadeira (v1.6.0 Fase 2: no contexto operador o poder do cargo não vale)
+	designarViaAPI(t, app, ckGer, fPess, idOp, "titular")
+	v45Reexecuta(t, st)
+	if rr, _ := doJSONReq(app, "DELETE", "/api/setores/"+idi(sProprio), nil, ckOp); rr.Code != http.StatusForbidden {
+		t.Fatalf("Fase 2: no CONTEXTO operador o ramo restrito do cargo não vale (403), veio %d", rr.Code)
+	}
+	f2TrocaContexto(t, app, ckOp, f2LinhaPapel(t, st, idOp, "enc_pessoal"))
 	if rr, res := doJSONReq(app, "DELETE", "/api/setores/"+idi(sProprio), nil, ckOp); rr.Code != http.StatusOK {
-		t.Fatalf("v367: operador designado exclui setor do próprio grupo (200), veio %d (%v)", rr.Code, res)
+		t.Fatalf("contexto enc_pessoal: operador designado exclui setor do próprio grupo (200), veio %d (%v)", rr.Code, res)
 	}
 	// e NÃO exclui setor de grupo alheio (restrito ao próprio)
 	if rr, _ := doJSONReq(app, "DELETE", "/api/setores/"+idi(sFora), nil, ckOp); rr.Code != http.StatusForbidden {
@@ -222,15 +271,23 @@ func TestV367PoderNaoVazaSemDesignacao(t *testing.T) {
 		t.Fatalf("operador sem designação deve 403 na rota de cargo do material, veio %d", rr.Code)
 	}
 
-	// designado SÓ em enc_pessoal: material (rota de cargo) segue 403
+	// designado SÓ em enc_pessoal: nem no contexto operador nem em qualquer
+	// outro o cargo do MATERIAL abre (designação em UMA cadeira não vaza)
 	designarViaAPI(t, app, ckGer, fPess, idOp, "titular")
+	v45Reexecuta(t, st)
 	if rr, _ := doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": gid, "setor_id": 0, "encarregado_id": 0, "auxiliar_encarregado_id": 0}, ckOp); rr.Code != http.StatusForbidden {
-		t.Fatalf("designado só em enc_pessoal: cargo do material segue 403, veio %d", rr.Code)
+		t.Fatalf("designado só em enc_pessoal (contexto operador): cargo do material segue 403, veio %d", rr.Code)
 	}
 
-	// designado TAMBÉM em enc_material (auxiliar): rota de cargo do material abre
+	// designado TAMBÉM em enc_material (auxiliar): NO CONTEXTO enc_material a
+	// rota de cargo do material abre — e a pessoal fecha (cadeiras separadas)
 	designarViaAPI(t, app, ckGer, fMat, idOp, "auxiliar")
+	v45Reexecuta(t, st)
+	f2TrocaContexto(t, app, ckOp, f2LinhaPapel(t, st, idOp, "enc_material"))
 	if rr, res := doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": gid, "setor_id": 0, "encarregado_id": 0, "auxiliar_encarregado_id": 0}, ckOp); rr.Code != http.StatusOK {
-		t.Fatalf("v367: designado em enc_material deve 200 na rota de cargo, veio %d (%v)", rr.Code, res)
+		t.Fatalf("contexto enc_material: rota de cargo deve 200, veio %d (%v)", rr.Code, res)
+	}
+	if rr, _ := doJSONReq(app, "POST", "/api/pessoas", map[string]any{"nome_guerra": "NVCTXMAT", "nome_completo": "No Contexto Material"}, ckOp); rr.Code != http.StatusForbidden {
+		t.Fatalf("contexto enc_material: pessoal deve 403, veio %d", rr.Code)
 	}
 }

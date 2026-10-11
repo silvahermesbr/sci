@@ -8,6 +8,19 @@
     return (typeof ME !== 'undefined' && ME) || window.ME || null;
   }
 
+  /* v1.6.0-contextos: título do módulo com a subordinação do CONTEXTO ativo —
+     fonte ME.grupo_nome / ME.setor_nome (mesmo critério do textoContextoUsuario
+     do core.js: conta sem grupo mostra "Global" quando admin; com setor no
+     contexto, acrescenta " / <setor>"). */
+  function tituloContexto(prefixo) {
+    const u = quem();
+    const grupo = (u && u.grupo_nome && u.grupo_nome.trim())
+      ? u.grupo_nome.trim()
+      : ((u && u.papel === 'admin') ? 'Global' : 'Sem grupo');
+    const setor = (u && u.setor_nome && u.setor_nome.trim()) ? u.setor_nome.trim() : '';
+    return (setor && grupo !== 'Global') ? `${prefixo} — ${grupo} / ${setor}` : `${prefixo} — ${grupo}`;
+  }
+
   function formatarTamanho(bytes) {
     if (!bytes || bytes <= 0) return '0 B';
     const k = 1024;
@@ -52,7 +65,7 @@
     app.innerHTML = `
       <div class="drive-topo-wrapper">
         <div class="drive-topo-info">
-          <h2 style="margin:0 0 4px">Drive Local</h2>
+          <h2 style="margin:0 0 4px">${esc(tituloContexto('DRIVE'))}</h2>
           <p style="color:var(--tx2);font-size:13px;margin:0">Repositório corporativo seguro com arquivos físicos em disco e controle de acesso hierárquico.</p>
         </div>
         <div class="drive-topo-acoes">
@@ -175,75 +188,97 @@
 
         let html = '';
 
-        // Seção de Pastas
+        // Seção de Pastas — v1.6.0-contextos: listagem em TABELA (padrão do
+        // restyle, como a aba "Arquivo do Grupo"); a linha inteira navega para
+        // a pasta e a célula final mantém o botão de opções.
         if (pastas.length > 0) {
           html += `
             <div class="drive-secao-titulo">Pastas (${pastas.length})</div>
-            <div class="drive-grid-pastas">
-              ${pastas.map(p => `
-                <div class="drive-cartao-pasta" data-pid="${p.id}">
-                  <div class="pasta-info-topo">
-                    <div class="pasta-icone-nome">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" style="color:var(--ambar)"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                      <span class="pasta-nome" title="${esc(p.nome)}">${esc(p.nome)}</span>
-                    </div>
-                    <div class="pasta-acoes">
-                      <button type="button" class="btn-icone-mini btnPastaOpcoes" data-pid="${p.id}" data-pnome="${esc(p.nome)}" data-pedit="${p.pode_editar ? 1 : 0}" title="Mais Opções">
+            <div class="rolagem"><table>
+              <thead><tr>
+                <th>Nome</th>
+                <th>Autor</th>
+                <th class="num">Itens</th>
+                <th style="white-space:nowrap">Criada em</th>
+                <th style="text-align:right">Ações</th>
+              </tr></thead>
+              <tbody>
+                ${pastas.map(p => `
+                  <tr class="drive-linha-pasta" data-pid="${p.id}" style="cursor:pointer">
+                    <td>
+                      <span style="display:inline-flex;align-items:center;gap:8px">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style="color:var(--ambar);flex:none"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        <b title="${esc(p.nome)}">${esc(p.nome)}</b>
+                        ${funcaoIDs.includes(+p.id) ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d" title="Possesso da função que você exerce">da função</span>' : ''}
+                        ${p.compartilhada ? '<span class="badge-comp" title="Compartilhada">👥</span>' : ''}
+                      </span>
+                    </td>
+                    <td>${esc(p.autor_nome || '—')}</td>
+                    <td class="num">${p.qtd_itens || 0}</td>
+                    <td style="white-space:nowrap">${fmtData(p.criado_em)}</td>
+                    <td><div class="gpx-acoes" style="justify-content:flex-end">
+                      <button type="button" class="btn-mini-acao btnPastaOpcoes" data-pid="${p.id}" data-pnome="${esc(p.nome)}" data-pedit="${p.pode_editar ? 1 : 0}" title="Mais Opções">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
                       </button>
-                    </div>
-                  </div>
-                  <div class="pasta-meta">
-                  <span>${p.qtd_itens || 0} item(ns)</span>
-                  ${funcaoIDs.includes(+p.id) ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d" title="Possesso da função que você exerce">da função</span>' : ''}
-                  ${p.compartilhada ? '<span class="badge-comp" title="Compartilhada">👥</span>' : ''}
-                  </div>
-                </div>
-              `).join('')}
-            </div>
+                    </div></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table></div>
           `;
         }
 
-        // Seção de Arquivos
+        // Seção de Arquivos — v1.6.0-contextos: listagem em TABELA (padrão do
+        // restyle); as ações (visualizar/baixar/opções) viram botões-ícone
+        // (btn-mini-acao, classe já existente) na célula final.
         if (arquivos.length > 0) {
           html += `
             <div class="drive-secao-titulo" style="margin-top:20px">Arquivos (${arquivos.length})</div>
-            <div class="drive-grid-arquivos">
-              ${arquivos.map(a => `
-                <div class="drive-cartao-arquivo" data-aid="${a.id}">
-                  <div class="arquivo-preview-box">
-                    ${iconeArquivo(a.tipo, a.nome_original)}
-                    <span class="arquivo-tamanho">${formatarTamanho(a.tamanho)}</span>
-                  </div>
-                  <div class="arquivo-info">
-                    <div class="arquivo-nome" title="${esc(a.nome_original)}">${esc(a.nome_original)}</div>
-                    <div class="arquivo-subinfo">
-                      <span>${esc(a.autor_nome)}</span>
-                      ${funcaoIDs.includes(+a.id) ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d" title="Possesso da função que você exerce">da função</span>' : ''}
-                      ${a.compartilhado ? '<span class="badge-comp" title="Compartilhado">👥</span>' : ''}
-                    </div>
-                  </div>
-                  <div class="arquivo-botoes-hover">
-                    <a href="/api/drive/download/${a.id}?inline=1" target="_blank" class="btn-mini-acao" title="Visualizar Inline">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                    </a>
-                    <a href="/api/drive/download/${a.id}" class="btn-mini-acao" title="Baixar Arquivo">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-                    </a>
-                    <button type="button" class="btn-mini-acao btnArqOpcoes" data-aid="${a.id}" data-anome="${esc(a.nome_original)}" data-aedit="${a.pode_editar ? 1 : 0}" title="Opções e Compartilhamento">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-                    </button>
-                  </div>
-                </div>
-              `).join('')}
-            </div>
+            <div class="rolagem"><table>
+              <thead><tr>
+                <th>Arquivo</th>
+                <th>Autor</th>
+                <th class="num">Tamanho</th>
+                <th style="white-space:nowrap">Enviado em</th>
+                <th style="text-align:right">Ações</th>
+              </tr></thead>
+              <tbody>
+                ${arquivos.map(a => `
+                  <tr data-aid="${a.id}">
+                    <td>
+                      <span style="display:inline-flex;align-items:center;gap:8px">
+                        ${iconeArquivo(a.tipo, a.nome_original)}
+                        <b title="${esc(a.nome_original)}">${esc(a.nome_original)}</b>
+                        ${funcaoIDs.includes(+a.id) ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d" title="Possesso da função que você exerce">da função</span>' : ''}
+                        ${a.compartilhado ? '<span class="badge-comp" title="Compartilhado">👥</span>' : ''}
+                      </span>
+                    </td>
+                    <td>${esc(a.autor_nome || '—')}</td>
+                    <td class="num">${formatarTamanho(a.tamanho)}</td>
+                    <td style="white-space:nowrap">${fmtData(a.criado_em)}</td>
+                    <td><div class="gpx-acoes" style="justify-content:flex-end">
+                      <a href="/api/drive/download/${a.id}?inline=1" target="_blank" class="btn-mini-acao" title="Visualizar Inline">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      </a>
+                      <a href="/api/drive/download/${a.id}" class="btn-mini-acao" title="Baixar Arquivo">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                      </a>
+                      <button type="button" class="btn-mini-acao btnArqOpcoes" data-aid="${a.id}" data-anome="${esc(a.nome_original)}" data-aedit="${a.pode_editar ? 1 : 0}" title="Opções e Compartilhamento">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                      </button>
+                    </div></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table></div>
           `;
         }
 
         container.innerHTML = html;
 
-        // Eventos de clique nas pastas
-        container.querySelectorAll('.drive-cartao-pasta').forEach(el => {
+        // Eventos de clique nas linhas de pasta (v1.6.0-contextos: tabela —
+        // a linha inteira navega, exceto no botão de opções)
+        container.querySelectorAll('.drive-linha-pasta').forEach(el => {
           el.onclick = (e) => {
             if (e.target.closest('.btnPastaOpcoes')) return;
             pastaAtualID = +el.dataset.pid;

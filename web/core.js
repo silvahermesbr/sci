@@ -51,36 +51,61 @@ function funcaoNomeContem(u, agulha) {
   return u.funcao_nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(agulha);
 }
 
+// v1.6.0 Fase 2 (poderes seguem o CONTEXTO ATIVO): os gestores derivam do
+// PAPEL ATIVO da sessão (ME.papel — a linha materializada em usuario_papeis
+// que a migração v45 criou para o legado e a designação sincroniza). O
+// fallback heurístico por funcoes_grupo/nome fica APENAS para papel vazio
+// (sessão legada pré-v45): com papel ativo, cargo NÃO acrescenta mais — quem
+// tem os dois contextos troca no dropdown (POST /api/sessao/contexto).
+
+// cadeiraLegadoDePapel: deriva o CONTEXTO ('enc_pessoal'/'enc_material') para
+// sessão de papel vazio. Pela chave imutável quando há catálogo; com as duas
+// cadeiras, enc_pessoal vence (conferência > material); sem catálogo (pré-key),
+// o nome da função decide — 'material' antes do genérico 'encarregado'.
+function cadeiraLegadoDePapel(u) {
+  if (!u) return '';
+  const ch = Array.isArray(u.funcoes_grupo) ? u.funcoes_grupo : null;
+  const temChave = k => !!ch && ch.some(f => f && f.chave === k);
+  if (temChave('enc_pessoal')) return 'enc_pessoal';
+  if (temChave('enc_material')) return 'enc_material';
+  if (ch) return ''; // com catálogo de cadeiras, chave ausente = não é enc
+  if (funcaoNomeContem(u, 'material')) return 'enc_material';
+  if (funcaoNomeContem(u, 'encarregado') || funcaoNomeContem(u, 'pessoal') || funcaoNomeContem(u, 'auxiliar')) return 'enc_pessoal';
+  return '';
+}
+
 function ehEncPessoalUsuario(u) {
   if (!u) return false;
-  if (Array.isArray(u.funcoes_grupo)) {
-    return u.funcoes_grupo.some(f => f && f.chave === 'enc_pessoal');
-  }
-  return funcaoNomeContem(u, 'pessoal') || funcaoNomeContem(u, 'encarregado') || funcaoNomeContem(u, 'auxiliar');
+  if (u.papel === 'enc_pessoal') return true;
+  if (u.papel) return false; // contexto ativo manda — cargo não acrescenta
+  return cadeiraLegadoDePapel(u) === 'enc_pessoal';
 }
 
 function ehEncMaterialUsuario(u) {
   if (!u) return false;
-  if (Array.isArray(u.funcoes_grupo)) {
-    return u.funcoes_grupo.some(f => f && f.chave === 'enc_material');
-  }
-  return funcaoNomeContem(u, 'material');
+  if (u.papel === 'enc_material') return true;
+  if (u.papel) return false; // contexto ativo manda — cargo não acrescenta
+  return cadeiraLegadoDePapel(u) === 'enc_material';
 }
 
-// v367: papel de sistema NÃO é mais apagado pelo cargo — conta 'operador' com
-// cadeira enc_* mantém papel 'operador' (rótulo OPERADOR); a sidebar ACRESCENTA
-// os módulos do cargo e os gestores derivam de funcoes_grupo, não do papel.
-// A derivação papel-conf 'encarregado' resta só para conta SEM papel do sistema.
+// v367: papel de sistema NÃO é mais apagado pelo cargo. v1.6.0 Fase 2: a
+// derivação legada de papel vazio NÃO produz mais o genérico 'encarregado' —
+// produz o CONTEXTO da cadeira ('enc_pessoal' vence quando as duas existem),
+// que tem ramos próprios na sidebar (montarShell) e nos portões do rotear.
 function definirUsuario(u) {
-  if (u && !u.papel && (ehEncPessoalUsuario(u) || ehEncMaterialUsuario(u))) {
-    u.papel = 'encarregado';
+  if (u && !u.papel) {
+    const legado = cadeiraLegadoDePapel(u);
+    if (legado) u.papel = legado;
   }
   ME = u; window.SCI_ME = u; window.ME = u;
   window.ehEncPessoal = () => ehEncPessoalUsuario(ME);
   window.ehEncMaterial = () => ehEncMaterialUsuario(ME);
   window.gestorPessoal = () => !!(ME && (ME.papel === 'gerente' || (window.ehEncPessoal && window.ehEncPessoal())));
   window.gestorMaterial = () => !!(ME && (ME.papel === 'gerente' || (window.ehEncMaterial && window.ehEncMaterial())));
-  window.ehEncarregado = () => !!(ME && (ME.papel === 'encarregado' || (window.ehEncPessoal && window.ehEncPessoal()) || (window.ehEncMaterial && window.ehEncMaterial())));
+  // v1.6.0 Fase 2: ehEncarregado NÃO mistura mais enc_material — é só o
+  // contexto 'enc_pessoal' (o string legado 'encarregado' ainda passa para
+  // sessões antigas em memória). O módulo do material é do contexto enc_material.
+  window.ehEncarregado = () => !!(ME && (ME.papel === 'encarregado' || ME.papel === 'enc_pessoal'));
 }
 window.definirUsuario = definirUsuario;
 
@@ -89,6 +114,11 @@ function rotuloPapel(p) {
   if (p === 'gerente') return 'GERENTE';
   if (p === 'chefe_setor') return 'CHEFE DE SETOR';
   if (p === 'encarregado') return 'ENCARREGADO';
+  // v1.6.0 F1: cadeiras enc_* materializam linha em usuario_papeis — o dropdown
+  // de contexto passa a exibi-las como papel (rótulo próprio, não mais OPERADOR).
+  if (p === 'enc_pessoal') return 'ENCARREGADO DE PESSOAL';
+  if (p === 'enc_material') return 'ENCARREGADO DE MATERIAL';
+  if (p === 'sem_funcao') return 'SEM FUNÇÃO';
   return 'OPERADOR';
 }
 window.rotuloPapel = rotuloPapel;
@@ -99,8 +129,13 @@ function rotaInicial() {
   // ordem 04/10 — usuário normal (sem papel do sistema) não tem módulos:
   if (['gerente', 'operador', 'chefe_setor'].includes(p)) return '#/hoje';
   if (p === 'encarregado') return '#/hoje'; // onda 05/10: papel-conf derivado (função encarregado)
+  // v1.6.0 F1: contexto enc_* materializado — cada cadeira aterrissa no seu módulo
+  if (p === 'enc_pessoal') return '#/hoje';
+  if (p === 'enc_material') return '#/material';
+  // v1.6.0 Fase 5 — conta SEM FUNÇÃO (e papel vazio sem cadeira legada
+  // derivável): aterrissa na página de bloqueio dedicada (não no genérico).
+  if (p === 'sem_funcao' || !p) return '#/bloqueio';
   return '#/sem-modulo';
-  return '#/hoje';
 }
 
 /* navega p/ hash; se já estiver nele, roteia direto (hashchange não dispara) */
@@ -315,6 +350,41 @@ function criarDropdown(container, opcoes, config = {}) {
 }
 window.criarDropdown = criarDropdown;
 
+/* ---------- Converte um <select> existente no Dropdown Estilizado Obsidian Glassmorphism ---------- */
+function converterSelectEmDropdown(selectEl, config = {}) {
+  if (!selectEl || selectEl.dataset.dropdownCustomizado === '1') return null;
+  selectEl.dataset.dropdownCustomizado = '1';
+
+  const extrairOpcoes = () => Array.from(selectEl.options).map(opt => ({
+    valor: opt.value,
+    rotulo: opt.text || opt.label || opt.value
+  }));
+
+  const container = document.createElement('div');
+  container.className = 'sci-dropdown-wrapper ' + (config.classeExtra || '');
+  if (selectEl.id) container.id = selectEl.id + '_dd';
+  if (config.style) container.style.cssText = config.style;
+
+  selectEl.style.display = 'none';
+  selectEl.parentNode.insertBefore(container, selectEl);
+
+  const dd = criarDropdown(container, extrairOpcoes(), {
+    valorPadrao: selectEl.value,
+    classeExtra: config.classeTriggerExtra || '',
+    alinharDireita: config.alinharDireita || false,
+    onChange: (novoValor) => {
+      if (selectEl.value !== String(novoValor)) {
+        selectEl.value = novoValor;
+        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if (typeof config.onChange === 'function') config.onChange(novoValor);
+    }
+  });
+
+  return dd;
+}
+window.converterSelectEmDropdown = converterSelectEmDropdown;
+
 /* ---------- Paginação Global (Máx 10 itens por página) ---------- */
 function paginarArray(itens, pagina, porPagina) {
   const tamPag = porPagina || 10;
@@ -497,25 +567,34 @@ function modalSenha() {
 window.modalSenha = modalSenha;
 
 /* ---------- shell (topbar + nav + dropdown do usuário) ---------- */
-function textoContextoUsuario(u) {
-  if (!u) return 'Sem papel';
-  const papel = rotuloPapel(u.papel);
-  const funcao = (u.funcao_nome && u.funcao_nome.trim()) ? u.funcao_nome.trim() : papel;
-  const grupo = (u.grupo_nome && u.grupo_nome.trim()) ? u.grupo_nome.trim() : (u.papel === 'admin' ? 'Global' : '');
-  const setor = (u.setor_nome && u.setor_nome.trim()) ? u.setor_nome.trim() : '';
-
-  let grupoSetor = '';
-  if (grupo && setor) {
-    grupoSetor = `${grupo}/${setor}`;
-  } else if (grupo) {
-    grupoSetor = grupo;
-  } else if (setor) {
-    grupoSetor = setor;
-  } else {
-    grupoSetor = (u.papel === 'admin' ? 'Global' : 'Sem grupo');
+function formatarPapelContexto(p) {
+  if (!p) return 'OPERADOR';
+  const papel = (typeof p === 'string') ? p : p.papel;
+  const funcaoNome = (typeof p === 'object') ? p.funcao_nome : null;
+  const rot = rotuloPapel(papel);
+  if (papel === 'enc_pessoal' || papel === 'enc_material') {
+    return (funcaoNome && funcaoNome.trim()) ? funcaoNome.trim().toUpperCase() : rot;
   }
+  return rot;
+}
+window.formatarPapelContexto = formatarPapelContexto;
 
-  return `${grupoSetor} - ${funcao}`;
+function textoContextoUsuario(u) {
+  if (!u) {
+    const obj = { funcao: 'Sem papel', grupo: '' };
+    obj.toString = () => 'Sem papel';
+    return obj;
+  }
+  const funcao = formatarPapelContexto(u);
+  const grupoRaw = (u.grupo_nome && u.grupo_nome.trim()) ? u.grupo_nome.trim() : (u.papel === 'admin' ? 'Global' : 'Sem grupo');
+  const partes = grupoRaw.split('/');
+  const grupo = partes[partes.length - 1].trim();
+  const setor = (u.setor_nome && u.setor_nome.trim()) ? u.setor_nome.trim() : '';
+  const sub = (setor && grupo !== 'Global') ? `${grupo} · ${setor}` : grupo;
+
+  const res = { funcao, grupo: sub };
+  res.toString = () => (sub && sub !== 'Global') ? `${funcao} · ${sub}` : funcao;
+  return res;
 }
 
 function montarShell(usuario) {
@@ -581,12 +660,12 @@ definirUsuario(usuario);
     <!-- Card de Usuário & Multi-Funções -->
     <div class="sidebar-usuario-card">
       <div class="sidebar-usuario-topo">
-        <div class="sidebar-avatar" id="sbAvatarWrapper">
+        <div class="sidebar-avatar" id="sbAvatarWrapper" role="button" tabindex="0" title="Meu Perfil" aria-label="Ir para Meu Perfil">
           ${usuario && usuario.foto_base64 && fotoValida(usuario.foto_base64) ? `<img src="${esc(usuario.foto_base64)}" class="sidebar-avatar-img" alt="Foto">` : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.4-3.2 4.2-5 7.5-5s6.1 1.8 7.5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`}
         </div>
         <div class="sidebar-usuario-info">
           <div class="sidebar-usuario-nome">${esc(usuario ? (usuario.nome_guerra || usuario.nome_completo || '—') : '')}</div>
-          <div class="sidebar-usuario-cargo">${esc(usuario && usuario.funcao_nome ? usuario.funcao_nome : rotuloPapel(papel))}</div>
+          <div class="sidebar-usuario-cargo">${esc(formatarPapelContexto(usuario))}</div>
         </div>
         <div class="sidebar-sino-wrapper">
           <button id="sbBtSinoNotif" type="button" title="Mensagens e Notificações" class="btn-sidebar-sino" aria-label="Mensagens e Notificações">
@@ -618,7 +697,10 @@ definirUsuario(usuario);
         <button type="button" id="sbBtContexto" class="btn-contexto-gatilho" title="Clique para alternar sua função/grupo ativo">
           <div class="contexto-badge-ativo">
             <span class="contexto-dot"></span>
-            <span id="sbTxtFuncaoAtiva" class="contexto-txt">${esc(textoContextoUsuario(usuario))}</span>
+            <div class="contexto-textos">
+              <span id="sbTxtFuncaoAtiva" class="contexto-titulo">${esc(textoContextoUsuario(usuario).funcao)}</span>
+              <span id="sbTxtGrupoAtivo" class="contexto-subtitulo">${esc(textoContextoUsuario(usuario).grupo)}</span>
+            </div>
           </div>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="contexto-seta"><path d="M6 9l6 6 6-6"/></svg>
         </button>
@@ -634,10 +716,6 @@ definirUsuario(usuario);
       <button type="button" id="sbBtPerfil" class="sidebar-btn-rodape" title="Meu Perfil">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         <span class="sb-lbl">Meu Perfil</span>
-      </button>
-      <button type="button" id="sbBtSenha" class="sidebar-btn-rodape" title="Alterar Senha">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        <span class="sb-lbl">Mudar Senha</span>
       </button>
       <button type="button" id="btnSair" class="sidebar-btn-rodape item-sair" title="Encerrar Sessão">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -656,13 +734,12 @@ definirUsuario(usuario);
     itens = [
       ['#/avisos', 'MURAL DE AVISOS', svgAvisosAdm],
       ['#/admin', 'PAINEL ADMIN', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>'],
-      ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'],
-      ['#/mensagens', 'EMAIL INTERNO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true]
+      ['#/mensagens', 'EMAIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true]
     ];
   } else {
     // ordem 04/10 — SISTEMAS DISPONÍVEIS POR PAPEL:
     //   Gerente: TODOS do seu grupo (conferência, email, avisos, drive, relatórios, gerenciar)
-    //   Chefe de setor: Conferência, Drive, mural de avisos e Email Interno
+    //   Chefe de setor: Conferência, Drive, mural de avisos e Email
     //   Operador: Conferência e mural de avisos
     //   Conta sem função do sistema: NADA (login leva ao aviso de módulo indisponível)
     const svgConf = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
@@ -670,53 +747,54 @@ definirUsuario(usuario);
     const svgAvisos = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
     const svgDrive = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
     const svgRel = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>';
-    const svgGer = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
-    const svgPes = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/><line x1="16" y1="3" x2="22" y2="9"/><line x1="22" y1="3" x2="16" y2="9"/></svg>';
+    const svgGer = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+    const svgPes = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
     const svgMaterial = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
-    const svgPerfil = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-    if (papel === 'operador') {
-      // v367: o papel de sistema dá a BASE e o CARGO (funcoes_grupo) ACRESCENTA
-      // módulos — encarregado designado não perde os itens do operador, ganha
-      // os do enc_pessoal/enc_material. Sem designação, sidebar igual à de antes.
+    // v1.6.0 Fase 5: conta SEM FUNÇÃO — sidebar MÍNIMA: sem itens de módulo
+    // (perfil/sair são fixos no rodapé; o dropdown de contexto mostra
+    // "Nenhuma outra função disponível" com papeis[] vazio). O rotear leva
+    // qualquer hash a #/bloqueio.
+    if (papel === 'sem_funcao' || !papel) {
+      itens = [];
+    } else if (papel === 'operador') {
+      // v1.6.0: operador acessa material (cautelar e descautelar de seu setor).
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
-        ['#/hoje', 'CONFERÊNCIA', svgConf]
+        ['#/hoje', 'CONFERÊNCIA', svgConf],
+        ['#/material', 'MATERIAL', svgMaterial]
       ];
-      const mapaOp = new Map();
-      const addItemOp = (rota, rotulo, svg, extra) => {
-        if (!mapaOp.has(rota)) mapaOp.set(rota, [rota, rotulo, svg, extra]);
-      };
-      if (window.ehEncPessoal && window.ehEncPessoal()) {
-        addItemOp('#/pessoal', 'PESSOAL', svgPes);
-      }
-      if (window.ehEncMaterial && window.ehEncMaterial()) {
-        addItemOp('#/material', 'MATERIAL', svgMaterial);
-      }
-      if (mapaOp.size > 0) itens = itens.concat(Array.from(mapaOp.values()));
     } else if (papel === 'chefe_setor') {
-      // v367: mesma composição base+cargo do operador.
+      // v1.6.0: chefe de setor gerencia material de seu setor e confere.
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
         ['#/hoje', 'CONFERÊNCIA', svgConf],
+        ['#/material', 'MATERIAL', svgMaterial],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
-        ['#/mensagens', 'EMAIL INTERNO', svgMsg, true]
+        ['#/mensagens', 'EMAIL', svgMsg, true]
       ];
-      const mapaCs = new Map();
-      const addItemCs = (rota, rotulo, svg, extra) => {
-        if (!mapaCs.has(rota)) mapaCs.set(rota, [rota, rotulo, svg, extra]);
-      };
-      if (window.ehEncPessoal && window.ehEncPessoal()) {
-        addItemCs('#/pessoal', 'PESSOAL', svgPes);
-      }
-      if (window.ehEncMaterial && window.ehEncMaterial()) {
-        addItemCs('#/material', 'MATERIAL', svgMaterial);
-      }
-      if (mapaCs.size > 0) itens = itens.concat(Array.from(mapaCs.values()));
+    } else if (papel === 'enc_pessoal') {
+      // v1.6.0 Fase 2: contexto PRÓPRIO do encarregado de pessoal (linha
+      // materializada ativa) — CONFERÊNCIA (régua de gerente) + PESSOAL.
+      // Encarregado NUNCA vê GERENCIAR GRUPO (#/grupos); material é do
+      // contexto enc_material (troca no dropdown).
+      itens = [
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
+        ['#/hoje', 'CONFERÊNCIA', svgConf],
+        ['#/pessoal', 'PESSOAL', svgPes],
+        ['#/relatorios', 'RELATÓRIOS', svgRel]
+      ];
+    } else if (papel === 'enc_material') {
+      // v1.6.0 Fase 2: contexto PRÓPRIO do encarregado de material — SÓ o
+      // módulo MATERIAL (sem conferência, nem pessoal; fase 6 endurece o servidor).
+      itens = [
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
+        ['#/material', 'MATERIAL', svgMaterial]
+      ];
     } else if (papel === 'gerente') {
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
         ['#/hoje', 'CONFERÊNCIA', svgConf],
-        ['#/mensagens', 'EMAIL INTERNO', svgMsg, true],
+        ['#/mensagens', 'EMAIL', svgMsg, true],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
         ['#/pessoal', 'PESSOAL', svgPes],
         ['#/material', 'MATERIAL', svgMaterial],
@@ -724,7 +802,10 @@ definirUsuario(usuario);
         ['#/relatorios', 'RELATÓRIOS', svgRel]
       ];
     } else if (window.ehEncarregado && window.ehEncarregado()) {
-      // f3: lógica composável para encarregados (pessoal e/ou material).
+      // LEGADO (v1.6.0 Fase 2): ramo composto só alcança sessão com o string
+      // antigo 'encarregado' em ME.papel — a derivação nova converte papel
+      // vazio nos contextos enc_pessoal/enc_material (ramos acima). Mantido
+      // apenas para não engolir sessão legada em memória.
       // Encarregado NUNCA vê GERENCIAR GRUPO (#/grupos).
       // Correção Diretor: TODOS têm leitura do MURAL DE AVISOS (no topo).
       const mapa = new Map();
@@ -739,14 +820,12 @@ definirUsuario(usuario);
       if (window.ehEncMaterial && window.ehEncMaterial()) {
         addItem('#/material', 'MATERIAL', svgMaterial);
       }
-      addItem('#/perfil', 'MEU PERFIL', svgPerfil);
       itens = Array.from(mapa.values());
     } else {
-      // P0 onda 05/10 — conta SEM função do sistema: Meu Perfil + Mural de Avisos
-      // (correção Diretor: leitura de avisos para TODOS).
+      // P0 onda 05/10 — conta SEM função do sistema: Mural de Avisos
+      // (correção Diretor: leitura de avisos para TODOS; perfil via foto/rodapé).
       itens = [
-        ['#/avisos', 'MURAL DE AVISOS', svgAvisos],
-        ['#/perfil', 'MEU PERFIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>']
+        ['#/avisos', 'MURAL DE AVISOS', svgAvisos]
       ];
     }
   }
@@ -774,19 +853,20 @@ definirUsuario(usuario);
       const mesmoSetor = p.setor_id ? (usuario.setor_id === p.setor_id) : true;
       const ehAtivo = mesmoPapel && mesmoSetor;
 
-      const rot = rotuloPapel(p.papel);
-      const funcao = (p.funcao_nome && p.funcao_nome.trim()) ? p.funcao_nome.trim() : rot;
-      const grupo = (p.grupo_nome && p.grupo_nome.trim()) ? p.grupo_nome.trim() : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
+      const funcao = formatarPapelContexto(p);
+      const grupoRaw = (p.grupo_nome && p.grupo_nome.trim()) ? p.grupo_nome.trim() : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
+      const partes = grupoRaw.split('/');
+      const grupo = partes[partes.length - 1].trim();
       const setor = (p.setor_nome && p.setor_nome.trim()) ? p.setor_nome.trim() : '';
-      const grupoSetor = (grupo && setor) ? `${grupo}/${setor}` : (grupo || setor || 'Global');
+      const sub = (setor && grupo !== 'Global') ? `${grupo} · ${setor}` : grupo;
 
       return `
         <div class="menu-contexto-item ${ehAtivo ? 'ativo' : ''}" data-papelid="${p.id}" data-setorid="${p.setor_id || ''}">
           <div style="min-width:0">
-            <div style="font-weight:700">${esc(grupoSetor)}</div>
-            <div style="font-size:11px;color:var(--tx3)">${esc(funcao)}</div>
+            <div class="menu-contexto-funcao">${esc(funcao)}</div>
+            <div class="menu-contexto-grupo">${esc(sub)}</div>
           </div>
-          ${ehAtivo ? '<span style="font-size:12px">✓</span>' : ''}
+          ${ehAtivo ? '<span class="menu-contexto-check">✓</span>' : ''}
         </div>
       `;
     }).join('');
@@ -846,16 +926,30 @@ definirUsuario(usuario);
     atualizarToggleEstado();
   }
 
+  // Acesso a Meu Perfil via clique na foto de perfil (e rodapé)
+  const avatarEl = $('#sbAvatarWrapper', sidebar);
+  if (avatarEl) {
+    avatarEl.onclick = () => irPara('#/perfil');
+    avatarEl.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        irPara('#/perfil');
+      }
+    };
+  }
+
   // Ações do rodapé
-  $('#sbBtPerfil', sidebar).onclick = () => irPara('#/perfil');
-  $('#sbBtSenha', sidebar).onclick = () => modalSenha();
+  const btPerfil = $('#sbBtPerfil', sidebar);
+  if (btPerfil) btPerfil.onclick = () => irPara('#/perfil');
+  const btSenha = $('#sbBtSenha', sidebar);
+  if (btSenha) btSenha.onclick = () => modalSenha();
   $('#btnSair', sidebar).onclick = async () => {
     try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (e) {}
     definirUsuario(null);
     irPara('#/login');
   };
 
-  // Sino de notificações
+  // Sino de notificações & Hover Card
   const btSino = $('#sbBtSinoNotif', sidebar);
   if (btSino) {
     btSino.onclick = (ev) => {
@@ -863,24 +957,83 @@ definirUsuario(usuario);
       irPara('#/mensagens');
     };
   }
+  const badgeAvisos = $('#sbBadgeAvisos', sidebar);
+  if (badgeAvisos) {
+    badgeAvisos.onclick = (ev) => {
+      ev.stopPropagation();
+      irPara('#/avisos');
+    };
+  }
+  const cardSino = $('#sbSinoHoverCard', sidebar);
+  if (cardSino) {
+    cardSino.onclick = (ev) => {
+      ev.stopPropagation();
+      const itemAvisos = ev.target.closest('#sinoHoverAvisosItem');
+      if (itemAvisos) {
+        irPara('#/avisos');
+      } else {
+        irPara('#/mensagens');
+      }
+    };
+  }
 
   // Mobile menu toggle
   const btMob = $('#btMobileMenu');
+  const fecharSidebarMobile = () => {
+    if (sidebar.classList.contains('aberto-mobile')) {
+      const layoutSidebar = document.getElementById('layoutApp');
+      if (sidebar.__paiOriginal && sidebar.parentNode !== sidebar.__paiOriginal) sidebar.__paiOriginal.insertBefore(sidebar, sidebar.__paiOriginal.firstChild);
+      else if (!sidebar.__paiOriginal && layoutSidebar && sidebar.parentNode !== layoutSidebar) layoutSidebar.insertBefore(sidebar, layoutSidebar.firstChild);
+      sidebar.classList.remove('aberto-mobile');
+      if (btMob) btMob.classList.remove('ativo');
+    }
+  };
+
   if (btMob) {
     btMob.onclick = (ev) => {
       ev.stopPropagation();
-      // Item 13 (ordem 06/10): drawer reanexado ao document.body ao abrir —
-      // dentro do <header>/<div> com transform/overflow o stacking context come
-      // o z-index e o drawer nasce por baixo (pitfall já provado neste repo).
-      // Guardamos o pai original para devolver a sidebar ao fechar (desktop intocado).
       if (!sidebar.__paiOriginal) sidebar.__paiOriginal = sidebar.parentNode;
       if (sidebar.parentNode !== document.body) document.body.appendChild(sidebar);
-      sidebar.classList.toggle('aberto-mobile');
+      const abrindo = !sidebar.classList.contains('aberto-mobile');
+      if (abrindo) {
+        sidebar.classList.add('aberto-mobile');
+        btMob.classList.add('ativo');
+      } else {
+        fecharSidebarMobile();
+      }
     };
   }
+
+  // Fechar sidebar mobile ao navegar por link da navegação
+  sidebar.querySelectorAll('#sidebarNav a, #sbBtPerfil, #sbAvatarWrapper, #btnSair').forEach(el => {
+    el.addEventListener('click', () => {
+      fecharSidebarMobile();
+    });
+  });
+
   const mobSino = $('#mobSinoNotif');
   if (mobSino) {
-    mobSino.onclick = () => irPara('#/mensagens');
+    mobSino.onclick = () => { fecharSidebarMobile(); irPara('#/mensagens'); };
+  }
+  const mobBadgeAvisos = $('#mobBadgeAvisos');
+  if (mobBadgeAvisos) {
+    mobBadgeAvisos.onclick = (ev) => {
+      ev.stopPropagation();
+      fecharSidebarMobile();
+      irPara('#/avisos');
+    };
+  }
+  const mobHover = $('#mobSinoHoverCard');
+  if (mobHover) {
+    mobHover.onclick = (ev) => {
+      fecharSidebarMobile();
+      const itemAvisos = ev.target.closest('#mobSinoHoverAvisosItem');
+      if (itemAvisos) {
+        irPara('#/avisos');
+      } else {
+        irPara('#/mensagens');
+      }
+    };
   }
 
   // Fechar menus ao clicar fora
@@ -894,13 +1047,7 @@ definirUsuario(usuario);
       }
       const sb = $('#sidebar');
       if (sb && sb.classList.contains('aberto-mobile') && !sb.contains(ev.target) && (!btMob || !btMob.contains(ev.target))) {
-        // item 13: ao fechar, devolve a sidebar ao layout (veja toggle acima)
-        // item 14: devolve na POSIÇÃO ORIGINAL (1º filho do flex) — appendChild
-        // jogaria a sidebar para depois da viewport e ela apareceria à DIREITA.
-        const layoutSidebar = document.getElementById('layoutApp');
-        if (sb.__paiOriginal && sb.parentNode !== sb.__paiOriginal) sb.__paiOriginal.insertBefore(sb, sb.__paiOriginal.firstChild);
-        else if (!sb.__paiOriginal && layoutSidebar && sb.parentNode !== layoutSidebar) layoutSidebar.insertBefore(sb, layoutSidebar.firstChild);
-        sb.classList.remove('aberto-mobile');
+        fecharSidebarMobile();
       }
     });
   }
@@ -1099,6 +1246,12 @@ function rotear() {
   montarShell(ME);
   const papel = ME.papel;
 
+  // v1.6.0 Fase 5 — conta SEM FUNÇÃO: página de bloqueio dedicada. Qualquer
+  // OUTRA hash com papel 'sem_funcao' (ou vazio, sem cadeira legada) cai nela;
+  // ViewSemModulo continua para papel VÁLIDO com módulo bloqueado.
+  if (h === '#/bloqueio') { chamarView('ViewBloqueioSemFuncao'); return; }
+  if (papel === 'sem_funcao' || !papel) { irPara('#/bloqueio'); return; }
+
   if (h === '' || h === '#' || h === '#/' || h === '#/login') { irPara(rotaInicial()); return; }
   if (h === '#/conferencias') { irPara('#/hoje'); return; }             // listas moram na Conferência
   if (papel === 'admin' && (h === '#/hoje' || h === '#/conferencia' || h === '#/calendario' || h === '#/drive' || h === '#/grupos')) {
@@ -1118,7 +1271,10 @@ function rotear() {
   // P0 onda 05/10: 'admin' NÃO cai no portão de bloqueio — sem isso as rotas
   // #/admin e #/configuracoes (fim da função) ficavam inalcançáveis para o admin,
   // que era capturado aqui e levado a "Módulo não disponível".
-  if (papel === 'encarregado') { /* onda 05/10: função de encarregado de pessoal passa no portão */ }
+  // v1.6.0 F1: o portão GERAL passa a aceitar os contextos enc_* materializados
+  // (as portas ESPECÍFICAS de módulo vêm nas fases 2/6 — aqui é só não-engolir
+  // o papel novo no bloqueio genérico de "sem módulo").
+  if (papel === 'encarregado' || papel === 'enc_pessoal' || papel === 'enc_material') { /* onda 05/10: função de encarregado de pessoal passa no portão */ }
   else if (papel !== 'admin' && !['gerente', 'operador', 'chefe_setor'].includes(papel)) {
     chamarView('ViewSemModulo'); return;
   }
@@ -1126,15 +1282,16 @@ function rotear() {
   // chefe de setor não tem relatórios.
   if (h === '#/drive' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
   if (h === '#/mensagens' && papel === 'operador') { chamarView('ViewSemModulo'); return; }
-  // ordem 06/10 (P4): relatórios liberados ao encarregado/auxiliar de pessoal
-  // (o servidor já aceita a função nos dados do grupo; mesmo escopo do gerente)
-  // fix 09/10: gestorPessoal() cobre o designado puro (sem papel-conf exigido).
+  // ordem 06/10 (P4) · v1.6.0 Fase 2: relatórios = gerente OU CONTEXTO
+  // 'enc_pessoal' ativo (gestorPessoal agora deriva do papel ativo — o cargo
+  // sozinho não abre mais; quem tem a cadeira troca no dropdown).
   if (h === '#/relatorios' && papel !== 'gerente' && !(window.gestorPessoal && window.gestorPessoal())) { chamarView('ViewSemModulo'); return; }
-  // Onda 10/10 — portão do módulo Conferência (#/hoje e #/conferencia):
-  // liberado para gerente, operador, chefe_setor e encarregado de pessoal;
-  // admin, encarregado de material puro e conta sem função são barrados.
+  // Onda 10/10 · v1.6.0 Fase 2 — portão do módulo Conferência (#/hoje e
+  // #/conferencia): liberado para gerente, operador, chefe_setor e contexto
+  // 'enc_pessoal' ATIVO; admin, contexto 'enc_material' e conta sem função
+  // são barrados (fase 6 endurece o servidor na leitura).
   if (h === '#/hoje' || h === '#/conferencia') {
-    const podeConf = ['gerente', 'operador', 'chefe_setor'].includes(papel) || !!(window.ehEncPessoal && window.ehEncPessoal());
+    const podeConf = ['gerente', 'operador', 'chefe_setor'].includes(papel) || papel === 'enc_pessoal';
     if (!podeConf) { chamarView('ViewSemModulo'); return; }
   }
   if (h === '#/hoje') { chamarView('ViewHoje'); return; }
@@ -1146,10 +1303,8 @@ function rotear() {
   if (h === '#/drive') { chamarView('ViewDrive'); return; }
   if (h === '#/relatorios') { chamarView('ViewRelatorios'); return; }
   if (h === '#/material') {
-    // fix 09/10 (encarregado de material): gerente OU designado enc_material —
-    // gestorMaterial() espelha o authMaterial do servidor (detecta por chave;
-    // v367: designado COM papel de sistema incluído — funcoes_grupo, não papel).
-    if (papel === 'gerente' || (window.gestorMaterial && window.gestorMaterial())) chamarView('ViewMaterial');
+    // v1.6.0: liberado para gerente, enc_material, chefe_setor e operador (cada um com seu escopo).
+    if (['gerente', 'enc_material', 'chefe_setor', 'operador'].includes(papel)) chamarView('ViewMaterial');
     else chamarView('ViewSemModulo');
     return;
   }
@@ -1169,10 +1324,10 @@ function rotear() {
     return;
   }
   if (h === '#/pessoal') {
-    // módulo Pessoal (f2): gerente OU encarregado/auxiliar de pessoal —
-    // fix 09/10: gestorPessoal() cobre o designado puro (funcoes_grupo com
-    // chave enc_pessoal) sem exigir papel-conf; servidor valida de novo.
-    if (papel === 'gerente' || window.gestorPessoal && window.gestorPessoal()) chamarView('ViewPessoal');
+    // módulo Pessoal (f2) · v1.6.0 Fase 2: gerente OU CONTEXTO 'enc_pessoal'
+    // ativo (podeGestaoPessoal do servidor agora é u.Papel == 'enc_pessoal');
+    // servidor valida de novo.
+    if (papel === 'gerente' || papel === 'enc_pessoal') chamarView('ViewPessoal');
     else irPara(rotaInicial());
     return;
   }
@@ -1718,4 +1873,31 @@ window.ViewSemModulo = function () {
       <h2 style="margin:0 0 8px">Módulo não disponível</h2>
       <p style="color:var(--tx2);font-size:13.5px;margin:0">Sua conta ainda não possui funções no sistema. Procure o encarregado de pessoal do seu grupo para receber uma função.</p>
     </div>`;
+};
+
+/* ---------- v1.6.0 Fase 5: conta SEM FUNÇÃO — página de bloqueio ----------
+   Destino de login/rotear de toda conta com papel 'sem_funcao' (e papel vazio
+   sem cadeira legada): sem módulo algum — o servidor barra os dados com a
+   guarda central de escopo (-1 → 403). Sai do bloqueio por SAIR (logout) ou
+   quando o gerente/encarregado designar uma cadeira (o próximo login resolve
+   o contexto pela linha materializada — Fase 3). */
+window.ViewBloqueioSemFuncao = function () {
+  const app = document.getElementById('app');
+  if (!app) return;
+  if (window.navAtiva) navAtiva('');
+  app.innerHTML = `
+    <div class="cartao" style="max-width:560px;margin:60px auto;text-align:center;padding:38px 28px">
+      <div style="font-size:44px;margin-bottom:12px">🚫</div>
+      <h2 style="margin:0 0 8px">Você não tem função neste grupo</h2>
+      <p style="color:var(--tx2);font-size:13.5px;margin:0 0 20px">Procure o gerente/encarregado para receber uma designação. Quando ela for feita, faça login novamente para entrar.</p>
+      <button type="button" class="primario" id="btBloqueioSair" style="padding:9px 26px">SAIR</button>
+    </div>`;
+  const bt = document.getElementById('btBloqueioSair');
+  if (bt) {
+    bt.onclick = async () => {
+      try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (e) {}
+      definirUsuario(null);
+      irPara('#/login');
+    };
+  }
 };

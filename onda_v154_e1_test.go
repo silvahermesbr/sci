@@ -271,6 +271,11 @@ func TestE1R10PapelAddFailClosed(t *testing.T) {
 
 	gidA := e1CriaGrupo(t, st, "Grp E1 Add A")
 	gidC := e1CriaGrupo(t, st, "Grp E1 Add C")
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo)
+	var setorAddA int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor E1 Add', ?, 1) RETURNING id`, gidA).Scan(&setorAddA); err != nil {
+		t.Fatalf("criar setor: %v", err)
+	}
 
 	criaUsuarioTeste(t, st, "ger_add", "senha-gerente", "gerente")
 	ckGer := e1LoginVinculado(t, app, st, "ger_add", gidA, "senha-gerente")
@@ -295,6 +300,10 @@ func TestE1R10PapelAddFailClosed(t *testing.T) {
 	if _, err := st.db.Exec(`INSERT INTO funcao_membros (funcao_id, grupo_id, usuario_id, titularidade) VALUES (?,?,?,'titular')`, fid, gidA, uidEnc); err != nil {
 		t.Fatalf("designar enc: %v", err)
 	}
+	// v1.6.0 Fase 2: o enc gere papéis pelo CONTEXTO 'enc_pessoal' — a
+	// designação semeda é MATERIALIZADA pela v45; com a única linha da conta
+	// sendo a da cadeira, o login do enc_add resolve o contexto enc.
+	v45Reexecuta(t, st)
 	ckEnc := loginAs(t, app, "enc_add", "senha-gerente")
 
 	criaUsuarioTeste(t, st, "alvo_add", "senha-gerente", "operador")
@@ -310,7 +319,7 @@ func TestE1R10PapelAddFailClosed(t *testing.T) {
 
 	// gerente no próprio grupo → 200
 	rr, res = doJSONReq(app, "POST", fmt.Sprintf("/api/usuarios/%d/papeis", uidAlvo),
-		map[string]any{"papel": "operador", "grupo_id": gidA}, ckGer)
+		map[string]any{"papel": "operador", "grupo_id": gidA, "setor_id": setorAddA}, ckGer)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("R-10 Add: gerente no próprio grupo deveria 200, veio %d (%v)", rr.Code, res)
 	}

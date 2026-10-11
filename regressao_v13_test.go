@@ -71,9 +71,14 @@ func TestRegressaoAvisosXSSeContratos(t *testing.T) {
 	}
 	grupoID := int64(res["id"].(float64))
 	ger := loginAs(t, app, "ger_reg_xss", "senha12345")
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo)
+	var setorXSS int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor XSS', ?, 1) RETURNING id`, grupoID).Scan(&setorXSS); err != nil {
+		t.Fatalf("criar setor: %v", err)
+	}
 	if rrOp, resOp := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
 		"login": "op_reg_xss", "senha": "senha12345", "papel": "operador",
-		"grupo_id": grupoID, "nome_guerra": "OpXSS",
+		"grupo_id": grupoID, "setor_id": setorXSS, "nome_guerra": "OpXSS",
 	}, admin); rrOp.Code != http.StatusOK {
 		t.Fatalf("operador: %v", resOp)
 	}
@@ -209,7 +214,7 @@ func TestRegressaoRepostarForaEscopo(t *testing.T) {
 }
 
 func TestRegressaoRevogacaoColecaoECor(t *testing.T) {
-	app, _, cleanup := setupTestApp(t)
+	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
 	admin := loginAs(t, app, "admin", "admin123")
 
@@ -221,9 +226,14 @@ func TestRegressaoRevogacaoColecaoECor(t *testing.T) {
 	}
 	grupoID := int64(res["id"].(float64))
 	ger := loginAs(t, app, "ger_rev", "senha12345")
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo)
+	var setorRev int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor Rev', ?, 1) RETURNING id`, grupoID).Scan(&setorRev); err != nil {
+		t.Fatalf("criar setor: %v", err)
+	}
 	if rrOp, resOp := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
 		"login": "op_rev", "senha": "senha12345", "papel": "operador",
-		"grupo_id": grupoID, "nome_guerra": "OpRev",
+		"grupo_id": grupoID, "setor_id": setorRev, "nome_guerra": "OpRev",
 	}, admin); rrOp.Code != http.StatusOK {
 		t.Fatalf("operador: %v", resOp)
 	}

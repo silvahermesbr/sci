@@ -122,9 +122,38 @@ var (
 	ErrNaoAutenticado = errors.New("não autenticado")
 )
 
+// papeisComEscopoDeDados (v1.6.0 Fase 5 — conta SEM FUNÇÃO): a LISTA ÚNICA de
+// papeis que têm escopo de dados. Papel fora dela — 'sem_funcao', vazio
+// (legado sem cadeira) ou qualquer valor não reconhecido — NÃO tem escopo,
+// MESMO COM grupo no cadastro: exigeEscopo/escopoDoUsuario devolvem -1 e a
+// guarda central da v1.5.4-A (403 + filtroGrupoSQL AND 1=0) barra o resto.
+// 'sem_funcao' é ausência de contexto (não é papel de linha — fica FORA do
+// CHECK de usuario_papeis por design): a conta nasce por hUsuariosAdd sem
+// linha em usuario_papeis e volta a valer quando o gerente/enc designa uma
+// cadeira (linha materializada → próximo login resolve o contexto).
+// Drive segue por ACL de grant (exceção aceita, registrada no mapa da onda).
+var papeisComEscopoDeDados = map[string]bool{
+	"admin":        true,
+	"gerente":      true,
+	"operador":     true,
+	"chefe_setor":  true,
+	"enc_pessoal":  true,
+	"enc_material": true,
+}
+
+// papelTemEscopoDeDados: o papel ativo dá acesso a dados de grupo?
+func papelTemEscopoDeDados(papel string) bool {
+	return papeisComEscopoDeDados[papel]
+}
+
 func (a *App) exigeEscopo(u *Usuario) (int64, error) {
 	if u == nil {
 		return -1, ErrNaoAutenticado
+	}
+	// v1.6.0 Fase 5: papel fora da lista → -1 (ErrContaSemGrupo deixa o
+	// mapeamento central intacto: 403 em todos os handlers, nunca 401).
+	if !papelTemEscopoDeDados(u.Papel) {
+		return -1, ErrContaSemGrupo
 	}
 	if u.Papel == "admin" {
 		return 0, nil

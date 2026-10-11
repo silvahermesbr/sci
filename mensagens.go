@@ -124,6 +124,12 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	papel := strings.ToLower(strings.TrimSpace(req.Papel))
 	switch papel {
 	case "admin", "gerente", "operador", "chefe_setor":
+	case "sem_funcao":
+		// v1.6.0 Fase 5: 'sem_funcao' é AUSÊNCIA de contexto — não é papel de
+		// linha (fica fora do CHECK de usuario_papeis por design). A conta nasce
+		// assim pelo hUsuariosAdd; aqui é sempre 400.
+		jsonErro(w, http.StatusBadRequest, "sem_funcao não é papel de linha — crie a conta com esse papel em POST /api/usuarios")
+		return
 	default:
 		jsonErro(w, http.StatusBadRequest, "papel inválido (admin | gerente | operador | chefe_setor)")
 		return
@@ -195,8 +201,23 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 	// atualiza usuarios.setor_id e responde 200, nunca 400 fake.
 	// v1.5.4-D1 (R-12): o COMANDO é materializado em chefe_setores AQUI (antes
 	// este endpoint só escrevia usuarios.setor_id — fábrica de chefe-zumbi).
+	// v1.6.0 Fase 4 (extinção do operador de grupo): para OPERADOR o setor é
+	// OBRIGATÓRIO (mesma doutrina do hUsuariosAdd) e grava usuarios.setor_id —
+	// antes era silenciosamente ignorado; sem setor o operador novo nascia
+	// bloqueado (exigeSetorOperador). Sem comando de chefe (chefe_setores).
 	setorReq := int64(0)
 	if papel == "chefe_setor" && req.SetorID != nil && *req.SetorID > 0 {
+		if req.GrupoID == nil || !a.setorIDValidoNoGrupo(*req.SetorID, *req.GrupoID) {
+			jsonErro(w, http.StatusBadRequest, "setor não pertence ao grupo do papel")
+			return
+		}
+		setorReq = *req.SetorID
+	}
+	if papel == "operador" {
+		if req.SetorID == nil || *req.SetorID <= 0 {
+			jsonErro(w, http.StatusBadRequest, "operador deve nascer vinculado a um setor do grupo")
+			return
+		}
 		if req.GrupoID == nil || !a.setorIDValidoNoGrupo(*req.SetorID, *req.GrupoID) {
 			jsonErro(w, http.StatusBadRequest, "setor não pertence ao grupo do papel")
 			return
@@ -212,21 +233,24 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 		if setorReq > 0 && req.GrupoID != nil && strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			var pid int64
 			if e := a.st.db.QueryRow(`SELECT id FROM usuario_papeis
-				WHERE usuario_id = ? AND grupo_id = ? AND papel = 'chefe_setor'`,
-				usuarioID, *req.GrupoID).Scan(&pid); e == nil {
+				WHERE usuario_id = ? AND grupo_id = ? AND papel = ?`,
+				usuarioID, *req.GrupoID, papel).Scan(&pid); e == nil {
 				if _, err := a.st.db.Exec(`UPDATE usuarios SET setor_id = ? WHERE id = ?`, setorReq, usuarioID); err != nil {
 					jsonErro(w, http.StatusInternalServerError, "falha ao vincular setor: "+err.Error())
 					return
 				}
-				// v1.5.4-D1: troca de setor materializa o novo COMANDO idem.
-				if _, err := a.st.db.Exec(`
-					INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)
-					ON CONFLICT(setor_id) DO UPDATE SET
-					  usuario_id = excluded.usuario_id,
-					  grupo_id = excluded.grupo_id
-				`, *req.GrupoID, setorReq, usuarioID); err != nil {
-					jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+err.Error())
-					return
+				// v1.5.4-D1: troca de setor materializa o novo COMANDO idem
+				// (SÓ chefe_setor — v1.6.0 F4: operador não comanda, só o cadastro).
+				if papel == "chefe_setor" {
+					if _, err := a.st.db.Exec(`
+						INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)
+						ON CONFLICT(setor_id) DO UPDATE SET
+						  usuario_id = excluded.usuario_id,
+						  grupo_id = excluded.grupo_id
+					`, *req.GrupoID, setorReq, usuarioID); err != nil {
+						jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+err.Error())
+						return
+					}
 				}
 				a.st.Auditoria(&u.ID, "adicionar_papel", "usuario_papeis", &pid,
 					fmt.Sprintf("usuario_id=%d papel=%s grupo_id=%v (troca de setor -> %d)", usuarioID, papel, *req.GrupoID, setorReq), ipDe(r))
@@ -246,14 +270,18 @@ func (a *App) hUsuarioPapelAdd(w http.ResponseWriter, r *http.Request) {
 		}
 		// v1.5.4-D1: materializa o COMANDO (substituição 1:1 — setor sai das
 		// mãos do chefe anterior; fonte única chefe_setores).
-		if _, err := a.st.db.Exec(`
-			INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)
-			ON CONFLICT(setor_id) DO UPDATE SET
-			  usuario_id = excluded.usuario_id,
-			  grupo_id = excluded.grupo_id
-		`, *req.GrupoID, setorReq, usuarioID); err != nil {
-			jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+err.Error())
-			return
+		// v1.6.0 F4: SÓ para chefe_setor — o operador ganha CADASTRO de setor,
+		// nunca comando.
+		if papel == "chefe_setor" {
+			if _, err := a.st.db.Exec(`
+				INSERT INTO chefe_setores (grupo_id, setor_id, usuario_id) VALUES (?,?,?)
+				ON CONFLICT(setor_id) DO UPDATE SET
+				  usuario_id = excluded.usuario_id,
+				  grupo_id = excluded.grupo_id
+			`, *req.GrupoID, setorReq, usuarioID); err != nil {
+				jsonErro(w, http.StatusInternalServerError, "falha ao gravar comando: "+err.Error())
+				return
+			}
 		}
 	}
 	if req.FuncaoID != nil {
@@ -639,6 +667,13 @@ func (a *App) hMensagensEnviadas(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) hMensagensEnviar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
+	// v1.6.0 Fase 5 (conta SEM FUNÇÃO): comunicação é POR PAPEL — conta fora da
+	// lista de escopo ('sem_funcao'/vazio) não tem caixa de envio (403, matriz
+	// da onda), nem com grupo no cadastro.
+	if !papelTemEscopoDeDados(u.Papel) {
+		jsonErro(w, http.StatusForbidden, "conta sem função no sistema — procure o gerente/encarregado para receber uma designação")
+		return
+	}
 	if u.PapelAtivoID == nil || *u.PapelAtivoID <= 0 {
 		jsonErro(w, http.StatusBadRequest, "usuário sem papel ativo na sessão")
 		return
@@ -1619,11 +1654,15 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 	// garantindo que TODO usuário do grupo receba a notificação.
 	var destinatarios int
 	var papelIDs []int64
+	// v1.6.0 Fase 3: as cadeiras enc_pessoal/enc_material MATERIALIZARAM linha em
+	// usuario_papeis (v45/sync da designação) — o enc puro entra na lista de
+	// destinatários pelo próprio contexto (antes ficava fora do IN e não recebia
+	// notificação de aviso). 'sem_funcao' NÃO entra: valor não existe ainda (Fase 5).
 	rowsN, errN := a.st.db.Query(`
 		SELECT DISTINCT up.id
 		FROM usuario_papeis up
 		JOIN usuarios us ON us.id = up.usuario_id AND us.ativo = 1
-		WHERE up.grupo_id = ? AND up.id != ? AND up.papel IN ('admin','gerente','operador','chefe_setor')`,
+		WHERE up.grupo_id = ? AND up.id != ? AND up.papel IN ('admin','gerente','operador','chefe_setor','enc_pessoal','enc_material')`,
 		*grupoID, *u.PapelAtivoID)
 	if errN != nil {
 		log.Printf("sci aviso %d notificação: %v", id, errN)
@@ -1642,7 +1681,7 @@ func (a *App) hAvisosAdd(w http.ResponseWriter, r *http.Request) {
 			SELECT us.id, us.papel, us.funcao_id
 			FROM usuarios us
 			WHERE us.grupo_id = ? AND us.ativo = 1 AND us.id != ?
-			  AND us.papel IN ('admin','gerente','operador','chefe_setor')
+			  AND us.papel IN ('admin','gerente','operador','chefe_setor','enc_pessoal','enc_material')
 			  AND NOT EXISTS (SELECT 1 FROM usuario_papeis up2 WHERE up2.usuario_id = us.id AND up2.grupo_id = ?)`,
 			*grupoID, u.ID, *grupoID)
 		if errF == nil {

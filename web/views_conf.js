@@ -969,8 +969,7 @@
         <p style="color:var(--tx2);font-size:12.5px;margin:0">Aguarde o Gerente ou Encarregado iniciar a conferência.</p>
       </div>` : ''}
       <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-        ${podeIniciar ? `<button class="primario" id="btIniciarConf" style="min-height:44px">▶ Iniciar conferência</button>
-        <button class="fantasma" id="btNovaConf" style="min-height:44px">+ Nova conferência</button>` : ''}
+        ${podeIniciar ? `<button class="primario" id="btIniciarConf" style="min-height:44px">+ Nova conferência</button>` : ''}
         <span style="color:var(--tx2);font-size:12px">${ehChefeSetor ? 'Como Chefe de Setor, selecione uma conferência aberta para lançar presença do seu efetivo.' : 'abertas podem ser editadas · várias simultâneas · fechadas viram relatório (PDF)'}</span></div>` +
       tabela('Abertas', abertas) + tabela('Fechadas', fechadas)
       : tabela('Arquivadas', lista, 'nenhuma conferência arquivada')}
@@ -1159,7 +1158,7 @@
     };
     confRender();
     confPoolingStart(); // ciclo 2: pooling 2s enquanto a conferência estiver na tela
-    $('#btVoltar').onclick = () => { confPoolingStop(); location.hash = '#/hoje'; };
+    $('#btVoltar').onclick = () => { confPoolingStop(); irPara('#/hoje'); };
     const btDesc = $('#btDescartar');
     if (btDesc) {
       btDesc.onclick = async () => {
@@ -1334,8 +1333,8 @@
         }
 
         return divisorHTML + `<div class="pessoa ${ehVerif ? 'verificado' : ''}" data-id="${p.id}">
-          <input type="checkbox" class="chk" data-id="${p.id}" ${ehVerif ? 'checked' : ''} title="verifiquei esta pessoa">
-          <span class="nome"><b>${esc(p.nome_guerra)}</b> ${badgeEscala}<small>${esc(p.nome_completo)}${p.funcao ? ' · ' + esc(p.funcao) : ''}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
+          <input type="checkbox" class="chk" data-id="${p.id}" ${ehVerif ? 'checked' : ''} title="${esc(p.nome_guerra || p.nome_completo)}${p.funcao ? ' — ' + esc(p.funcao) : ''}">
+          <span class="nome"><b>${esc(p.nome_guerra || p.nome_completo)}</b> ${badgeEscala}<small>${esc(p.funcao || '—')}${C.obs[p.id] ? ' · 📝' : ''}${C.temComentario[p.id] ? ' · 💬' : ''}</small></span>
           <select class="sel-situacao" data-id="${p.id}" title="situação">${sit === 'nao_verificado' ? '<option value="nao_verificado" disabled selected>NÃO VERIFICADO</option>' : ''}${SITUACOES.map(optSit).join('')}</select>
           ${selDest}<button type="button" class="fantasma bt-coment" data-id="${p.id}" title="comentários" style="min-height:36px;padding:4px 8px">💬</button></div>`;
       }).join('');
@@ -1359,7 +1358,9 @@
       // (papel-conf derivado no core.js). Admin segue PROIBIDO (403 no backend) —
       // não ganha botão, só aviso. Papel explícito, NÃO !ehChefe (incluía admin).
       const papelT = (window.ME && window.ME.papel) || '';
-      const ehGerEnc = papelT === 'gerente' || papelT === 'encarregado';
+      const ehGerEnc = papelT === 'gerente' || papelT === 'encarregado' || papelT === 'enc_pessoal'
+        || !!(window.ehEncPessoal && window.ehEncPessoal())
+        || !!(window.ehEncarregado && window.ehEncarregado());
       // P3: operador/chefe fecha o PRÓPRIO setor — mesma expressão de escopoSetor
       // em ViewConferencia (usuarios.setor_id → fallback pessoa vinculada).
       const meuSetor = window.ME ? (window.ME.setor_id || window.ME.pessoa_setor_id) : null;
@@ -1374,7 +1375,7 @@
     const banner = semC
       ? `<div class="cartao"><p style="color:var(--tx2)">Nenhuma conferência aberta. Ao iniciar, a data e o horário de Brasília são registrados automaticamente.</p>
          ${!ehChefe ? `<div style="display:flex;gap:8px;align-items:end;margin-top:10px">
-           <button class="primario" id="btIniciar" style="min-height:44px">▶ Iniciar conferência</button></div>` : '<p style="color:var(--tx3);font-size:12px;margin-top:8px">Aguarde o Gerente ou Operador iniciar a conferência do grupo.</p>'}</div>`
+           <button class="primario" id="btIniciar" style="min-height:44px">+ Nova conferência</button></div>` : '<p style="color:var(--tx3);font-size:12px;margin-top:8px">Aguarde o Gerente ou Operador iniciar a conferência do grupo.</p>'}</div>`
       : `<div class="cartao">
          <span>${pill('aberta')} <b>Conferência #${C.c.id}</b> · aberta em ${fmtData(C.c.data)} às ${fmtHora(C.c.criada_em)}${C.c.local ? ' · ' + esc(C.c.local) : ''}</span>
          ${C.modo === 'antiguidade' ? `<div class="cfa-badge" title="Conferência limitada às funções selecionadas">FILTRO POR ANTIGUIDADE: ${esc((C.funcoesFiltro || []).join(', '))}</div>` : ''}
@@ -1508,6 +1509,21 @@
     });
     const btIniBanner = $('#btIniciar');
     if (btIniBanner) btIniBanner.onclick = abrirModalIniciarOuDespacharConf;
+    const btV = $('#btVoltar');
+    if (btV) btV.onclick = () => { confPoolingStop(); irPara('#/hoje'); };
+    const btDesc = $('#btDescartar');
+    if (btDesc) {
+      btDesc.onclick = async () => {
+        if (!(await confirmar(`DESCARTAR a conferência #${C.c.id}? O estado parcial gravado será apagado. Esta ação não pode ser desfeita.`))) return;
+        try {
+          await api('/api/conferencia/' + C.c.id, { method: 'DELETE' });
+          confPoolingStop(); // ciclo 2: sem timer órfão ao descartar
+          toast('Conferência descartada');
+          location.hash = '#/hoje';
+          location.reload();
+        } catch (e) {}
+      };
+    }
     atualizar(); // contador de verificados acompanha o re-render (v9.15.2)
     ligarBarra(); // v9.16.5b: barra é recriada no innerHTML — religar FECHAR e busca
     confPainelGerenteRender();
@@ -1829,7 +1845,7 @@
       // ordem 04/10: abas do módulo → DROPDOWN estilizado
       if (typeof criarDropdown === 'function') {
         criarDropdown($('#abasRelDD'), [
-          { valor: 'consolidado', rotulo: '📊 Resumo Consolidado & PDF' },
+          { valor: 'consolidado', rotulo: '📊 Resumo' },
           { valor: 'conferencias', rotulo: '📋 Conferências Individuais' },
           { valor: 'individual', rotulo: '🔍 Busca Individual por Militar' }
         ], {
@@ -1844,23 +1860,46 @@
     };
 
     /* =========================================================================
-       1. ABA: RESUMO CONSOLIDADO & PDF DO PERÍODO
+       1. ABA: RESUMO (SUB-ABAS: DASHBOARD & EFETIVO)
        ========================================================================= */
+    let subAbaResumo = 'dashboard';
+
     const viewRelConsolidado = () => {
       const alvo = $('#corpoRelatorios');
       alvo.innerHTML = `
-        <div class="cartao">
-          ${gSel ? `<div class="form-linha" style="margin-bottom:8px">${gSel}</div>` : ''}
-          <div class="form-linha" style="align-items:center;gap:10px;margin-bottom:12px">
-            <span style="font-size:12px;color:var(--tx2)">Período:</span>
-            <div id="modosDD" style="min-width:160px"></div>
-            <div id="entrada" style="flex:1"></div>
-            <button class="primario" id="btGerar" style="min-height:44px; padding:0 20px">Gerar Relatório</button>
-          </div>
+        <div class="abas" style="margin-bottom:14px">
+          <button type="button" data-subaba="dashboard" class="${subAbaResumo === 'dashboard' ? 'ativo' : ''}">📊 Dashboard</button>
+          <button type="button" data-subaba="efetivo" class="${subAbaResumo === 'efetivo' ? 'ativo' : ''}">👥 Efetivo</button>
         </div>
-        <div id="estadoAtual"><div class="carregando">Carregando estado atual do efetivo…</div></div>
-        <div id="saida"><div class="carregando">Gerando consolidado…</div></div>
+        <div id="subAbaDashboard" class="${subAbaResumo === 'dashboard' ? '' : 'oculto'}">
+          <div class="cartao">
+            ${gSel ? `<div class="form-linha" style="margin-bottom:8px">${gSel}</div>` : ''}
+            <div class="form-linha" style="align-items:center;gap:10px;margin-bottom:12px">
+              <span style="font-size:12px;color:var(--tx2)">Período:</span>
+              <div id="modosDD" style="min-width:160px"></div>
+              <div id="entrada" style="flex:1"></div>
+              <button class="primario" id="btGerar" style="min-height:44px; padding:0 20px">Gerar Relatório</button>
+            </div>
+          </div>
+          <div id="saida"><div class="carregando">Gerando consolidado…</div></div>
+        </div>
+        <div id="subAbaEfetivo" class="${subAbaResumo === 'efetivo' ? '' : 'oculto'}">
+          <div id="estadoAtual"><div class="carregando">Carregando estado atual do efetivo…</div></div>
+        </div>
       `;
+
+      alvo.querySelectorAll('.abas button[data-subaba]').forEach(b => {
+        b.onclick = () => {
+          subAbaResumo = b.dataset.subaba;
+          alvo.querySelectorAll('.abas button[data-subaba]').forEach(btn => {
+            btn.classList.toggle('ativo', btn.dataset.subaba === subAbaResumo);
+          });
+          const elDash = $('#subAbaDashboard');
+          const elEf = $('#subAbaEfetivo');
+          if (elDash) elDash.classList.toggle('oculto', subAbaResumo !== 'dashboard');
+          if (elEf) elEf.classList.toggle('oculto', subAbaResumo !== 'efetivo');
+        };
+      });
 
       let modo = 'dia';
       const entrada = () => {
@@ -1907,6 +1946,9 @@
           { valor: 'ano', rotulo: 'Ano' },
           { valor: 'livre', rotulo: 'Período livre' }
         ], { valorPadrao: modo, onChange: (m) => { modo = m; entrada(); } });
+      }
+      if (typeof converterSelectEmDropdown === 'function' && $('#fGrupo')) {
+        converterSelectEmDropdown($('#fGrupo'));
       }
       $('#btGerar').onclick = gerar;
     };
@@ -2084,6 +2126,11 @@
         pgConfs = 1;
         renderizarTabelaConfs();
       };
+
+      if (typeof converterSelectEmDropdown === 'function') {
+        converterSelectEmDropdown($('#cfStatus'));
+        if ($('#fGrupo')) converterSelectEmDropdown($('#fGrupo'));
+      }
 
       carregarConfs();
     };
@@ -2403,6 +2450,11 @@
 
       $('#biIr').onclick = buscarPessoa;
       $('#biNome').addEventListener('keydown', ev => { if (ev.key === 'Enter') buscarPessoa(); });
+
+      if (typeof converterSelectEmDropdown === 'function') {
+        converterSelectEmDropdown($('#biSetor'));
+        converterSelectEmDropdown($('#biFuncao'));
+      }
 
       const pintaFiltros = () => {
         $('#biFiltros').innerHTML = regras.map((rg, i) => `

@@ -25,12 +25,14 @@ func TestOndaUxAvisoComentarioCampos(t *testing.T) {
 	criaUsuarioTeste(t, st, "ux_ger", "senha-gerente", "gerente")
 	ckGer := vinculaGrupoDoLogin(t, app, st, "ux_ger", gid)
 
-	// comentarista SEM PAPEL (pior caso do bug): usuário cru, sem linha em usuario_papeis
-	hash, _ := hashSenha("senha-ux-123")
-	if _, err := st.db.Exec(`INSERT INTO usuarios (login, senha_hash, papel, nome_guerra, grupo_id, precisa_setup) VALUES ('ux_cru', ?, '', 'Cru', ?, 0)`, hash, gid); err != nil {
-		t.Fatalf("criar usuário sem papel: %v", err)
+	// comentarista (v1.6.0 Fase 5: comunicação é por PAPEL — a conta sem
+	// função não comenta mural; a persona aqui é o operador do grupo, que
+	// conserva o caso de funcao_nome vazio do bug original)
+	criaUsuarioTeste(t, st, "ux_op", "senha-ux-123", "operador")
+	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ? WHERE login = 'ux_op'`, gid); err != nil {
+		t.Fatalf("vincular comentarista: %v", err)
 	}
-	ckCru := loginAs(t, app, "ux_cru", "senha-ux-123")
+	ckCru := loginAs(t, app, "ux_op", "senha-ux-123")
 
 	// gerente publica o aviso
 	rr, res := doJSONReq(app, "POST", "/api/avisos", map[string]any{
@@ -42,7 +44,7 @@ func TestOndaUxAvisoComentarioCampos(t *testing.T) {
 	}
 	avisoID := int64(res["id"].(float64))
 
-	// comentarista sem papel comenta
+	// comentarista comenta
 	rr, resC := doJSONReq(app, "POST", fmt.Sprintf("/api/avisos/%d/comentar", avisoID), map[string]any{
 		"texto": "Comentário de conta sem papel.",
 	}, ckCru)

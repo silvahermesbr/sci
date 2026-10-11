@@ -14,10 +14,21 @@ func TestPerfilUsuarioCompletoEFoto(t *testing.T) {
 	adminCookie := loginAs(t, app, "admin", "admin123")
 
 	// 1. Criar um usuário operador de teste
+	// v1.6.0 F4: operador nasce com grupo e setor (extinção do operador de grupo)
+	var gidPerfil int64
+	if err := app.st.db.QueryRow(`INSERT INTO grupos (nome) VALUES ('Grp Perfil') RETURNING id`).Scan(&gidPerfil); err != nil {
+		t.Fatalf("criar grupo: %v", err)
+	}
+	var setorPerfil int64
+	if err := app.st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor Perfil', ?, 1) RETURNING id`, gidPerfil).Scan(&setorPerfil); err != nil {
+		t.Fatalf("criar setor: %v", err)
+	}
 	_, respAdd := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
-		"login": "militar.silva",
-		"senha": "password123",
-		"papel": "operador",
+		"login":    "militar.silva",
+		"senha":    "password123",
+		"papel":    "operador",
+		"grupo_id": gidPerfil,
+		"setor_id": setorPerfil,
 	}, adminCookie)
 	uid := int64(respAdd["id"].(float64))
 
@@ -112,10 +123,17 @@ func TestCriacaoGrupoSimplificadaEAtribuicaoGerente(t *testing.T) {
 	}
 
 	// 3. Criar usuário e movê-lo para o novo grupo
+	// v1.6.0 F4: operador nasce com grupo e setor (extinção do operador de grupo)
+	var setorAlpha int64
+	if err := app.st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor Alpha', ?, 1) RETURNING id`, gid).Scan(&setorAlpha); err != nil {
+		t.Fatalf("criar setor: %v", err)
+	}
 	_, respU1 := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
-		"login": "militar.alpha1",
-		"senha": "password123",
-		"papel": "operador",
+		"login":    "militar.alpha1",
+		"senha":    "password123",
+		"papel":    "operador",
+		"grupo_id": gid,
+		"setor_id": setorAlpha,
 	}, adminCookie)
 	uid1 := int64(respU1["id"].(float64))
 
@@ -140,9 +158,11 @@ func TestCriacaoGrupoSimplificadaEAtribuicaoGerente(t *testing.T) {
 
 	// 5. Adicionar segundo usuário ao grupo e promovê-lo a Gerente
 	_, respU2 := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
-		"login": "militar.alpha2",
-		"senha": "password123",
-		"papel": "operador",
+		"login":    "militar.alpha2",
+		"senha":    "password123",
+		"papel":    "operador",
+		"grupo_id": gid,
+		"setor_id": setorAlpha,
 	}, adminCookie)
 	uid2 := int64(respU2["id"].(float64))
 
@@ -218,11 +238,17 @@ func TestGrupoEdicaoENomeSigla(t *testing.T) {
 	}, adminCookie)
 	gid3 := int64(respG3["id"].(float64))
 
+	// v1.6.0 F4: operador nasce com setor (extinção do operador de grupo)
+	var setorIso int64
+	if err := app.st.db.QueryRow(`INSERT INTO setores (nome, grupo_id, ativo) VALUES ('Setor Isolado', ?, 1) RETURNING id`, gid3).Scan(&setorIso); err != nil {
+		t.Fatalf("criar setor isolado: %v", err)
+	}
 	rrOp, respOp := doJSONReq(app, "POST", "/api/usuarios", map[string]any{
 		"login":    "operador.isolado",
 		"senha":    "password123",
 		"papel":    "operador",
 		"grupo_id": gid3,
+		"setor_id": setorIso,
 	}, adminCookie)
 	if rrOp.Code != http.StatusOK {
 		t.Fatalf("falha ao criar operador: code %d resp %v", rrOp.Code, respOp)

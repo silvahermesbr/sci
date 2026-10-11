@@ -1,4 +1,4 @@
-/* SCI — Email Interno (ex-Mensageria), Despachos & Fórum de Avisos (v1.2 Fase 2; renome/abas nested ordem Diretor 04/10)
+/* SCI — Email (renome v1.6.0; ex-Email Interno / ex-Mensageria), Despachos & Fórum de Avisos (v1.2 Fase 2; renome/abas nested ordem Diretor 04/10)
    Comunicação formal institucional, Despachos com Retorno Obrigatório,
    Anexos, Pastas e Mural Gerencial com Registro de Ciente e Auditoria. */
 (function () {
@@ -6,6 +6,19 @@
 
   function quem() {
     return (typeof ME !== 'undefined' && ME) || window.ME || null;
+  }
+
+  /* v1.6.0-contextos: título do módulo com a subordinação do CONTEXTO ativo —
+     fonte ME.grupo_nome / ME.setor_nome (mesmo critério do textoContextoUsuario
+     do core.js: conta sem grupo mostra "Global" quando admin; com setor no
+     contexto, acrescenta " / <setor>"). */
+  function tituloContexto(prefixo) {
+    const u = quem();
+    const grupo = (u && u.grupo_nome && u.grupo_nome.trim())
+      ? u.grupo_nome.trim()
+      : ((u && u.papel === 'admin') ? 'Global' : 'Sem grupo');
+    const setor = (u && u.setor_nome && u.setor_nome.trim()) ? u.setor_nome.trim() : '';
+    return (setor && grupo !== 'Global') ? `${prefixo} — ${grupo} / ${setor}` : `${prefixo} — ${grupo}`;
   }
 
   /* Formata o nome completo destacando o nome de guerra em negrito */
@@ -49,7 +62,7 @@
     app.innerHTML = `
       <div class="msg-header-topo">
         <div>
-          <h2 style="margin:0 0 4px">Email Interno</h2>
+          <h2 style="margin:0 0 4px">${esc(tituloContexto('EMAIL'))}</h2>
           <p style="color:var(--tx2);font-size:13px;margin:0">Caixa de entrada e enviadas para mensagens convencionais; aba própria de despachos, com retorno exigido e finalização pelo destinatário.</p>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -282,8 +295,11 @@
       // Onda 05/10 (caixa da função): itens possesso da função (da_funcao=true)
       // agrupados na própria seção "Caixa da Função" no TOPO — sem duplicação
       // (a API já entrega cada item uma única vez) e sem arquivamento
-      // (destID NULL; trava server-side). Cartão da função c/ estilo próprio.
-      const cartaoMsg = (m, daFuncao) => {
+      // (destID NULL; trava server-side).
+      // v1.6.0-contextos: a listagem vira TABELA (thead/tbody, padrão do
+      // restyle) — o conteúdo da era dos cards é preservado; a linha inteira
+      // abre a thread e a célula final traz o botão "abrir".
+      const linhaMsg = (m, daFuncao) => {
         const lida = daFuncao ? true : !!m.lida_em;
         const rem = m.remetente || {};
         const nomeRem = formatarNomeRemetente(rem.nome_completo, rem.nome_guerra);
@@ -307,25 +323,41 @@
         }
 
         return `
-          <div class="msg-card ${daFuncao ? 'da-funcao lida' : (lida ? 'lida' : 'nao-lida')}" data-msgid="${m.id}" style="cursor:pointer;${daFuncao ? 'border-left:3px solid var(--ambar)' : ''}">
-            <div class="msg-card-status">
-              <span class="msg-dot ${lida ? 'lida' : ''}"></span>
-            </div>
-            <div class="msg-card-corpo-prev">
-              <div class="msg-card-linha1">
-                <span class="msg-remetente-tit">${nomeRem} · <small class="msg-funcao-tag">${esc(funcaoRem)}</small></span>
-                <span class="msg-data-txt">${fmtData(m.criada_em)} ${fmtHora(m.criada_em)}</span>
-              </div>
-              <div class="msg-card-linha2" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:3px 0 5px">
-                <span class="msg-papel-sub">${esc(papelRem)}</span>
-                ${badgeDespacho}
-                ${badgeAnexos}
-              </div>
-              <div class="msg-card-assunto">${esc(m.assunto)}</div>
-            </div>
-          </div>
+          <tr class="msg-linha-tabela" data-msgid="${m.id}" style="cursor:pointer">
+            <td style="white-space:nowrap;${daFuncao ? 'box-shadow:inset 3px 0 0 var(--ambar)' : ''}">
+              <span style="display:inline-flex;align-items:center;gap:8px">
+                <span class="msg-dot ${lida ? 'lida' : ''}"></span>
+                ${badgeDespacho || `<span style="color:var(--tx3)" title="${lida ? 'Lida' : 'Não lida'}">—</span>`}
+              </span>
+            </td>
+            <td>
+              <span class="msg-remetente-tit">${nomeRem}</span>
+              <small class="msg-funcao-tag">${esc(funcaoRem)}</small>
+              ${daFuncao ? '<span class="badge-mini" style="background:var(--ambar);color:#1a1a0d;margin-left:6px" title="Possesso da função que você exerce">da função</span>' : ''}
+              <div style="font-size:11.5px;color:var(--tx3);margin-top:2px">${esc(papelRem)}</div>
+            </td>
+            <td>
+              <b style="${lida ? '' : 'color:var(--verde-claro)'}">${esc(m.assunto)}</b>
+              ${badgeAnexos ? `<div style="margin-top:3px">${badgeAnexos}</div>` : ''}
+            </td>
+            <td style="white-space:nowrap">${fmtData(m.criada_em)} ${fmtHora(m.criada_em)}</td>
+            <td><div class="gpx-acoes" style="justify-content:flex-end"><button type="button" class="acao-linha" data-abrirmsg="${m.id}" title="Abrir thread">abrir</button></div></td>
+          </tr>
         `;
       };
+
+      const tabelaMsgs = linhas => `
+        <div class="rolagem"><table>
+          <thead><tr>
+            <th style="width:230px">Status</th>
+            <th style="width:26%">De</th>
+            <th>Assunto</th>
+            <th style="white-space:nowrap">Recebido em</th>
+            <th style="text-align:right">Ações</th>
+          </tr></thead>
+          <tbody>${linhas.join('')}</tbody>
+        </table></div>
+      `;
 
       const daFuncao = msgs.filter(m => m.da_funcao);
       const pessoais = msgs.filter(m => !m.da_funcao);
@@ -336,18 +368,18 @@
             <span style="font-size:13px;font-weight:700;color:var(--ambar)">📋 Caixa da Função (${daFuncao.length})</span>
             <small style="color:var(--tx3);font-size:11px">possesso da função — permanece na troca de titular; não arquivável</small>
           </div>
-          <div class="msg-lista-wrapper" style="margin-bottom:18px">${daFuncao.map(m => cartaoMsg(m, true)).join('')}</div>
+          <div style="margin-bottom:18px">${tabelaMsgs(daFuncao.map(m => linhaMsg(m, true)))}</div>
         `;
       }
       const secaoPessoal = pessoais.length > 0
-        ? `<div class="msg-lista-wrapper">${pessoais.map(m => cartaoMsg(m, false)).join('')}</div>`
+        ? tabelaMsgs(pessoais.map(m => linhaMsg(m, false)))
         : '';
 
       cont.innerHTML = secaoFuncao + secaoPessoal;
 
-      cont.querySelectorAll('.msg-card').forEach(card => {
-        card.onclick = () => {
-          const id = +card.dataset.msgid;
+      cont.querySelectorAll('.msg-linha-tabela').forEach(tr => {
+        tr.onclick = () => {
+          const id = +tr.dataset.msgid;
           const msgObj = msgs.find(x => x.id === id);
           if (msgObj) abrirModalVisualizar(msgObj, modo);
         };
@@ -368,7 +400,10 @@
         return;
       }
 
-      const html = msgs.map(m => {
+      // v1.6.0-contextos: listagem de enviadas em TABELA (padrão do restyle) —
+      // colunas Status (andamento do despacho) / Para / Assunto / Data / Ações;
+      // a linha inteira continua abrindo a thread.
+      const linhas = msgs.map(m => {
         const dests = m.destinatarios || [];
         const destTxt = dests.map(d => `${(d.papel || '').toUpperCase()}${d.grupo_nome ? ' (' + d.grupo_nome + ')' : ''}`).join(', ') || 'Sem destinatários';
 
@@ -381,27 +416,32 @@
         }
 
         return `
-          <div class="msg-card lida" data-msgid="${m.id}" style="cursor:pointer">
-            <div class="msg-card-status">
-              <span class="msg-dot lida"></span>
-            </div>
-            <div class="msg-card-corpo-prev">
-              <div class="msg-card-linha1">
-                <span class="msg-remetente-tit">Para: <b>${esc(destTxt)}</b></span>
-                <span class="msg-data-txt">${fmtData(m.criada_em)} ${fmtHora(m.criada_em)}</span>
-              </div>
-              <div style="margin:2px 0 5px">${badgeDespacho}</div>
-              <div class="msg-card-assunto">${esc(m.assunto)}</div>
-            </div>
-          </div>
+          <tr class="msg-linha-tabela" data-msgid="${m.id}" style="cursor:pointer">
+            <td style="white-space:nowrap">${badgeDespacho || '<span style="color:var(--tx3)">—</span>'}</td>
+            <td><span class="msg-remetente-tit">Para: <b>${esc(destTxt)}</b></span></td>
+            <td><b>${esc(m.assunto)}</b></td>
+            <td style="white-space:nowrap">${fmtData(m.criada_em)} ${fmtHora(m.criada_em)}</td>
+            <td><div class="gpx-acoes" style="justify-content:flex-end"><button type="button" class="acao-linha" data-abrirmsg="${m.id}" title="Abrir thread">abrir</button></div></td>
+          </tr>
         `;
-      }).join('');
+      });
 
-      cont.innerHTML = `<div class="msg-lista-wrapper">${html}</div>`;
+      cont.innerHTML = `
+        <div class="rolagem"><table>
+          <thead><tr>
+            <th style="width:260px">Status</th>
+            <th style="width:26%">Para</th>
+            <th>Assunto</th>
+            <th style="white-space:nowrap">Enviado em</th>
+            <th style="text-align:right">Ações</th>
+          </tr></thead>
+          <tbody>${linhas.join('')}</tbody>
+        </table></div>
+      `;
 
-      cont.querySelectorAll('.msg-card').forEach(card => {
-        card.onclick = () => {
-          const id = +card.dataset.msgid;
+      cont.querySelectorAll('.msg-linha-tabela').forEach(tr => {
+        tr.onclick = () => {
+          const id = +tr.dataset.msgid;
           const msgObj = msgs.find(x => x.id === id);
           if (msgObj) abrirModalVisualizar(msgObj, soDespachos ? 'despachos_enviadas' : 'enviadas');
         };
@@ -1120,7 +1160,7 @@
       }
 
       const totalPendencias = count + despachos;
-      const txt = totalPendencias === 1 ? '1 pendência no Email Interno' : `${totalPendencias} mensagens/despachos pendentes`;
+      const txt = totalPendencias === 1 ? '1 pendência no Email' : `${totalPendencias} mensagens/despachos pendentes`;
       // Notificação de AVISOS do grupo (ordem Diretor 07/10): aviso publicado =
       // todo usuário recebe notificação. Fonte: /api/notificacoes (avisos_pendentes,
       // já existente) somada ao badge do sino — sem duplicar o que já está no inbox.
