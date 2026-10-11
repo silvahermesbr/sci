@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -465,31 +466,119 @@ func TestMaterialBlindagem_CategoriasEscopo(t *testing.T) {
 	}
 }
 
-// TestMaterialBlindagem_ChefeSetorGate403 testa a remoção de chefe_setor de authMaterial:
-// - Chefe de setor tentando acessar qualquer rota de material recebe 403
-func TestMaterialBlindagem_ChefeSetorGate403(t *testing.T) {
+// TestMaterialBlindagem_ChefeSetorRecorte testa a doutrina de NÍVEL da onda
+// v1.6.0-contextos (o chefe de setor ENTROU no authMaterial com setor —
+// checkpoint do comando; o antigo "chefe 403 no material" virou acesso
+// RECORTE):
+//   - leituras do módulo → 200 com recorte (só o próprio setor na lista);
+//   - save do próprio setor → 200 (nasce no próprio, corpo com setor alheio
+//     é ignorado); item de outro setor não é alcançado (404 honesto do P1-2);
+//   - Del/baixa patrimonial → 403 "exclusão e baixa de material é ato do
+//     gerente ou encarregado de material" (mesmo no próprio setor);
+//   - designação de responsáveis segue 403 (gerente/enc_material/admin);
+//   - gerente não regride: exclui item de qualquer setor (200).
+func TestMaterialBlindagem_ChefeSetorRecorte(t *testing.T) {
 	app, st, cleanup := setupTestApp(t)
 	defer cleanup()
 
-	_, _, _, _, _, _, _, chefeACk := setupPersonasMaterial(t, app, st)
+	_, gidA, gerACk, _, _, _, _, chefeACk := setupPersonasMaterial(t, app, st)
 
-	rotas := []struct {
-		metodo string
-		path   string
-	}{
+	// Materializar o COMANDO do chefe (fonte única chefe_setores, v1.5.4-D1) —
+	// o setup cria papel + usuarios.setor_id; a linha de comando é a doutrina.
+	var idChefe, setorChefe int64
+	if err := st.db.QueryRow(`SELECT id, setor_id FROM usuarios WHERE login = 'chefe_mat_a'`).Scan(&idChefe, &setorChefe); err != nil {
+		t.Fatalf("ler chefe_mat_a: %v", err)
+	}
+	materializaComandoSetor(t, st, idChefe, gidA, setorChefe)
+
+	// Item em OUTRO setor do MESMO grupo (fora do recorte do chefe)
+	var outroSetor int64
+	if err := st.db.QueryRow(`INSERT INTO setores (nome, grupo_id) VALUES ('Setor Blindagem Outro', ?) RETURNING id`, gidA).Scan(&outroSetor); err != nil {
+		t.Fatalf("criar setor alheio: %v", err)
+	}
+	var itemAlheio int64
+	if err := st.db.QueryRow(`INSERT INTO material_itens (grupo_id, setor_id, nome, codigo_patrimonio, status, quantidade) VALUES (?, ?, 'Fuzil Setor Outro', 'BLD-OUT-1', 'disponivel', 1) RETURNING id`, gidA, outroSetor).Scan(&itemAlheio); err != nil {
+		t.Fatalf("criar item alheio: %v", err)
+	}
+
+	// 1. Leituras → 200 (antes eram 403 no gate)
+	for _, r := range []struct{ metodo, path string }{
 		{"GET", "/api/material/itens"},
 		{"GET", "/api/material/cautelas"},
 		{"GET", "/api/material/conferencias"},
 		{"GET", "/api/material/categorias"},
-		{"POST", "/api/material/itens"},
-		{"POST", "/api/material/cautelar"},
-		{"POST", "/api/material/responsaveis"},
+	} {
+		rr, _ := doJSONReq(app, r.metodo, r.path, nil, chefeACk)
+		if rr.Code != http.StatusOK {
+			t.Errorf("chefe_setor em %s %s: esperado 200 (recorte), veio %d", r.metodo, r.path, rr.Code)
+		}
 	}
 
-	for _, r := range rotas {
-		rr, _ := doJSONReq(app, r.metodo, r.path, nil, chefeACk)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("chefe_setor em %s %s: esperado 403, veio %d", r.metodo, r.path, rr.Code)
+	// 2. Recorte na lista: só o próprio setor (vazio aqui — nenhum item no setor
+	// do chefe ainda); o item alheio NUNCA aparece.
+	rrList, resList := doJSONReq(app, "GET", "/api/material/itens", nil, chefeACk)
+	if rrList.Code != http.StatusOK {
+		t.Fatalf("chefe listar itens: esperado 200, veio %d", rrList.Code)
+	}
+	listaChefe, _ := resList["itens"].([]any)
+	for _, it := range listaChefe {
+		if m, ok := it.(map[string]any); ok && int64(m["id"].(float64)) == itemAlheio {
+			t.Fatalf("chefe NÃO devia ver item de outro setor (%v)", m["id"])
 		}
+	}
+
+	// 3. Save do próprio setor → 200 (corpo com setor alheio é ignorado)
+	rrSave, resSave := doJSONReq(app, "POST", "/api/material/itens", map[string]any{
+		"nome":              "Item do Chefe Blindagem",
+		"codigo_patrimonio": "BLD-CH-1",
+		"setor_id":          outroSetor,
+	}, chefeACk)
+	if rrSave.Code != http.StatusOK {
+		t.Fatalf("chefe criar item: esperado 200, veio %d (%v)", rrSave.Code, resSave)
+	}
+	itemChefe := int64(resSave["id"].(float64))
+	var setorNascido *int64
+	if err := st.db.QueryRow(`SELECT setor_id FROM material_itens WHERE id = ?`, itemChefe).Scan(&setorNascido); err != nil || setorNascido == nil || *setorNascido != setorChefe {
+		t.Fatalf("item do chefe devia nascer no próprio setor (%d), veio %v (%v)", setorChefe, setorNascido, err)
+	}
+	// e a lista agora mostra o próprio (recorte positivo)
+	rrList2, resList2 := doJSONReq(app, "GET", "/api/material/itens", nil, chefeACk)
+	if rrList2.Code != http.StatusOK {
+		t.Fatalf("chefe listar itens pós-save: esperado 200, veio %d", rrList2.Code)
+	}
+	viuProprio := false
+	listaChefe2, _ := resList2["itens"].([]any)
+	for _, it := range listaChefe2 {
+		if m, ok := it.(map[string]any); ok {
+			if int64(m["id"].(float64)) == itemChefe {
+				viuProprio = true
+			}
+			if int64(m["id"].(float64)) == itemAlheio {
+				t.Fatalf("chefe NÃO devia ver item de outro setor (%v)", m["id"])
+			}
+		}
+	}
+	if !viuProprio {
+		t.Fatalf("chefe devia ver o item do próprio setor (%d) na lista", itemChefe)
+	}
+
+	// 4. Del / baixa patrimonial → 403 com a mensagem da doutrina
+	rrDel, _ := doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d", itemChefe), nil, chefeACk)
+	if rrDel.Code != http.StatusForbidden || !strings.Contains(rrDel.Body.String(), "exclusão e baixa de material é ato do gerente ou encarregado de material") {
+		t.Fatalf("chefe excluir próprio: esperado 403 da doutrina, veio %d (%s)", rrDel.Code, rrDel.Body.String())
+	}
+	if rrB, _ := doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d?modo=baixar", itemChefe), nil, chefeACk); rrB.Code != http.StatusForbidden {
+		t.Fatalf("chefe baixar próprio: esperado 403, veio %d", rrB.Code)
+	}
+
+	// 5. Designação de responsáveis segue fechada (porta de papel do handler)
+	rrResp, _ := doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": gidA, "encarregado_id": 0}, chefeACk)
+	if rrResp.Code != http.StatusForbidden {
+		t.Fatalf("chefe salvar responsaveis: esperado 403, veio %d", rrResp.Code)
+	}
+
+	// 6. Não-regressão do gerente: exclui item de qualquer setor (200)
+	if rrGer, _ := doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d", itemChefe), nil, gerACk); rrGer.Code != http.StatusOK {
+		t.Fatalf("gerente excluir item do setor do chefe: esperado 200, veio %d", rrGer.Code)
 	}
 }

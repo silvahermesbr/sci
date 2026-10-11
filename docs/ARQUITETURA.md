@@ -255,7 +255,7 @@ troca no dropdown e a matriz re-avalia. `sem_função` = conta SEM linha em `usu
 |---|---|---|---|---|---|---|---|
 | **Conferência** `#/hoje` `#/conferencia` | ✗ (leitura vazia) | ✓ total (grupo) | só próprio setor (lança/inicia/marca/conclui/reabre/pré-fecha); leitura cortada; fechar ✗ | setor comandado (`setorAtivoComandado`) | total (régua gerente) | ✗ TUDO (nem leitura — `confLeituraAuth`) | ✗ 403 |
 | **Pessoal** `#/pessoal` | ✗ (só via admin p/ catálogo) | ✓ | ✗ | ✗ | ✓ (efetivo/funções/setores/contas, cria operador C/SETOR e sem_funcao) | ✗ | ✗ 403 |
-| **Material** `#/material` | ✗ | ✓ grupo | ✓ SÓ próprio setor (itens/cautelas/confs/PDFs); categoria leitura; sem setor → 403 | ✗ | ✗ | ✓ grupo | ✗ 403 |
+| **Material** `#/material` | ✗ | ✓ grupo (cadastra/edita/exclui/baixa) | ✓ só cautela/descautela do PRÓPRIO setor (save/del 403; sem setor → 403) | ✓ PRÓPRIO setor: adiciona/edita + cautela/descautela; excluir/baixar ✗ (ato do ger/enc) | ✗ | ✓ grupo | ✗ 403 |
 | **Grupos/gerenciar** `#/grupos` | ✗ (área admin separada) | ✓ próprio | ✗ | ✗ | ✗ | ✗ | ✗ 403 |
 | **Admin/config** `#/admin` `#/configuracoes` | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **Relatórios** `#/relatorios` | ✓ global | ✓ árvore | ✓ (exige setor; recorte grupo — pendência M1) | ✗ (front) | ✓ | ✗ | ✗ 403 |
@@ -414,31 +414,46 @@ Arquivo: `server_material.go` (+PDFs `relatorio.go`, watchdog `server_catalogo.g
 v14/16/27/28/29/36/41). Tabelas: `material_categorias/itens/cautelas/cautela_anexos/tipos/classes/
 viaturas/item_anexos/item_comentarios/conferencias/conferencia_itens`, `grupo_setor_responsaveis`.
 
-`authMaterial` (server_material.go:2571): MODO_RESERVA→423; sessão; papel ∈ {gerente, operador} OU
-**CONTEXTO `enc_material` ATIVO** (v1.6.0-F2 — `ehEncarregadoDeMaterial` = u.Papel) → passa;
-**admin 403**; **v1.6.0-F4: operador sem setor 403** (`exigeSetorOperador` dentro do middleware).
-**v1.6.0-F7 — RECORTE DE SETOR do operador (onda_v160_material_setor.go):** `setorEscopoMaterial`
-(:34) devolve nil (escopo GRUPO) para gerente/enc_material e o setor de atuação para o operador
-(`setorDoUsuario`); `recortaSetorMaterial` (:48) RECUSA operador sem setor (403 — mesma mensagem do
-guarda central; chamar ANTES de abrir tx) e `setorNoCorte` (:60) exige o objeto (item/cautela — setor
-do ITEM, não tem setor próprio — /conferência de material) no próprio setor, **setor NULL = Carga
-Geral, FORA do recorte**. Leituras filtram no SQL, escritas checam o objeto na/antes da tx; o
-`iniciar` de conferência de material FORÇA o setor do operador (ignora o do corpo); bipagem/fechamento
-e PDFs (pronto/inventário/recibo/etiquetas) idem. **Categorias:** leitura para todos do módulo;
+`authMaterial` (server_material.go:2597): MODO_RESERVA→423; sessão; papel ∈ {gerente, operador,
+chefe_setor} OU **CONTEXTO `enc_material` ATIVO** (v1.6.0-F2 — `ehEncarregadoDeMaterial` = u.Papel) →
+passa; **admin 403**; **v1.6.0-F4: operador sem setor 403** (`exigeSetorOperador` dentro do
+middleware); **v1.6.0-contextos: chefe_setor SEM setor 403** (mesma mensagem do guarda central).
+**Doutrina de NÍVEL do módulo (v1.6.0-contextos — MATERIAL por nível de acesso):**
+gerente/CONTEXTO enc_material visualizam e gerem TODO o grupo (status quo mantido); **chefe_setor**
+visualiza + ADICIONA/CRIA/ATUALIZA o material do PRÓPRIO setor (visto a nível grupo pelo enc) e
+NÃO exclui nem dá baixa — 403 "exclusão e baixa de material é ato do gerente ou encarregado de
+material" no `hMaterialItensDel`, que cobre TAMBÉM a baixa patrimonial (ela é o ramo
+`?modo=baixar` do DELETE de itens; não existe handler de baixa separado); **operador** APENAS
+cautelar e descautelar (save/del 403 "operador não tem permissão para cadastrar ou editar
+materiais"/"...excluir ou baixar..."); a cautela/descautela do chefe MANTIDAS com recorte do
+próprio setor (interpretação registrada em `hMaterialCautelar`/`hMaterialDevolver`).
+**v1.6.0-F7 — RECORTE DE SETOR do operador E do chefe (onda_v160_material_setor.go):**
+`setorEscopoMaterial` (:34) devolve nil (escopo GRUPO) para gerente/enc_material e o setor de
+atuação para operador/chefe_setor (`setorDoUsuario`); `recortaSetorMaterial` (:48) RECUSA
+operador/chefe sem setor (403 — mesma mensagem do guarda central; chamar ANTES de abrir tx) e
+`setorNoCorte` (:60) exige o objeto (item/cautela — setor do ITEM, não tem setor próprio —
+/conferência de material) no próprio setor, **setor NULL = Carga Geral, FORA do recorte**.
+Leituras filtram no SQL, escritas checam o objeto na/antes da tx; o `iniciar` de conferência de
+material FORÇA o setor do operador/chefe (ignora o do corpo); bipagem/fechamento e PDFs
+(pronto/inventário/recibo/etiquetas) idem. **Termos de exibição (v1.6.0-contextos):** rótulos,
+mensagens e relatórios impressos dizem **Cautelar/Descautelado/Cautelado** — o valor gravado
+`status='acautelado'` é ENUM (CHECK store.go:678/2609) e `data_devolucao`/`obs_devolucao`/
+`status='devolvida'` são esquema/valores persistidos: NUNCA renomear identificadores, só o texto
+humano. **Categorias:** leitura para todos do módulo;
 ESCRITA (add/del) só gerente/CONTEXTO enc_material (:1231/:1293 — o catálogo é da reserva, dimensão
-de grupo). Ciclo do item: `disponivel→acautelado→(devolução)→…manutencao/baixado` (CHECK store.go:795);
-sensibilidade `controlado` força qtd=1+patrimônio; UNIQUE(grupo, patrimônio); devolução parcial splita
+de grupo). Ciclo do item: `disponivel→acautelado→(descautela)→…manutencao/baixado` (CHECK store.go:795);
+sensibilidade `controlado` força qtd=1+patrimônio; UNIQUE(grupo, patrimônio); descautela parcial splita
 linha; **1 conferência aberta/grupo/setor/dia** (índice parcial v41); watchdog SLA 30min→webhook;
 anexos base64 ≤800KB com allowlist MIME+`attachment`+nosniff (o modelo correto — replicar no Drive).
 
 | Método | Rota | Handler (sm:linha) | Guarda | Escopo | W | Notas |
 |---|---|---|---|---|---|---|
 | GET/POST/DELETE | /api/material/categorias[/{id}] | :1198/:1229/:1291 | authMaterial | leitura ok; **escrita (F7) só gerente/CONTEXTO enc_material** (:1229/:1291); escrita -1: 403 (v1.5.4-A); global só admin | material_categorias | em uso→desativa |
-| GET/POST/DELETE | /api/material/itens[/{id}] | :1340/:1483/:1686 | authMaterial | -1: 403 (v1.5.4-A); **operador: SÓ o próprio setor (F7 — lista/grava/edita/exclui; setor do corpo é IGNORADO e forçado ao dele :1527; item de outro setor 403)** | itens, viaturas | ?status/?categoria/?garagem; exclusão atômica tx |
+| GET/POST/DELETE | /api/material/itens[/{id}] | :1340/:1483/:1691 | authMaterial | -1: 403 (v1.5.4-A); **níveis (v1.6.0-contextos): operador SÓ cautela/descautela — save/del 403; chefe_setor grava/edita o PRÓPRIO setor (F7 — setor do corpo IGNORADO e forçado ao dele; item de outro setor 404 honesto P1-2); Del (e baixa `?modo=baixar`) só gerente/enc_material — chefe/operador 403** | itens, viaturas | ?status/?categoria/?garagem; exclusão atômica tx |
 | GET | /api/material/itens/{id}/qr | :2425 | authMaterial | -1: 403 (v1.5.4-A); **F7: item do próprio setor** | — | `sci://m:{id}:{pat}` |
 | GET | /api/material/etiquetas-lote.pdf | :2480 | authMaterial | -1: 403 (v1.5.4-A); **F7: ids ∩ setor do operador** | — | 10/folha A4 |
 | GET | /api/material/inventario/pdf | :1108 | **authMaterial** (v1.5.4-D2/R-2) | exigeEscopo; -1: 403; **F7: operador sai só com o próprio setor** | — | reservaAtivo→423 |
-| POST | /api/material/cautelar · devolver | :1786 · :1942 | authMaterial | -1: 403 (v1.5.4-A); **F7: item do PRÓPRIO setor (query na tx)** | cautelas, itens | tx; saldo; parcial split |
+| POST | /api/material/cautelar · devolver | :1806 · :1965 | authMaterial | -1: 403 (v1.5.4-A); **F7: item do PRÓPRIO setor (query na tx); chefe_setor MANTÉM cautela/descautela do próprio setor (v1.6.0-contextos — interpretação no handler); operador idem** | cautelas, itens | tx; saldo; parcial split |
 | GET | /api/material/cautelas | :2067 | authMaterial | -1: 403 (v1.5.4-A); **F7: recorte pelo setor do ITEM da cautela** | — | LIMIT 200 |
 | GET | /api/material/cautelas/{id}/recibo.pdf | :1030 | **authMaterial** (v1.5.4-D2/R-2) | exigeEscopo + cautela no escopo; -1: 403; **F7: recibo só de cautela do próprio setor** | — | 2 vias; auditoria |
 | POST/GET | …/cautelas/{id}/anexos · /api/material/anexos/{id} (GET/DEL) | :2168/:2265/:2318/:2385 | authMaterial+cautelaNoEscopo | -1: 403 (v1.5.4-A); **F7: recorte pelo setor do item da cautela** | cautela_anexos | allowlist MIME |
@@ -450,8 +465,10 @@ anexos base64 ≤800KB com allowlist MIME+`attachment`+nosniff (o modelo correto
 **Se você alterar, verifique também:** os 4 geradores de PDF (relatorio.go:861/1095/1231/1709);
 watchdog+sino (`server_catalogo.go:560`, `server_admin.go:350`); ficha pessoal (cautelas ativas,
 server_pessoal.go:527); NUKE (⚠ não apaga material_conferencias → FK aborta, R-6); etiquetas
-(material_tipos/classes); front views_material.js + gates core.js:1147; **recorte de setor do
-operador (`setorEscopoMaterial`/`recortaSetorMaterial` — TOQUE OS DOIS LADOS, porta de papel +
+(material_tipos/classes); front views_material.js (controles por NÍVEL: operador só
+cautela/descautela; chefe sem excluir/baixar — esconde-controle, o 403 nunca é a experiência;
+termos Cautelar/Descautelar só em TEXTO) + gates core.js:1305; **recorte de setor do
+operador/chefe (`setorEscopoMaterial`/`recortaSetorMaterial` — TOQUE OS DOIS LADOS, porta de papel +
 recorte por handler)**; tests onda_material_*,
 v1_5_material_*, v15_cia_fixes, fix_encarregado(±v367), regressao_escalas_material, onda_v154_d2_test,
 **onda_v160_f7_test**.
@@ -748,7 +765,7 @@ Prioridade de correção e plano: ver [`ROADMAP.md`](ROADMAP.md) v1.5.4/v1.5.5. 
 | R-29 | **GET /api/material/conferencias descarta conferências ABERTAS**: o Scan de `fechada_em` (string) falha com NULL e a linha é engolida no loop (`if rows.Scan(...) == nil`) — só conferências FECHADAS listam; o front do material hoje recarrega a lista para mostrar a aberta (depende de outro caminho). Provado no F7 (onda_v160_f7_test) | server_material.go:498 (hMaterialConferenciasList) | P2 |
 | R-30 | **GET /api/conferencias/hoje (PLURAL) não existe**: não bate com `GET /api/conferencias` (lista) nem com `/api/conferencia/{id}` — cai no catch-all do SPA e devolve 200 com HTML. Testes antigos o usam como prova fraca (200 sem corpo JSON) — trocar por `/api/conferencia/hoje` | rotas server_conferencia.go:1779-1802; onda_f3_e2e_personas_test.go:112 | P2 (teste) |
 | R-31 | **Bloco de criação do encarregado em views_pessoal.js é código morto**: `#encCriar` nunca é renderizado (a view não emite o botão); SE reativado, precisa enviar `setor_id` (F4 — o servidor recusa operador sem setor com 400) e tratar `sem_funcao` | web/views_pessoal.js:290 | P3 |
-| R-32 | **`ui_helpers.js` (código morto, nunca carregado) tem a 3ª cópia de `rotuloPapel`, DIVERGENTE**: não conhece `enc_pessoal`/`enc_material`/`sem_funcao` (mostraria "OPERADOR"). Higiene do M8: carregar e apagar as cópias, ou deletar o arquivo | web/ui_helpers.js:12 | P3 (higiene M8) |
+| R-32 | ~~**`ui_helpers.js` (código morto, nunca carregado) tem a 3ª cópia de `rotuloPapel`, DIVERGENTE**: não conhece `enc_pessoal`/`enc_material`/`sem_funcao` (mostraria "OPERADOR").~~ **ALINHADA na v1.6.0-contextos (checkpoint do comando)**: a 3ª cópia agora conhece `chefe_setor`/`encarregado`/`enc_pessoal`/`enc_material`/`sem_funcao` — mesmo vocabulário da cópia de core.js. Residual de higiene M8 (baixar o arquivo de vez ou apagar as cópias) segue aberto como tarefa de limpeza, não como divergência | web/ui_helpers.js:12 | P3 (higiene M8) | ✅ |
 | R-33 | ~~**Furo: CONTEXTO enc_material lia a conferência inteira** (hoje/estado/lista/{id}/stream com `a.auth(false)` pelado — sem poder de escrita, lia o efetivo do grupo)~~ **FECHADO na v1.6.0-F6**: porta de papel `confLeituraAuth` (server_conferencia.go:1749) nas leituras — `papelConfAutorizado` + admin (leitura vazia); **enc_material 403 nem leitura**. Regressão: `onda_v160_f6_test.go` | server_conferencia.go | ✅ |
 | R-34 | ~~**Furo: operador concluí/reabria/lia pré-fechamento de QUALQUER setor do grupo** (confMarcarAuth só cobra papel)~~ **FECHADO na v1.6.0-F7**: ramo do operador espelhando o do chefe em concluir (:702), reabrir (:780) e pré-fechamento (onda_0910:240) — só o setor de CADASTRO (`setorDoUsuario`); sem setor → 403 (mensagem única da onda). Regressão: `onda_v160_f7_test.go` | server_conferencia.go; onda_0910_conf_antiguidade.go | ✅ |
 | R-35 | ~~**Furo: módulo Material sem recorte de setor para o operador** (authMaterial cobra papel e o operador via/editava/apagava/cautelava itens, cautelas, conferências e PDFs do grupo INTEIRO)~~ **FECHADO na v1.6.0-F7**: `setorEscopoMaterial`/`recortaSetorMaterial`/`setorNoCorte` (onda_v160_material_setor.go) aplicam o próprio setor em leituras/escritas/PDFs/conferência de material (Carga Geral — setor NULL — fora do recorte); iniciar força o setor; categorias: escrita ger/enc. Regressão: `onda_v160_f7_test.go` | server_material.go; onda_v160_material_setor.go | ✅ |

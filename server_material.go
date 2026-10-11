@@ -1717,6 +1717,16 @@ func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
 		jsonErro(w, http.StatusForbidden, "operador não tem permissão para excluir ou baixar materiais")
 		return
 	}
+	// v1.6.0 onda contextos — doutrina de NÍVEL: ao chefe de setor o comando
+	// concedeu ADICIONAR/CRIAR/ATUALIZAR o material do próprio setor, NÃO
+	// destruir. Exclusão definitiva E baixa patrimonial (modo=baixar, logo
+	// ABAIXO neste mesmo handler) são ato do gerente ou do encarregado de
+	// material — o 403 no topo cobre os dois caminhos (não há handler de baixa
+	// separado; a baixa é o ramo `modo=baixar` daqui).
+	if u.Papel == "chefe_setor" {
+		jsonErro(w, http.StatusForbidden, "exclusão e baixa de material é ato do gerente ou encarregado de material")
+		return
+	}
 	esc, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -1737,7 +1747,7 @@ func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
 	// Modo "baixar" (desincorporar/aposentar patrimônio mantendo histórico)
 	if modo == "baixar" {
 		if itemStatus == "acautelado" {
-			jsonErro(w, http.StatusBadRequest, "Não é possível baixar um item acautelado. Realize a devolução primeiro.")
+			jsonErro(w, http.StatusBadRequest, "Não é possível baixar um item cautelado. Realize a descautelação primeiro.")
 			return
 		}
 		_, err = a.st.db.Exec(`UPDATE material_itens SET status = 'baixado' WHERE id = ?`, id)
@@ -1752,7 +1762,7 @@ func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
 
 	// Exclusão definitiva (remove item, histórico de cautelas e anexos em transação atômica)
 	if itemStatus == "acautelado" {
-		jsonErro(w, http.StatusBadRequest, "Não é possível excluir um item que está acautelado no momento. Realize a devolução primeiro.")
+		jsonErro(w, http.StatusBadRequest, "Não é possível excluir um item que está cautelado no momento. Realize a descautelação primeiro.")
 		return
 	}
 
@@ -1797,6 +1807,9 @@ func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	// v1.6.0 F7: recorte de setor do operador — resolvido ANTES da tx (o recorte
 	// consulta o pool; pool=1 com tx aberta é deadlock, lição bd6a7af).
+	// Interpretação registrada (onda contextos): chefe de setor MANTÉM acesso à
+	// cautela — opera a cautela do PRÓPRIO setor (recortaSetorMaterial já o
+	// recorta e recusa sem setor); exclusão/baixa não (hMaterialItensDel 403).
 	corte, ok := recortaSetorMaterial(w, a, u)
 	if !ok {
 		return
@@ -1952,6 +1965,9 @@ func (a *App) hMaterialCautelar(w http.ResponseWriter, r *http.Request) {
 func (a *App) hMaterialDevolver(w http.ResponseWriter, r *http.Request) {
 	u := usuarioDoCtx(r)
 	// v1.6.0 F7: recorte de setor do operador — resolvido ANTES da tx (pool=1).
+	// Interpretação registrada (onda contextos): chefe de setor MANTÉM acesso à
+	// descautela (devolução) — só sobre cautelas do PRÓPRIO setor (setor do
+	// ITEM da cautela, conferido abaixo); exclusão/baixa não (hMaterialItensDel).
 	corte, ok := recortaSetorMaterial(w, a, u)
 	if !ok {
 		return

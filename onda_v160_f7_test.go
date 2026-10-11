@@ -3,21 +3,31 @@ package main
 // onda_v160_f7_test.go — v1.6.0 Fase 7 ("setor em tudo" para o OPERADOR):
 // material e conferência recortados ao PRÓPRIO setor do contexto operador.
 //
+// Onda v1.6.0-contextos (doutrina de NÍVEL do comando): o teste do C provava
+// operador CRUANDO item no próprio setor (200) — INVERTIDO: operador SÓ
+// cautela/descautela (save/del 403); chefe de setor ADICIONA/EDITA o próprio
+// setor e NÃO exclui/baixa; gerente/enc_material seguem de grupo.
+//
 // Matriz por persona (padrão da casa: setupTestApp + loginAs + doJSONReq;
 // positivo E negativo):
-//   - operador (com setor): lista/cautela/conferência/PDF só do PRÓPRIO setor
-//     (positivo 200 no próprio + prova de AUSÊNCIA do alheio na lista);
-//     escritas em item alheio → 403/404; iniciar de material com setor alheio
-//     no CORPO usa o PRÓPRIO setor (200 com setor_id efetivo devolvido);
-//     conferência de pessoal: concluir/reabrir/pré-fechar setor alheio → 403,
-//     próprio → 200.
+//   - operador (com setor): lista/cautela/descautela/conferência/PDF só do
+//     PRÓPRIO setor (positivo 200 no próprio + prova de AUSÊNCIA do alheio na
+//     lista); cadastrar/editar/excluir/baixar item → 403 (ANTES do recorte —
+//     o papel veta primeiro); iniciar de material com setor alheio no CORPO
+//     usa o PRÓPRIO setor (200 com setor_id efetivo devolvido); conferência
+//     de pessoal: concluir/reabrir/pré-fechar setor alheio → 403, próprio → 200.
 //   - operador SEM setor → 403 "conta sem setor atribuído — solicite ao
 //     gerente/encarregado" nas rotas do módulo (a MESMA mensagem do guarda
 //     central do Agente B; as camadas coexistem na integração). Escopo de
 //     grupo segue onde a onda manteve (responsáveis).
+//   - chefe_setor (comando materializado em chefe_setores + setor de cadastro):
+//     save próprio setor 200 (nascendo SEMPRE no próprio, corpo ignorado),
+//     item de outro setor não é alcançado (404 honesto do P1-2), Del/baixa
+//     403 "exclusão e baixa de material é ato do gerente ou encarregado de
+//     material", cautela/descautela do próprio setor 200 (mantida).
 //   - gerente/enc_material seguem GRUPO (vêem o que o operador não vê; editam
-//     item de qualquer setor); escrita de categorias vira gerente/enc_material
-//     (catálogo de grupo) com leitura aberta.
+//     e excluem item de qualquer setor); escrita de categorias vira
+//     gerente/enc_material (catálogo de grupo) com leitura aberta.
 
 import (
 	"encoding/base64"
@@ -236,32 +246,35 @@ func TestF7MaterialOperadorRecortePorSetor(t *testing.T) {
 		t.Fatalf("op devia listar SÓ a conferência do próprio setor: vistos=%v (s1=%d s2=%d)", got, confS1, confS2)
 	}
 
-	// ---------- ESCRITAS DE ITEM ----------
-	// criar com setor ALHEIO no corpo → nasce no PRÓPRIO (força; ignora corpo)
-	rr, res = doJSONReq(app, "POST", "/api/material/itens", map[string]any{"nome": "Item Novo Op", "codigo_patrimonio": "F7-OP-1", "setor_id": c.s2}, c.ckOp)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("op criar item (corpo setor alheio): esperado 200, veio %d (%v)", rr.Code, res)
+	// ---------- ESCRITAS DE ITEM (doutrina de NÍVEL: operador SÓ cautela) ----------
+	// O teste da fase 7 provava operador CRUANDO item no próprio setor (200);
+	// a doutrina do comando INVERTEU: operador não cadastra nem edita — o 403
+	// do checkpoint vem ANTES do recorte (o papel veta, depois o escopo fala).
+	rr, _ = doJSONReq(app, "POST", "/api/material/itens", map[string]any{"nome": "Item Novo Op", "codigo_patrimonio": "F7-OP-1", "setor_id": c.s2}, c.ckOp)
+	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "operador não tem permissão para cadastrar ou editar materiais") {
+		t.Fatalf("op criar item: esperado 403 com a mensagem do checkpoint, veio %d (%s)", rr.Code, rr.Body.String())
 	}
-	novoID := int64(res["id"].(float64))
-	var novoSetor *int64
-	if err := st.db.QueryRow(`SELECT setor_id FROM material_itens WHERE id = ?`, novoID).Scan(&novoSetor); err != nil || novoSetor == nil || *novoSetor != c.s1 {
-		t.Fatalf("item do operador devia nascer no setor próprio (%d), veio %v (%v)", c.s1, novoSetor, err)
-	}
-	// editar item ALHEIO → 404 (WHERE não bate; 404 honesto do P1-2)
+	// editar item ALHEIO e o PRÓPRIO → 403 (mesma régua; sem exceção ao próprio)
 	rr, _ = doJSONReq(app, "POST", "/api/material/itens", map[string]any{"id": c.itemS2, "nome": "Hackeado", "codigo_patrimonio": "F7-0002"}, c.ckOp)
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("op editar item alheio: esperado 404, veio %d", rr.Code)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("op editar item alheio: esperado 403, veio %d", rr.Code)
 	}
-	// editar o PRÓPRIO → 200 (corpo completo: a edição é substituição integral)
-	if rr, res = doJSONReq(app, "POST", "/api/material/itens", map[string]any{"id": c.itemS1, "nome": "Fuzil Alpha Editado", "codigo_patrimonio": "F7-0001", "quantidade": 5}, c.ckOp); rr.Code != http.StatusOK {
-		t.Fatalf("op editar próprio: esperado 200, veio %d (%v)", rr.Code, res)
+	rr, _ = doJSONReq(app, "POST", "/api/material/itens", map[string]any{"id": c.itemS1, "nome": "Fuzil Alpha Editado", "codigo_patrimonio": "F7-0001", "quantidade": 5}, c.ckOp)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("op editar próprio: esperado 403, veio %d", rr.Code)
 	}
-	// excluir item ALHEIO / Carga Geral → 403
+	// excluir/baixar: ALHEIO, Carga Geral E PRÓPRIO → 403 (só cautela/descautela)
 	if rr, _ = doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d", c.itemS2), nil, c.ckOp); rr.Code != http.StatusForbidden {
 		t.Fatalf("op excluir item alheio: esperado 403, veio %d", rr.Code)
 	}
 	if rr, _ = doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d", c.itemG), nil, c.ckOp); rr.Code != http.StatusForbidden {
 		t.Fatalf("op excluir carga geral: esperado 403, veio %d", rr.Code)
+	}
+	if rr, _ = doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d?modo=baixar", c.itemS1), nil, c.ckOp); rr.Code != http.StatusForbidden {
+		t.Fatalf("op baixar próprio: esperado 403, veio %d", rr.Code)
+	}
+	if rr, _ = doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d", c.itemS1), nil, c.ckOp); rr.Code != http.StatusForbidden {
+		t.Fatalf("op excluir próprio: esperado 403, veio %d", rr.Code)
 	}
 
 	// ---------- CAUTELAR / DEVOLVER ----------
@@ -487,5 +500,93 @@ func TestF7ConferenciaOperadorSetorProprio(t *testing.T) {
 	// não-regressão do gerente (grupo inteiro)
 	if rr, _ := doJSONReq(app, "POST", fmt.Sprintf("/api/conferencia/%d/setor/%d/concluir", cid, sB), nil, ckGer); rr.Code != http.StatusOK {
 		t.Fatalf("gerente concluir setor alheio a si: esperado 200, veio %d", rr.Code)
+	}
+}
+
+// TestF7MaterialChefeNivel: doutrina de NÍVEL (onda v1.6.0-contextos) — o
+// chefe de setor ADICIONA/CRIA/ATUALIZA o material do PRÓPRIO setor (visível a
+// nível grupo pelo enc/gerente) e NÃO exclui nem baixa (ato do gerente ou
+// encarregado de material); cautela/descautela do próprio setor MANTIDAS
+// (interpretação registrada no hMaterialCautelar/hMaterialDevolver).
+func TestF7MaterialChefeNivel(t *testing.T) {
+	app, st, cleanup := setupTestApp(t)
+	defer cleanup()
+	c := f7SetupMaterial(t, app, st)
+
+	// chefe comandando o setor s1: papel + setor de cadastro + linha de COMANDO
+	// em chefe_setores (fonte única da chefia, v1.5.4-D1/R-12).
+	criaUsuarioTeste(t, st, "f7_chefe", "senha-chefe", "chefe_setor")
+	if _, err := st.db.Exec(`UPDATE usuarios SET grupo_id = ?, setor_id = ? WHERE login = 'f7_chefe'`, c.gid, c.s1); err != nil {
+		t.Fatalf("vincular chefe: %v", err)
+	}
+	var idChefe int64
+	if err := st.db.QueryRow(`SELECT id FROM usuarios WHERE login = 'f7_chefe'`).Scan(&idChefe); err != nil {
+		t.Fatalf("id chefe: %v", err)
+	}
+	materializaComandoSetor(t, st, idChefe, c.gid, c.s1)
+	ckChefe := loginAs(t, app, "f7_chefe", "senha-chefe")
+
+	// ---------- LEITURA: 200 COM recorte (o "chefe 403 no material" da era
+	// blindagem virou acesso recortado — onda_material_blindagem_test ajustado
+	// na mesma onda).
+	rr, res := doJSONReq(app, "GET", "/api/material/itens", nil, ckChefe)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("chefe itens: esperado 200 com recorte, veio %d (%v)", rr.Code, res)
+	}
+	if ids := f7IDs(res, "itens"); !ids[c.itemS1] || ids[c.itemS2] || ids[c.itemG] {
+		t.Fatalf("chefe devia ver SÓ o item do próprio setor: vistos=%v (s1=%d s2=%d geral=%d)", ids, c.itemS1, c.itemS2, c.itemG)
+	}
+
+	// ---------- SAVE: próprio setor 200 — nasce SEMPRE no próprio (corpo
+	// com setor alheio é IGNORADO, mesma régua do operador).
+	rr, res = doJSONReq(app, "POST", "/api/material/itens", map[string]any{"nome": "Item do Chefe", "codigo_patrimonio": "F7-CH-1", "setor_id": c.s2}, ckChefe)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("chefe criar item (corpo setor alheio): esperado 200, veio %d (%v)", rr.Code, res)
+	}
+	itemChefe := int64(res["id"].(float64))
+	var setorNasc *int64
+	if err := st.db.QueryRow(`SELECT setor_id FROM material_itens WHERE id = ?`, itemChefe).Scan(&setorNasc); err != nil || setorNasc == nil || *setorNasc != c.s1 {
+		t.Fatalf("item do chefe devia nascer no setor próprio (%d), veio %v (%v)", c.s1, setorNasc, err)
+	}
+	// editar o PRÓPRIO → 200
+	if rr, _ = doJSONReq(app, "POST", "/api/material/itens", map[string]any{"id": itemChefe, "nome": "Item do Chefe Editado", "codigo_patrimonio": "F7-CH-1", "quantidade": 5}, ckChefe); rr.Code != http.StatusOK {
+		t.Fatalf("chefe editar próprio: esperado 200, veio %d", rr.Code)
+	}
+	// item de OUTRO setor → não é alcançado (o UPDATE não bate no WHERE do
+	// recorte; 404 honesto do P1-2 — a recusa explícita da doutrina, o 403,
+	// fica no Del/baixa logo abaixo).
+	if rr, _ = doJSONReq(app, "POST", "/api/material/itens", map[string]any{"id": c.itemS2, "nome": "Hackeado Pelo Chefe", "codigo_patrimonio": "F7-0002"}, ckChefe); rr.Code != http.StatusNotFound {
+		t.Fatalf("chefe editar item alheio: esperado 404 (P1-2), veio %d", rr.Code)
+	}
+
+	// ---------- DEL / BAIXA: 403 MESMO no próprio setor (ato do gerente/enc) ----------
+	rr, _ = doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d", itemChefe), nil, ckChefe)
+	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "exclusão e baixa de material é ato do gerente ou encarregado de material") {
+		t.Fatalf("chefe excluir próprio: esperado 403 com a mensagem da doutrina, veio %d (%s)", rr.Code, rr.Body.String())
+	}
+	if rr, _ = doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d?modo=baixar", itemChefe), nil, ckChefe); rr.Code != http.StatusForbidden {
+		t.Fatalf("chefe baixar próprio: esperado 403, veio %d", rr.Code)
+	}
+	// não-regressão do gerente: exclui item de qualquer setor do grupo (200)
+	if rr, _ = doJSONReq(app, "DELETE", fmt.Sprintf("/api/material/itens/%d", itemChefe), nil, c.ckGer); rr.Code != http.StatusOK {
+		t.Fatalf("gerente excluir item do setor do chefe: esperado 200, veio %d", rr.Code)
+	}
+
+	// ---------- CAUTELA/DESCAUTELA: chefe MANTÉM acesso (próprio setor) ----------
+	if rr, res = doJSONReq(app, "POST", "/api/material/cautelar", map[string]any{"item_id": c.itemS1, "pessoa_id": c.pA}, ckChefe); rr.Code != http.StatusOK {
+		t.Fatalf("chefe cautelar próprio: esperado 200, veio %d (%v)", rr.Code, res)
+	}
+	cautChefe := int64(res["cautela_id"].(float64))
+	if rr, _ = doJSONReq(app, "POST", "/api/material/cautelar", map[string]any{"item_id": c.itemS2, "pessoa_id": c.pB}, ckChefe); rr.Code != http.StatusForbidden {
+		t.Fatalf("chefe cautelar alheio: esperado 403, veio %d", rr.Code)
+	}
+	if rr, _ = doJSONReq(app, "POST", "/api/material/devolver", map[string]any{"cautela_id": cautChefe}, ckChefe); rr.Code != http.StatusOK {
+		t.Fatalf("chefe descautelar própria: esperado 200, veio %d", rr.Code)
+	}
+
+	// ---------- DESIGNAÇÃO DE RESPONSÁVEIS: segue fechada ao chefe ----------
+	rr, _ = doJSONReq(app, "POST", "/api/material/responsaveis", map[string]any{"grupo_id": c.gid, "encarregado_id": c.pA}, ckChefe)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("chefe salvar responsaveis: esperado 403, veio %d", rr.Code)
 	}
 }

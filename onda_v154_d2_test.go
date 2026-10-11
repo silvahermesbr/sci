@@ -226,10 +226,13 @@ func TestD2_R2_PDFsComGuardaDoModulo(t *testing.T) {
 	// ---------- setor que AINDA comanda (fonte única chefe_setores)  ----------
 	espera(ckChefe, "/api/conferencia/"+int64ToStr(conf1)+"/relatorio.pdf", http.StatusOK, "chefe conf1 (setor comandado)")
 	espera(ckChefe, "/api/conferencia/"+int64ToStr(conf2)+"/relatorio.pdf", http.StatusForbidden, "chefe conf2 (setor não comandado)")
-	// chefe é papel do módulo escalas, mas NÃO do módulo material
+	// chefe é papel do módulo escalas; v1.6.0-contextos (doutrina de NÍVEL):
+	// chefe_setor ENTROU no módulo material COM recorte de setor — o comando
+	// vigente dele (s1, onde mora a fixture) autoriza os PDFs do módulo (200;
+	// antes 403 no gate). Recorte/regs: onda_v160_f7_test (TestF7MaterialChefeNivel).
 	espera(ckChefe, "/api/escalas/pdf?mes=2026-10", http.StatusOK, "chefe escalas pdf")
-	espera(ckChefe, "/api/material/inventario/pdf", http.StatusForbidden, "chefe material inventario")
-	espera(ckChefe, "/api/material/conferencias/"+int64ToStr(matConfID)+"/pronto.pdf", http.StatusForbidden, "chefe material pronto")
+	espera(ckChefe, "/api/material/inventario/pdf", http.StatusOK, "chefe material inventario (próprio setor)")
+	espera(ckChefe, "/api/material/conferencias/"+int64ToStr(matConfID)+"/pronto.pdf", http.StatusOK, "chefe material pronto (conf do setor comandado)")
 
 	// ---------- OPERADOR de OUTRO grupo: nada do grupo alvo escopa ----------
 	// Rotas que ENDEREÇAM objeto do grupo alvo → 403 (escopo estrito).
