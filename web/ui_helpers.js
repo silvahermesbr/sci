@@ -9,7 +9,7 @@
 (function () {
 'use strict';
   const $ = s => document.querySelector(s);
-  const rotuloPapel = p => p === 'admin' ? 'ADMIN' : p === 'gerente' ? 'GERENTE' : p === 'chefe_setor' ? 'CHEFE DE SETOR' : 'OPERADOR';
+  const rotuloPapel = p => p === 'admin' ? 'ADMIN' : p === 'gerente' ? 'GERENTE' : p === 'chefe_setor' ? 'CHEFE DE SETOR' : p === 'encarregado' ? 'ENCARREGADO' : p === 'enc_pessoal' ? 'ENCARREGADO DE PESSOAL' : p === 'enc_material' ? 'ENCARREGADO DE MATERIAL' : p === 'sem_funcao' ? 'SEM FUNÇÃO' : 'OPERADOR';
   const quem = () => (typeof ME !== 'undefined' && ME) || window.ME || null;
   const ativosDe = l => (l || []).filter(x => x.ativo === 1 || x.ativo === true);
 
@@ -232,7 +232,7 @@
                 const chips = papeis.map(p => {
                   const rot = rotuloPapel(p.papel);
                   const grp = p.grupo_nome ? p.grupo_nome : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
-                  const func = p.funcao_nome ? ` · ${p.funcao_nome}` : '';
+                  const func = (p.papel === 'enc_pessoal' || p.papel === 'enc_material' || !p.funcao_nome || p.funcao_nome.toLowerCase().includes('encarregado')) ? '' : ` · ${p.funcao_nome}`;
                   const ehUnico = p.papel === 'gerente' ? ' (Titular Único)' : '';
                   return `
                     <span class="papel-chip ${p.papel}">

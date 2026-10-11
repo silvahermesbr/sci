@@ -32,10 +32,21 @@
       pagDiv.className = 'tbl-pag';
       table.parentElement.parentElement.insertAdjacentElement('afterend', pagDiv);
     }
-    pagDiv.innerHTML = `<button type="button" class="paginacao-btn" data-pg="${st.pag - 1}" ${st.pag <= 1 ? 'disabled' : ''}>‹</button>
-      <span class="paginacao-info" style="font-size:12px;color:var(--tx2);margin:0 8px">Página ${st.pag} de ${pags}</span>
-      <button type="button" class="paginacao-btn" data-pg="${st.pag + 1}" ${st.pag >= pags ? 'disabled' : ''}>›</button>`;
-    pagDiv.querySelectorAll('.paginacao-btn').forEach(b => {
+    const info = {
+      pagina: st.pag,
+      totalPaginas: pags,
+      inicio: linhas.length === 0 ? 0 : (st.pag - 1) * st.tamPag + 1,
+      fim: Math.min(st.pag * st.tamPag, linhas.length),
+      totalItens: linhas.length
+    };
+    if (typeof renderPaginadorHTML === 'function') {
+      pagDiv.innerHTML = renderPaginadorHTML(info, chave);
+    } else {
+      pagDiv.innerHTML = `<button type="button" class="paginacao-btn" data-pg="${st.pag - 1}" ${st.pag <= 1 ? 'disabled' : ''}>‹</button>
+        <span class="paginacao-info" style="font-size:12px;color:var(--tx2);margin:0 8px">Página ${st.pag} de ${pags}</span>
+        <button type="button" class="paginacao-btn" data-pg="${st.pag + 1}" ${st.pag >= pags ? 'disabled' : ''}>›</button>`;
+    }
+    pagDiv.querySelectorAll('.paginacao-btn[data-pg]').forEach(b => {
       b.onclick = () => { st.pag = +b.dataset.pg; pesPaginarRender(chave, table, tbody); };
     });
   }
@@ -100,6 +111,7 @@
 
   let abaPes = 'efetivo';    // sub-aba corrente do módulo Pessoal
   let setoresCat = null, funcoesCat = null; // cache (v9.16.9)
+  const expandedChefiasSetores = new Set(); // setores com toggle expandido na aba Chefias
 
   window.ViewPessoal = async function () {
     const eu = quem();
@@ -136,34 +148,19 @@
         ]);
         optSetores = ativosDe(setoresNovos);
         optFuncoes = ativosDe((funcoesNovas && funcoesNovas.funcoes) || funcoesNovas);
-        const selS = $('#pSetor'), selF = $('#pFuncao');
+        const selS = $('#fPesSetor'), selF = $('#fPesAntiguidade');
         if (selS) {
           const val = selS.value;
-          selS.innerHTML = '<option value="">—</option>' + optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
+          selS.innerHTML = '<option value="">Todos os setores</option><option value="__sem_setor__">Sem setor</option>' + optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
           selS.value = val;
         }
         if (selF) {
           const val = selF.value;
-          selF.innerHTML = '<option value="">—</option>' + optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
+          selF.innerHTML = '<option value="">Todas as antiguidades</option><option value="__sem_antiguidade__">Sem antiguidade</option>' + optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
           selF.value = val;
         }
       } catch (e) {}
     }
-
-    /* --- formulário de militar (criar/editar) + adição em lote --- */
-    const formPessoa = `
-      <div class="cartao"><h3 style="margin-top:0">Cadastrar / editar militar</h3>
-        <input type="hidden" id="pId">
-        <div class="form-linha"><div class="campo"><label>Nome de guerra</label><input id="pNg"></div>
-        <div class="campo"><label>Nome completo</label><input id="pNc"></div></div>
-        <div class="form-linha"><div class="campo"><label>Setor</label><select id="pSetor"><option value="">—</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-        <div class="campo"><label>Antiguidade</label><select id="pFuncao"><option value="">—</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-        <div class="campo"><label>Status</label><select id="pStatus"><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
-        <button class="primario" id="pSalvar">Salvar</button>
-        <h3 style="margin-top:16px">Adição em lote — cole as linhas e importe</h3>
-        <p style="color:var(--tx2);font-size:12px;margin:4px 0">Formato (1 por linha, separado por ponto-e-vírgula): <code>nome de guerra ; nome completo ; setor ; posto/graduação</code> — setor e posto/graduação são opcionais e devem já existir no catálogo.</p>
-        <textarea id="csv" rows="5" placeholder="SILVA;José da Silva;Comando;Motorista&#10;SOUSA;Maria de Sousa;Serviços&#10;PERES;Bruno Peres"></textarea>
-        <button class="acao-linha" id="csvGo" style="margin-top:8px">Importar linhas</button></div>`;
 
     /* --- mapa local de rótulos e classes de apresentação --- */
     const GPX_ROTULO_APRESENTACAO = {
@@ -182,51 +179,87 @@
       return `<span class="pill">${esc(estado)}</span>`;
     }
 
-    /* --- banco de pessoal (checkbox por linha p/ operações em lote) --- */
-    const linhasP = (pessoas.pessoas || []).map(p => {
-      const ap = mapaApresentacao[p.id];
-      const pillAp = ap && ap.estado ? ` ${gpxRenderPillApresentacao(ap.estado)}` : '';
-      const celMod = p.ultima_mod_em
-        ? `<div class="gpx-mod-cel"><div>${fmtData(p.ultima_mod_em)} ${fmtHora(p.ultima_mod_em)}</div>${p.ultima_mod_por ? `<small class="gpx-mod-por">por ${esc(p.ultima_mod_por)}</small>` : ''}</div>`
-        : '—';
-      return `<tr data-p='${esc(JSON.stringify(p))}'><td><input type="checkbox" class="chkP" data-id="${p.id}"></td>
-       <td class="num">#${p.id}</td><td><b>${esc(p.nome_guerra)}</b>${pillAp}</td><td>${esc(p.nome_completo)}</td>
-       <td>${esc(p.setor || 'SEM SETOR')}</td>
-       <td>${esc(p.funcao || 'INDEFINIDO')}</td>
-       <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
-       <td>${celMod}</td>
-       <td><div class="gpx-acoes">
-       ${podeApresentacao ? `<button class="acao-linha" data-apresentacao="${p.id}" data-nome="${esc(p.nome_guerra)}">APRESENTAÇÃO</button>` : ''}
-       ${podeApresentacao ? `<button class="acao-linha" data-historico="${p.id}" data-nome="${esc(p.nome_guerra)}">HISTÓRICO</button>` : ''}
-       <button class="acao-linha" data-edit="${p.id}">editar</button>
-       <button class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button>
-       ${souFuncaoPessoal ? '' : `<button class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button>`}
-       </div></td></tr>`;
-    }).join('');
-
     // ordem 04/10: abas do módulo → DROPDOWN estilizado
     $('#app').innerHTML = `<h2>Pessoal</h2>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
         <span style="font-size:12px;color:var(--tx2)">Seção:</span>
         <div id="abasPesDD" style="min-width:200px"></div></div>
       <div id="pesEfetivo" class="${abaPes === 'efetivo' ? '' : 'oculto'}">
-        ${formPessoa}
-        <div class="cartao"><h3 style="margin-top:0">BANCO DE PESSOAL (${(pessoas.pessoas || []).length})</h3>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-            <label style="font-size:13px"><input type="checkbox" id="chkTodosP"> todos</label>
-            <button class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
-            ${souFuncaoPessoal ? '' : '<button class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>'}
-            <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span></div>
-          <div class="rolagem"><table><thead><tr><th></th><th>ID</th><th>Guerra</th><th>Completo</th><th>Setor</th><th>Antiguidade</th><th>Ativo</th><th>ÚLTIMA MODIFICAÇÃO</th><th></th></tr></thead>
-          <tbody id="tabP">${linhasP || '<tr><td colspan="9"><span class="vazio">nenhum militar cadastrado</span></td></tr>'}</tbody></table></div></div>
-        <div class="cartao gpx-rel-card">
-          <h3 style="margin-top:16px">RELATÓRIO DE FALTAS E ATRASOS</h3>
-          <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Selecione uma conferência fechada para emitir o relatório analítico filtrado por situação.</p>
-          <div class="gpx-rel-controles">
-            <div id="gpxRelConfDD" style="min-width:280px"></div>
-            <button type="button" class="primario" id="gpxBtFaltas">SÓ FALTAS</button>
-            <button type="button" id="gpxBtAtrasos">SÓ ATRASOS</button>
+        <div class="cartao" style="margin-bottom:12px">
+          <!-- Topo do Banco de Pessoal: título + botões cadastrar / importar lote -->
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+            <h3 style="margin:0">BANCO DE PESSOAL (<span id="contagemPes">${(pessoas.pessoas || []).length}</span>)</h3>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button type="button" class="primario" id="btAbrirCadastrar" style="min-height:36px;display:flex;align-items:center;gap:6px">
+                <span style="font-size:16px;line-height:1">+</span> Cadastrar militar
+              </button>
+              <button type="button" class="acao-linha" id="btAbrirLoteCsv" style="min-height:36px;display:flex;align-items:center;gap:6px" title="Importar múltiplos militares">
+                📥 Importar em lote
+              </button>
+            </div>
           </div>
+
+          <!-- Tabela de Filtros -->
+          <div class="filtros-pessoal-grid" style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:10px;align-items:flex-end;margin-bottom:14px;background:var(--painel2);padding:12px;border-radius:var(--raio-p);border:1px solid var(--borda)">
+            <div class="campo" style="margin:0">
+              <label style="font-size:12px;font-weight:600;color:var(--tx2)">Pesquisar militar</label>
+              <input type="text" id="fPesBusca" list="listaPesMilitares" placeholder="Digite o nome..." autocomplete="off">
+              <datalist id="listaPesMilitares"></datalist>
+            </div>
+            <div class="campo" style="margin:0">
+              <label style="font-size:12px;font-weight:600;color:var(--tx2)">Setor</label>
+              <select id="fPesSetor">
+                <option value="">Todos os setores</option>
+                <option value="__sem_setor__">Sem setor</option>
+                ${optSetores.map(s => `<option value="${s.id}">${esc(s.nome)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo" style="margin:0">
+              <label style="font-size:12px;font-weight:600;color:var(--tx2)">Antiguidade</label>
+              <select id="fPesAntiguidade">
+                <option value="">Todas as antiguidades</option>
+                <option value="__sem_antiguidade__">Sem antiguidade</option>
+                ${optFuncoes.map(f => `<option value="${f.id}">${esc(f.nome)}</option>`).join('')}
+              </select>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding-bottom:4px">
+              <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;user-select:none;margin:0">
+                <input type="checkbox" id="fPesInativos"> Mostrar inativos
+              </label>
+              <button type="button" class="fantasma" id="fPesLimpar" style="font-size:12px;padding:4px 8px">Limpar</button>
+            </div>
+          </div>
+
+          <!-- Operações em Lote -->
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+            <label style="font-size:13px;cursor:pointer"><input type="checkbox" id="chkTodosP"> todos da página</label>
+            <button type="button" class="primario" id="btEditLote" disabled>Editar selecionados (<span id="nSel">0</span>)</button>
+            ${souFuncaoPessoal ? '' : '<button type="button" class="perigo" id="btExcLote" disabled>Excluir selecionados (<span id="nSel2">0</span>)</button>'}
+            <span style="color:var(--tx2);font-size:12px">com histórico de conferência: exclusão vira inativo (histórico preservado)</span>
+          </div>
+
+          <!-- Tabela com Ordenação -->
+          <div class="rolagem">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:36px"></th>
+                  <th class="num" data-col="id" style="cursor:pointer;user-select:none" title="Ordenar por ID">ID</th>
+                  <th data-col="guerra" style="cursor:pointer;user-select:none" title="Ordenar por Guerra">Guerra</th>
+                  <th data-col="completo" style="cursor:pointer;user-select:none" title="Ordenar por Completo">Completo</th>
+                  <th data-col="setor" style="cursor:pointer;user-select:none" title="Ordenar por Setor">Setor</th>
+                  <th data-col="antiguidade" style="cursor:pointer;user-select:none" title="Ordenar por Antiguidade">Antiguidade</th>
+                  <th data-col="ativo" style="cursor:pointer;user-select:none" title="Ordenar por Status">Ativo</th>
+                  <th data-col="mod" style="cursor:pointer;user-select:none" title="Ordenar por Modificação">ÚLTIMA MODIFICAÇÃO</th>
+                  <th style="text-align:right">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="tabP"></tbody>
+            </table>
+          </div>
+
+          <!-- Container de Paginação no modelo de Relatórios -->
+          <div id="pagPessoasCont"></div>
         </div>
       </div>
       <div id="pesFuncoes" class="${abaPes === 'funcoes' ? '' : 'oculto'}">
@@ -238,28 +271,25 @@
         <tbody id="tabFun"><tr><td colspan="${podeDesignar ? 3 : 2}"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>
       <div id="pesSetores" class="${abaPes === 'setores' ? '' : 'oculto'}">
-        <!-- f2: aba SETORES do módulo Pessoal — GESTÃO (novo/editar/excluir),
-             CHEFIAS (nomear/destituir) e PANORAMA (leitura, próprio + subordinados).
-             excluir setor: enc/aux SÓ no próprio grupo (servidor valida). -->
+        <!-- aba SETORES do módulo Pessoal — CHEFIAS (árvore Reddit: Setor › Titular Chefe › Operadores) -->
         <div class="cartao">
-          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px">
             <div>
-              <h3 style="margin:0 0 4px">🏢 Setores — Gestão</h3>
-              <p style="color:var(--tx2); font-size:12.5px; margin:0">EDITAR abre as ações do setor: ALTERAR NOME, NOMEAR CHEFE (candidatos = pessoas do setor) e EXCLUIR (remaneja o pessoal para SEM SETOR; setor com histórico de conferências não é apagado — desative).</p>
+              <h3 style="margin:0 0 4px">CHEFIAS — Nomeação e Destituição rápida</h3>
+              <p style="color:var(--tx2);font-size:12.5px;margin:0">Cada setor com seu titular chefe e operadores. Clique no setor para expandir a lista hierárquica. Nomear atribui o papel <b>chefe_setor</b>; destituir remove o comando.</p>
             </div>
-            <button class="primario" id="btNovoSetor" style="min-height:36px">+ Novo setor</button>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+              <button type="button" class="fantasma" id="btToggleTodosChefes" style="min-height:36px;font-size:12.5px">Expandir todos</button>
+              <button type="button" class="primario" id="btNovoSetorChefes" style="min-height:36px">+ Novo setor</button>
+            </div>
           </div>
-          <div class="rolagem"><table><thead><tr><th>Setor</th><th>Sigla</th><th>Unidade</th><th>Chefe</th><th>Ações</th></tr></thead>
-          <tbody id="tabSetores"><tr><td colspan="5"><span class="carregando">…</span></td></tr></tbody></table></div>
+          <div class="campo" style="margin-bottom:12px">
+            <input id="fFiltroChefes" placeholder="Buscar setor, chefe ou operador…" style="width:100%;max-width:380px">
+          </div>
+          <div id="tabChefes">
+            <div class="carregando" style="padding:16px 0">Carregando chefias e setores…</div>
+          </div>
         </div>
-        <div class="cartao"><h3 style="margin-top:0">CHEFIAS — Nomeação e Destituição rápida</h3>
-        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Cada setor com seu chefe atual. Nomear atribui o papel <b>chefe_setor</b> e vincula o setor à conta; destituir remove o papel (setor fica livre). Um usuário pode chefiar VÁRIOS setores.</p>
-        <div class="rolagem"><table><thead><tr><th>Setor</th><th>Chefe atual</th><th>Nomear</th></tr></thead>
-        <tbody id="tabChefes"><tr><td colspan="3"><span class="carregando">…</span></td></tr></tbody></table></div></div>
-        <div class="cartao"><h3 style="margin-top:0">PANORAMA — Visão Agregada do escopo</h3>
-        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Somente leitura: pessoal ativo no banco e contas ativas por setor (próprio grupo e subordinados). Nomear/destituir use os blocos acima.</p>
-        <div class="rolagem"><table><thead><tr><th>Setor</th><th>Unidade</th><th class="num">Pessoal ativo</th><th class="num">Contas ativas</th><th>Chefe</th></tr></thead>
-        <tbody id="tabAgreg"><tr><td colspan="5"><span class="carregando">…</span></td></tr></tbody></table></div></div>
       </div>`;
 
     /* --- alternância de sub-abas (ordem 04/10: dropdown estilizado) --- */
@@ -277,7 +307,7 @@
             if (el) el.classList.toggle('oculto', kk !== abaPes);
           });
           if (abaPes === 'funcoes') carregarFuncoesMembros();
-          if (abaPes === 'setores') { carregarModoSetores(); carregarChefes(); carregarAgregadoSetores(); }
+          if (abaPes === 'setores') { carregarChefes(); }
         }
       });
     }
@@ -315,17 +345,7 @@
 
     // f2: toggles de árvore são da view Grupos (Gerenciar) — aqui não há árvore.
 
-    /* --- ordem 06/10 (item 10): controles de tabela nas listas do GERENCIA ---
-       Banco de pessoal: ordenar em todas as colunas + paginação 20/página.
-       Operadores: idem (trivial — mesma chamada). Demais abas plugam o helper
-       nos próprios loaders (funcoes/chefes/agregado/setores). Relatórios NÃO. */
-    const tabPTbl = document.querySelector('#pesEfetivo table');
-    if (tabPTbl) {
-      pesTabelaControles('pes-efetivo', tabPTbl, $('#tabP'), [
-        null, { tipo: 'num' }, { tipo: 'txt' }, { tipo: 'txt' },
-        { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, null
-      ], 20);
-    }
+    /* --- controles das tabelas de Funções / Chefes / Setores plugam pesTabelaControles nos loaders --- */
 
     /* --- onda C2 (05/10): aba FUNÇÕES — designação de membros por função ---
        GET /api/grupo/funcoes/membros (escopo do grupo da sessão) + POST/DELETE.
@@ -404,58 +424,7 @@
     }
     if (abaPes === 'funcoes') carregarFuncoesMembros();
     if (abaPes === 'efetivo') atualizarSelectsCatalogos();
-    if (abaPes === 'setores') { carregarModoSetores(); carregarChefes(); carregarAgregadoSetores(); }
-
-    /* --- ordem 06/10 (item 8): modo SETORES do Gerenciar ---
-       Listagem com botão EDITAR por setor (modal com 3 ações: ALTERAR NOME via
-       PATCH /api/catalogo/setores/{id}; NOMEAR CHEFE via POST /api/grupos/{id}/
-       nomear_chefe {usuario_id, setor_id} — candidatos = pessoas do setor;
-       EXCLUIR via DELETE /api/setores/{id} com confirmação dupla) e NOVO SETOR
-       no topo (POST /api/catalogo/setores). */
-    async function carregarModoSetores() {
-      const tb = $('#tabSetores');
-      if (!tb) return;
-      tb.innerHTML = '<tr><td colspan="5"><span class="carregando">…</span></td></tr>';
-      try {
-        const [setoresG, pessoalR, contasR] = await Promise.all([
-          api('/api/catalogo/setores'), api('/api/pessoas'), api('/api/usuarios')]);
-        const listaS = (setoresG || []).filter(s => s.ativo !== false);
-        const gid = eu.grupo_id;
-        const doGrupo = (contasR || []).filter(c => c.grupo_id === gid && c.ativo);
-        const chefeDeSetor = {};
-        doGrupo.forEach(c => {
-          (c.papeis || []).forEach(p => {
-            if (p.papel === 'chefe_setor' && c.setor_id) chefeDeSetor[c.setor_id] = c;
-          });
-        });
-        if (!listaS.length) {
-          tb.innerHTML = '<tr><td colspan="5"><span class="vazio">nenhum setor no catálogo — use NOVO SETOR</span></td></tr>';
-        } else {
-          tb.innerHTML = listaS.map(s => {
-            const ch = chefeDeSetor[s.id];
-            return `<tr>
-            <td><b>${esc(s.nome)}</b></td>
-            <td>${s.sigla ? '<code style="font-size:11px">' + esc(s.sigla) + '</code>' : '<span style="color:var(--tx3)">—</span>'}</td>
-            <td>${esc((grupos.find(g => g.id === s.grupo_id) || {}).nome || '—')}</td>
-            <td>${ch
-              ? `<span class="alerta-ok">👑 ${esc(ch.nome_guerra || ch.login)}</span>`
-              : '<span style="color:var(--tx3)">sem chefe</span>'}</td>
-            <td><button class="acao-linha" data-edsetor="${s.id}" data-nome="${esc(s.nome)}" data-sigla="${esc(s.sigla || '')}">EDITAR</button></td>
-          </tr>`;
-          }).join('');
-          // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Setor/Sigla/Unidade/Chefe)
-          const tabStTbl = document.querySelector('#pesSetores table');
-          if (tabStTbl) pesOrdenar('pes-setores', tabStTbl, tb,
-            [{ tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }]);
-        }
-        // ligar EDITAR em cada setor (mesmo com lista vazia não há botões — ok)
-        tb.querySelectorAll('[data-edsetor]').forEach(bt => {
-          bt.onclick = () => modalEditarSetor(+bt.dataset.edsetor, bt.dataset.nome, bt.dataset.sigla || '');
-        });
-      } catch (e) {
-        tb.innerHTML = '<tr><td colspan="5"><span class="vazio">Falha ao carregar setores.</span></td></tr>';
-      }
-    }
+    if (abaPes === 'setores') { carregarChefes(); }
 
     // modal EDITAR do setor: 3 ações (nome / chefe / excluir com dupla confirmação)
     function modalEditarSetor(sID, sNome, sSigla) {
@@ -539,151 +508,655 @@
       };
     }
 
-    /* --- onda itens79 (item 9): aba SETORES — visão agregada do escopo ---
-       GET /api/setores/agregado (admin vê tudo; gerente vê próprio grupo +
-       subordinados). Somente leitura: nomear/destituir segue na aba Chefes
-       (via canônica POST /api/grupos/{id}/nomear_chefe). */
-    async function carregarAgregadoSetores() {
-      const tb = $('#tabAgreg');
-      if (!tb) return;
-      tb.innerHTML = '<tr><td colspan="5"><span class="carregando">…</span></td></tr>';
-      try {
-        const r = await api('/api/setores/agregado');
-        const lista = r.setores || [];
-        if (!lista.length) {
-          tb.innerHTML = '<tr><td colspan="5"><span class="vazio">nenhum setor no escopo — crie em Tags › Estrutura Organizacional</span></td></tr>';
-          return;
-        }
-        tb.innerHTML = lista.map(s => `<tr>
-          <td><b>${esc(s.nome)}</b>${s.sigla ? ' <code style="font-size:11px">' + esc(s.sigla) + '</code>' : ''}</td>
-          <td>${esc(s.grupo_nome || '—')}</td>
-          <td class="num">${s.pessoas || 0}</td>
-          <td class="num">${s.contas || 0}</td>
-          <td>${s.tem_chefe
-            ? `<span class="alerta-ok">👑 ${esc(s.chefe_nome)}</span>`
-            : '<span style="color:var(--tx3)">sem chefe</span>'}</td>
-        </tr>`).join('');
-        // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Setor/Unidade/Pessoal/Contas/Chefe)
-        const tabAgrTbl = document.querySelector('#pesAgregado table');
-        if (tabAgrTbl) pesOrdenar('pes-agregado', tabAgrTbl, tb,
-          [{ tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'num' }, { tipo: 'num' }, { tipo: 'txt' }]);
-      } catch (e) {
-        tb.innerHTML = '<tr><td colspan="5"><span class="vazio">Falha ao carregar a visão agregada de setores.</span></td></tr>';
-      }
-    }
-
-    /* --- onda Escalas (05/10): aba CHEFES — nomear/destituir chefe de setor --- */
+    /* --- onda Escalas: aba CHEFIAS — lista de setores com toggle hierárquico estilo Reddit --- */
     async function carregarChefes() {
       const tb = $('#tabChefes');
       if (!tb) return;
-      tb.innerHTML = '<tr><td colspan="3"><span class="carregando">…</span></td></tr>';
+      tb.innerHTML = '<div class="carregando" style="padding:16px 0">Carregando chefias e setores…</div>';
       try {
-        const [setoresG, contasR] = await Promise.all([api('/api/catalogo/setores'), api('/api/usuarios')]);
+        const [setoresG, contasR, gruposR] = await Promise.all([
+          api('/api/catalogo/setores'),
+          api('/api/usuarios'),
+          api('/api/grupos').catch(() => [])
+        ]);
+        const listaS = (setoresG || []).filter(s => s.ativo !== false);
+        if (!listaS.length) {
+          tb.innerHTML = '<div class="vazio" style="padding:24px 0">Nenhum setor cadastrado no catálogo. Use o botão "+ Novo setor" acima.</div>';
+          return;
+        }
+
         const doGrupo = (contasR || []).filter(c => c.grupo_id === eu.grupo_id && c.ativo);
-        // ordem 06/10 (item 14): o COMANDO por setor vem do backend —
-        // chefe_usuario_id/chefe_nome em /api/catalogo/setores (chefe_setores).
-        // Um usuário pode chefiar VÁRIOS setores (mapa setor → chefe).
+        const opContas = doGrupo.map(c => `<option value="${c.id}">${esc(c.nome_guerra || c.login)} (${esc(c.login)})</option>`).join('');
+
+        // Mapeamento de chefes por setor
         const chefeDeSetor = {};
         (setoresG || []).forEach(s => {
           if (s.chefe_usuario_id) chefeDeSetor[s.id] = { id: s.chefe_usuario_id, nome_guerra: s.chefe_nome, login: s.chefe_nome };
         });
-        const listaS = (setoresG || []).filter(s => s.ativo !== false);
-        if (!listaS.length) { tb.innerHTML = '<tr><td colspan="3"><span class="vazio">nenhum setor no catálogo</span></td></tr>'; return; }
-        const opContas = doGrupo.map(c => `<option value="${c.id}">${esc(c.nome_guerra || c.login)} (${esc(c.login)})</option>`).join('');
+
+        tb.className = 'chefias-reddit-container';
         tb.innerHTML = listaS.map(s => {
           const ch = chefeDeSetor[s.id];
-          const atual = ch
-            ? `<b>👑 ${esc(ch.nome_guerra || ch.login)}</b> <small style="color:var(--tx2)">(${esc(ch.login)})</small>
-               <button class="acao-linha" data-destituir="${ch.id}" data-setorid="${s.id}" data-nome="${esc(ch.nome_guerra || ch.login)}" data-setor="${esc(s.nome)}">destituir</button>`
-            : '<span style="color:var(--tx3)">sem chefe</span>';
-          return `<tr>
-            <td><b>${esc(s.nome)}</b>${s.sigla ? ' <code style="font-size:11px">' + esc(s.sigla) + '</code>' : ''}</td>
-            <td>${atual}</td>
-            <td>
-              <div class="form-linha" style="gap:6px;align-items:center;flex-wrap:wrap">
-                <select data-selchefe="${s.id}" style="min-width:170px"><option value="">— conta —</option>${opContas}</select>
-                <button class="primario" data-nomear="${s.id}" data-setor="${esc(s.nome)}" style="font-size:12px;padding:4px 12px">Nomear</button>
+          const chConta = ch ? (contasR || []).find(c => c.id === ch.id) : null;
+          const chNome = (chConta && (chConta.nome_guerra || chConta.login)) || (ch && ch.nome_guerra) || s.chefe_nome || '';
+          const chLogin = (chConta && chConta.login) || (ch && ch.login) || s.chefe_nome || '';
+          const chCompleto = (chConta && chConta.nome_completo) || '';
+          const temChefe = !!(ch || s.chefe_usuario_id || chConta);
+          const opIdChefe = chConta ? chConta.id : (ch ? ch.id : s.chefe_usuario_id);
+
+          // Operadores vinculados a este setor (exclui o titular chefe)
+          const opsDoSetor = (contasR || []).filter(c => {
+            if (c.ativo === false) return false;
+            if (opIdChefe && c.id === opIdChefe) return false;
+            return c.setor_id === s.id;
+          });
+
+          const gNome = ((gruposR || grupos || []).find(g => g.id === s.grupo_id) || {}).nome || '';
+          const isExp = expandedChefiasSetores.has(s.id);
+
+          return `
+          <div class="chefia-setor-card ${isExp ? 'expandido' : ''}" data-setor-id="${s.id}">
+            <div class="chefia-setor-header" tabindex="0" role="button" aria-expanded="${isExp ? 'true' : 'false'}" aria-label="Setor ${esc(s.nome)}">
+              <div class="chefia-setor-info-left">
+                <span class="chefia-setor-toggle-btn" title="Alternar expansão">
+                  <span class="setor-toggle-arrow">▶</span>
+                </span>
+                <span class="chefia-setor-nome">${esc(s.nome)}</span>
+                ${s.sigla ? `<code class="chefia-setor-sigla">${esc(s.sigla)}</code>` : ''}
+                ${gNome ? `<span class="chefia-setor-unidade">(${esc(gNome)})</span>` : ''}
               </div>
-            </td></tr>`;
+              <div class="chefia-setor-badges">
+                ${temChefe
+                  ? `<span class="alerta-ok" style="font-size:11.5px">👑 ${esc(chNome)}</span>`
+                  : `<span style="color:var(--tx3);font-size:11.5px">sem chefe</span>`}
+                <span class="pill" style="background:rgba(59,130,246,0.12);color:#93c5fd;border-color:rgba(59,130,246,0.3);font-size:11px">
+                  ${opsDoSetor.length} op${opsDoSetor.length === 1 ? '' : 's'}
+                </span>
+                <button type="button" class="acao-linha" data-edsetor="${s.id}" data-nome="${esc(s.nome)}" data-sigla="${esc(s.sigla || '')}" style="font-size:11px;padding:2px 8px" title="Editar informações do setor">editar</button>
+              </div>
+            </div>
+
+            <div class="chefia-reddit-thread ${isExp ? '' : 'oculto'}">
+              <div class="reddit-threadline" title="Clique para recolher"></div>
+              <div class="reddit-thread-conteudo">
+
+                <!-- 1º item da lista: Titular Chefe -->
+                <div class="reddit-comment-node chefe-node">
+                  <div class="reddit-node-header">
+                    <div class="reddit-node-meta">
+                      <span class="papel-chip chefe_setor">👑 TITULAR CHEFE</span>
+                      ${temChefe ? `
+                        <span class="reddit-node-nome"><b>${esc(chNome)}</b></span>
+                        <span class="reddit-node-login">(@${esc(chLogin)})</span>
+                        ${chCompleto ? `<span style="color:var(--tx2);font-size:12px">· ${esc(chCompleto)}</span>` : ''}
+                      ` : `
+                        <span style="color:var(--tx3);font-size:12.5px;font-style:italic">Sem titular chefe definido</span>
+                      `}
+                    </div>
+                    ${temChefe ? `
+                      <button type="button" class="acao-linha perigo" data-destituir="${opIdChefe}" data-setorid="${s.id}" data-nome="${esc(chNome)}" data-setor="${esc(s.nome)}" style="font-size:11.5px">
+                        destituir
+                      </button>
+                    ` : ''}
+                  </div>
+                  <div class="reddit-nomear-box">
+                    <span style="font-size:12px;color:var(--tx2)">${temChefe ? 'Substituir chefe:' : 'Nomear chefe:'}</span>
+                    <select data-selchefe="${s.id}" style="min-width:170px;font-size:12px"><option value="">— escolher conta do grupo —</option>${opContas}</select>
+                    <button type="button" class="primario" data-nomear="${s.id}" data-setor="${esc(s.nome)}" style="font-size:12px;padding:4px 12px">Nomear</button>
+                  </div>
+                </div>
+
+                <!-- Abaixo: Operadores -->
+                <div class="reddit-operadores-secao">
+                  <div class="reddit-operadores-titulo">Operadores (${opsDoSetor.length})</div>
+                  ${opsDoSetor.length > 0 ? opsDoSetor.map(op => `
+                    <div class="reddit-comment-node operador-node">
+                      <div class="reddit-node-header">
+                        <div class="reddit-node-meta">
+                          <span class="papel-chip operador">OPERADOR</span>
+                          <span class="reddit-node-nome"><b>${esc(op.nome_guerra || op.login)}</b></span>
+                          <span class="reddit-node-login">(@${esc(op.login)})</span>
+                          ${op.nome_completo ? `<span style="color:var(--tx2);font-size:12px">· ${esc(op.nome_completo)}</span>` : ''}
+                        </div>
+                        ${op.ativo
+                          ? '<span class="pill pill-presente" style="font-size:10px;padding:1px 6px">Ativo</span>'
+                          : '<span class="pill pill-falta" style="font-size:10px;padding:1px 6px">Inativo</span>'}
+                      </div>
+                    </div>
+                  `).join('') : '<div class="reddit-comment-node vazio">Nenhum operador vinculado a este setor.</div>'}
+                </div>
+
+              </div>
+            </div>
+          </div>`;
         }).join('');
+
+        // Ligar toggles expansíveis ao clicar no cabeçalho ou na threadline
+        tb.querySelectorAll('.chefia-setor-card').forEach(card => {
+          const sID = +card.dataset.setorId;
+          const toggleHandler = (e) => {
+            if (e.target.closest('button, select, input, a, option')) return;
+            const exp = card.classList.toggle('expandido');
+            const hdr = card.querySelector('.chefia-setor-header');
+            if (hdr) hdr.setAttribute('aria-expanded', exp ? 'true' : 'false');
+            const thread = card.querySelector('.chefia-reddit-thread');
+            if (thread) thread.classList.toggle('oculto', !exp);
+            if (sID) {
+              if (exp) expandedChefiasSetores.add(sID);
+              else expandedChefiasSetores.delete(sID);
+            }
+          };
+
+          const hdr = card.querySelector('.chefia-setor-header');
+          if (hdr) {
+            hdr.onclick = toggleHandler;
+            hdr.onkeydown = (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                if (e.target.closest('button, select, input, a, option')) return;
+                e.preventDefault();
+                toggleHandler(e);
+              }
+            };
+          }
+
+          const tline = card.querySelector('.reddit-threadline');
+          if (tline) tline.onclick = toggleHandler;
+        });
+
+        // Ligar botões Nomear
         tb.querySelectorAll('[data-nomear]').forEach(bt => {
-          bt.onclick = async () => {
+          bt.onclick = async (e) => {
+            e.stopPropagation();
             const sID = +bt.dataset.nomear;
             const sel = tb.querySelector(`[data-selchefe="${sID}"]`);
             if (!sel || !sel.value) { toast('Escolha a conta', 'erro'); return; }
-            const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/nomear_chefe', { method: 'POST', body: JSON.stringify({ usuario_id: +sel.value, setor_id: sID }) }), 'Nomeando chefe…');
-            if (r.ok) carregarChefes();
+            const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/nomear_chefe', {
+              method: 'POST',
+              body: JSON.stringify({ usuario_id: +sel.value, setor_id: sID })
+            }), 'Nomeando chefe…');
+            if (r.ok) {
+              expandedChefiasSetores.add(sID);
+              carregarChefes();
+            }
           };
         });
+
+        // Ligar botões Destituir
         tb.querySelectorAll('[data-destituir]').forEach(bt => {
-          bt.onclick = async () => {
-            // ordem 06/10 (item 14): destitui SÓ o comando daquele setor — o chefe
-            // que comanda outros setores continua chefe (papel permanece).
+          bt.onclick = async (e) => {
+            e.stopPropagation();
             if (!(await confirmar(`Destituir ${bt.dataset.nome} como chefe de ${bt.dataset.setor}?`))) return;
-            const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/destituir_chefe', { method: 'POST', body: JSON.stringify({ usuario_id: +bt.dataset.destituir, setor_id: +bt.dataset.setorid }) }), 'Destituindo chefe…');
-            if (r.ok) carregarChefes();
+            const sID = +bt.dataset.setorid;
+            const r = await processar(() => api('/api/grupos/' + eu.grupo_id + '/destituir_chefe', {
+              method: 'POST',
+              body: JSON.stringify({ usuario_id: +bt.dataset.destituir, setor_id: sID })
+            }), 'Destituindo chefe…');
+            if (r.ok) {
+              expandedChefiasSetores.add(sID);
+              carregarChefes();
+            }
           };
         });
-        // ordem 06/10 (item 10): ordenar POR nos cabeçalhos (Setor / Chefe atual / Nomear)
-        const tabChTbl = tb ? tb.closest('table') : null;
-        if (tabChTbl) {
-          pesTabelaControles('pes-chefes', tabChTbl, tb, [{ tipo: 'txt' }, { tipo: 'txt' }, null], 20);
+
+        // Ligar botões Editar setor
+        tb.querySelectorAll('[data-edsetor]').forEach(bt => {
+          bt.onclick = (e) => {
+            e.stopPropagation();
+            modalEditarSetor(+bt.dataset.edsetor, bt.dataset.nome, bt.dataset.sigla || '');
+          };
+        });
+
+        // Ligar filtro de busca
+        const fFiltro = $('#fFiltroChefes');
+        if (fFiltro) {
+          fFiltro.oninput = () => {
+            const q = fFiltro.value.trim().toLowerCase();
+            tb.querySelectorAll('.chefia-setor-card').forEach(card => {
+              const txt = card.textContent.toLowerCase();
+              card.style.display = (!q || txt.includes(q)) ? '' : 'none';
+            });
+          };
+        }
+
+        // Ligar Expandir todos / Recolher todos
+        const btToggleAll = $('#btToggleTodosChefes');
+        if (btToggleAll) {
+          let todosExp = false;
+          btToggleAll.onclick = () => {
+            todosExp = !todosExp;
+            btToggleAll.textContent = todosExp ? 'Recolher todos' : 'Expandir todos';
+            tb.querySelectorAll('.chefia-setor-card').forEach(card => {
+              const sID = +card.dataset.setorId;
+              const thread = card.querySelector('.chefia-reddit-thread');
+              const hdr = card.querySelector('.chefia-setor-header');
+              if (todosExp) {
+                card.classList.add('expandido');
+                if (hdr) hdr.setAttribute('aria-expanded', 'true');
+                if (thread) thread.classList.remove('oculto');
+                if (sID) expandedChefiasSetores.add(sID);
+              } else {
+                card.classList.remove('expandido');
+                if (hdr) hdr.setAttribute('aria-expanded', 'false');
+                if (thread) thread.classList.add('oculto');
+                if (sID) expandedChefiasSetores.delete(sID);
+              }
+            });
+          };
         }
       } catch (e) {
-        tb.innerHTML = '<tr><td colspan="3"><span class="vazio">Falha ao carregar chefes.</span></td></tr>';
+        tb.innerHTML = '<div class="vazio" style="padding:24px 0">Falha ao carregar chefias e setores.</div>';
       }
     }
 
-    /* --- salvar militar (criar/editar) --- */
-    $('#pSalvar').onclick = async () => {
-      const corpo = { nome_guerra: $('#pNg').value.trim(), nome_completo: $('#pNc').value.trim(),
-        setor_id: +$('#pSetor').value || null, funcao_id: +$('#pFuncao').value || null, status: $('#pStatus').value };
-      if (!corpo.nome_guerra || !corpo.nome_completo) { toast('Nomes obrigatórios', 'erro'); return; }
-      const id = $('#pId').value;
-      const r = await processar(() => id
-        ? api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) })
-        : api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) }),
-        id ? 'Salvando alterações…' : 'Cadastrando militar…');
-      if (r.ok) window.ViewPessoal();
-    };
+    /* --- Banco de Pessoal: estado de filtros, ordenação e paginação --- */
+    const listaPessoasTotal = (pessoas && pessoas.pessoas) || [];
+    let filtroSetor = '';
+    let filtroAntiguidade = '';
+    let filtroMostrarInativos = false;
+    let filtroBusca = '';
+    let pgAtual = 1;
+    const tamPag = 10;
+    let colOrdem = 'id';
+    let ordemAsc = true;
+    const idsSelecionados = new Set();
 
-    /* --- adição em lote --- */
-    $('#csvGo').onclick = async () => {
-      const linhas = $('#csv').value.split('\n').map(l => l.trim()).filter(Boolean);
-      if (!linhas.length) { toast('Cole ao menos uma linha', 'erro'); return; }
-      let ok = 0, falha = 0;
-      await processar(async () => {
-        for (const l of linhas) {
-          const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
-          let sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
-          if (st && !sid) {
-            try {
-              const resSt = await api('/api/catalogo/setores', { method: 'POST', body: JSON.stringify({ nome: st }) });
-              if (resSt && resSt.id) {
-                sid = resSt.id;
-                optSetores.push({ id: sid, nome: st, ativo: 1 });
-              }
-            } catch (e) {}
+    function normalizarTexto(txt) {
+      return String(txt || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .trim();
+    }
+
+    function atualizarDatalistMilitares() {
+      const dl = $('#listaPesMilitares');
+      if (!dl) return;
+      const jaAdicionados = new Set();
+      const opcoes = [];
+      listaPessoasTotal.forEach(p => {
+        if (!filtroMostrarInativos && p.status !== 'ativo') return;
+        const nc = (p.nome_completo || '').trim();
+        const ng = (p.nome_guerra || '').trim();
+        if (!nc || jaAdicionados.has(nc)) return;
+        jaAdicionados.add(nc);
+        opcoes.push(`<option value="${esc(nc)}">${esc(ng ? ng + ' — ' : '')}${esc(nc)}</option>`);
+      });
+      dl.innerHTML = opcoes.join('');
+    }
+
+    function filtrarEOrdenarPessoas() {
+      const buscaNorm = normalizarTexto(filtroBusca);
+      const filtradas = listaPessoasTotal.filter(p => {
+        if (!filtroMostrarInativos && p.status !== 'ativo') return false;
+        if (filtroSetor !== '') {
+          if (filtroSetor === '__sem_setor__') {
+            if (p.setor_id != null && p.setor_id !== 0) return false;
+          } else {
+            if (String(p.setor_id) !== String(filtroSetor)) return false;
           }
-          let fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
-          if (fn && !fid) {
-            try {
-              const resFn = await api('/api/catalogo/funcoes', { method: 'POST', body: JSON.stringify({ nome: fn }) });
-              if (resFn && resFn.id) {
-                fid = resFn.id;
-                optFuncoes.push({ id: fid, nome: fn, ativo: 1 });
-              }
-            } catch (e) {}
-          }
-          try { await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo' }) }); ok++; }
-          catch (e) { falha++; }
         }
-      }, `Importando ${linhas.length} linha(s)…`);
-      toast(`${ok} importado(s)${falha ? ' · ' + falha + ' linha(s) com falha' : ''}`, falha && !ok ? 'erro' : 'ok');
-      if (ok) window.ViewPessoal();
-    };
+        if (filtroAntiguidade !== '') {
+          if (filtroAntiguidade === '__sem_antiguidade__') {
+            if (p.funcao_id != null && p.funcao_id !== 0) return false;
+          } else {
+            if (String(p.funcao_id) !== String(filtroAntiguidade)) return false;
+          }
+        }
+        if (buscaNorm) {
+          const gNorm = normalizarTexto(p.nome_guerra);
+          const cNorm = normalizarTexto(p.nome_completo);
+          const idStr = String(p.id);
+          if (!gNorm.includes(buscaNorm) && !cNorm.includes(buscaNorm) && !idStr.includes(buscaNorm)) {
+            return false;
+          }
+        }
+        return true;
+      });
 
-    /* --- exclusão de militar (individual + lote; com histórico → desativa) --- */
+      filtradas.sort((a, b) => {
+        let va, vb;
+        if (colOrdem === 'id') {
+          va = Number(a.id) || 0;
+          vb = Number(b.id) || 0;
+          return ordemAsc ? (va - vb) : (vb - va);
+        }
+        if (colOrdem === 'guerra') {
+          va = a.nome_guerra || ''; vb = b.nome_guerra || '';
+        } else if (colOrdem === 'completo') {
+          va = a.nome_completo || ''; vb = b.nome_completo || '';
+        } else if (colOrdem === 'setor') {
+          va = a.setor || ''; vb = b.setor || '';
+        } else if (colOrdem === 'antiguidade') {
+          va = a.funcao || ''; vb = b.funcao || '';
+        } else if (colOrdem === 'ativo') {
+          va = a.status || ''; vb = b.status || '';
+        } else if (colOrdem === 'mod') {
+          va = a.ultima_mod_em || ''; vb = b.ultima_mod_em || '';
+        } else {
+          va = a[colOrdem] || ''; vb = b[colOrdem] || '';
+        }
+        const cmp = String(va).localeCompare(String(vb), 'pt', { sensitivity: 'base' }) || String(va).localeCompare(String(vb));
+        return ordemAsc ? cmp : -cmp;
+      });
+
+      return filtradas;
+    }
+
+    function renderizarTabelaPessoas() {
+      const filtradas = filtrarEOrdenarPessoas();
+      const fnPag = typeof paginarArray === 'function' ? paginarArray : window.paginarArray;
+      const fnRenderPag = typeof renderPaginadorHTML === 'function' ? renderPaginadorHTML : window.renderPaginadorHTML;
+
+      const pag = fnPag ? fnPag(filtradas, pgAtual, tamPag) : {
+        pagina: 1, totalPaginas: 1, totalItens: filtradas.length,
+        inicio: 1, fim: filtradas.length, dados: filtradas
+      };
+      pgAtual = pag.pagina;
+
+      const contEl = $('#contagemPes');
+      if (contEl) {
+        contEl.textContent = (filtradas.length !== listaPessoasTotal.length)
+          ? `${filtradas.length} de ${listaPessoasTotal.length}`
+          : `${listaPessoasTotal.length}`;
+      }
+
+      const tbody = $('#tabP');
+      if (!tbody) return;
+
+      if (pag.totalItens === 0) {
+        tbody.innerHTML = '<tr><td colspan="9"><span class="vazio">nenhum militar encontrado</span></td></tr>';
+      } else {
+        tbody.innerHTML = pag.dados.map(p => {
+          const ap = mapaApresentacao[p.id];
+          const pillAp = ap && ap.estado ? ` ${gpxRenderPillApresentacao(ap.estado)}` : '';
+          const celMod = p.ultima_mod_em
+            ? `<div class="gpx-mod-cel"><div>${fmtData(p.ultima_mod_em)} ${fmtHora(p.ultima_mod_em)}</div>${p.ultima_mod_por ? `<small class="gpx-mod-por">por ${esc(p.ultima_mod_por)}</small>` : ''}</div>`
+            : '—';
+          const isSel = idsSelecionados.has(p.id);
+          return `<tr data-p='${esc(JSON.stringify(p))}'>
+            <td><input type="checkbox" class="chkP" data-id="${p.id}" ${isSel ? 'checked' : ''}></td>
+            <td class="num">#${p.id}</td>
+            <td><b>${esc(p.nome_guerra)}</b>${pillAp}</td>
+            <td>${esc(p.nome_completo)}</td>
+            <td>${esc(p.setor || 'SEM SETOR')}</td>
+            <td>${esc(p.funcao || 'INDEFINIDO')}</td>
+            <td>${p.status === 'ativo' ? '<span class="alerta-ok">● ATIVO</span>' : '<span style="color:var(--tx3)">● INATIVO</span>'}</td>
+            <td>${celMod}</td>
+            <td><div class="gpx-acoes">
+              ${podeApresentacao ? `<button type="button" class="acao-linha" data-apresentacao="${p.id}" data-nome="${esc(p.nome_guerra)}">APRESENTAÇÃO</button>` : ''}
+              ${podeApresentacao ? `<button type="button" class="acao-linha" data-historico="${p.id}" data-nome="${esc(p.nome_guerra)}">HISTÓRICO</button>` : ''}
+              <button type="button" class="acao-linha" data-edit="${p.id}">editar</button>
+              <button type="button" class="acao-linha" data-fichap="${p.id}" title="Imprimir Dossiê / Ficha Cadastral">📄 ficha</button>
+              ${souFuncaoPessoal ? '' : `<button type="button" class="acao-linha" data-excP="${p.id}" data-nome="${esc(p.nome_guerra)}">excluir</button>`}
+            </div></td>
+          </tr>`;
+        }).join('');
+      }
+
+      const pagContainer = $('#pagPessoasCont');
+      if (pagContainer) {
+        pagContainer.innerHTML = fnRenderPag ? fnRenderPag(pag, 'pagBancoPessoal') : '';
+        pagContainer.querySelectorAll('.paginacao-btn[data-pg]').forEach(b => {
+          b.onclick = () => {
+            pgAtual = +b.dataset.pg;
+            renderizarTabelaPessoas();
+          };
+        });
+      }
+
+      vincularEventosLinhasPessoas();
+      atualizarSelecaoLoteUI();
+    }
+
+    function vincularEventosLinhasPessoas() {
+      const tbody = $('#tabP');
+      if (!tbody) return;
+
+      tbody.querySelectorAll('.chkP').forEach(ch => {
+        ch.onchange = () => {
+          const id = +ch.dataset.id;
+          if (ch.checked) idsSelecionados.add(id);
+          else idsSelecionados.delete(id);
+          atualizarSelecaoLoteUI();
+        };
+      });
+
+      tbody.querySelectorAll('[data-edit]').forEach(bt => {
+        bt.onclick = ev => {
+          ev.stopPropagation();
+          const tr = bt.closest('tr');
+          if (!tr || !tr.dataset.p) return;
+          const p = JSON.parse(tr.dataset.p);
+          abrirModalMilitar(p);
+        };
+      });
+
+      tbody.querySelectorAll('[data-fichap]').forEach(bt => {
+        bt.onclick = ev => {
+          ev.stopPropagation();
+          window.open('/api/pessoas/' + bt.dataset.fichap + '/pdf', '_blank');
+        };
+      });
+
+      tbody.querySelectorAll('[data-excP]').forEach(bt => {
+        bt.onclick = () => excPessoa(bt.dataset.excP, bt.dataset.nome);
+      });
+
+      tbody.querySelectorAll('[data-apresentacao]').forEach(bt => {
+        bt.onclick = ev => abrirModalApresentacao(ev, bt);
+      });
+
+      tbody.querySelectorAll('[data-historico]').forEach(bt => {
+        bt.onclick = ev => abrirModalHistorico(ev, bt);
+      });
+    }
+
+    function atualizarSelecaoLoteUI() {
+      const totalSel = idsSelecionados.size;
+      const nSel = $('#nSel');
+      if (nSel) nSel.textContent = totalSel;
+      const nSel2 = $('#nSel2');
+      if (nSel2) nSel2.textContent = totalSel;
+      const btEdit = $('#btEditLote');
+      if (btEdit) btEdit.disabled = totalSel === 0;
+      const btExc = $('#btExcLote');
+      if (btExc) btExc.disabled = totalSel === 0;
+
+      const chkTodos = $('#chkTodosP');
+      if (chkTodos) {
+        const chksPag = [...document.querySelectorAll('#tabP .chkP')];
+        if (chksPag.length > 0 && chksPag.every(c => c.checked)) {
+          chkTodos.checked = true;
+          chkTodos.indeterminate = false;
+        } else if (chksPag.some(c => c.checked)) {
+          chkTodos.checked = false;
+          chkTodos.indeterminate = true;
+        } else {
+          chkTodos.checked = false;
+          chkTodos.indeterminate = false;
+        }
+      }
+    }
+
+    function configurarCabecalhosOrdenacao() {
+      const thead = document.querySelector('#pesEfetivo table thead');
+      if (!thead) return;
+      thead.querySelectorAll('th[data-col]').forEach(th => {
+        th.onclick = () => {
+          const col = th.dataset.col;
+          if (colOrdem === col) {
+            ordemAsc = !ordemAsc;
+          } else {
+            colOrdem = col;
+            ordemAsc = true;
+          }
+          atualizarClassesCabecalhos(thead);
+          renderizarTabelaPessoas();
+        };
+      });
+      atualizarClassesCabecalhos(thead);
+    }
+
+    function atualizarClassesCabecalhos(thead) {
+      thead.querySelectorAll('th[data-col]').forEach(th => {
+        th.classList.remove('sorted-asc', 'sorted-desc');
+        if (th.dataset.col === colOrdem) {
+          th.classList.add(ordemAsc ? 'sorted-asc' : 'sorted-desc');
+        }
+      });
+    }
+
+    /* --- modal Cadastrar / Editar Militar --- */
+    function abrirModalMilitar(p = null) {
+      const editando = !!(p && p.id);
+      const titulo = editando ? `Editar militar — ${esc(p.nome_guerra || '')}` : 'Cadastrar militar';
+      const valNg = editando ? (p.nome_guerra || '') : '';
+      const valNc = editando ? (p.nome_completo || '') : '';
+      const valSetor = editando ? (p.setor_id || '') : '';
+      const valFuncao = editando ? (p.funcao_id || '') : '';
+      const valStatus = editando ? (p.status || 'ativo') : 'ativo';
+
+      const div = modal(`
+        <div class="modal-inner" style="max-width:520px">
+          <h3 style="margin-top:0">${titulo}</h3>
+          <div class="form-linha" style="margin-bottom:12px">
+            <div class="campo" style="flex:1">
+              <label>Nome de guerra *</label>
+              <input id="mNg" value="${esc(valNg)}" placeholder="Ex.: SILVA">
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Nome completo *</label>
+              <input id="mNc" value="${esc(valNc)}" placeholder="Ex.: José da Silva">
+            </div>
+          </div>
+          <div class="form-linha" style="margin-bottom:12px">
+            <div class="campo" style="flex:1">
+              <label>Setor</label>
+              <select id="mSetor">
+                <option value="">— Selecionar setor —</option>
+                ${optSetores.map(x => `<option value="${x.id}" ${String(x.id) === String(valSetor) ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="campo" style="flex:1">
+              <label>Antiguidade</label>
+              <select id="mFuncao">
+                <option value="">— Selecionar antiguidade —</option>
+                ${optFuncoes.map(x => `<option value="${x.id}" ${String(x.id) === String(valFuncao) ? 'selected' : ''}>${esc(x.nome)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="campo" style="margin-bottom:18px">
+            <label>Status</label>
+            <select id="mStatus">
+              <option value="ativo" ${valStatus === 'ativo' ? 'selected' : ''}>Ativo</option>
+              <option value="inativo" ${valStatus === 'inativo' ? 'selected' : ''}>Inativo</option>
+            </select>
+          </div>
+          <div class="modal-acoes" style="display:flex;justify-content:flex-end;gap:8px">
+            <button type="button" class="fantasma" id="mX">Cancelar</button>
+            <button type="button" class="primario" id="mSalvar">${editando ? 'Salvar alterações' : 'Cadastrar militar'}</button>
+          </div>
+        </div>
+      `);
+      if (!div) return;
+      const fechar = () => div.fechar ? div.fechar() : div.remove();
+      div.querySelector('#mX').onclick = fechar;
+      const fNg = div.querySelector('#mNg');
+      if (fNg) fNg.focus();
+
+      div.querySelector('#mSalvar').onclick = async () => {
+        const ng = div.querySelector('#mNg').value.trim();
+        const nc = div.querySelector('#mNc').value.trim();
+        const sid = +div.querySelector('#mSetor').value || null;
+        const fid = +div.querySelector('#mFuncao').value || null;
+        const st = div.querySelector('#mStatus').value || 'ativo';
+
+        if (!ng || !nc) {
+          toast('Nome de guerra e nome completo são obrigatórios', 'erro');
+          return;
+        }
+
+        const corpo = {
+          nome_guerra: ng,
+          nome_completo: nc,
+          setor_id: sid,
+          funcao_id: fid,
+          status: st
+        };
+
+        const r = await processar(
+          () => editando
+            ? api('/api/pessoas/' + p.id, { method: 'PATCH', body: JSON.stringify(corpo) })
+            : api('/api/pessoas', { method: 'POST', body: JSON.stringify(corpo) }),
+          editando ? 'Salvando alterações…' : 'Cadastrando militar…'
+        );
+
+        if (r && r.ok) {
+          toast(editando ? 'Militar atualizado com sucesso' : 'Militar cadastrado com sucesso');
+          fechar();
+          window.ViewPessoal();
+        }
+      };
+    }
+
+    /* --- modal Adição em lote (CSV) --- */
+    function abrirModalLoteCsv() {
+      const div = modal(`
+        <div class="modal-inner" style="max-width:540px">
+          <h3 style="margin-top:0">Adição em lote — Importar militares</h3>
+          <p style="color:var(--tx2);font-size:12px;margin:4px 0 10px">
+            Formato (1 por linha, separado por ponto-e-vírgula):<br>
+            <code>nome de guerra ; nome completo ; setor ; posto/graduação</code><br>
+            Setor e posto/graduação são opcionais e devem já existir no catálogo.
+          </p>
+          <div class="campo" style="margin-bottom:14px">
+            <textarea id="csv" rows="6" placeholder="SILVA;José da Silva;Comando;Motorista&#10;SOUSA;Maria de Sousa;Serviços&#10;PERES;Bruno Peres"></textarea>
+          </div>
+          <div class="modal-acoes" style="display:flex;justify-content:flex-end;gap:8px">
+            <button type="button" class="fantasma" id="csvX">Cancelar</button>
+            <button type="button" class="primario" id="csvGo">Importar linhas</button>
+          </div>
+        </div>
+      `);
+      if (!div) return;
+      const fechar = () => div.fechar ? div.fechar() : div.remove();
+      div.querySelector('#csvX').onclick = fechar;
+      div.querySelector('#csvGo').onclick = async () => {
+        const linhas = (div.querySelector('#csv')?.value || '').split('\n').map(l => l.trim()).filter(Boolean);
+        if (!linhas.length) { toast('Cole ao menos uma linha', 'erro'); return; }
+        let ok = 0, falha = 0;
+        await processar(async () => {
+          for (const l of linhas) {
+            const [ng, nc, st, fn] = l.split(';').map(x => (x || '').trim());
+            let sid = (optSetores.find(s => s.nome.toLowerCase() === (st || '').toLowerCase()) || {}).id || null;
+            if (st && !sid) {
+              try {
+                const resSt = await api('/api/catalogo/setores', { method: 'POST', body: JSON.stringify({ nome: st }) });
+                if (resSt && resSt.id) { sid = resSt.id; optSetores.push({ id: sid, nome: st, ativo: 1 }); }
+              } catch (e) {}
+            }
+            let fid = (optFuncoes.find(s => s.nome.toLowerCase() === (fn || '').toLowerCase()) || {}).id || null;
+            if (fn && !fid) {
+              try {
+                const resFn = await api('/api/catalogo/funcoes', { method: 'POST', body: JSON.stringify({ nome: fn }) });
+                if (resFn && resFn.id) { fid = resFn.id; optFuncoes.push({ id: fid, nome: fn, ativo: 1 }); }
+              } catch (e) {}
+            }
+            try {
+              await api('/api/pessoas', { method: 'POST', body: JSON.stringify({ nome_guerra: ng, nome_completo: nc, setor_id: sid, funcao_id: fid, status: 'ativo' }) });
+              ok++;
+            } catch (e) { falha++; }
+          }
+        }, `Importando ${linhas.length} linha(s)...`);
+        toast(`${ok} importado(s)${falha ? ' · ' + falha + ' linha(s) com falha' : ''}`, falha && !ok ? 'erro' : 'ok');
+        if (ok) {
+          fechar();
+          window.ViewPessoal();
+        }
+      };
+    }
+
+    /* --- exclusão de militar (individual; com histórico → desativa) --- */
     const excPessoa = async (id, nome) => {
       if (!(await confirmar(`Excluir "${nome}" do banco de pessoal? (com histórico de conferência virará inativo)`))) return;
       const r = await processar(() => api(`/api/pessoas/${id}`, { method: 'DELETE' }), `Excluindo ${nome}…`);
@@ -692,195 +1165,248 @@
         window.ViewPessoal();
       }
     };
-    document.querySelectorAll('[data-excP]').forEach(b => b.onclick = () => excPessoa(b.dataset.excP, b.dataset.nome));
 
-    const selCount = () => document.querySelectorAll('.chkP:checked').length;
-    const refreshSel = () => {
-      const n = selCount();
-      $('#nSel').textContent = n;
-      const nSel2 = $('#nSel2'); // ausente p/ função de pessoal (sem excluir em lote)
-      if (nSel2) nSel2.textContent = n;
-      const btExc = $('#btExcLote');
-      if (btExc) btExc.disabled = n === 0;
-      $('#btEditLote').disabled = n === 0;
-    };
-    document.querySelectorAll('.chkP').forEach(ch => ch.onchange = refreshSel);
-    $('#chkTodosP').onchange = () => {
-      document.querySelectorAll('.chkP').forEach(ch => { ch.checked = $('#chkTodosP').checked; });
-      refreshSel();
-    };
+    /* --- exclusão em lote --- */
     const btExcLoteEl = $('#btExcLote');
-    if (btExcLoteEl) btExcLoteEl.onclick = async () => {
-      const ids = [...document.querySelectorAll('.chkP:checked')].map(c => +c.dataset.id);
-      if (!ids.length) return;
-      if (!(await confirmar(`Excluir ${ids.length} militar(es)? (com histórico de conferência virarão inativos)`))) return;
-      let ok = 0, des = 0, falha = 0;
-      await processar(async () => {
-        for (const id of ids) {
-          try {
-            const r = await api(`/api/pessoas/${id}`, { method: 'DELETE' });
-            r.desativado ? des++ : ok++;
-          } catch (e) { falha++; }
-        }
-      }, `Excluindo ${ids.length} militar(es)…`);
-      toast(`Excluídos: ${ok} · desativados: ${des}${falha ? ' · falhas: ' + falha : ''}`, falha && !ok ? 'erro' : 'ok');
-      if (ok || des) window.ViewPessoal();
-    };
+    if (btExcLoteEl) {
+      btExcLoteEl.onclick = async () => {
+        const ids = [...idsSelecionados];
+        if (!ids.length) return;
+        if (!(await confirmar(`Excluir ${ids.length} militar(es)? (com histórico de conferência virarão inativos)`))) return;
+        let ok = 0, des = 0, falha = 0;
+        await processar(async () => {
+          for (const id of ids) {
+            try {
+              const r = await api(`/api/pessoas/${id}`, { method: 'DELETE' });
+              r.desativado ? des++ : ok++;
+            } catch (e) { falha++; }
+          }
+        }, `Excluindo ${ids.length} militar(es)…`);
+        toast(`Excluídos: ${ok} · desativados: ${des}${falha ? ' · falhas: ' + falha : ''}`, falha && !ok ? 'erro' : 'ok');
+        if (ok || des) window.ViewPessoal();
+      };
+    }
 
     /* --- edição em lote: modal único aplica setor/função/status ('(manter)' = não altera) --- */
-    $('#btEditLote').onclick = () => {
-      const sel = [...document.querySelectorAll('.chkP:checked')].map(c => +c.dataset.id);
-      if (!sel.length) { toast('Selecione ao menos um militar', 'erro'); return; }
-      const div = modal(`<div class="modal-inner"><h3>Editar em lote — ${sel.length} militar(es)</h3>
-        <p style="color:var(--tx2);font-size:12px;margin:4px 0">Campos em <b>(manter)</b> não são alterados. Aplica a todos os selecionados.</p>
-        <div class="form-linha">
-          <div class="campo"><label>Setor</label><select id="lSetor"><option value="">(manter)</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-          <div class="campo"><label>Antiguidade</label><select id="lFuncao"><option value="">(manter)</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
-          <div class="campo"><label>Status</label><select id="lStatus"><option value="">(manter)</option><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
-        <div class="modal-acoes"><button class="fantasma" id="lX">Cancelar</button>
-        <button class="primario" id="lGo">Aplicar a ${sel.length}</button></div></div>`);
-      if (!div) return;
-      div.querySelector('#lX').onclick = () => div.fechar && div.fechar();
-      div.querySelector('#lGo').onclick = async () => {
-        const sid = div.querySelector('#lSetor').value;
-        const fid = div.querySelector('#lFuncao').value;
-        const st = div.querySelector('#lStatus').value;
-        if (!sid && !fid && !st) { toast('Nada para alterar — todos em manter', 'erro'); return; }
-        div.fechar && div.fechar();
-        const r = await processar(async () => {
-          let ok = 0; const erros = [];
-          for (const id of sel) {
-            const p = (pessoas.pessoas || []).find(x => x.id === id);
-            if (!p) { erros.push('#' + id + ' não encontrado'); continue; }
-            const corpo = { nome_guerra: p.nome_guerra, nome_completo: p.nome_completo,
-              setor_id: sid ? +sid : (p.setor_id ?? null), funcao_id: fid ? +fid : (p.funcao_id ?? null),
-              status: st || p.status };
-            try { await api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) }); ok++; }
-            catch (e) { erros.push('#' + id + ': ' + (e && e.message || 'falhou')); }
-          }
-          if (erros.length && !ok) throw new Error(erros[0]);
-          return { ok, erros };
-        }, `Editando ${sel.length} militar(es)…`);
-        if (r.ok) {
-          const info = r.resultado;
-          toast(`Aplicado a ${info.ok} militar(es)${info.erros.length ? ' · falhas: ' + info.erros.length : ''}`, info.erros.length ? 'erro' : 'ok');
-          window.ViewPessoal();
-        }
-      };
-    };
-
-    /* --- editar militar (preenche o formulário do topo) --- */
-    document.querySelectorAll('#tabP tr[data-p]').forEach(tr => {
-      tr.querySelector('[data-edit]').onclick = ev => {
-        ev.stopPropagation();
-        const p = JSON.parse(tr.dataset.p);
-        $('#pId').value = p.id; $('#pNg').value = p.nome_guerra; $('#pNc').value = p.nome_completo;
-        $('#pSetor').value = p.setor_id || ''; $('#pFuncao').value = p.funcao_id || ''; $('#pStatus').value = p.status;
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      };
-    });
-
-    /* --- imprimir ficha de pessoal --- */
-    document.querySelectorAll('#tabP [data-fichap]').forEach(bt => {
-      bt.onclick = ev => {
-        ev.stopPropagation();
-        const id = bt.dataset.fichap;
-        window.open('/api/pessoas/' + id + '/pdf', '_blank');
-      };
-    });
-
-    /* --- onda GPX (item 2): edição de apresentação (presente → dispensado etc.) --- */
-    document.querySelectorAll('#tabP [data-apresentacao]').forEach(bt => {
-      bt.onclick = ev => {
-        ev.stopPropagation();
-        const pid = bt.dataset.apresentacao;
-        const nomeGuerra = bt.dataset.nome || '';
-        const atual = mapaApresentacao[pid] || {};
-        const estadoAtual = atual.estado || 'presente';
-
-        const div = modal(`<div class="modal-inner" style="max-width:440px">
-          <h3>Apresentação — ${esc(nomeGuerra)}</h3>
-          <div class="campo" style="margin-bottom:12px">
-            <label>Estado de Apresentação</label>
-            <div id="gpxAprEstadoDD"></div>
-          </div>
-          <div class="campo" style="margin-bottom:16px">
-            <label>Motivo (opcional)</label>
-            <textarea id="gpxAprMotivo" rows="3" placeholder="Justificativa ou observação…">${esc(atual.motivo || '')}</textarea>
-          </div>
-          <div class="modal-acoes" style="display:flex;justify-content:flex-end;gap:8px">
-            <button class="fantasma" id="gpxAprCanc">Cancelar</button>
-            <button class="primario" id="gpxAprReg">Registrar</button>
-          </div>
-        </div>`);
+    const btEditLoteEl = $('#btEditLote');
+    if (btEditLoteEl) {
+      btEditLoteEl.onclick = () => {
+        const sel = [...idsSelecionados];
+        if (!sel.length) { toast('Selecione ao menos um militar', 'erro'); return; }
+        const div = modal(`<div class="modal-inner"><h3>Editar em lote — ${sel.length} militar(es)</h3>
+          <p style="color:var(--tx2);font-size:12px;margin:4px 0">Campos em <b>(manter)</b> não são alterados. Aplica a todos os selecionados.</p>
+          <div class="form-linha">
+            <div class="campo"><label>Setor</label><select id="lSetor"><option value="">(manter)</option>${optSetores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+            <div class="campo"><label>Antiguidade</label><select id="lFuncao"><option value="">(manter)</option>${optFuncoes.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('')}</select></div>
+            <div class="campo"><label>Status</label><select id="lStatus"><option value="">(manter)</option><option value="ativo">ativo</option><option value="inativo">inativo</option></select></div></div>
+          <div class="modal-acoes"><button class="fantasma" id="lX">Cancelar</button>
+          <button class="primario" id="lGo">Aplicar a ${sel.length}</button></div></div>`);
         if (!div) return;
+        div.querySelector('#lX').onclick = () => div.fechar && div.fechar();
+        div.querySelector('#lGo').onclick = async () => {
+          const sid = div.querySelector('#lSetor').value;
+          const fid = div.querySelector('#lFuncao').value;
+          const st = div.querySelector('#lStatus').value;
+          if (!sid && !fid && !st) { toast('Nada para alterar — todos em manter', 'erro'); return; }
+          div.fechar && div.fechar();
+          const r = await processar(async () => {
+            let ok = 0; const erros = [];
+            for (const id of sel) {
+              const p = (pessoas.pessoas || []).find(x => x.id === id);
+              if (!p) { erros.push('#' + id + ' não encontrado'); continue; }
+              const corpo = { nome_guerra: p.nome_guerra, nome_completo: p.nome_completo,
+                setor_id: sid ? +sid : (p.setor_id ?? null), funcao_id: fid ? +fid : (p.funcao_id ?? null),
+                status: st || p.status };
+              try { await api('/api/pessoas/' + id, { method: 'PATCH', body: JSON.stringify(corpo) }); ok++; }
+              catch (e) { erros.push('#' + id + ': ' + (e && e.message || 'falhou')); }
+            }
+            if (erros.length && !ok) throw new Error(erros[0]);
+            return { ok, erros };
+          }, `Editando ${sel.length} militar(es)…`);
+          if (r.ok) {
+            const info = r.resultado;
+            toast(`Aplicado a ${info.ok} militar(es)${info.erros.length ? ' · falhas: ' + info.erros.length : ''}`, info.erros.length ? 'erro' : 'ok');
+            window.ViewPessoal();
+          }
+        };
+      };
+    }
 
-        let estadoEscolhido = estadoAtual;
-        const ddContainer = div.querySelector('#gpxAprEstadoDD');
-        if (ddContainer && typeof criarDropdown === 'function') {
-          criarDropdown(ddContainer, [
-            { valor: 'presente', rotulo: 'Presente' },
-            { valor: 'dispensado', rotulo: 'Dispensado' },
-            { valor: 'descompensado', rotulo: 'Descompensado' },
-            { valor: 'a serviço externo', rotulo: 'A serviço externo' },
-            { valor: 'atrasado', rotulo: 'Atrasado' },
-            { valor: 'falta', rotulo: 'Falta' }
-          ], {
-            valorPadrao: estadoAtual,
-            onChange: v => { estadoEscolhido = v; }
-          });
-        }
+    /* --- eventos dos filtros do Banco de Pessoal --- */
+    const fBusca = $('#fPesBusca');
+    if (fBusca) {
+      fBusca.addEventListener('input', () => {
+        filtroBusca = fBusca.value;
+        pgAtual = 1;
+        renderizarTabelaPessoas();
+      });
+    }
 
-        const fecharModal = () => { div.remove(); };
-        const btCanc = div.querySelector('#gpxAprCanc');
-        if (btCanc) btCanc.onclick = fecharModal;
+    let ddSetor = null;
+    const fSetor = $('#fPesSetor');
+    if (fSetor) {
+      fSetor.addEventListener('change', () => {
+        filtroSetor = fSetor.value;
+        pgAtual = 1;
+        renderizarTabelaPessoas();
+      });
+      if (typeof converterSelectEmDropdown === 'function') {
+        ddSetor = converterSelectEmDropdown(fSetor);
+      }
+    }
 
-        const btReg = div.querySelector('#gpxAprReg');
-        if (btReg) {
-          btReg.onclick = async () => {
-            const motivoTxt = (div.querySelector('#gpxAprMotivo')?.value || '').trim();
-            btReg.disabled = true;
-            try {
-              const resp = await api(`/api/pessoas/${pid}/apresentacao`, {
-                method: 'POST',
-                body: JSON.stringify({ estado: estadoEscolhido, motivo: motivoTxt })
-              });
-              if (resp && resp.ok) {
-                toast('Apresentação registrada');
-                fecharModal();
-                window.ViewPessoal();
-              } else {
-                toast((resp && resp.erro) || 'Falha ao registrar apresentação', 'erro');
-                btReg.disabled = false;
-              }
-            } catch (err) {
-              toast((err && err.message) || 'Erro ao comunicar com o servidor', 'erro');
+    let ddAntiguidade = null;
+    const fAntiguidade = $('#fPesAntiguidade');
+    if (fAntiguidade) {
+      fAntiguidade.addEventListener('change', () => {
+        filtroAntiguidade = fAntiguidade.value;
+        pgAtual = 1;
+        renderizarTabelaPessoas();
+      });
+      if (typeof converterSelectEmDropdown === 'function') {
+        ddAntiguidade = converterSelectEmDropdown(fAntiguidade);
+      }
+    }
+
+    const fInativos = $('#fPesInativos');
+    if (fInativos) {
+      fInativos.addEventListener('change', () => {
+        filtroMostrarInativos = fInativos.checked;
+        pgAtual = 1;
+        atualizarDatalistMilitares();
+        renderizarTabelaPessoas();
+      });
+    }
+
+    const fLimpar = $('#fPesLimpar');
+    if (fLimpar) {
+      fLimpar.addEventListener('click', () => {
+        filtroBusca = '';
+        filtroSetor = '';
+        filtroAntiguidade = '';
+        filtroMostrarInativos = false;
+        if (fBusca) fBusca.value = '';
+        if (fSetor) fSetor.value = '';
+        if (fAntiguidade) fAntiguidade.value = '';
+        if (ddSetor) ddSetor.setValor('');
+        if (ddAntiguidade) ddAntiguidade.setValor('');
+        if (fInativos) fInativos.checked = false;
+        pgAtual = 1;
+        atualizarDatalistMilitares();
+        renderizarTabelaPessoas();
+      });
+    }
+
+    const btAbrirCad = $('#btAbrirCadastrar');
+    if (btAbrirCad) btAbrirCad.onclick = () => abrirModalMilitar(null);
+
+    const btAbrirCsv = $('#btAbrirLoteCsv');
+    if (btAbrirCsv) btAbrirCsv.onclick = () => abrirModalLoteCsv();
+
+    const chkTodosP = $('#chkTodosP');
+    if (chkTodosP) {
+      chkTodosP.onchange = () => {
+        const marcar = chkTodosP.checked;
+        document.querySelectorAll('#tabP .chkP').forEach(ch => {
+          ch.checked = marcar;
+          const id = +ch.dataset.id;
+          if (marcar) idsSelecionados.add(id);
+          else idsSelecionados.delete(id);
+        });
+        atualizarSelecaoLoteUI();
+      };
+    }
+
+    /* --- onda GPX (item 2): edição de apresentação --- */
+    function abrirModalApresentacao(ev, bt) {
+      ev.stopPropagation();
+      const pid = bt.dataset.apresentacao;
+      const nomeGuerra = bt.dataset.nome || '';
+      const atual = mapaApresentacao[pid] || {};
+      const estadoAtual = atual.estado || 'presente';
+
+      const div = modal(`<div class="modal-inner" style="max-width:440px">
+        <h3>Apresentação — ${esc(nomeGuerra)}</h3>
+        <div class="campo" style="margin-bottom:12px">
+          <label>Estado de Apresentação</label>
+          <div id="gpxAprEstadoDD"></div>
+        </div>
+        <div class="campo" style="margin-bottom:16px">
+          <label>Motivo (opcional)</label>
+          <textarea id="gpxAprMotivo" rows="3" placeholder="Justificativa ou observação…">${esc(atual.motivo || '')}</textarea>
+        </div>
+        <div class="modal-acoes" style="display:flex;justify-content:flex-end;gap:8px">
+          <button class="fantasma" id="gpxAprCanc">Cancelar</button>
+          <button class="primario" id="gpxAprReg">Registrar</button>
+        </div>
+      </div>`);
+      if (!div) return;
+
+      let estadoEscolhido = estadoAtual;
+      const ddContainer = div.querySelector('#gpxAprEstadoDD');
+      if (ddContainer && typeof criarDropdown === 'function') {
+        criarDropdown(ddContainer, [
+          { valor: 'presente', rotulo: 'Presente' },
+          { valor: 'dispensado', rotulo: 'Dispensado' },
+          { valor: 'descompensado', rotulo: 'Descompensado' },
+          { valor: 'a serviço externo', rotulo: 'A serviço externo' },
+          { valor: 'atrasado', rotulo: 'Atrasado' },
+          { valor: 'falta', rotulo: 'Falta' }
+        ], {
+          valorPadrao: estadoAtual,
+          onChange: v => { estadoEscolhido = v; }
+        });
+      }
+
+      const fecharModal = () => { div.remove(); };
+      const btCanc = div.querySelector('#gpxAprCanc');
+      if (btCanc) btCanc.onclick = fecharModal;
+
+      const btReg = div.querySelector('#gpxAprReg');
+      if (btReg) {
+        btReg.onclick = async () => {
+          const motivoTxt = (div.querySelector('#gpxAprMotivo')?.value || '').trim();
+          btReg.disabled = true;
+          try {
+            const resp = await api(`/api/pessoas/${pid}/apresentacao`, {
+              method: 'POST',
+              body: JSON.stringify({ estado: estadoEscolhido, motivo: motivoTxt })
+            });
+            if (resp && resp.ok) {
+              toast('Apresentação registrada');
+              fecharModal();
+              window.ViewPessoal();
+            } else {
+              toast((resp && resp.erro) || 'Falha ao registrar apresentação', 'erro');
               btReg.disabled = false;
             }
-          };
-        }
-      };
-    });
+          } catch (err) {
+            toast((err && err.message) || 'Erro ao comunicar com o servidor', 'erro');
+            btReg.disabled = false;
+          }
+        };
+      }
+    }
 
     /* --- onda GPX (item 3): trilha de modificações por pessoa --- */
-    document.querySelectorAll('#tabP [data-historico]').forEach(bt => {
-      bt.onclick = async ev => {
-        ev.stopPropagation();
-        const pid = bt.dataset.historico;
-        const nomeGuerra = bt.dataset.nome || '';
+    function abrirModalHistorico(ev, bt) {
+      ev.stopPropagation();
+      const pid = bt.dataset.historico;
+      const nomeGuerra = bt.dataset.nome || '';
 
-        const div = modal(`<div class="modal-inner" style="max-width:540px">
-          <h3>Histórico de Modificações — ${esc(nomeGuerra)}</h3>
-          <div id="gpxHistCorpo"><div class="carregando">…</div></div>
-          <div class="modal-acoes" style="display:flex;justify-content:flex-end;margin-top:14px">
-            <button class="fantasma" id="gpxHistFechar">Fechar</button>
-          </div>
-        </div>`);
-        if (!div) return;
+      const div = modal(`<div class="modal-inner" style="max-width:540px">
+        <h3>Histórico de Modificações — ${esc(nomeGuerra)}</h3>
+        <div id="gpxHistCorpo"><div class="carregando">…</div></div>
+        <div class="modal-acoes" style="display:flex;justify-content:flex-end;margin-top:14px">
+          <button class="fantasma" id="gpxHistFechar">Fechar</button>
+        </div>
+      </div>`);
+      if (!div) return;
 
-        const btFechar = div.querySelector('#gpxHistFechar');
-        if (btFechar) btFechar.onclick = () => { div.remove(); };
+      const btFechar = div.querySelector('#gpxHistFechar');
+      if (btFechar) btFechar.onclick = () => { div.remove(); };
 
+      (async () => {
         try {
           const r = await api(`/api/pessoas/${pid}/modificacoes`);
           const lista = (r && r.modificacoes) || [];
@@ -900,55 +1426,13 @@
           const cont = div.querySelector('#gpxHistCorpo');
           if (cont) cont.innerHTML = '<div class="gpx-hist-vazio">Falha ao carregar modificações.</div>';
         }
-      };
-    });
+      })();
+    }
 
-    /* --- onda GPX (item 4): relatório de faltas e atrasos de conferência fechada --- */
-    (async () => {
-      const relDDCont = $('#gpxRelConfDD');
-      const btFaltas = $('#gpxBtFaltas');
-      const btAtrasos = $('#gpxBtAtrasos');
-      if (!relDDCont || !btFaltas || !btAtrasos) return;
-
-      let confsFechadas = [];
-      try {
-        const respConfs = await api('/api/conferencia/lista');
-        confsFechadas = (respConfs || []).filter(c => c && c.status === 'fechada');
-      } catch (err) {
-        confsFechadas = [];
-      }
-
-      let confIdSelecionada = confsFechadas.length ? String(confsFechadas[0].id) : null;
-
-      if (!confsFechadas.length) {
-        relDDCont.innerHTML = '<span style="color:var(--tx3);font-size:12.5px">Nenhuma conferência fechada encontrada</span>';
-        btFaltas.disabled = true;
-        btAtrasos.disabled = true;
-        return;
-      }
-
-      const opcoesDD = confsFechadas.map(c => ({
-        valor: String(c.id),
-        rotulo: `#${c.id} — ${fmtData(c.data)} ${c.nome ? '· ' + c.nome : ''} (${c.lancamentos || 0} lançamentos)`
-      }));
-
-      if (typeof criarDropdown === 'function') {
-        criarDropdown(relDDCont, opcoesDD, {
-          valorPadrao: confIdSelecionada,
-          onChange: val => { confIdSelecionada = val; }
-        });
-      }
-
-      btFaltas.onclick = () => {
-        if (!confIdSelecionada) { toast('Selecione uma conferência fechada', 'erro'); return; }
-        window.open('/api/conferencia/' + encodeURIComponent(confIdSelecionada) + '/relatorio.pdf?filtro=faltas', '_blank');
-      };
-
-      btAtrasos.onclick = () => {
-        if (!confIdSelecionada) { toast('Selecione uma conferência fechada', 'erro'); return; }
-        window.open('/api/conferencia/' + encodeURIComponent(confIdSelecionada) + '/relatorio.pdf?filtro=atrasos', '_blank');
-      };
-    })();
+    // Inicialização da tabela do Banco de Pessoal
+    atualizarDatalistMilitares();
+    configurarCabecalhosOrdenacao();
+    renderizarTabelaPessoas();
 
     // ordem 06/10 (item 8b): NOVO SETOR no topo do modo Setores (POST catálogo existente)
     const abrirModalNovoSetor = () => {

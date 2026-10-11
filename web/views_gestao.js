@@ -530,7 +530,7 @@
                 const chips = papeis.map(p => {
                   const rot = rotuloPapel(p.papel);
                   const grp = p.grupo_nome ? p.grupo_nome : (p.papel === 'admin' ? 'Global' : 'Sem grupo');
-                  const func = p.funcao_nome ? ` · ${p.funcao_nome}` : '';
+                  const func = (p.papel === 'enc_pessoal' || p.papel === 'enc_material' || !p.funcao_nome || p.funcao_nome.toLowerCase().includes('encarregado')) ? '' : ` · ${p.funcao_nome}`;
                   const ehUnico = p.papel === 'gerente' ? ' (Titular Único)' : '';
                   return `
                     <span class="papel-chip ${p.papel}">
@@ -2079,19 +2079,18 @@
   }
 
   /* =====================================================================
-     #/grupos — GERENCIAR (f2): estrutura do grupo — Antiguidade · Grupos · Operadores.
+     #/grupos — GERENCIAR (f2): estrutura do grupo — Antiguidade · Grupos.
      O Pessoal (Efetivo · Funções · Setores) saiu para web/views_pessoal.js
      (módulo Pessoal, rota #/pessoal) — divisão gerir grupo × gerir pessoal.
+     Operadores são de setor (gerenciados em Pessoal › Setores).
      ===================================================================== */
   window.ViewGrupos = async function () {
     const eu = quem();
     if (!eu || eu.papel !== 'gerente') { location.hash = '#/hoje'; return; }
-    const souFuncaoPessoal = false;
     navAtiva('#/grupos');
     $('#app').innerHTML = '<div class="carregando">…</div>';
     const [grupos, arvore, contas] = await Promise.all([
       api('/api/grupos'), api('/api/grupos/arvore'), api('/api/usuarios')]);
-    const operadores = contas.filter(c => c.grupo_id === eu.grupo_id && c.papel === 'operador');
     const meus = grupos.filter(g => g.id === eu.grupo_id);
     const gerenteDe = {};
     contas.filter(c => c.papel === 'gerente' && c.ativo && c.grupo_id).forEach(c => { gerenteDe[c.grupo_id] = c.login; });
@@ -2166,33 +2165,18 @@
           || '<span class="vazio">nenhum grupo</span>') + `</div>
         <div class="cartao"><h3 style="margin-top:0">Subordinação — Estrutura e Hierarquia da Unidade</h3>
           <div id="arvore2">${arvoreHTML(arvore, true)}</div></div>
-      </div>
-      <div id="gerOperadores" class="${abaGer === 'operadores' ? '' : 'oculto'}">
-        <div class="cartao"><h3 style="margin-top:0">OPERADORES do meu grupo (${operadores.length})</h3>
-        <p style="color:var(--tx2);font-size:12.5px;margin:0 0 10px">Fluxo da hierarquia: <b>gerente</b> designa os <b>chefes de setor</b> (módulo Pessoal › Setores) → cada <b>chefe</b> seleciona os operadores dentre as contas do SEU setor. A criação de contas do grupo pelo encarregado/auxiliar está no módulo <b>Pessoal › Efetivo</b>.</p>
-        <div class="campo" style="margin-bottom:8px"><label>Filtrar operadores</label><input id="fOp" placeholder="buscar login…"></div>
-        <div class="rolagem" style="margin-top:10px"><table><thead><tr><th>ID</th><th>Login</th><th>Status</th><th>Criada</th><th>Ações</th></tr></thead>
-        <tbody>${operadores.map(o => `
-          <tr data-login="${esc(o.login)}"><td class="num">#${o.id}</td><td><b>${esc(o.login)}</b></td><td>${o.ativo ? 'ativa' : 'desativada'}</td><td>${fmtData(o.criado_em)}</td>
-          <td>${souFuncaoPessoal
-            ? `<button class="acao-linha" data-editu="${o.id}" data-login="${esc(o.login)}" data-ng="${esc(o.nome_guerra || '')}" data-nc="${esc(o.nome_completo || '')}">editar</button>`
-            : `<button class="acao-linha" data-senha="${o.id}" data-login="${esc(o.login)}">senha</button>
-          <button class="acao-linha" data-mv="${o.id}" data-login="${esc(o.login)}">mover</button>
-          <button class="acao-linha" data-exc="${o.id}" data-login="${esc(o.login)}">excluir</button>`}</td></tr>`).join('')
-          || '<tr><td colspan="5"><span class="vazio">nenhum operador</span></td></tr>'}</tbody></table></div>
       </div>`;
 
     /* --- alternância de sub-abas --- */
     if (typeof criarDropdown === 'function') {
       criarDropdown($('#abasGerDD'), [
         { valor: 'tags', rotulo: 'Tags' },
-        { valor: 'grupos', rotulo: 'Grupos' },
-        { valor: 'operadores', rotulo: 'Operadores' }
+        { valor: 'grupos', rotulo: 'Grupos' }
       ], {
         valorPadrao: abaGer,
         onChange: (k) => {
           abaGer = k;
-          ['tags', 'grupos', 'operadores'].forEach(kk => {
+          ['tags', 'grupos'].forEach(kk => {
             const el = $('#ger' + kk[0].toUpperCase() + kk.slice(1));
             if (el) el.classList.toggle('oculto', kk !== abaGer);
           });
@@ -2201,25 +2185,6 @@
       });
     }
 
-    /* --- controles de tabela dos operadores --- */
-    const tabOpTbl = document.querySelector('#gerOperadores table');
-    if (tabOpTbl) {
-      window.tabelaControles('ger-operadores', tabOpTbl, tabOpTbl.querySelector('tbody'), [
-        { tipo: 'num' }, { tipo: 'txt' }, { tipo: 'txt' }, { tipo: 'txt' }, null
-      ], 20);
-    }
-
-    /* --- edição de nomes da conta pela função de pessoal --- */
-    document.querySelectorAll('[data-editu]').forEach(b => {
-      b.onclick = async () => {
-        const novoNg = prompt('Nome de guerra:', b.dataset.ng || '');
-        if (novoNg === null) return;
-        const novoNc = prompt('Nome completo:', b.dataset.nc || '');
-        if (novoNc === null) return;
-        const r = await processar(() => api(`/api/usuarios/${b.dataset.editu}`, { method: 'PATCH', body: JSON.stringify({ nome_guerra: novoNg.trim(), nome_completo: novoNc.trim() }) }), 'Salvando conta…');
-        if (r.ok) window.ViewGrupos();
-      };
-    });
 
     /* --- árvore e cards de grupos --- */
     const gerGrp = $('#gerGrupos');
@@ -2269,214 +2234,233 @@
       const tipos = ['destinos', 'funcoes', 'tags', 'material_tipos', 'material_classes', 'setores'];
       const meuGid = (window.ME && window.ME.grupo_id) || null;
 
-      const coletarSubordinados = (no, acc = new Set()) => {
-        if (!no) return acc;
-        if (Array.isArray(no)) {
-          no.forEach(n => coletarSubordinados(n, acc));
+      try {
+        const coletarSubordinados = (no, acc = new Set()) => {
+          if (!no) return acc;
+          if (Array.isArray(no)) {
+            no.forEach(n => coletarSubordinados(n, acc));
+            return acc;
+          }
+          if (no.id && no.id !== meuGid) acc.add(no.id);
+          if (no.filhos) no.filhos.forEach(f => coletarSubordinados(f, acc));
           return acc;
-        }
-        if (no.id && no.id !== meuGid) acc.add(no.id);
-        if (no.filhos) no.filhos.forEach(f => coletarSubordinados(f, acc));
-        return acc;
-      };
-      const subsIds = coletarSubordinados(arvore);
-      const mapGrupos = {};
-      (grupos || []).forEach(g => { mapGrupos[g.id] = g.nome; });
+        };
+        const subsIds = coletarSubordinados(arvore);
+        const mapGrupos = {};
+        (grupos || []).forEach(g => { mapGrupos[g.id] = g.nome; });
 
-      const cache = {};
-      const resultados = await Promise.all(tipos.map(t =>
-        Array.isArray(cache[t])
-          ? Promise.resolve([t, cache[t]])
-          : api('/api/catalogo/' + t).then(l => [t, l]).catch(() => [t, []])));
-
-      let html = `
-        <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:8px;padding:12px;margin-bottom:18px;font-size:12.5px;color:var(--tx2)">
-          💡 <b>Doutrina de Organização v1.5:</b> As tags estão divididas em <b>Pessoal</b> (Situação/Destino/Funções) e <b>Material</b> (Situação/Tipo/Classe). A tag de setor do militar é preenchida automaticamente pelo Setor ao qual ele está alocado.
-        </div>`;
-
-      for (const [t, lista] of resultados) {
-        const minhas = lista.filter(x => x.grupo_id === meuGid);
-        const subordinadas = lista.filter(x => x.grupo_id && subsIds.has(x.grupo_id));
-        const herdadas = lista.filter(x => x.grupo_id !== meuGid && (!x.grupo_id || !subsIds.has(x.grupo_id)));
-
-        const nivelTag = x => {
-          let n = 0, pai = x.pai_id;
-          while (pai != null) { const p = lista.find(y => y.id === pai); if (!p) break; n++; pai = p.pai_id; }
-          return n;
+        const normalizarLista = (t, res) => {
+          if (Array.isArray(res)) return res;
+          if (res && Array.isArray(res[t])) return res[t];
+          if (res && Array.isArray(res.funcoes)) return res.funcoes;
+          if (res && Array.isArray(res.itens)) return res.itens;
+          if (res && Array.isArray(res.dados)) return res.dados;
+          return [];
         };
 
-        const chipCorTag = x => (t === 'tags' || t === 'material_tipos' || t === 'material_classes') && x.cor
-          ? `<span style="display:inline-block; width:12px; height:12px; border-radius:50%; background:${esc(x.cor)}; margin-right:6px; vertical-align:middle; border:1px solid rgba(255,255,255,0.2)"></span>`
-          : '';
+        const cache = {};
+        const resultados = await Promise.all(tipos.map(async t => {
+          if (Array.isArray(cache[t])) return [t, cache[t]];
+          try {
+            const l = await api('/api/catalogo/' + t);
+            return [t, normalizarLista(t, l)];
+          } catch (e) {
+            return [t, []];
+          }
+        }));
 
-        const linhaLista = (x, tipoPermissao, nomeOrigem) => {
-          const podeGerenciar = tipoPermissao === 'meu' || tipoPermissao === 'subordinado';
-          const recuo = ((t === 'tags' || t === 'material_tipos') && tipoPermissao === 'meu') ? `margin-left:${nivelTag(x) * 18}px` : '';
+        let html = `
+          <div style="background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:8px;padding:12px;margin-bottom:18px;font-size:12.5px;color:var(--tx2)">
+            💡 <b>Doutrina de Organização v1.5:</b> As tags estão divididas em <b>Pessoal</b> (Situação/Destino/Funções) e <b>Material</b> (Situação/Tipo/Classe). A tag de setor do militar é preenchida automaticamente pelo Setor ao qual ele está alocado.
+          </div>`;
 
-          return `
-            <div class="cat-linha ${!podeGerenciar ? 'herdado' : ''}" style="${recuo}; display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:4px; background:var(--painel2); border:1px solid var(--borda); border-radius:6px">
-              <small class="num" style="width:34px; color:var(--tx3)">#${x.id}</small>
-              <div style="flex:1; display:flex; align-items:center; gap:6px; flex-wrap:wrap">
-                ${chipCorTag(x)}
-                <span style="font-weight:600">${esc(x.nome)}</span>
-                ${x.sigla ? `<code style="font-size:11px; padding:1px 5px; background:var(--painel3); border-radius:4px; color:var(--tx2)">${esc(x.sigla)}</code>` : ''}
-                ${!x.ativo ? '<i style="color:var(--tx3); font-size:12px">(inativo)</i>' : ''}
-                ${tipoPermissao === 'subordinado' ? `<span style="font-size:10.5px; padding:1px 6px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3)">🌲 ${esc(nomeOrigem || 'Subordinado')}</span>` : ''}
+        for (const [t, lista] of resultados) {
+          const minhas = lista.filter(x => x.grupo_id === meuGid);
+          const subordinadas = lista.filter(x => x.grupo_id && subsIds.has(x.grupo_id));
+          const herdadas = lista.filter(x => x.grupo_id !== meuGid && (!x.grupo_id || !subsIds.has(x.grupo_id)));
+
+          const nivelTag = x => {
+            let n = 0, pai = x.pai_id;
+            while (pai != null) { const p = lista.find(y => y.id === pai); if (!p) break; n++; pai = p.pai_id; }
+            return n;
+          };
+
+          const chipCorTag = x => (t === 'tags' || t === 'material_tipos' || t === 'material_classes') && x.cor
+            ? `<span style="display:inline-block; width:12px; height:12px; border-radius:50%; background:${esc(x.cor)}; margin-right:6px; vertical-align:middle; border:1px solid rgba(255,255,255,0.2)"></span>`
+            : '';
+
+          const linhaLista = (x, tipoPermissao, nomeOrigem) => {
+            const podeGerenciar = tipoPermissao === 'meu' || tipoPermissao === 'subordinado';
+            const recuo = ((t === 'tags' || t === 'material_tipos') && tipoPermissao === 'meu') ? `margin-left:${nivelTag(x) * 18}px` : '';
+
+            return `
+              <div class="cat-linha ${!podeGerenciar ? 'herdado' : ''}" style="${recuo}; display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:4px; background:var(--painel2); border:1px solid var(--borda); border-radius:6px">
+                <small class="num" style="width:34px; color:var(--tx3)">#${x.id}</small>
+                <div style="flex:1; display:flex; align-items:center; gap:6px; flex-wrap:wrap">
+                  ${chipCorTag(x)}
+                  <span style="font-weight:600">${esc(x.nome)}</span>
+                  ${x.sigla ? `<code style="font-size:11px; padding:1px 5px; background:var(--painel3); border-radius:4px; color:var(--tx2)">${esc(x.sigla)}</code>` : ''}
+                  ${!x.ativo ? '<i style="color:var(--tx3); font-size:12px">(inativo)</i>' : ''}
+                  ${tipoPermissao === 'subordinado' ? `<span style="font-size:10.5px; padding:1px 6px; border-radius:4px; background:rgba(59,130,246,0.15); color:#60a5fa; border:1px solid rgba(59,130,246,0.3)">🌲 ${esc(nomeOrigem || 'Subordinado')}</span>` : ''}
+                </div>
+                <div style="display:flex; align-items:center; gap:6px">
+                  ${podeGerenciar ? `
+                    <button class="acao-linha" style="font-size:11.5px; padding:2px 8px" data-editcat="${t}" data-cid="${x.id}" data-nome="${esc(x.nome)}" data-cor="${esc(x.cor || '')}" data-sigla="${esc(x.sigla || '')}">editar</button>
+                    ${souFuncaoPessoal ? '' : `<button class="acao-linha perigo" style="font-size:11.5px; padding:2px 8px" data-delcat="${t}" data-cid="${x.id}">excluir</button>`}
+                  ` : `
+                    <span style="color:var(--tx3); font-size:11.5px; display:inline-flex; align-items:center; gap:3px">
+                      🔒 ${esc(nomeOrigem || 'Superior')}
+                    </span>
+                  `}
+                </div>
               </div>
-              <div style="display:flex; align-items:center; gap:6px">
-                ${podeGerenciar ? `
-                  <button class="acao-linha" style="font-size:11.5px; padding:2px 8px" data-editcat="${t}" data-cid="${x.id}" data-nome="${esc(x.nome)}" data-cor="${esc(x.cor || '')}" data-sigla="${esc(x.sigla || '')}">editar</button>
-                  ${souFuncaoPessoal ? '' : `<button class="acao-linha perigo" style="font-size:11.5px; padding:2px 8px" data-delcat="${t}" data-cid="${x.id}">excluir</button>`}
-                ` : `
-                  <span style="color:var(--tx3); font-size:11.5px; display:inline-flex; align-items:center; gap:3px">
-                    🔒 ${esc(nomeOrigem || 'Superior')}
-                  </span>
-                `}
-              </div>
-            </div>
-          `;
-        };
+            `;
+          };
 
-        let corpo = '';
+          let corpo = '';
 
-        corpo += `
-          <div class="cat-secao" style="font-weight:700; font-size:12px; color:var(--verde-claro); margin:10px 0 6px; display:flex; align-items:center; gap:6px">
-            <span>🛡️ DO MEU GRUPO (${minhas.length})</span>
-          </div>
-          ${minhas.length ? minhas.sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id)).map(x => linhaLista(x, 'meu')).join('') : '<span class="vazio" style="padding:6px 0; display:block">— Nenhum item próprio criado —</span>'}
-        `;
-
-        if (subordinadas.length) {
           corpo += `
-            <div class="cat-secao" style="font-weight:700; font-size:12px; color:#60a5fa; margin:14px 0 6px; display:flex; align-items:center; gap:6px">
-              <span>🌲 DE GRUPOS SUBORDINADOS (${subordinadas.length})</span>
-              <small style="font-weight:400; color:var(--tx3)">— Você pode editar/gerenciar</small>
+            <div class="cat-secao" style="font-weight:700; font-size:12px; color:var(--verde-claro); margin:10px 0 6px; display:flex; align-items:center; gap:6px">
+              <span>🛡️ DO MEU GRUPO (${minhas.length})</span>
             </div>
-            ${subordinadas.map(x => linhaLista(x, 'subordinado', mapGrupos[x.grupo_id] || ('Grupo #' + x.grupo_id))).join('')}
+            ${minhas.length ? minhas.sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id)).map(x => linhaLista(x, 'meu')).join('') : '<span class="vazio" style="padding:6px 0; display:block">— Nenhum item próprio criado —</span>'}
+          `;
+
+          if (subordinadas.length) {
+            corpo += `
+              <div class="cat-secao" style="font-weight:700; font-size:12px; color:#60a5fa; margin:14px 0 6px; display:flex; align-items:center; gap:6px">
+                <span>🌲 DE GRUPOS SUBORDINADOS (${subordinadas.length})</span>
+                <small style="font-weight:400; color:var(--tx3)">— Você pode editar/gerenciar</small>
+              </div>
+              ${subordinadas.map(x => linhaLista(x, 'subordinado', mapGrupos[x.grupo_id] || ('Grupo #' + x.grupo_id))).join('')}
+            `;
+          }
+
+          if (herdadas.length) {
+            corpo += `
+              <div class="cat-secao" style="font-weight:700; font-size:12px; color:var(--tx3); margin:14px 0 6px; display:flex; align-items:center; gap:6px">
+                <span>🔒 HERDADO DE GRUPOS SUPERIORES / GLOBAL (${herdadas.length})</span>
+                <small style="font-weight:400; color:var(--tx3)">— Somente Leitura</small>
+              </div>
+              ${herdadas.map(x => linhaLista(x, 'superior', x.grupo_id ? (mapGrupos[x.grupo_id] || 'Grupo #' + x.grupo_id) : 'Global')).join('')}
+            `;
+          }
+
+          const btAnt = (t === 'tags' || t === 'setores' || t === 'funcoes' || t === 'material_tipos') && minhas.length >= 2
+            ? `<button class="fantasma" data-ant="${t}" style="min-height:30px; padding:4px 10px; font-size:12px">⚖ Definir antiguidade</button>` : '';
+
+          html += `
+            <div class="cat-bloco" style="margin-bottom:20px; background:var(--painel); border:1px solid var(--borda); border-radius:8px; padding:12px 14px">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid var(--borda); padding-bottom:8px; margin-bottom:8px">
+                <b style="font-size:14.5px">${rotCat[t]}</b>
+                ${btAnt}
+              </div>
+              ${corpo}
+            </div>
           `;
         }
 
-        if (herdadas.length) {
-          corpo += `
-            <div class="cat-secao" style="font-weight:700; font-size:12px; color:var(--tx3); margin:14px 0 6px; display:flex; align-items:center; gap:6px">
-              <span>🔒 HERDADO DE GRUPOS SUPERIORES / GLOBAL (${herdadas.length})</span>
-              <small style="font-weight:400; color:var(--tx3)">— Somente Leitura</small>
+        cont.innerHTML = html;
+
+        /* --- handlers: editar / excluir / antiguidade --- */
+        cont.querySelectorAll('[data-editcat]').forEach(b => b.onclick = () => {
+          const t = b.dataset.editcat, cid = b.dataset.cid, nome = b.dataset.nome, cor = b.dataset.cor, sigla = b.dataset.sigla;
+          const div = modal(`
+            <div class="modal-inner" style="max-width:440px">
+              <h3 style="margin-top:0">Editar ${rotCat[t]}</h3>
+              <div class="campo"><label>Nome</label><input id="edNome" value="${esc(nome)}"></div>
+              ${t === 'tags' ? `<div class="campo"><label>Cor da Tag</label><input type="color" id="edCor" value="${esc(cor || '#10b981')}" style="width:100%; height:40px; padding:2px; cursor:pointer"></div>` : ''}
+              ${t === 'setores' ? `<div class="campo"><label>Sigla</label><input id="edSigla" value="${esc(sigla || '')}"></div>` : ''}
+              <div class="modal-acoes">
+                <button class="fantasma" id="edX">Cancelar</button>
+                <button class="primario" id="edGo">Salvar Alterações</button>
+              </div>
             </div>
-            ${herdadas.map(x => linhaLista(x, 'superior', x.grupo_id ? (mapGrupos[x.grupo_id] || 'Grupo #' + x.grupo_id) : 'Global')).join('')}
-          `;
-        }
+          `);
+          div.querySelector('#edNome').focus();
+          div.querySelector('#edX').onclick = () => div.fechar();
+          div.querySelector('#edGo').onclick = async () => {
+            const novoNome = div.querySelector('#edNome').value.trim();
+            if (!novoNome) { toast('Informe o nome', 'erro'); return; }
+            const corpo = { nome: novoNome };
+            if (t === 'tags' && div.querySelector('#edCor')) corpo.cor = div.querySelector('#edCor').value;
+            if (t === 'setores' && div.querySelector('#edSigla')) corpo.sigla = div.querySelector('#edSigla').value.trim();
 
-        const btAnt = (t === 'tags' || t === 'setores' || t === 'funcoes' || t === 'material_tipos') && minhas.length >= 2
-          ? `<button class="fantasma" data-ant="${t}" style="min-height:30px; padding:4px 10px; font-size:12px">⚖ Definir antiguidade</button>` : '';
+            const r = await processar(() => api(`/api/catalogo/${t}/${cid}`, { method: 'PATCH', body: JSON.stringify(corpo) }), 'Salvando alterações…');
+            if (r.ok) {
+              toast('Item atualizado com sucesso!');
+              div.fechar();
+              carregarCats();
+            }
+          };
+        });
 
-        html += `
-          <div class="cat-bloco" style="margin-bottom:20px; background:var(--painel); border:1px solid var(--borda); border-radius:8px; padding:12px 14px">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid var(--borda); padding-bottom:8px; margin-bottom:8px">
-              <b style="font-size:14.5px">${rotCat[t]}</b>
-              ${btAnt}
-            </div>
-            ${corpo}
-          </div>
-        `;
-      }
-
-      cont.innerHTML = html;
-
-      /* --- handlers: editar / excluir / antiguidade --- */
-      cont.querySelectorAll('[data-editcat]').forEach(b => b.onclick = () => {
-        const t = b.dataset.editcat, cid = b.dataset.cid, nome = b.dataset.nome, cor = b.dataset.cor, sigla = b.dataset.sigla;
-        const div = modal(`
-          <div class="modal-inner" style="max-width:440px">
-            <h3 style="margin-top:0">Editar ${rotCat[t]}</h3>
-            <div class="campo"><label>Nome</label><input id="edNome" value="${esc(nome)}"></div>
-            ${t === 'tags' ? `<div class="campo"><label>Cor da Tag</label><input type="color" id="edCor" value="${esc(cor || '#10b981')}" style="width:100%; height:40px; padding:2px; cursor:pointer"></div>` : ''}
-            ${t === 'setores' ? `<div class="campo"><label>Sigla</label><input id="edSigla" value="${esc(sigla || '')}"></div>` : ''}
-            <div class="modal-acoes">
-              <button class="fantasma" id="edX">Cancelar</button>
-              <button class="primario" id="edGo">Salvar Alterações</button>
-            </div>
-          </div>
-        `);
-        div.querySelector('#edNome').focus();
-        div.querySelector('#edX').onclick = () => div.fechar();
-        div.querySelector('#edGo').onclick = async () => {
-          const novoNome = div.querySelector('#edNome').value.trim();
-          if (!novoNome) { toast('Informe o nome', 'erro'); return; }
-          const corpo = { nome: novoNome };
-          if (t === 'tags' && div.querySelector('#edCor')) corpo.cor = div.querySelector('#edCor').value;
-          if (t === 'setores' && div.querySelector('#edSigla')) corpo.sigla = div.querySelector('#edSigla').value.trim();
-
-          const r = await processar(() => api(`/api/catalogo/${t}/${cid}`, { method: 'PATCH', body: JSON.stringify(corpo) }), 'Salvando alterações…');
+        cont.querySelectorAll('[data-delcat]').forEach(b => b.onclick = async () => {
+          if (!(await confirmar('Excluir este item do catálogo?'))) return;
+          const r = await processar(() => api(`/api/catalogo/${b.dataset.delcat}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
           if (r.ok) {
-            toast('Item atualizado com sucesso!');
-            div.fechar();
+            toast('Item excluído com sucesso');
             carregarCats();
           }
-        };
-      });
+        });
 
-      cont.querySelectorAll('[data-delcat]').forEach(b => b.onclick = async () => {
-        if (!(await confirmar('Excluir este item do catálogo?'))) return;
-        const r = await processar(() => api(`/api/catalogo/${b.dataset.delcat}/${b.dataset.cid}`, { method: 'DELETE' }), 'Excluindo item…');
-        if (r.ok) {
-          toast('Item excluído com sucesso');
-          carregarCats();
-        }
-      });
-
-      cont.querySelectorAll('[data-ant]').forEach(bt => bt.onclick = () => {
-        const t = bt.dataset.ant;
-        const lista = (resultados.find(r => r[0] === t) || [null, []])[1]
-          .filter(x => x.grupo_id === meuGid);
-        if (lista.length < 2) return;
-        const raiz = lista.filter(x => x.pai_id == null);
-        const empilhar = (nos, acc) => nos
-          .sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id))
-          .forEach(x => { acc.push(x); empilhar(lista.filter(y => y.pai_id === x.id), acc); });
-        let ordem = []; empilhar(raiz, ordem);
-        lista.filter(x => !ordem.includes(x)).forEach(x => ordem.push(x));
-        const div = modal(`<div class="modal-inner"><h3>Antiguidade — ${rotCat[t]}</h3>
-          <p style="color:var(--tx2);font-size:12px;margin:4px 0">Arraste para ordenar: o primeiro é o mais antigo.</p>
-          <div id="antLista" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto"></div>
-          <div class="modal-acoes"><button class="fantasma" id="antX">Cancelar</button>
-          <button class="primario" id="antGo">Salvar ordem</button></div></div>`);
-        const desenhar = () => {
-          div.querySelector('#antLista').innerHTML = ordem.map((x, i) =>
-            `<div class="ant-item" draggable="true" data-antid="${x.id}">
-               <span class="num" style="width:26px;text-align:center;font-weight:800">${i + 1}</span>
-               <span style="flex:1">${esc(x.nome)}</span>
-               <span style="color:var(--tx3);cursor:grab">⋮⋮</span></div>`).join('');
-          div.querySelectorAll('.ant-item').forEach(item => {
-            item.addEventListener('dragstart', ev => { ev.dataTransfer.setData('text/plain', item.dataset.antid); item.classList.add('drop-alvo'); });
-            item.addEventListener('dragend', () => item.classList.remove('drop-alvo'));
-            item.addEventListener('dragover', ev => { ev.preventDefault(); item.style.borderTop = '2px solid var(--verde)'; });
-            item.addEventListener('dragleave', () => { item.style.borderTop = ''; });
-            item.addEventListener('drop', ev => {
-              ev.preventDefault();
-              item.style.borderTop = '';
-              const movId = +ev.dataTransfer.getData('text/plain');
-              const alvoId = +item.dataset.antid;
-              if (movId === alvoId) return;
-              const de = ordem.findIndex(x => x.id === movId);
-              const para = ordem.findIndex(x => x.id === alvoId);
-              const [mov] = ordem.splice(de, 1);
-              ordem.splice(para, 0, mov);
-              desenhar();
+        cont.querySelectorAll('[data-ant]').forEach(bt => bt.onclick = () => {
+          const t = bt.dataset.ant;
+          const listaRaw = (resultados.find(r => r[0] === t) || [null, []])[1];
+          const lista = (Array.isArray(listaRaw) ? listaRaw : []).filter(x => x.grupo_id === meuGid);
+          if (lista.length < 2) return;
+          const raiz = lista.filter(x => x.pai_id == null);
+          const empilhar = (nos, acc) => nos
+            .sort((a, b) => (a.antiguidade ?? 999) - (b.antiguidade ?? 999) || (a.id - b.id))
+            .forEach(x => { acc.push(x); empilhar(lista.filter(y => y.pai_id === x.id), acc); });
+          let ordem = []; empilhar(raiz, ordem);
+          lista.filter(x => !ordem.includes(x)).forEach(x => ordem.push(x));
+          const div = modal(`<div class="modal-inner"><h3>Antiguidade — ${rotCat[t]}</h3>
+            <p style="color:var(--tx2);font-size:12px;margin:4px 0">Arraste para ordenar: o primeiro é o mais antigo.</p>
+            <div id="antLista" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow:auto"></div>
+            <div class="modal-acoes"><button class="fantasma" id="antX">Cancelar</button>
+            <button class="primario" id="antGo">Salvar ordem</button></div></div>`);
+          const desenhar = () => {
+            div.querySelector('#antLista').innerHTML = ordem.map((x, i) =>
+              `<div class="ant-item" draggable="true" data-antid="${x.id}">
+                 <span class="num" style="width:26px;text-align:center;font-weight:800">${i + 1}</span>
+                 <span style="flex:1">${esc(x.nome)}</span>
+                 <span style="color:var(--tx3);cursor:grab">⋮⋮</span></div>`).join('');
+            div.querySelectorAll('.ant-item').forEach(item => {
+              item.addEventListener('dragstart', ev => { ev.dataTransfer.setData('text/plain', item.dataset.antid); item.classList.add('drop-alvo'); });
+              item.addEventListener('dragend', () => item.classList.remove('drop-alvo'));
+              item.addEventListener('dragover', ev => { ev.preventDefault(); item.style.borderTop = '2px solid var(--verde)'; });
+              item.addEventListener('dragleave', () => { item.style.borderTop = ''; });
+              item.addEventListener('drop', ev => {
+                ev.preventDefault();
+                item.style.borderTop = '';
+                const movId = +ev.dataTransfer.getData('text/plain');
+                const alvoId = +item.dataset.antid;
+                if (movId === alvoId) return;
+                const de = ordem.findIndex(x => x.id === movId);
+                const para = ordem.findIndex(x => x.id === alvoId);
+                const [mov] = ordem.splice(de, 1);
+                ordem.splice(para, 0, mov);
+                desenhar();
+              });
             });
-          });
-        };
-        desenhar();
-        div.querySelector('#antX').onclick = () => div.fechar();
-        div.querySelector('#antGo').onclick = async () => {
-          const ids = [...div.querySelectorAll('.ant-item')].map(e => +e.dataset.antid);
-          const r = await processar(async () => {
-            for (let i = 0; i < ids.length; i++) {
-              await api(`/api/catalogo/${t}/${ids[i]}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: null, antiguidade: i + 1 }) });
-            }
-          }, 'Salvando antiguidade…');
-          if (r.ok) { toast('Antiguidade salva'); carregarCats(); }
-        };
-      });
+          };
+          desenhar();
+          div.querySelector('#antX').onclick = () => div.fechar();
+          div.querySelector('#antGo').onclick = async () => {
+            const ids = [...div.querySelectorAll('.ant-item')].map(e => +e.dataset.antid);
+            const r = await processar(async () => {
+              for (let i = 0; i < ids.length; i++) {
+                await api(`/api/catalogo/${t}/${ids[i]}/pai`, { method: 'PATCH', body: JSON.stringify({ pai_id: null, antiguidade: i + 1 }) });
+              }
+            }, 'Salvando antiguidade…');
+            if (r.ok) { toast('Antiguidade salva'); carregarCats(); }
+          };
+        });
+      } catch (err) {
+        cont.innerHTML = '<div class="vazio" style="padding:24px 0">Falha ao carregar catálogos. Tente recarregar a página.</div>';
+        console.error('Erro ao carregar catálogos:', err);
+      }
     };
 
     $('#cgGo').onclick = async () => {
@@ -2496,26 +2480,6 @@
     };
     if (abaGer === 'tags') carregarCats(); else $('#gerTags').addEventListener('renderTags', carregarCats, { once: true });
 
-    /* --- operadores: filtro + senha/mover/excluir --- */
-    $('#fOp').oninput = () => {
-      const q = $('#fOp').value.trim().toLowerCase();
-      document.querySelectorAll('#gerOperadores tbody tr[data-login]').forEach(tr => {
-        tr.style.display = !q || tr.dataset.login.toLowerCase().includes(q) ? '' : 'none';
-      });
-    };
-    document.querySelectorAll('#gerOperadores [data-mv]').forEach(b => b.onclick = () =>
-      modalMover(b.dataset.mv, b.dataset.login, optsMoverGer,
-        'Permitido apenas entre o seu grupo e seus subordinados.', () => window.ViewGrupos()));
-    document.querySelectorAll('[data-senha]').forEach(b => b.onclick = () =>
-      modalSenha(b.dataset.senha, b.dataset.login, false, () => {}));
-    document.querySelectorAll('[data-exc]').forEach(b => b.onclick = async () => {
-      if (!(await confirmar(`Excluir a conta "${b.dataset.login}"?`))) return;
-      try {
-        const r = await api(`/api/usuarios/${b.dataset.exc}`, { method: 'DELETE' });
-        toast(r.desativado ? 'Conta desativada (histórico preservado)' : 'Conta excluída');
-        window.ViewGrupos();
-      } catch (e) {}
-    });
   };
 
   /* =====================================================================

@@ -1487,6 +1487,11 @@ func (a *App) hMaterialItensSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Operadores podem apenas cautelar e descautelar — criação e edição são do chefe de setor, gerente ou encarregado.
+	if u.Papel == "operador" {
+		jsonErro(w, http.StatusForbidden, "operador não tem permissão para cadastrar ou editar materiais")
+		return
+	}
 	esc, err := a.exigeEscopo(u)
 	if err != nil {
 		jsonErro(w, http.StatusForbidden, "conta sem grupo definido")
@@ -1705,6 +1710,11 @@ func (a *App) hMaterialItensDel(w http.ResponseWriter, r *http.Request) {
 	// v1.6.0 F7: recorte de setor do operador.
 	corte, ok := recortaSetorMaterial(w, a, u)
 	if !ok {
+		return
+	}
+	// Operadores podem apenas cautelar e descautelar.
+	if u.Papel == "operador" {
+		jsonErro(w, http.StatusForbidden, "operador não tem permissão para excluir ou baixar materiais")
 		return
 	}
 	esc, err := a.exigeEscopo(u)
@@ -2581,7 +2591,11 @@ func (a *App) authMaterial(next http.HandlerFunc) http.Handler {
 				return
 			}
 			if !a.exigeSetorOperador(w, u) { return } // v1.6.0 F4: operador é de setor
-			if u.Papel == "gerente" || u.Papel == "operador" || a.ehEncarregadoDeMaterial(u) {
+			if u.Papel == "chefe_setor" && setorDoUsuario(a, u) == nil {
+				jsonErro(w, http.StatusForbidden, "conta sem setor atribuído — solicite ao gerente/encarregado")
+				return
+			}
+			if u.Papel == "gerente" || u.Papel == "operador" || u.Papel == "chefe_setor" || a.ehEncarregadoDeMaterial(u) {
 				next(w, r)
 				return
 			}

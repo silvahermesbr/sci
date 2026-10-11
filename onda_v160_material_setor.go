@@ -26,28 +26,28 @@ const msgSemSetorOperador = "conta sem setor atribuído — solicite ao gerente/
 
 // setorEscopoMaterial: recorte de setor do módulo para o CONTEXTO ativo.
 //   - gerente / enc_material / admin → nil (escopo GRUPO: nada recortado);
-//   - operador → o setor de atuação (u.SetorID → fallback pessoa vinculada,
+//   - operador / chefe_setor → o setor de atuação (u.SetorID → fallback pessoa vinculada,
 //     mesma resolução dos guardas de conferência).
 //
-// nil NÃO significa "sem recorte aplicável" para o operador: operador SEM
+// nil NÃO significa "sem recorte aplicável" para o operador ou chefe_setor: sem
 // setor é recusa (recortaSetorMaterial), nunca escopo de grupo.
 func setorEscopoMaterial(a *App, u *Usuario) *int64 {
 	if u == nil {
 		return nil
 	}
-	if u.Papel == "operador" {
+	if u.Papel == "operador" || u.Papel == "chefe_setor" {
 		return setorDoUsuario(a, u)
 	}
 	return nil
 }
 
-// recortaSetorMaterial: resolve o recorte e RECUSA o operador sem setor.
+// recortaSetorMaterial: resolve o recorte e RECUSA o operador ou chefe sem setor.
 // Devolve (recorte, true) para seguir; (nil, false) depois de escrever o 403.
 // Chamar ANTES de abrir transação (consulta o pool — pool=1: query no pool com
 // tx aberta é deadlock, lição bd6a7af).
 func recortaSetorMaterial(w http.ResponseWriter, a *App, u *Usuario) (*int64, bool) {
 	corte := setorEscopoMaterial(a, u)
-	if u != nil && u.Papel == "operador" && corte == nil {
+	if u != nil && (u.Papel == "operador" || u.Papel == "chefe_setor") && corte == nil {
 		jsonErro(w, http.StatusForbidden, msgSemSetorOperador)
 		return nil, false
 	}
