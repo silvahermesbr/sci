@@ -734,12 +734,12 @@ definirUsuario(usuario);
     itens = [
       ['#/avisos', 'MURAL DE AVISOS', svgAvisosAdm],
       ['#/admin', 'PAINEL ADMIN', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>'],
-      ['#/mensagens', 'EMAIL INTERNO', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true]
+      ['#/mensagens', 'EMAIL', '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>', true]
     ];
   } else {
     // ordem 04/10 — SISTEMAS DISPONÍVEIS POR PAPEL:
     //   Gerente: TODOS do seu grupo (conferência, email, avisos, drive, relatórios, gerenciar)
-    //   Chefe de setor: Conferência, Drive, mural de avisos e Email Interno
+    //   Chefe de setor: Conferência, Drive, mural de avisos e Email
     //   Operador: Conferência e mural de avisos
     //   Conta sem função do sistema: NADA (login leva ao aviso de módulo indisponível)
     const svgConf = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>';
@@ -770,7 +770,7 @@ definirUsuario(usuario);
         ['#/hoje', 'CONFERÊNCIA', svgConf],
         ['#/material', 'MATERIAL', svgMaterial],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
-        ['#/mensagens', 'EMAIL INTERNO', svgMsg, true]
+        ['#/mensagens', 'EMAIL', svgMsg, true]
       ];
     } else if (papel === 'enc_pessoal') {
       // v1.6.0 Fase 2: contexto PRÓPRIO do encarregado de pessoal (linha
@@ -794,7 +794,7 @@ definirUsuario(usuario);
       itens = [
         ['#/avisos', 'MURAL DE AVISOS', svgAvisos], // onda C2: mural NO TOPO
         ['#/hoje', 'CONFERÊNCIA', svgConf],
-        ['#/mensagens', 'EMAIL INTERNO', svgMsg, true],
+        ['#/mensagens', 'EMAIL', svgMsg, true],
         ['#/drive', 'DRIVE LOCAL', svgDrive],
         ['#/pessoal', 'PESSOAL', svgPes],
         ['#/material', 'MATERIAL', svgMaterial],
